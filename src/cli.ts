@@ -6,12 +6,24 @@ import { initProject } from './installer.js'
 
 function parseArgs(argv: string[]) {
   const [command, ...rest] = argv
-  const options: { targetDir?: string; nightly?: boolean; json?: boolean } = {}
+  const options: {
+    targetDir?: string
+    withSkill?: boolean
+    nightly?: boolean
+    json?: boolean
+    usedDeprecatedNightly?: boolean
+  } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index]
+    if (token === '--with-skill') {
+      options.withSkill = true
+      continue
+    }
     if (token === '--nightly') {
+      options.withSkill = true
       options.nightly = true
+      options.usedDeprecatedNightly = true
       continue
     }
     if (token === '--json') {
@@ -40,7 +52,7 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--nightly]
+  agent-belay init [--target <dir>] [--with-skill]
   agent-belay doctor [--target <dir>] [--json]
 `)
 }
@@ -54,9 +66,12 @@ async function main() {
     }
 
     if (command === 'init') {
+      if (options.usedDeprecatedNightly) {
+        process.stderr.write('Warning: --nightly is deprecated. Use --with-skill instead.\n')
+      }
       const result = await initProject(options)
       process.stdout.write(
-        `Initialized agent-belay in ${result.repoRoot}${result.nightly ? ' (nightly extras enabled)' : ''}.\n`,
+        `Initialized agent-belay in ${result.repoRoot}${result.withSkill ? ' (skill extras enabled)' : ''}.\n`,
       )
       return
     }

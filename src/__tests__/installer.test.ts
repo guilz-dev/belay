@@ -9,6 +9,8 @@ import { doctorProject } from '../doctor.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
+const BUNDLED_SKILL_PATH = new URL('../../skills/belay/SKILL.md', import.meta.url)
+const BUNDLED_COMMAND_PATH = new URL('../../skills/belay/belay-approve.md', import.meta.url)
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-'))
@@ -29,7 +31,7 @@ describe('agent-belay installer', () => {
   it('creates managed hooks and preserves existing ordering around prepend/append hooks', async () => {
     const repoRoot = await createTempRepo()
     const cursorDir = path.join(repoRoot, '.cursor')
-    await initProject({ targetDir: repoRoot, nightly: true })
+    await initProject({ targetDir: repoRoot, withSkill: true })
 
     const hooksPath = path.join(cursorDir, 'hooks.json')
     const hooks = await readJson(hooksPath)
@@ -54,9 +56,13 @@ describe('agent-belay installer', () => {
     const runnerPath = path.join(cursorDir, 'hooks', 'belay-runner')
     const runnerCmdPath = path.join(cursorDir, 'hooks', 'belay-runner.cmd')
     const configPath = path.join(cursorDir, 'belay.config.json')
+    const bundledSkill = await readFile(BUNDLED_SKILL_PATH, 'utf8')
+    const bundledCommand = await readFile(BUNDLED_COMMAND_PATH, 'utf8')
+    expect(bundledSkill).toContain('name: belay')
+    expect(bundledSkill).toContain('description:')
 
-    expect(await readFile(skillPath, 'utf8')).toContain('/belay-approve')
-    expect(await readFile(commandPath, 'utf8')).toContain('/belay-approve')
+    expect(await readFile(skillPath, 'utf8')).toBe(bundledSkill)
+    expect(await readFile(commandPath, 'utf8')).toBe(bundledCommand)
     expect(await readFile(runnerPath, 'utf8')).toContain('resolve_node')
     expect(await readFile(runnerCmdPath, 'utf8')).toContain('NODE_BIN')
     expect(await readFile(configPath, 'utf8')).toContain('"mode": "enforce"')
@@ -64,14 +70,42 @@ describe('agent-belay installer', () => {
 
   it('is idempotent across repeated init runs', async () => {
     const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot, nightly: true })
+    await initProject({ targetDir: repoRoot, withSkill: true })
     const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
     const first = await readFile(hooksPath, 'utf8')
 
-    await initProject({ targetDir: repoRoot, nightly: true })
+    await initProject({ targetDir: repoRoot, withSkill: true })
     const second = await readFile(hooksPath, 'utf8')
 
     expect(second).toBe(first)
+  })
+
+  it('supports deprecated nightly option as an alias for withSkill', async () => {
+    const repoWithSkill = await createTempRepo()
+    const repoNightly = await createTempRepo()
+
+    await initProject({ targetDir: repoWithSkill, withSkill: true })
+    await initProject({ targetDir: repoNightly, nightly: true })
+
+    const withSkillSkill = await readFile(
+      path.join(repoWithSkill, '.cursor', 'skills', 'belay', 'SKILL.md'),
+      'utf8',
+    )
+    const nightlySkill = await readFile(
+      path.join(repoNightly, '.cursor', 'skills', 'belay', 'SKILL.md'),
+      'utf8',
+    )
+    const withSkillCommand = await readFile(
+      path.join(repoWithSkill, '.cursor', 'commands', 'belay-approve.md'),
+      'utf8',
+    )
+    const nightlyCommand = await readFile(
+      path.join(repoNightly, '.cursor', 'commands', 'belay-approve.md'),
+      'utf8',
+    )
+
+    expect(nightlySkill).toBe(withSkillSkill)
+    expect(nightlyCommand).toBe(withSkillCommand)
   })
 
   it('preserves existing hook ordering around prepend and append merges', async () => {

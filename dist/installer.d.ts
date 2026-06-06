@@ -3,6 +3,6 @@ declare function loadHooksFile(hooksPath: string): Promise<HooksFile>;
 declare function mergeHooksFile(current: HooksFile): HooksFile;
 export declare function initProject(options?: InitOptions): Promise<{
     repoRoot: string;
-    nightly: boolean;
+    withSkill: boolean;
 }>;
 export { loadHooksFile, mergeHooksFile };

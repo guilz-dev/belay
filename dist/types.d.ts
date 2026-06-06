@@ -38,6 +38,8 @@ export interface HooksFile {
 }
 export interface InitOptions {
     targetDir?: string;
+    withSkill?: boolean;
+    /** @deprecated Use withSkill instead. */
     nightly?: boolean;
 }
 export interface DoctorOptions {

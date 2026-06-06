@@ -13,13 +13,14 @@ import {
   renderAuditHook,
   renderBeforeSubmitHook,
   renderConfig,
-  renderNightlyCommand,
-  renderNightlySkill,
   renderRuntimeCore,
   renderShellGateHook,
   renderToolGateHook,
 } from './templates.js'
 import type { HookEntry, HooksFile, InitOptions } from './types.js'
+
+const BUNDLED_SKILL_TEMPLATE_URL = new URL('../skills/belay/SKILL.md', import.meta.url)
+const BUNDLED_COMMAND_TEMPLATE_URL = new URL('../skills/belay/belay-approve.md', import.meta.url)
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -56,6 +57,15 @@ async function writeTextIfMissing(filePath: string, content: string): Promise<vo
   }
   await ensureDir(path.dirname(filePath))
   await writeFile(filePath, content, 'utf8')
+}
+
+async function readBundledTemplate(fileUrl: URL): Promise<string> {
+  try {
+    return await readFile(fileUrl, 'utf8')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Unknown read failure.'
+    throw new Error(`Bundled template missing at ${fileUrl.pathname}: ${detail}`)
+  }
 }
 
 async function loadHooksFile(hooksPath: string): Promise<HooksFile> {
@@ -118,9 +128,9 @@ function mergeHooksFile(current: HooksFile): HooksFile {
 
 export async function initProject(
   options: InitOptions = {},
-): Promise<{ repoRoot: string; nightly: boolean }> {
+): Promise<{ repoRoot: string; withSkill: boolean }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const nightly = options.nightly === true
+  const withSkill = options.withSkill === true || options.nightly === true
   const cursorDir = path.join(repoRoot, '.cursor')
   const hooksDir = path.join(cursorDir, 'hooks')
   const belayDir = path.join(cursorDir, 'belay')
@@ -155,16 +165,18 @@ export async function initProject(
   await writeJsonIfMissing(path.join(belayDir, 'approved-approvals.json'), EMPTY_APPROVALS)
   await writeTextIfMissing(path.join(belayDir, 'audit.ndjson'), '')
 
-  if (nightly) {
+  if (withSkill) {
     await ensureDir(skillsDir)
     await ensureDir(commandsDir)
-    await writeTextFile(path.join(skillsDir, 'SKILL.md'), renderNightlySkill())
-    await writeTextFile(path.join(commandsDir, 'belay-approve.md'), renderNightlyCommand())
+    const bundledSkill = await readBundledTemplate(BUNDLED_SKILL_TEMPLATE_URL)
+    const bundledCommand = await readBundledTemplate(BUNDLED_COMMAND_TEMPLATE_URL)
+    await writeTextFile(path.join(skillsDir, 'SKILL.md'), bundledSkill)
+    await writeTextFile(path.join(commandsDir, 'belay-approve.md'), bundledCommand)
   }
 
   await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
 
-  return { repoRoot, nightly }
+  return { repoRoot, withSkill }
 }
 
 export { loadHooksFile, mergeHooksFile }

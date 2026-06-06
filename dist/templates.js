@@ -30,39 +30,6 @@ const eventName = process.argv[2] ?? 'postToolUse'
 await runAuditHook(eventName)
 `;
 }
-export function renderNightlySkill() {
-    return `---
-name: belay
-description: >-
-  Belay approval helper for Cursor. Use when a shell command or subagent launch
-  is denied as high-risk and needs a one-shot approval.
----
-
-# Belay
-
-Belay installs repo-local hooks that gate high-risk shell commands and subagent
-launches. Enforcement lives in hooks; this Skill only explains the flow.
-
-## Approval flow
-
-If Belay blocks an action, it returns an approval ID. Approve the next matching
-action once by sending:
-
-\`\`\`text
-/belay-approve <approval-id>
-\`\`\`
-
-Then retry the original action unchanged. Approvals are one-shot.
-`;
-}
-export function renderNightlyCommand() {
-    return `Use this command only after agent-belay has denied a high-risk action and returned an approval ID.
-
-1. Send \`/belay-approve <approval-id>\`.
-2. Wait for the success message.
-3. Retry the original action unchanged.
-`;
-}
 export function renderRuntimeCore(config) {
     const configLiteral = inlineJson(config);
     return `import { createHash, randomUUID } from 'node:crypto'

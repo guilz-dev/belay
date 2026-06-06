@@ -38,6 +38,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
     "LICENSE",
     "agent-belay-logo.png"

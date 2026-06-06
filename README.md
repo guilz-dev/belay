@@ -64,22 +64,38 @@ agent runtimes, not as a proof that a command is truly reversible.
 
 ## Install
 
-Current adapter:
+### Full setup (recommended)
+
+```bash
+npx agent-belay init --with-skill
+```
+
+This installs the runtime hooks and also writes helper artifacts for:
+
+- `.cursor/skills/belay/SKILL.md`
+- `.cursor/commands/belay-approve.md`
+
+`--nightly` is still accepted as a deprecated alias for one release, but use
+`--with-skill` going forward.
+
+### Hook runtime only
 
 ```bash
 npx agent-belay init
 ```
 
-For the current Cursor-style integration, add `--nightly` to also generate the
-optional Skill and command artifacts:
+### Skill only (skills CLI)
 
 ```bash
-npx agent-belay init --nightly
+npx skills add guilz-dev/agent-belay --skill belay -a cursor -y
 ```
 
 Re-running `init` is supported for the current adapter, but it **re-writes
 managed config and hook files**. Keep local customizations outside the
 generated Belay files.
+
+Installing the skill alone does not enable gating. Runtime enforcement still
+requires `npx agent-belay init` in the target repository.
 
 ## What it installs
 
@@ -96,15 +112,21 @@ Current adapter artifacts:
 - `.cursor/belay/approved-approvals.json`
 - `.cursor/belay/audit.ndjson`
 
-Nightly-only extras:
+Optional skill and command artifacts (with `--with-skill`):
 
 - `.cursor/skills/belay/SKILL.md`
 - `.cursor/commands/belay-approve.md`
+
+Packaged skill source for `npx skills add`:
+
+- `skills/belay/SKILL.md`
+- `skills/belay/belay-approve.md`
 
 ## Commands
 
 ```bash
 npx agent-belay init
+npx agent-belay init --with-skill
 npx agent-belay doctor
 ```
 
