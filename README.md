@@ -1,45 +1,89 @@
-# agent-belay
+# Agent Belay
+
+`agent-belay` is a practical Belay-style gate for agent runtimes.
+
+The current v0.1 integration targets hook-capable agent environments, with the
+first adapter implemented for Cursor-style hooks.
 
 <p align="center">
   <img src="./agent-belay-logo.png" alt="agent-belay logo" width="480">
 </p>
 
-`agent-belay` installs repo-local Cursor hooks that apply Belay-style gating to
-shell commands and subagent launches.
+## Motivation
 
-Belay can be used on Stable Cursor via hooks. Optional Skill integration is
-available on Nightly Cursor.
+Static denylists are broken — they can't read context, and the list never keeps up.
+
+The same command can be harmless in one situation and high-risk in another.
+
+A rule like "never run this command" is too coarse. But the growing list of
+exceptions you bolt on to fix that quickly becomes fragile, hard to maintain,
+and easy to work around.
+
+`agent-belay` exists to move the decision boundary away from command names
+alone. Instead of treating every invocation of a tool as equally dangerous, it
+makes its own runtime judgment based on:
+
+- **reversibility** — can this be undone?
+- **external effects** — does it reach outside the machine?
+- **blast radius** — how much could it affect?
+- **operator confidence** — how sure are we?
+
+When that judgment gets uncertain, or an action looks like it crosses a real
+safety boundary, it falls back to explicit approval and audit — instead of
+pretending a static denylist solved the problem.
 
 ## Scope
 
 `agent-belay` is an **agent-skill-oriented hook heuristic for Belay-style gating**, not the
 full abstract Belay substrate model.
 
-- It is optimized for Cursor hook payloads, which do not include an agent-side
+- It is currently optimized for hook payloads that do not include an agent-side
   `Assessment`.
 - In v0.1, it primarily denies **external or irreversible-looking effects**.
 - Local mutations are usually allowed as `allow_flagged`, not blocked.
 - Command-name and payload heuristics are part of the current implementation.
 
 This means `agent-belay` is best understood as a practical hook gate for
-agent runtimes that currently integrate through Cursor-style hooks, not as a proof that a command is truly reversible.
+agent runtimes, not as a proof that a command is truly reversible.
+
+## Runtime Support
+
+`agent-belay` is intended as an agent-facing package, not a Cursor-only product.
+
+- The current v0.1 adapter is implemented for Cursor-style hooks.
+- Future adapters can target other agent runtimes without changing the package
+  name or core concepts.
+- The optional Skill artifact is only a UX layer; it is not the core runtime.
+
+## Roadmap
+
+- `v0.1`: Cursor-style hook adapter with one-shot approval and audit
+- Next: stronger classifier coverage and additional runtime adapters
+- Long term: cleaner separation between reusable Belay core logic and
+  host-specific integrations
 
 ## Install
+
+Current adapter:
 
 ```bash
 npx agent-belay init
 ```
 
-Add `--nightly` to also generate the optional Skill and command artifacts:
+For the current Cursor-style integration, add `--nightly` to also generate the
+optional Skill and command artifacts:
 
 ```bash
 npx agent-belay init --nightly
 ```
 
-Re-running `init` is supported, but it **re-writes managed config and hook
-files**. Keep local customizations outside the generated Belay files.
+Re-running `init` is supported for the current adapter, but it **re-writes
+managed config and hook files**. Keep local customizations outside the
+generated Belay files.
 
 ## What it installs
+
+Current adapter artifacts:
 
 - `.cursor/belay.config.json`
 - `.cursor/hooks/belay-runner`
@@ -80,20 +124,21 @@ Approvals are one-shot and expire after 15 minutes by default.
 
 ## Existing Hooks
 
-`agent-belay` is designed to coexist with existing repo-local Cursor hooks.
+For the current Cursor-style adapter, `agent-belay` is designed to coexist with
+existing repo-local hooks.
 
 - Gate hooks are inserted with prepend semantics so they run before existing
   hooks for the same event.
 - Audit hooks are appended so they observe the final flow after other hooks.
 - Existing non-Belay hook entries are preserved in order.
 
-If another hook also denies the same event, Cursor will still block it; Belay
-does not try to suppress other repo policies.
+If another hook also denies the same event, the host runtime will still block
+it; Belay does not try to suppress other repo policies.
 
 ## Git Hygiene
 
-Belay state files are local runtime artifacts. They should usually stay out of
-git.
+Belay state files are local runtime artifacts for the current adapter. They
+should usually stay out of git.
 
 Recommended ignore entries:
 

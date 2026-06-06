@@ -1,8 +1,32 @@
 {
   "name": "agent-belay",
   "version": "0.1.0",
+  "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guilz-dev/agent-belay.git"
+  },
+  "homepage": "https://github.com/guilz-dev/agent-belay#readme",
+  "bugs": {
+    "url": "https://github.com/guilz-dev/agent-belay/issues"
+  },
+  "keywords": [
+    "agent",
+    "belay",
+    "hooks",
+    "approval",
+    "audit",
+    "runtime-safety"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.29.3",
   "bin": {
     "agent-belay": "./dist/cli.js"
   },
@@ -20,10 +44,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "lint": "biome check src package.json README.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.15",
     "@types/node": "22.15.29",
     "typescript": "5.9.3",
     "vitest": "3.2.4"
