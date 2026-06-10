@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -14,12 +14,8 @@ afterEach(async () => {
 
 describe('relativeWithinRepo', () => {
   it('resolves symlinked paths inside the repository (R5)', async () => {
-    const repoRoot = await mkdir(path.join(os.tmpdir(), `belay-repo-${Date.now()}`), {
-      recursive: true,
-    }).then((dir) => {
-      tempDirs.push(dir)
-      return dir
-    })
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-repo-'))
+    tempDirs.push(repoRoot)
     const realDir = path.join(repoRoot, 'real')
     const linkPath = path.join(repoRoot, 'link.txt')
     await mkdir(realDir, { recursive: true })
@@ -30,18 +26,10 @@ describe('relativeWithinRepo', () => {
   })
 
   it('treats symlink escape targets as outside the repo', async () => {
-    const outsideDir = await mkdir(path.join(os.tmpdir(), `belay-out-${Date.now()}`), {
-      recursive: true,
-    }).then((dir) => {
-      tempDirs.push(dir)
-      return dir
-    })
-    const repoRoot = await mkdir(path.join(os.tmpdir(), `belay-repo2-${Date.now()}`), {
-      recursive: true,
-    }).then((dir) => {
-      tempDirs.push(dir)
-      return dir
-    })
+    const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'belay-out-'))
+    tempDirs.push(outsideDir)
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-repo2-'))
+    tempDirs.push(repoRoot)
     const outsideFile = path.join(outsideDir, 'outside.txt')
     const linkPath = path.join(repoRoot, 'escape.txt')
     await writeFile(outsideFile, 'x')
