@@ -51,7 +51,7 @@ describe('agent-belay installer', () => {
     ).toEqual(['Delete', 'Shell', 'StrReplace', 'Task', 'Write'])
     expect(
       hooks.hooks.subagentStart.map((entry: { matcher?: string }) => entry.matcher).sort(),
-    ).toEqual(['computerUse', 'debug', 'generalPurpose'])
+    ).toEqual(['bugbot', 'computerUse', 'debug', 'explore', 'generalPurpose', 'videoReview'])
     expect(hooks.hooks.postToolUse.at(-1).command).toBe(managedByEvent.postToolUse.command)
     expect(hooks.hooks.stop.at(-1).command).toBe(managedByEvent.stop.command)
     expect(hooks.hooks.sessionEnd.at(-1).command).toBe(managedByEvent.sessionEnd.command)

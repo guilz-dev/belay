@@ -50,7 +50,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/build-runtime.mjs",
-    "lint": "biome check src package.json README.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts",
+    "lint": "biome check src package.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts docs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && vitest run"
   },

@@ -1,3 +1,4 @@
+import { matchesCustomCommand } from './custom-command-match.js'
 import { shellFingerprint } from './fingerprint.js'
 import {
   hasOutsideRepoPath,
@@ -25,10 +26,8 @@ const READ_ONLY_COMMANDS = new Set([
   'git status',
   'head',
   'ls',
-  'node',
   'pwd',
   'rg',
-  'sed',
   'sort',
   'tail',
   'wc',
@@ -76,6 +75,8 @@ const EXTERNAL_COMMANDS = new Set([
 ])
 
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])
+
+const INTERPRETER_SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval'])
 
 const EXTERNAL_SCRIPT_TERMS = ['deploy', 'publish', 'release', 'ship', 'prod']
 
@@ -141,8 +142,82 @@ function splitSegmentsWithSeparators(tokens: string[]): SegmentContext[] {
   return segments
 }
 
-function isExternalKey(key: string, options: ClassifierOptions): boolean {
-  return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some((c) => c === key)
+function isExternalKey(
+  key: string,
+  normalizedCommand: string,
+  options: ClassifierOptions,
+): boolean {
+  return (
+    EXTERNAL_COMMANDS.has(key) ||
+    (options.customExternalCommands ?? []).some((pattern) =>
+      matchesCustomCommand(normalizedCommand, key, pattern),
+    )
+  )
+}
+
+function extractInterpreterScript(tokens: string[]): string | null {
+  for (let index = 1; index < tokens.length; index += 1) {
+    const flag = tokens[index]
+    if (INTERPRETER_SCRIPT_FLAGS.has(flag)) {
+      return tokens[index + 1] ?? null
+    }
+  }
+  return null
+}
+
+function hasInPlaceSedFlag(tokens: string[]): boolean {
+  return tokens.some((token) => token === '-i' || token === '--in-place')
+}
+
+function wrapInnerVerdict(params: {
+  inner: ClassifyResult
+  normalizedCommand: string
+  cwdRelative: string
+  wrapReason: string
+  wrapSignal: string
+}): ClassifyResult {
+  const { inner, normalizedCommand, cwdRelative, wrapReason, wrapSignal } = params
+  const signals = [wrapSignal, ...inner.assessment.signals]
+  if (inner.verdict === 'deny_pending_approval') {
+    return {
+      ...inner,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      reason: wrapReason,
+      assessment: {
+        ...inner.assessment,
+        signals,
+      },
+    }
+  }
+  if (inner.verdict === 'allow_flagged') {
+    return {
+      ...inner,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      reason: wrapReason,
+      assessment: {
+        ...inner.assessment,
+        signals,
+      },
+    }
+  }
+  if (inner.verdict === 'allow') {
+    return {
+      verdict: 'allow_flagged',
+      reason: wrapReason,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: inner.assessment.external,
+        blastRadius: inner.assessment.blastRadius,
+        confidence: Math.min(inner.assessment.confidence, 0.7),
+        signals,
+      },
+    }
+  }
+  return inner
 }
 
 function classifySegment(
@@ -152,6 +227,7 @@ function classifySegment(
   normalizedCommand: string,
   cwdRelative: string,
   options: ClassifierOptions,
+  depth: number,
 ): ClassifyResult {
   const segmentTokens = segment.tokens
   const key = commandKey(segmentTokens)
@@ -159,7 +235,7 @@ function classifySegment(
   const signals: string[] = []
 
   for (const custom of options.customAllowCommands ?? []) {
-    if (normalizedCommand.includes(custom) || key === custom) {
+    if (matchesCustomCommand(normalizedCommand, key, custom)) {
       return {
         verdict: 'allow',
         reason: 'custom_allow',
@@ -177,7 +253,7 @@ function classifySegment(
   }
 
   for (const custom of options.customExternalCommands ?? []) {
-    if (normalizedCommand.includes(custom) || key === custom) {
+    if (matchesCustomCommand(normalizedCommand, key, custom)) {
       return denyResult({
         reason: 'custom_external',
         normalizedCommand,
@@ -248,6 +324,39 @@ function classifySegment(
     })
   }
 
+  if (depth < 2) {
+    const innerScript = extractInterpreterScript(segmentTokens)
+    if (innerScript && (SHELL_INTERPRETERS.has(key) || key === 'node')) {
+      const inner = classifyShell(innerScript, cwd, repoRoot, options, depth + 1)
+      const wrapReason = key === 'node' ? 'node_eval' : 'shell_interpreter_script'
+      const wrapSignal = key === 'node' ? 'node_eval' : 'shell_interpreter_script'
+      return wrapInnerVerdict({
+        inner,
+        normalizedCommand,
+        cwdRelative,
+        wrapReason,
+        wrapSignal,
+      })
+    }
+  }
+
+  if (key === 'sed' && hasInPlaceSedFlag(segmentTokens)) {
+    signals.push('sed_in_place')
+    return {
+      verdict: 'allow_flagged',
+      reason: 'local_mutation',
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: false,
+        blastRadius: 'this repository',
+        confidence: 0.74,
+        signals,
+      },
+    }
+  }
+
   if ((key === 'npm run' || key === 'pnpm run') && segmentTokens[2]) {
     const scriptName = segmentTokens[2].toLowerCase()
     if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
@@ -289,7 +398,7 @@ function classifySegment(
     }
   }
 
-  if (isExternalKey(key, options)) {
+  if (isExternalKey(key, normalizedCommand, options)) {
     signals.push('external_command', key)
     return denyResult({
       reason: 'external_effect',
@@ -317,6 +426,23 @@ function classifySegment(
         blastRadius: 'this repository',
         confidence: 0.95,
         signals: ['read_only_command'],
+      },
+    }
+  }
+
+  if (key === 'node' || key === 'sed') {
+    signals.push(key === 'node' ? 'node_execution' : 'sed_execution')
+    return {
+      verdict: 'allow_flagged',
+      reason: 'unknown_local_effect',
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: false,
+        blastRadius: 'this repository',
+        confidence: 0.64,
+        signals,
       },
     }
   }
@@ -359,6 +485,7 @@ export function classifyShell(
   cwd: string,
   repoRoot: string,
   options: ClassifierOptions = {},
+  depth = 0,
 ): ClassifyResult {
   const tokens = tokenizeShell(command)
   const segments = splitSegmentsWithSeparators(tokens)
@@ -387,6 +514,7 @@ export function classifyShell(
       normalizedCommand,
       cwdRelative,
       options,
+      depth,
     )
     effective = worseVerdict(effective, result)
     if (result.verdict === 'deny_pending_approval' && options.strictChains !== true) {

@@ -102,6 +102,30 @@ export function getManagedHookEntries(
       },
     },
     {
+      event: 'subagentStart',
+      definition: {
+        command: subagentGate,
+        placement: 'prepend',
+        matcher: 'explore',
+      },
+    },
+    {
+      event: 'subagentStart',
+      definition: {
+        command: subagentGate,
+        placement: 'prepend',
+        matcher: 'videoReview',
+      },
+    },
+    {
+      event: 'subagentStart',
+      definition: {
+        command: subagentGate,
+        placement: 'prepend',
+        matcher: 'bugbot',
+      },
+    },
+    {
       event: 'postToolUse',
       definition: {
         command: runnerCommand(platform, 'belay-audit', 'postToolUse'),

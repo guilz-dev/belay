@@ -47,6 +47,15 @@ function createApprovalRecord(params) {
   };
 }
 
+// src/core/custom-command-match.ts
+function matchesCustomCommand(normalizedCommand, key, pattern) {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return normalizedCommand === trimmed || key === trimmed;
+}
+
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
 function canonicalStringify(value) {
@@ -108,7 +117,10 @@ function resolveMutationTarget(token, cwd) {
   if (token.startsWith("./") || token.startsWith("../")) {
     return path.resolve(cwd, token);
   }
-  return null;
+  if (!token.includes("/") && !token.includes("\\")) {
+    return path.resolve(cwd, token);
+  }
+  return path.resolve(cwd, token);
 }
 function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   return tokens.some((token) => {
@@ -233,10 +245,8 @@ var READ_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "git status",
   "head",
   "ls",
-  "node",
   "pwd",
   "rg",
-  "sed",
   "sort",
   "tail",
   "wc",
@@ -281,6 +291,7 @@ var EXTERNAL_COMMANDS = /* @__PURE__ */ new Set([
   "wget"
 ]);
 var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
 var VERDICT_RANK = {
   allow: 0,
@@ -328,16 +339,74 @@ function splitSegmentsWithSeparators(tokens) {
   flush();
   return segments;
 }
-function isExternalKey(key, options) {
-  return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some((c) => c === key);
+function isExternalKey(key, normalizedCommand, options) {
+  return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
 }
-function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative, options) {
+function extractInterpreterScript(tokens) {
+  for (let index = 1; index < tokens.length; index += 1) {
+    const flag = tokens[index];
+    if (INTERPRETER_SCRIPT_FLAGS.has(flag)) {
+      return tokens[index + 1] ?? null;
+    }
+  }
+  return null;
+}
+function hasInPlaceSedFlag(tokens) {
+  return tokens.some((token) => token === "-i" || token === "--in-place");
+}
+function wrapInnerVerdict(params) {
+  const { inner, normalizedCommand, cwdRelative, wrapReason, wrapSignal } = params;
+  const signals = [wrapSignal, ...inner.assessment.signals];
+  if (inner.verdict === "deny_pending_approval") {
+    return {
+      ...inner,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      reason: wrapReason,
+      assessment: {
+        ...inner.assessment,
+        signals
+      }
+    };
+  }
+  if (inner.verdict === "allow_flagged") {
+    return {
+      ...inner,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      reason: wrapReason,
+      assessment: {
+        ...inner.assessment,
+        signals
+      }
+    };
+  }
+  if (inner.verdict === "allow") {
+    return {
+      verdict: "allow_flagged",
+      reason: wrapReason,
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: inner.assessment.external,
+        blastRadius: inner.assessment.blastRadius,
+        confidence: Math.min(inner.assessment.confidence, 0.7),
+        signals
+      }
+    };
+  }
+  return inner;
+}
+function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative, options, depth) {
   const segmentTokens = segment.tokens;
   const key = commandKey(segmentTokens);
   const redirects = extractRedirectTargets(segmentTokens);
   const signals = [];
   for (const custom of options.customAllowCommands ?? []) {
-    if (normalizedCommand.includes(custom) || key === custom) {
+    if (matchesCustomCommand(normalizedCommand, key, custom)) {
       return {
         verdict: "allow",
         reason: "custom_allow",
@@ -354,7 +423,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     }
   }
   for (const custom of options.customExternalCommands ?? []) {
-    if (normalizedCommand.includes(custom) || key === custom) {
+    if (matchesCustomCommand(normalizedCommand, key, custom)) {
       return denyResult({
         reason: "custom_external",
         normalizedCommand,
@@ -421,6 +490,37 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
+  if (depth < 2) {
+    const innerScript = extractInterpreterScript(segmentTokens);
+    if (innerScript && (SHELL_INTERPRETERS.has(key) || key === "node")) {
+      const inner = classifyShell(innerScript, cwd, repoRoot, options, depth + 1);
+      const wrapReason = key === "node" ? "node_eval" : "shell_interpreter_script";
+      const wrapSignal = key === "node" ? "node_eval" : "shell_interpreter_script";
+      return wrapInnerVerdict({
+        inner,
+        normalizedCommand,
+        cwdRelative,
+        wrapReason,
+        wrapSignal
+      });
+    }
+  }
+  if (key === "sed" && hasInPlaceSedFlag(segmentTokens)) {
+    signals.push("sed_in_place");
+    return {
+      verdict: "allow_flagged",
+      reason: "local_mutation",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.74,
+        signals
+      }
+    };
+  }
   if ((key === "npm run" || key === "pnpm run") && segmentTokens[2]) {
     const scriptName = segmentTokens[2].toLowerCase();
     if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
@@ -460,7 +560,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       };
     }
   }
-  if (isExternalKey(key, options)) {
+  if (isExternalKey(key, normalizedCommand, options)) {
     signals.push("external_command", key);
     return denyResult({
       reason: "external_effect",
@@ -487,6 +587,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
         blastRadius: "this repository",
         confidence: 0.95,
         signals: ["read_only_command"]
+      }
+    };
+  }
+  if (key === "node" || key === "sed") {
+    signals.push(key === "node" ? "node_execution" : "sed_execution");
+    return {
+      verdict: "allow_flagged",
+      reason: "unknown_local_effect",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.64,
+        signals
       }
     };
   }
@@ -521,7 +637,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     }
   };
 }
-function classifyShell(command, cwd, repoRoot, options = {}) {
+function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -546,7 +662,8 @@ function classifyShell(command, cwd, repoRoot, options = {}) {
       repoRoot,
       normalizedCommand,
       cwdRelative,
-      options
+      options,
+      depth
     );
     effective = worseVerdict(effective, result);
     if (result.verdict === "deny_pending_approval" && options.strictChains !== true) {
@@ -742,12 +859,21 @@ import path2 from "node:path";
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
   const normalized = filePath.replaceAll("\\", "/");
-  const baseName = normalized.split("/").pop() ?? normalized;
+  const segments = normalized.split("/");
+  const baseName = segments.at(-1) ?? normalized;
   for (const pattern of patterns) {
     const normalizedPattern = pattern.replaceAll("\\", "/");
     if (normalizedPattern.includes("**")) {
-      const suffix = normalizedPattern.replace("**/", "");
-      if (normalized.includes(suffix) || normalized.endsWith(suffix)) {
+      const parts = normalizedPattern.split("**").map((part) => part.replace(/^\/+|\/+$/g, ""));
+      const prefix = parts[0]?.replace(/\/+$/, "") ?? "";
+      const suffix = parts[1]?.replace(/^\/+/, "") ?? "";
+      if (prefix && !normalized.startsWith(prefix)) {
+        continue;
+      }
+      if (suffix && !normalized.includes(suffix)) {
+        continue;
+      }
+      if (prefix || suffix) {
         return true;
       }
     }
@@ -758,11 +884,15 @@ function matchesSensitivePath(filePath, patterns) {
       if (regex.test(normalized) || regex.test(baseName)) {
         return true;
       }
+      continue;
     }
     if (normalized === normalizedPattern || baseName === normalizedPattern) {
       return true;
     }
     if (normalized.endsWith(`/${normalizedPattern}`)) {
+      return true;
+    }
+    if (segments.includes(normalizedPattern)) {
       return true;
     }
   }
@@ -818,7 +948,6 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
     const shellResult = classifyShell(command, cwd, repoRoot, options);
     return {
       ...shellResult,
-      fingerprint: toolFingerprint(toolName, { command }, repoRoot),
       summary: command
     };
   }
@@ -933,6 +1062,8 @@ var DEFAULT_CONFIG_V2 = {
     toolShell: true
   },
   classifier: {
+    // When true, scan every chained segment and keep the strictest verdict.
+    // When false, return immediately on the first deny segment.
     strictChains: true,
     customExternalCommands: [],
     customAllowCommands: [],
@@ -1036,11 +1167,7 @@ function classifierOptionsFromConfig(config) {
   };
 }
 
-// src/version.ts
-var PACKAGE_VERSION = "0.2.0";
-
 // src/adapters/cursor/runtime-entry.ts
-var RUNTIME_PACKAGE_VERSION = PACKAGE_VERSION;
 var EMPTY_APPROVALS = {
   version: 1,
   approvals: []
@@ -1327,7 +1454,7 @@ async function runToolGateHook(eventName) {
       const result = classifyToolUse(payload, repoRoot, cwd, options);
       const response = await gateDecisionToResponse({
         repoRoot,
-        kind: "tool",
+        kind: "shell",
         result,
         config
       });
@@ -1394,7 +1521,6 @@ async function runAuditHook(eventName) {
   }
 }
 export {
-  RUNTIME_PACKAGE_VERSION,
   runAuditHook,
   runBeforeSubmitPromptHook,
   runShellGateHook,

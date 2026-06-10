@@ -60,9 +60,12 @@ async function readRuntimeBundle(): Promise<string> {
 
 export async function renderRuntimeCore(): Promise<string> {
   const bundle = await readRuntimeBundle()
-  if (bundle.includes('RUNTIME_BUILD_STAMP')) {
-    return bundle
-  }
-  const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(PACKAGE_VERSION)};\n`
-  return `${stamp}${bundle}`
+  const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(`${PACKAGE_VERSION}@${new Date().toISOString()}`)};\n`
+  const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`
+  const withoutStamp = bundle
+    .replace(/^export const RUNTIME_BUILD_STAMP = .*;\n/gm, '')
+    .replace(/^export const RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
+    .replace(/^var RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
+    .replace(/\n {2}RUNTIME_PACKAGE_VERSION,\n/, '\n')
+  return `${versionLine}${stamp}${withoutStamp}`
 }

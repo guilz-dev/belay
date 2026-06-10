@@ -2,20 +2,24 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { classifyShell } from '../core/classify-shell.js'
 import { classifyToolUse } from '../core/classify-tool.js'
 
 const repoRoot = '/workspace/project'
 const cwd = repoRoot
 
 describe('classifyToolUse', () => {
-  it('reuses shell classification for Shell tool', () => {
-    const result = classifyToolUse(
+  it('reuses shell classification and fingerprint for Shell tool', () => {
+    const shellOnly = classifyToolUse(
       { tool_name: 'Shell', tool_input: { command: 'git push origin main' } },
       repoRoot,
       cwd,
     )
-    expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.summary).toBe('git push origin main')
+    expect(shellOnly.verdict).toBe('deny_pending_approval')
+    expect(shellOnly.summary).toBe('git push origin main')
+
+    const shellHook = classifyShell('git push origin main', cwd, repoRoot)
+    expect(shellOnly.fingerprint).toBe(shellHook.fingerprint)
   })
 
   it('denies writes outside the repository', () => {

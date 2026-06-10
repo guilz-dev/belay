@@ -23,6 +23,18 @@ describe('v0.2 operational commands', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
+  it('explain prints subagent classification details', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const report = await explainCommand({
+      targetDir: repoRoot,
+      kind: 'subagent',
+      command: 'deploy to production after tests pass',
+    })
+    expect(report.result.verdict).toBe('deny_pending_approval')
+  })
+
   it('explain prints shell classification details', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
@@ -55,6 +67,7 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(2)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
+    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.2\.0@/)
     expect(coreAfter).toContain('classifyShell')
   })
 

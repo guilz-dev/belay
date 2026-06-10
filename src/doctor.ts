@@ -96,7 +96,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   if (existsSync(corePath)) {
     const runtimeVersions = await readRuntimeVersion(corePath)
-    if (runtimeVersions.stamp && runtimeVersions.stamp !== PACKAGE_VERSION) {
+    if (runtimeVersions.stamp && !runtimeVersions.stamp.startsWith(`${PACKAGE_VERSION}@`)) {
       warnings.push(
         `Installed runtime stamp (${runtimeVersions.stamp}) differs from package (${PACKAGE_VERSION}). Run agent-belay upgrade.`,
       )
@@ -106,7 +106,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         `Installed runtime version (${runtimeVersions.version}) differs from package (${PACKAGE_VERSION}). Run agent-belay upgrade.`,
       )
     }
-    if (runtimeVersions.stamp === PACKAGE_VERSION) {
+    if (runtimeVersions.stamp?.startsWith(`${PACKAGE_VERSION}@`)) {
       notes.push(`Runtime version matches package (${PACKAGE_VERSION}).`)
     }
   }

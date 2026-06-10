@@ -89,4 +89,34 @@ describe('classifyShell', () => {
     const result = classifyShell('git push origin main', cwd, repoRoot)
     expect(result.assessment.signals.length).toBeGreaterThan(0)
   })
+
+  it('denies shell interpreter -c wrappers around external commands', () => {
+    const result = classifyShell('bash -c "git push origin main"', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('shell_interpreter_script')
+  })
+
+  it('denies node -e wrappers around external commands', () => {
+    const result = classifyShell('node -e "curl https://example.com"', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('node_eval')
+  })
+
+  it('flags node without -e instead of treating it as read-only', () => {
+    const result = classifyShell('node --version', cwd, repoRoot)
+    expect(result.verdict).toBe('allow_flagged')
+  })
+
+  it('flags sed -i as local mutation', () => {
+    const result = classifyShell("sed -i 's/a/b/' notes.txt", cwd, repoRoot)
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('local_mutation')
+  })
+
+  it('does not allow overly broad custom allow patterns', () => {
+    const denied = classifyShell('git push origin main', cwd, repoRoot, {
+      customAllowCommands: ['git'],
+    })
+    expect(denied.verdict).toBe('deny_pending_approval')
+  })
 })

@@ -16,6 +16,9 @@ function parseArgs(argv: string[]) {
     approvalId?: string
     explainCommand?: string
     explainCwd?: string
+    explainKind?: 'shell' | 'tool' | 'subagent'
+    explainToolName?: string
+    explainPayload?: Record<string, unknown>
   } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -46,6 +49,33 @@ function parseArgs(argv: string[]) {
       index += 1
       continue
     }
+    if (token === '--kind') {
+      const next = rest[index + 1]
+      if (!next || !['shell', 'tool', 'subagent'].includes(next)) {
+        throw new Error('--kind requires shell, tool, or subagent.')
+      }
+      options.explainKind = next as 'shell' | 'tool' | 'subagent'
+      index += 1
+      continue
+    }
+    if (token === '--tool') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--tool requires a tool name.')
+      }
+      options.explainToolName = next
+      index += 1
+      continue
+    }
+    if (token === '--payload-json') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--payload-json requires a JSON object.')
+      }
+      options.explainPayload = JSON.parse(next) as Record<string, unknown>
+      index += 1
+      continue
+    }
     if (token === '--help' || token === '-h') {
       return { command: 'help', options }
     }
@@ -71,7 +101,7 @@ Usage:
   agent-belay upgrade [--target <dir>] [--with-skill]
   agent-belay doctor [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
-  agent-belay explain [--target <dir>] [--cwd <dir>] [--json] -- <command>
+  agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
   agent-belay revoke <approval-id> [--target <dir>]
 `)
 }
@@ -129,14 +159,17 @@ async function main() {
     }
 
     if (command === 'explain') {
-      if (!options.explainCommand) {
-        throw new Error('explain requires a command after --')
+      if (!options.explainCommand && !options.explainPayload) {
+        throw new Error('explain requires a command after -- or --payload-json')
       }
       const report = await explainCommand({
         targetDir: options.targetDir,
         command: options.explainCommand,
         cwd: options.explainCwd,
         json: options.json,
+        kind: options.explainKind,
+        toolName: options.explainToolName,
+        payload: options.explainPayload,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)

@@ -52,7 +52,6 @@ export function classifyToolUse(payload, repoRoot, cwd, options = {}) {
         const shellResult = classifyShell(command, cwd, repoRoot, options);
         return {
             ...shellResult,
-            fingerprint: toolFingerprint(toolName, { command }, repoRoot),
             summary: command,
         };
     }

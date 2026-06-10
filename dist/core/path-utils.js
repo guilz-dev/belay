@@ -31,7 +31,10 @@ export function resolveMutationTarget(token, cwd) {
     if (token.startsWith('./') || token.startsWith('../')) {
         return path.resolve(cwd, token);
     }
-    return null;
+    if (!token.includes('/') && !token.includes('\\')) {
+        return path.resolve(cwd, token);
+    }
+    return path.resolve(cwd, token);
 }
 export function hasOutsideRepoPath(tokens, cwd, repoRoot) {
     return tokens.some((token) => {

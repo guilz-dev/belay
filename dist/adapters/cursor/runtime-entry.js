@@ -4,8 +4,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { approvalCommandMatch, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, compactApprovals, createApprovalRecord, mergeConfig, scrubValue, } from '../../core/index.js';
-import { PACKAGE_VERSION } from '../../version.js';
-export const RUNTIME_PACKAGE_VERSION = PACKAGE_VERSION;
 const EMPTY_APPROVALS = {
     version: 1,
     approvals: [],
@@ -293,7 +291,7 @@ export async function runToolGateHook(eventName) {
             const result = classifyToolUse(payload, repoRoot, cwd, options);
             const response = await gateDecisionToResponse({
                 repoRoot,
-                kind: 'tool',
+                kind: 'shell',
                 result,
                 config,
             });

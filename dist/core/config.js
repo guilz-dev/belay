@@ -10,6 +10,8 @@ export const DEFAULT_CONFIG_V2 = {
         toolShell: true,
     },
     classifier: {
+        // When true, scan every chained segment and keep the strictest verdict.
+        // When false, return immediately on the first deny segment.
         strictChains: true,
         customExternalCommands: [],
         customAllowCommands: [],

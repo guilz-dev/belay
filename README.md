@@ -136,6 +136,8 @@ npx agent-belay upgrade
 npx agent-belay doctor
 npx agent-belay status
 npx agent-belay explain -- <shell-command>
+npx agent-belay explain --kind subagent -- "deploy to production"
+npx agent-belay explain --kind tool --tool Write -- .env
 npx agent-belay revoke <approval-id>
 ```
 
@@ -161,9 +163,19 @@ overrides:
     "customExternalCommands": [],
     "customAllowCommands": [],
     "sensitivePaths": [".env", ".env.*", "**/credentials/**"]
+  },
+  "audit": {
+    "logPath": ".cursor/belay/audit.ndjson",
+    "includeAssessment": true
   }
 }
 ```
+
+`strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
+the strictest verdict. Set it to `false` to stop at the first deny segment.
+
+`customAllowCommands` and `customExternalCommands` use exact command or segment
+key matches only (no substring wildcards).
 
 v0.1 configs are migrated automatically on load.
 

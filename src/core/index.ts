@@ -19,6 +19,7 @@ export {
   migrateConfig,
   normalizeConfig,
 } from './config.js'
+export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,
   hashValue,

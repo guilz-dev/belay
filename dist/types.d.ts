@@ -44,11 +44,15 @@ export interface StatusReport {
     approved: ApprovalRecord[];
     expiredPendingCount: number;
 }
+export type ExplainKind = 'shell' | 'tool' | 'subagent';
 export interface ExplainOptions {
     targetDir?: string;
-    command: string;
+    command?: string;
     cwd?: string;
     json?: boolean;
+    kind?: ExplainKind;
+    toolName?: string;
+    payload?: Record<string, unknown>;
 }
 export interface RevokeOptions {
     targetDir?: string;

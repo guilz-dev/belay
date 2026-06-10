@@ -1,24 +1,73 @@
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
-import { classifierOptionsFromConfig, classifyShell } from './core/index.js';
+import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from './core/index.js';
+function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
+    const kind = options.kind ?? 'shell';
+    if (kind === 'shell') {
+        if (!options.command) {
+            throw new Error('explain requires a command for shell classification.');
+        }
+        return {
+            kind: 'shell',
+            input: options.command,
+            result: classifyShell(options.command, cwd, repoRoot, classifierOptions),
+        };
+    }
+    if (kind === 'subagent') {
+        const payload = options.payload ?? {
+            tool_name: 'Task',
+            tool_input: {
+                description: options.command ?? '',
+            },
+        };
+        if (!options.command && !options.payload) {
+            throw new Error('explain requires --command or --payload-json for subagent classification.');
+        }
+        return {
+            kind: 'subagent',
+            input: options.command ?? JSON.stringify(payload),
+            result: classifySubagent(payload, repoRoot, classifierOptions),
+        };
+    }
+    if (kind === 'tool') {
+        const payload = options.payload ??
+            {
+                tool_name: options.toolName ?? 'Shell',
+                tool_input: options.toolName === 'Shell'
+                    ? { command: options.command ?? '' }
+                    : { path: options.command ?? '' },
+            };
+        if (!options.command && !options.payload) {
+            throw new Error('explain requires --command or --payload-json for tool classification.');
+        }
+        return {
+            kind: 'tool',
+            input: options.command ?? JSON.stringify(payload),
+            result: classifyToolUse(payload, repoRoot, cwd, classifierOptions),
+        };
+    }
+    throw new Error(`Unknown explain kind: ${kind}`);
+}
 export async function explainCommand(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot;
     const config = await loadConfigFile(repoRoot);
     const classifierOptions = classifierOptionsFromConfig(config);
-    const result = classifyShell(options.command, cwd, repoRoot, classifierOptions);
+    const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
     return {
         repoRoot,
-        command: options.command,
+        kind: classified.kind,
+        command: classified.input,
         cwd,
-        result,
+        result: classified.result,
     };
 }
 export function formatExplainReport(report) {
     const { result } = report;
     const lines = [
         `agent-belay explain for ${report.repoRoot}`,
-        `Command: ${report.command}`,
+        `Kind: ${report.kind}`,
+        `Input: ${report.command}`,
         `CWD: ${report.cwd}`,
         '',
         `Verdict: ${result.verdict}`,
