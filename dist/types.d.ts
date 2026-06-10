@@ -13,6 +13,7 @@ export interface HooksFile {
 export interface InitOptions {
     targetDir?: string;
     withSkill?: boolean;
+    dogfood?: boolean;
 }
 export interface UpgradeOptions {
     targetDir?: string;
@@ -22,6 +23,24 @@ export interface DoctorOptions {
     targetDir?: string;
     fix?: boolean;
     dryRun?: boolean;
+}
+export interface Oq3SpikeStatus {
+    path: string;
+    ok: boolean;
+    recordedAt: string | null;
+    error: string | null;
+    controlPlaneDir: string;
+}
+export interface DogfoodStatus {
+    active: boolean;
+    mode: string;
+    unknownLocalEffect: string;
+    spikeOnPrompt: boolean;
+    readyForEnforce: boolean;
+    gateEvents: number;
+    wouldBlockCount: number;
+    wouldBlockRate: number;
+    notes: string[];
 }
 export interface DoctorReport {
     ok: boolean;
@@ -36,6 +55,8 @@ export interface DoctorReport {
     issues: string[];
     notes: string[];
     warnings: string[];
+    dogfood: DogfoodStatus | null;
+    oq3Spike: Oq3SpikeStatus | null;
 }
 export interface StatusOptions {
     targetDir?: string;
@@ -47,6 +68,23 @@ export interface StatusReport {
     pending: ApprovalRecord[];
     approved: ApprovalRecord[];
     expiredPendingCount: number;
+    dogfood: DogfoodStatus;
+    oq3Spike: Oq3SpikeStatus | null;
+}
+export interface DogfoodOptions {
+    targetDir?: string;
+    enforce?: boolean;
+    force?: boolean;
+    spikeOnPrompt?: boolean;
+}
+export interface DogfoodResult {
+    ok: boolean;
+    repoRoot: string;
+    message: string;
+    configPath: string;
+    mode: string;
+    unknownLocalEffect: string;
+    spikeOnPrompt: boolean;
 }
 export type ExplainKind = 'shell' | 'tool' | 'subagent';
 export interface ExplainReport {

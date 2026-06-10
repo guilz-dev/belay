@@ -1,13 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
-### Fixed
+### Added
 
-- Shell classifier merges substitution analysis with outer command segments (no bypass via benign `$(...)`)
-- Command substitution ignored inside single/double quotes
-- Reverse control-plane migration on upgrade only when repo-local approvals are empty
-- Dogfood metrics notes updated for audit mode without pending approvals
+- `agent-belay dogfood` enables OQ1 audit + fail-closed policy (optional `--enforce`, `--force`, `--no-spike`)
+- `agent-belay init --dogfood` initializes with dogfood config
+- `status` and `doctor` show dogfood readiness and OQ3 spike results (`oq3-spike-last.json`)
 
 ## 0.3.1
 
@@ -23,6 +22,13 @@
 ### Changed
 
 - Audit mode records would-block events without creating pending approvals
+
+### Fixed
+
+- Shell classifier merges substitution analysis with outer command segments (no bypass via benign `$(...)`)
+- Command substitution ignored inside single/double quotes
+- Reverse control-plane migration on upgrade only when repo-local approvals are empty
+- Dogfood metrics notes updated for audit mode without pending approvals
 
 ## 0.3.0
 
@@ -77,5 +83,6 @@
 - Flag `sed -i` and bare `node`/`sed` invocations
 - Require exact matches for custom allow/external command rules
 
-### Removed
-- Deprecated `--nightly` CLI flag (use `--with-skill`)
+## 0.1.0
+
+Initial release.

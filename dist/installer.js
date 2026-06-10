@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js';
+import { dogfoodProject } from './dogfood.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js';
 import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from './templates.js';
@@ -141,7 +142,10 @@ export async function initProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const withSkill = options.withSkill === true;
     await installBase(repoRoot, withSkill);
-    return { repoRoot, withSkill };
+    if (options.dogfood === true) {
+        await dogfoodProject({ targetDir: repoRoot });
+    }
+    return { repoRoot, withSkill, dogfood: options.dogfood === true };
 }
 export async function upgradeProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());

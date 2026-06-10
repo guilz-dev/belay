@@ -170,7 +170,10 @@ Packaged skill source for `npx skills add`:
 ```bash
 npx agent-belay init
 npx agent-belay init --with-skill
+npx agent-belay init --dogfood
 npx agent-belay upgrade
+npx agent-belay dogfood
+npx agent-belay dogfood --enforce
 npx agent-belay doctor
 npx agent-belay doctor --fix
 npx agent-belay metrics
@@ -228,18 +231,22 @@ load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
 }
 ```
 
-**OQ1 dogfood** — try fail-closed defaults safely:
+**OQ1 dogfood** — one command to start:
 
-```json
-{
-  "mode": "audit",
-  "policy": { "unknownLocalEffect": "deny" }
-}
+```bash
+npx agent-belay dogfood
+# or on init:
+npx agent-belay init --dogfood
 ```
 
-Run `npx agent-belay metrics` to review would-block rate and top reasons. Tune
-with `overrides.allow` and `npx agent-belay explain`, then switch to
-`mode: "enforce"` when metrics report ready.
+This sets `mode: "audit"` and `policy.unknownLocalEffect: "deny"`, and enables
+`controlPlane.spikeOnPrompt` for OQ3 validation. Run `npx agent-belay metrics`
+after normal agent work, check `npx agent-belay status` / `doctor` for OQ3 spike
+results, tune `overrides.allow` with `explain`, then:
+
+```bash
+npx agent-belay dogfood --enforce
+```
 
 `policy.unknownLocalEffect: "deny"` enables fail-closed shell classification for
 unrecognized local commands.

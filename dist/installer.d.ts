@@ -4,6 +4,7 @@ declare function mergeHooksFile(current: HooksFile): HooksFile;
 export declare function initProject(options?: InitOptions): Promise<{
     repoRoot: string;
     withSkill: boolean;
+    dogfood: boolean;
 }>;
 export declare function upgradeProject(options?: UpgradeOptions): Promise<{
     repoRoot: string;

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
 import { approvedApprovalsPath, belayStateDir, loadConfigFile, pendingApprovalsPath, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
+import { loadOperationalInsights } from './operational-insights.js';
 import { getManagedHookEntries } from './defaults.js';
 import { loadHooksFile } from './installer.js';
 import { resolveNodeBinary } from './node-resolution.js';
@@ -144,6 +145,33 @@ export async function doctorProject(options = {}) {
             notes.push('No orphan approval cleanup actions were needed.');
         }
     }
+    let dogfood = null;
+    let oq3Spike = null;
+    if (loadedConfig) {
+        const operational = await loadOperationalInsights({ targetDir: repoRoot });
+        dogfood = operational.dogfood;
+        oq3Spike = operational.oq3Spike;
+        if (dogfood.active) {
+            notes.push(`Dogfood active: ${dogfood.gateEvents} gate events, ${dogfood.wouldBlockCount} would-block (${(dogfood.wouldBlockRate * 100).toFixed(1)}%).`);
+            if (dogfood.readyForEnforce) {
+                notes.push('Dogfood metrics suggest enforce mode is ready (agent-belay dogfood --enforce).');
+            }
+        }
+        else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
+            notes.push('Fail-closed policy is enabled in enforce mode.');
+        }
+        if (loadedConfig.controlPlane.spikeOnPrompt) {
+            if (oq3Spike?.ok) {
+                notes.push(`OQ3 spike passed at ${oq3Spike.path}.`);
+            }
+            else if (oq3Spike) {
+                warnings.push(`OQ3 spike failed at ${oq3Spike.path}${oq3Spike.error ? `: ${oq3Spike.error}` : ''}.`);
+            }
+            else {
+                warnings.push('OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt in Cursor.');
+            }
+        }
+    }
     const report = {
         ok: issues.length === 0 && hooksOk,
         repoRoot,
@@ -153,6 +181,8 @@ export async function doctorProject(options = {}) {
         issues,
         notes,
         warnings,
+        dogfood,
+        oq3Spike,
     };
     return report;
 }
@@ -173,6 +203,12 @@ export function formatDoctorReport(report) {
         lines.push('', 'Warnings:');
         for (const warning of report.warnings) {
             lines.push(`- ${warning}`);
+        }
+    }
+    if (report.dogfood) {
+        lines.push('', `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | enforce ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`);
+        if (report.oq3Spike) {
+            lines.push(`OQ3 spike: ${report.oq3Spike.ok ? 'ok' : 'failed'} (${report.oq3Spike.path})`);
         }
     }
     if (report.issues.length > 0) {
