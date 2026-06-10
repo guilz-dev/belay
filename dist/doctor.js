@@ -35,6 +35,10 @@ export async function doctorProject(options = {}) {
     }
     else {
         try {
+            const rawConfig = JSON.parse(await readFile(configPath, 'utf8'));
+            if (rawConfig.version === undefined) {
+                warnings.push('Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.');
+            }
             loadedConfig = await loadConfigFile(repoRoot);
             if (loadedConfig.version !== 3) {
                 warnings.push(`Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`);

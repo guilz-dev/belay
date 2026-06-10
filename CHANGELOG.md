@@ -20,6 +20,12 @@
 - `explain` output includes active policy and override lists
 - Approval state paths resolve to control plane or repo-local based on config
 
+### Fixed
+
+- Gate audit events now use config-driven redaction (not only postToolUse hook)
+- Shell classifier denies redirects and mutations targeting the control plane (R8)
+- Version-less configs with v3 sections migrate correctly; doctor warns when `version` is missing
+
 ## 0.2.0
 
 ### Added

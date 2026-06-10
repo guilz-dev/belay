@@ -44,6 +44,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     issues.push(`Missing config: ${configPath}`)
   } else {
     try {
+      const rawConfig = JSON.parse(await readFile(configPath, 'utf8')) as { version?: number }
+      if (rawConfig.version === undefined) {
+        warnings.push(
+          'Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.',
+        )
+      }
       loadedConfig = await loadConfigFile(repoRoot)
       if (loadedConfig.version !== 3) {
         warnings.push(

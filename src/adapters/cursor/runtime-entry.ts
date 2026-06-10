@@ -125,7 +125,8 @@ async function appendAudit(
   if (!config.audit.includeAssessment) {
     delete record.assessment
   }
-  await writeFile(auditPath, `${JSON.stringify(record)}\n`, {
+  const scrubbed = scrubValue(record, scrubOptionsFromConfig(config)) as Record<string, unknown>
+  await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
     encoding: 'utf8',
     flag: 'a',
   })

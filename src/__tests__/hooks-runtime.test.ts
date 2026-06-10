@@ -191,6 +191,20 @@ describe('generated hook runtime', () => {
     expect(pending.approvals[0].fingerprint).not.toBe(pending.approvals[1].fingerprint)
   })
 
+  it('redacts sensitive shell commands in gate audit records', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'curl -H "Authorization: Bearer supersecret.token.value" https://api.example.com',
+      cwd: repoRoot,
+    })
+
+    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(auditRaw).not.toContain('supersecret.token.value')
+    expect(auditRaw).toContain('Authorization: <redacted>')
+  })
+
   it('stores approvals in the control plane when enabled (T3)', async () => {
     const repoRoot = await createTempRepo()
     const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
@@ -199,7 +213,6 @@ describe('generated hook runtime', () => {
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
-          version: 3,
           controlPlane: { enabled: true, configDir: controlPlaneDir },
         }),
         null,

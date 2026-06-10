@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath, } from './config-io.js';
+import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js';
 import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from './templates.js';

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { approvalCommandMatch, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, compactApprovals, createApprovalRecord, approvedApprovalsFile, mergeConfig, pendingApprovalsFile, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
+import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, compactApprovals, createApprovalRecord, mergeConfig, pendingApprovalsFile, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 const EMPTY_APPROVALS = {
     version: 1,
     approvals: [],
@@ -84,7 +84,8 @@ async function appendAudit(repoRoot, config, event) {
     if (!config.audit.includeAssessment) {
         delete record.assessment;
     }
-    await writeFile(auditPath, `${JSON.stringify(record)}\n`, {
+    const scrubbed = scrubValue(record, scrubOptionsFromConfig(config));
+    await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
         encoding: 'utf8',
         flag: 'a',
     });

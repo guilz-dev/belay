@@ -372,6 +372,18 @@ function matchesCustomExternal(normalizedCommand, key, options) {
     (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
   );
 }
+function targetsControlPlane(paths, cwd, controlPlaneDir) {
+  if (!controlPlaneDir) {
+    return false;
+  }
+  return paths.some((target) => {
+    const resolved = resolveMutationTarget(target, cwd);
+    if (!resolved) {
+      return false;
+    }
+    return pathWithinRoot(controlPlaneDir, resolved);
+  });
+}
 function extractCommandSubstitution(command) {
   const parenMatch = command.match(/\$\(([^)]+)\)/);
   if (parenMatch?.[1]) {
@@ -502,6 +514,36 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
         external: true,
         blastRadius: "dynamic shell evaluation",
         confidence: 0.93,
+        signals
+      }
+    });
+  }
+  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+    signals.push("control_plane_redirect");
+    return denyResult({
+      reason: "control_plane_mutation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "agent-belay control plane",
+        confidence: 0.97,
+        signals
+      }
+    });
+  }
+  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+    signals.push("control_plane_path");
+    return denyResult({
+      reason: "control_plane_mutation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "agent-belay control plane",
+        confidence: 0.97,
         signals
       }
     });
@@ -1279,48 +1321,78 @@ function migrateV2ToV3(v2, rawOverrides) {
     audit: v2.audit
   });
 }
+function hasV3Sections(raw) {
+  return raw.policy !== void 0 || raw.overrides !== void 0 || raw.redaction !== void 0 || raw.controlPlane !== void 0;
+}
+function looksLikeV2Config(raw) {
+  return raw.gates?.fileMutation !== void 0 || raw.gates?.toolShell !== void 0 || raw.classifier?.customAllowCommands !== void 0 || raw.classifier?.customExternalCommands !== void 0 || raw.audit?.includeAssessment !== void 0;
+}
+function mergeV3FromRaw(base, raw) {
+  return normalizeConfig({
+    ...base,
+    policy: {
+      ...base.policy,
+      ...raw.policy ?? {}
+    },
+    overrides: {
+      allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
+      external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? [])
+    },
+    redaction: {
+      ...base.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      ...base.controlPlane,
+      ...raw.controlPlane ?? {}
+    }
+  });
+}
+function normalizeV3Raw(raw) {
+  return normalizeConfig({
+    ...DEFAULT_CONFIG_V3,
+    ...raw,
+    version: 3,
+    gates: {
+      ...DEFAULT_CONFIG_V3.gates,
+      ...raw.gates ?? {}
+    },
+    classifier: {
+      ...DEFAULT_CONFIG_V3.classifier,
+      ...raw.classifier ?? {}
+    },
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...raw.policy ?? {}
+    },
+    overrides: {
+      ...DEFAULT_CONFIG_V3.overrides,
+      ...raw.overrides ?? {}
+    },
+    redaction: {
+      ...DEFAULT_CONFIG_V3.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      ...raw.controlPlane ?? {}
+    },
+    audit: {
+      ...DEFAULT_CONFIG_V3.audit,
+      ...raw.audit ?? {}
+    }
+  });
+}
 function migrateConfig(loaded) {
   if (typeof loaded !== "object" || loaded === null) {
     return { ...DEFAULT_CONFIG_V3 };
   }
   const raw = loaded;
-  if (raw.version === 3) {
-    return normalizeConfig({
-      ...DEFAULT_CONFIG_V3,
-      ...raw,
-      version: 3,
-      gates: {
-        ...DEFAULT_CONFIG_V3.gates,
-        ...raw.gates ?? {}
-      },
-      classifier: {
-        ...DEFAULT_CONFIG_V3.classifier,
-        ...raw.classifier ?? {}
-      },
-      policy: {
-        ...DEFAULT_CONFIG_V3.policy,
-        ...raw.policy ?? {}
-      },
-      overrides: {
-        ...DEFAULT_CONFIG_V3.overrides,
-        ...raw.overrides ?? {}
-      },
-      redaction: {
-        ...DEFAULT_CONFIG_V3.redaction,
-        ...raw.redaction ?? {}
-      },
-      controlPlane: {
-        ...DEFAULT_CONFIG_V3.controlPlane,
-        ...raw.controlPlane ?? {}
-      },
-      audit: {
-        ...DEFAULT_CONFIG_V3.audit,
-        ...raw.audit ?? {}
-      }
-    });
+  if (raw.version === 3 || raw.version === void 0 && hasV3Sections(raw)) {
+    return normalizeV3Raw(raw);
   }
   const baseV2 = { ...DEFAULT_CONFIG_V2 };
-  if (raw.version === 1 || raw.version === void 0) {
+  if (raw.version === 1 || raw.version === void 0 && !looksLikeV2Config(raw)) {
     const migratedV22 = normalizeConfigV2({
       ...baseV2,
       mode: raw.mode ?? baseV2.mode,
@@ -1336,7 +1408,7 @@ function migrateConfig(loaded) {
         logPath: raw.audit?.logPath ?? baseV2.audit.logPath
       }
     });
-    return migrateV2ToV3(migratedV22, raw.overrides);
+    return mergeV3FromRaw(migrateV2ToV3(migratedV22, raw.overrides), raw);
   }
   const migratedV2 = normalizeConfigV2({
     ...baseV2,
@@ -1355,7 +1427,7 @@ function migrateConfig(loaded) {
       ...raw.audit ?? {}
     }
   });
-  return migrateV2ToV3(migratedV2, raw.overrides);
+  return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw);
 }
 function normalizeConfigV2(config) {
   return {
@@ -1576,7 +1648,8 @@ async function appendAudit(repoRoot, config, event) {
   if (!config.audit.includeAssessment) {
     delete record.assessment;
   }
-  await writeFile(auditPath, `${JSON.stringify(record)}
+  const scrubbed = scrubValue(record, scrubOptionsFromConfig(config));
+  await writeFile(auditPath, `${JSON.stringify(scrubbed)}
 `, {
     encoding: "utf8",
     flag: "a"

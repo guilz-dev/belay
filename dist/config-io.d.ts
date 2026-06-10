@@ -1,4 +1,4 @@
-import { belayStateDir, type BelayConfigV3 } from './core/config.js';
+import { type BelayConfigV3, belayStateDir } from './core/config.js';
 import type { ApprovalStateFile } from './core/types.js';
 export declare function configPathFor(repoRoot: string): string;
 export { belayStateDir };

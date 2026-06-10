@@ -42,7 +42,7 @@ security-relevant reports.
 
 - **Fail-closed shell mode** — `policy.unknownLocalEffect: "deny"` blocks unrecognized local commands (default remains `allow_flagged` until dogfood).
 - **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; `allow` wins over `external`.
-- **Chain hardening** — denies `eval`/`source`, command substitution wrappers, pipe-to-shell, outside-repo redirects.
+- **Chain hardening** — denies `eval`/`source`, command substitution wrappers (single-level), pipe-to-shell, outside-repo redirects, and control-plane path mutations via shell or file tools.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and control-plane files.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 

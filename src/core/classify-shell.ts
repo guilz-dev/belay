@@ -3,6 +3,7 @@ import { shellFingerprint } from './fingerprint.js'
 import {
   hasOutsideRepoPath,
   normalizeToken,
+  pathWithinRoot,
   relativeWithinRepo,
   resolveMutationTarget,
 } from './path-utils.js'
@@ -177,6 +178,23 @@ function matchesCustomExternal(
   )
 }
 
+function targetsControlPlane(
+  paths: string[],
+  cwd: string,
+  controlPlaneDir: string | null | undefined,
+): boolean {
+  if (!controlPlaneDir) {
+    return false
+  }
+  return paths.some((target) => {
+    const resolved = resolveMutationTarget(target, cwd)
+    if (!resolved) {
+      return false
+    }
+    return pathWithinRoot(controlPlaneDir, resolved)
+  })
+}
+
 function extractCommandSubstitution(command: string): string | null {
   const parenMatch = command.match(/\$\(([^)]+)\)/)
   if (parenMatch?.[1]) {
@@ -334,6 +352,38 @@ function classifySegment(
         external: true,
         blastRadius: 'dynamic shell evaluation',
         confidence: 0.93,
+        signals,
+      },
+    })
+  }
+
+  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+    signals.push('control_plane_redirect')
+    return denyResult({
+      reason: 'control_plane_mutation',
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: 'irreversible',
+        external: false,
+        blastRadius: 'agent-belay control plane',
+        confidence: 0.97,
+        signals,
+      },
+    })
+  }
+
+  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+    signals.push('control_plane_path')
+    return denyResult({
+      reason: 'control_plane_mutation',
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: 'irreversible',
+        external: false,
+        blastRadius: 'agent-belay control plane',
+        confidence: 0.97,
         signals,
       },
     })

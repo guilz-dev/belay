@@ -164,4 +164,28 @@ describe('classifyShell', () => {
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('command_substitution')
   })
+
+  it('denies shell redirects targeting the control plane (R8)', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyShell(
+      `echo '{}' > ${controlPlaneDir}/pending-approvals.json`,
+      cwd,
+      repoRoot,
+      { controlPlaneDir },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
+
+  it('denies shell mutations targeting control plane paths via cp', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyShell(
+      `cp notes.txt ${controlPlaneDir}/pending-approvals.json`,
+      cwd,
+      repoRoot,
+      { controlPlaneDir },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
 })

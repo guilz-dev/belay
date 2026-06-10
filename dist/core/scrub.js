@@ -24,9 +24,7 @@ function resolvedScrubOptions(options = {}) {
 }
 export function scrubString(value, options = {}) {
     const resolved = resolvedScrubOptions(options);
-    let scrubbed = value
-        .replace(UUID_PATTERN, '<uuid>')
-        .replace(TIMESTAMP_PATTERN, '<timestamp>');
+    let scrubbed = value.replace(UUID_PATTERN, '<uuid>').replace(TIMESTAMP_PATTERN, '<timestamp>');
     if (resolved.maskApprovalIds) {
         scrubbed = scrubbed
             .replace(APPROVAL_ID_PATTERN, '<approval-id>')

@@ -51,6 +51,16 @@ describe('config migration', () => {
     expect(migrated.classifier).not.toHaveProperty('customExternalCommands')
   })
 
+  it('treats version-less v3 sections as v3 config', () => {
+    const migrated = migrateConfig({
+      controlPlane: { enabled: true, configDir: '/tmp/belay-cp' },
+    })
+
+    expect(migrated.version).toBe(3)
+    expect(migrated.controlPlane.enabled).toBe(true)
+    expect(migrated.controlPlane.configDir).toBe('/tmp/belay-cp')
+  })
+
   it('merges v2 legacy custom* with explicit overrides without duplicates', () => {
     const migrated = migrateConfig({
       version: 2,

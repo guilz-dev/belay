@@ -206,64 +206,111 @@ export function isConfigV3(value: unknown): value is BelayConfigV3 {
   return typeof value === 'object' && value !== null && (value as BelayConfigV3).version === 3
 }
 
+type RawConfigInput = Partial<{
+  version: number
+  mode: BelayMode
+  approvalTtlMinutes: number
+  tokenPrefix: string
+  gates: Partial<BelayConfigV2['gates']>
+  classifier: Partial<BelayConfigV2['classifier']> & Partial<BelayClassifierConfig>
+  policy: Partial<BelayPolicyConfig>
+  overrides: Partial<BelayOverridesConfig>
+  redaction: Partial<BelayRedactionConfig>
+  controlPlane: Partial<BelayControlPlaneConfig>
+  audit: Partial<BelayConfigV2['audit']>
+}>
+
+function hasV3Sections(raw: RawConfigInput): boolean {
+  return (
+    raw.policy !== undefined ||
+    raw.overrides !== undefined ||
+    raw.redaction !== undefined ||
+    raw.controlPlane !== undefined
+  )
+}
+
+function looksLikeV2Config(raw: RawConfigInput): boolean {
+  return (
+    raw.gates?.fileMutation !== undefined ||
+    raw.gates?.toolShell !== undefined ||
+    raw.classifier?.customAllowCommands !== undefined ||
+    raw.classifier?.customExternalCommands !== undefined ||
+    raw.audit?.includeAssessment !== undefined
+  )
+}
+
+function mergeV3FromRaw(base: BelayConfigV3, raw: RawConfigInput): BelayConfigV3 {
+  return normalizeConfig({
+    ...base,
+    policy: {
+      ...base.policy,
+      ...(raw.policy ?? {}),
+    },
+    overrides: {
+      allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
+      external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? []),
+    },
+    redaction: {
+      ...base.redaction,
+      ...(raw.redaction ?? {}),
+    },
+    controlPlane: {
+      ...base.controlPlane,
+      ...(raw.controlPlane ?? {}),
+    },
+  })
+}
+
+function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
+  return normalizeConfig({
+    ...DEFAULT_CONFIG_V3,
+    ...raw,
+    version: 3,
+    gates: {
+      ...DEFAULT_CONFIG_V3.gates,
+      ...(raw.gates ?? {}),
+    },
+    classifier: {
+      ...DEFAULT_CONFIG_V3.classifier,
+      ...(raw.classifier ?? {}),
+    },
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...(raw.policy ?? {}),
+    },
+    overrides: {
+      ...DEFAULT_CONFIG_V3.overrides,
+      ...(raw.overrides ?? {}),
+    },
+    redaction: {
+      ...DEFAULT_CONFIG_V3.redaction,
+      ...(raw.redaction ?? {}),
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      ...(raw.controlPlane ?? {}),
+    },
+    audit: {
+      ...DEFAULT_CONFIG_V3.audit,
+      ...(raw.audit ?? {}),
+    },
+  })
+}
+
 export function migrateConfig(loaded: unknown): BelayConfigV3 {
   if (typeof loaded !== 'object' || loaded === null) {
     return { ...DEFAULT_CONFIG_V3 }
   }
 
-  const raw = loaded as Partial<{
-    version: number
-    mode: BelayMode
-    approvalTtlMinutes: number
-    tokenPrefix: string
-    gates: Partial<BelayConfigV2['gates']>
-    classifier: Partial<BelayConfigV2['classifier']> & Partial<BelayClassifierConfig>
-    policy: Partial<BelayPolicyConfig>
-    overrides: Partial<BelayOverridesConfig>
-    redaction: Partial<BelayRedactionConfig>
-    controlPlane: Partial<BelayControlPlaneConfig>
-    audit: Partial<BelayConfigV2['audit']>
-  }>
+  const raw = loaded as RawConfigInput
 
-  if (raw.version === 3) {
-    return normalizeConfig({
-      ...DEFAULT_CONFIG_V3,
-      ...raw,
-      version: 3,
-      gates: {
-        ...DEFAULT_CONFIG_V3.gates,
-        ...(raw.gates ?? {}),
-      },
-      classifier: {
-        ...DEFAULT_CONFIG_V3.classifier,
-        ...(raw.classifier ?? {}),
-      },
-      policy: {
-        ...DEFAULT_CONFIG_V3.policy,
-        ...(raw.policy ?? {}),
-      },
-      overrides: {
-        ...DEFAULT_CONFIG_V3.overrides,
-        ...(raw.overrides ?? {}),
-      },
-      redaction: {
-        ...DEFAULT_CONFIG_V3.redaction,
-        ...(raw.redaction ?? {}),
-      },
-      controlPlane: {
-        ...DEFAULT_CONFIG_V3.controlPlane,
-        ...(raw.controlPlane ?? {}),
-      },
-      audit: {
-        ...DEFAULT_CONFIG_V3.audit,
-        ...(raw.audit ?? {}),
-      },
-    })
+  if (raw.version === 3 || (raw.version === undefined && hasV3Sections(raw))) {
+    return normalizeV3Raw(raw)
   }
 
   const baseV2 = { ...DEFAULT_CONFIG_V2 }
 
-  if (raw.version === 1 || raw.version === undefined) {
+  if (raw.version === 1 || (raw.version === undefined && !looksLikeV2Config(raw))) {
     const migratedV2 = normalizeConfigV2({
       ...baseV2,
       mode: raw.mode ?? baseV2.mode,
@@ -279,7 +326,7 @@ export function migrateConfig(loaded: unknown): BelayConfigV3 {
         logPath: raw.audit?.logPath ?? baseV2.audit.logPath,
       },
     })
-    return migrateV2ToV3(migratedV2, raw.overrides)
+    return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw)
   }
 
   const migratedV2 = normalizeConfigV2({
@@ -300,7 +347,7 @@ export function migrateConfig(loaded: unknown): BelayConfigV3 {
     },
   })
 
-  return migrateV2ToV3(migratedV2, raw.overrides)
+  return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw)
 }
 
 export function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2 {
