@@ -67,7 +67,7 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(3)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
-    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.3\.0@/)
+    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.3\.1@/)
     expect(coreAfter).toContain('classifyShell')
   })
 

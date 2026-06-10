@@ -63,6 +63,8 @@ export interface BelayRedactionConfig {
 export interface BelayControlPlaneConfig {
   enabled: boolean
   configDir: string | null
+  /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
+  spikeOnPrompt?: boolean
 }
 
 export interface BelayClassifierConfig {
@@ -106,6 +108,7 @@ export const DEFAULT_REDACTION_V3: BelayRedactionConfig = {
 export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   enabled: false,
   configDir: null,
+  spikeOnPrompt: false,
 }
 
 export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
@@ -436,6 +439,7 @@ export function normalizeConfig(
         typeof v3.controlPlane?.configDir === 'string' && v3.controlPlane.configDir.trim()
           ? v3.controlPlane.configDir.trim()
           : null,
+      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
     },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -513,6 +517,11 @@ export function resolveControlPlaneDir(config: BelayConfigV3): string {
     return config.controlPlane.configDir
   }
   return defaultControlPlaneDir()
+}
+
+/** Control-plane directory regardless of enabled flag (for orphan migration). */
+export function configuredControlPlaneDir(config: BelayConfigV3): string {
+  return resolveControlPlaneDir(config)
 }
 
 export function belayStateDir(config: BelayConfigV3, repoRoot: string): string {

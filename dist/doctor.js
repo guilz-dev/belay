@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
 import { approvedApprovalsPath, belayStateDir, loadConfigFile, pendingApprovalsPath, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
 import { getManagedHookEntries } from './defaults.js';
@@ -50,7 +51,7 @@ export async function doctorProject(options = {}) {
                 const repoLocalPending = path.join(cursorDir, 'belay', 'pending-approvals.json');
                 const repoLocalApproved = path.join(cursorDir, 'belay', 'approved-approvals.json');
                 if (existsSync(repoLocalPending) || existsSync(repoLocalApproved)) {
-                    warnings.push('Repo-local approval files remain while control plane is enabled. The runtime ignores them.');
+                    warnings.push('Repo-local approval files remain while control plane is enabled. Run agent-belay doctor --fix to archive them.');
                 }
             }
             else {
@@ -62,7 +63,7 @@ export async function doctorProject(options = {}) {
                     const hasApprovalFiles = existsSync(path.join(controlPlaneDir, 'pending-approvals.json')) ||
                         existsSync(path.join(controlPlaneDir, 'approved-approvals.json'));
                     if (hasApprovalFiles) {
-                        warnings.push(`Control plane is disabled but approval files still exist at ${controlPlaneDir}. Re-enable control plane or archive them manually.`);
+                        warnings.push(`Control plane is disabled but approval files still exist at ${controlPlaneDir}. Run agent-belay doctor --fix to migrate and archive them.`);
                     }
                 }
             }
@@ -130,6 +131,17 @@ export async function doctorProject(options = {}) {
         }
         if (runtimeVersions.stamp?.startsWith(`${PACKAGE_VERSION}@`)) {
             notes.push(`Runtime version matches package (${PACKAGE_VERSION}).`);
+        }
+    }
+    if (options.fix && loadedConfig) {
+        const cleanup = await cleanupOrphanApprovalState(repoRoot, loadedConfig, {
+            dryRun: options.dryRun === true,
+        });
+        if (cleanup.actions.length > 0) {
+            notes.push(...cleanup.actions);
+        }
+        else {
+            notes.push('No orphan approval cleanup actions were needed.');
         }
     }
     const report = {

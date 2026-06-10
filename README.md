@@ -62,7 +62,8 @@ sending `/belay-approve <approval-id>`. Approvals are one-shot and expire after
 for later review.
 
 If `mode` is set to `"audit"` in `.cursor/belay.config.json`, would-be denies
-are recorded but execution is still allowed to continue.
+are recorded (`wouldBlock: true` in the audit log) but execution is still
+allowed to continue. Pending approvals are not created in audit mode.
 
 This creates a dynamic, context-aware gate rather than a static command
 denylist.
@@ -171,6 +172,8 @@ npx agent-belay init
 npx agent-belay init --with-skill
 npx agent-belay upgrade
 npx agent-belay doctor
+npx agent-belay doctor --fix
+npx agent-belay metrics
 npx agent-belay status
 npx agent-belay explain -- <shell-command>
 npx agent-belay explain --kind subagent -- "deploy to production"
@@ -225,17 +228,32 @@ load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
 }
 ```
 
+**OQ1 dogfood** — try fail-closed defaults safely:
+
+```json
+{
+  "mode": "audit",
+  "policy": { "unknownLocalEffect": "deny" }
+}
+```
+
+Run `npx agent-belay metrics` to review would-block rate and top reasons. Tune
+with `overrides.allow` and `npx agent-belay explain`, then switch to
+`mode: "enforce"` when metrics report ready.
+
 `policy.unknownLocalEffect: "deny"` enables fail-closed shell classification for
-unrecognized local commands. Use with `overrides.allow` and `npx agent-belay explain`
-to tune before enabling in `enforce` mode.
+unrecognized local commands.
 
 `controlPlane.enabled: true` stores approval state under
 `~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). The same path is
 shared across repositories for the current OS user. Existing repo-local approval
 files are copied or merged into the control plane on `upgrade`. Disabling control
-plane switches back to repo-local paths without deleting the user-level files.
+plane merges approvals back to repo-local; run `npx agent-belay doctor --fix` to
+archive orphaned files. Set `controlPlane.spikeOnPrompt: true` to validate hook
+filesystem access (OQ3) — results land in `oq3-spike-last.json`.
+
 File-mutation tools and shell redirects cannot write control-plane paths when
-this is enabled.
+control plane is enabled.
 
 `strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
 the strictest verdict. Override lists use exact command or segment key matches only.

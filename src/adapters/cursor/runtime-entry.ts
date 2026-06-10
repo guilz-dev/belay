@@ -20,6 +20,9 @@ import {
   createApprovalRecord,
   mergeConfig,
   pendingApprovalsFile,
+  persistControlPlaneSpikeResult,
+  resolveControlPlaneDir,
+  runControlPlaneSpike,
   scrubOptionsFromConfig,
   scrubValue,
 } from '../../core/index.js'
@@ -28,6 +31,8 @@ const EMPTY_APPROVALS: ApprovalStateFile = {
   version: 1,
   approvals: [],
 }
+
+let controlPlaneSpikeRan = false
 
 function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
@@ -212,6 +217,16 @@ async function movePendingToApproved(repoRoot: string, config: BelayConfigV3, ap
   }
 }
 
+function gateAuditEventName(kind: 'shell' | 'subagent' | 'tool'): string {
+  if (kind === 'shell') {
+    return 'beforeShellExecution'
+  }
+  if (kind === 'tool') {
+    return 'preToolUse'
+  }
+  return 'subagentGate'
+}
+
 async function gateDecisionToResponse(params: {
   repoRoot: string
   kind: 'shell' | 'subagent' | 'tool'
@@ -219,52 +234,58 @@ async function gateDecisionToResponse(params: {
   config: BelayConfigV3
 }) {
   const { repoRoot, kind, result, config } = params
+  const gateBase = {
+    event: gateAuditEventName(kind),
+    kind,
+    fingerprint: result.fingerprint,
+    summary: result.normalizedCommand ?? result.summary ?? '',
+    assessment: result.assessment,
+    mode: config.mode,
+  }
   const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint)
   if (approved) {
     await appendAudit(repoRoot, config, {
-      event:
-        kind === 'shell' ? 'beforeShellExecution' : kind === 'tool' ? 'preToolUse' : 'subagentGate',
-      kind,
+      ...gateBase,
       verdict: 'allow',
       reason: 'approved_once',
       approvalId: approved.approvalId,
-      fingerprint: result.fingerprint,
-      summary: result.normalizedCommand ?? result.summary ?? '',
-      assessment: result.assessment,
+      wouldBlock: false,
+      permission: 'allow',
     })
     return { permission: 'allow' }
   }
 
   if (result.verdict === 'allow' || result.verdict === 'allow_flagged') {
     await appendAudit(repoRoot, config, {
-      event:
-        kind === 'shell' ? 'beforeShellExecution' : kind === 'tool' ? 'preToolUse' : 'subagentGate',
-      kind,
+      ...gateBase,
       verdict: result.verdict,
       reason: result.reason,
-      fingerprint: result.fingerprint,
-      summary: result.normalizedCommand ?? result.summary ?? '',
-      assessment: result.assessment,
+      wouldBlock: false,
+      permission: 'allow',
+    })
+    return { permission: 'allow' }
+  }
+
+  if (config.mode === 'audit') {
+    await appendAudit(repoRoot, config, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: true,
+      permission: 'allow',
     })
     return { permission: 'allow' }
   }
 
   const approval = await ensurePendingApproval(repoRoot, kind, result, config)
   await appendAudit(repoRoot, config, {
-    event:
-      kind === 'shell' ? 'beforeShellExecution' : kind === 'tool' ? 'preToolUse' : 'subagentGate',
-    kind,
+    ...gateBase,
     verdict: result.verdict,
     reason: result.reason,
     approvalId: approval.approvalId,
-    fingerprint: result.fingerprint,
-    summary: result.normalizedCommand ?? result.summary ?? '',
-    assessment: result.assessment,
+    wouldBlock: true,
+    permission: 'deny',
   })
-
-  if (config.mode === 'audit') {
-    return { permission: 'allow' }
-  }
 
   return {
     permission: 'deny',
@@ -273,12 +294,44 @@ async function gateDecisionToResponse(params: {
   }
 }
 
+async function maybeRunControlPlaneSpike(repoRoot: string, config: BelayConfigV3): Promise<void> {
+  const envEnabled = process.env.BELAY_OQ3_SPIKE === '1'
+  if (!envEnabled && !config.controlPlane.spikeOnPrompt) {
+    return
+  }
+  if (controlPlaneSpikeRan) {
+    return
+  }
+  controlPlaneSpikeRan = true
+
+  const controlPlaneDir = config.controlPlane.configDir ?? resolveControlPlaneDir(config)
+  const homedir = () => process.env.HOME ?? ''
+  const spike = await runControlPlaneSpike(process.env, process.cwd(), homedir, controlPlaneDir)
+  const spikePath = await persistControlPlaneSpikeResult(
+    spike,
+    process.env,
+    homedir,
+    controlPlaneDir,
+  )
+  await appendAudit(repoRoot, config, {
+    event: 'controlPlaneSpike',
+    kind: 'diagnostic',
+    verdict: spike.ok ? 'allow' : 'deny_pending_approval',
+    reason: spike.ok ? 'control_plane_writable' : 'control_plane_blocked',
+    summary: spike.error ?? spikePath,
+    mode: config.mode,
+    wouldBlock: !spike.ok,
+    permission: 'allow',
+  })
+}
+
 export async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? '')
     const repoRoot = findRepoRoot(process.cwd())
     const { config } = await loadConfig(repoRoot)
+    await maybeRunControlPlaneSpike(repoRoot, config)
     const approvalId = approvalCommandMatch(prompt, config.tokenPrefix)
     if (!approvalId) {
       jsonResponse({ continue: true })

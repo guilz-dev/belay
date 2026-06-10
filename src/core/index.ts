@@ -7,6 +7,8 @@ export {
   mergeApprovalStates,
   nowIso,
 } from './approval.js'
+export type { AuditMetricsReport } from './audit-metrics.js'
+export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js'
 export { classifyShell } from './classify-shell.js'
 export { classifySubagent } from './classify-subagent.js'
 export { classifyToolUse } from './classify-tool.js'
@@ -34,6 +36,10 @@ export {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
 } from './config.js'
+export {
+  persistControlPlaneSpikeResult,
+  runControlPlaneSpike,
+} from './control-plane-spike.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,
@@ -51,6 +57,7 @@ export {
   resolveMutationTarget,
 } from './path-utils.js'
 export { scrubString, scrubValue } from './scrub.js'
+export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js'
 export type {
   ApprovalRecord,
   ApprovalStateFile,

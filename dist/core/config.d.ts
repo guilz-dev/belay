@@ -53,6 +53,8 @@ export interface BelayRedactionConfig {
 export interface BelayControlPlaneConfig {
     enabled: boolean;
     configDir: string | null;
+    /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
+    spikeOnPrompt?: boolean;
 }
 export interface BelayClassifierConfig {
     strictChains: boolean;
@@ -96,6 +98,8 @@ export declare function scrubOptionsFromConfig(config: BelayConfigV3): ScrubOpti
 export declare function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOptions;
 export declare function defaultControlPlaneDir(env?: NodeJS.ProcessEnv, homedir?: () => string): string;
 export declare function resolveControlPlaneDir(config: BelayConfigV3): string;
+/** Control-plane directory regardless of enabled flag (for orphan migration). */
+export declare function configuredControlPlaneDir(config: BelayConfigV3): string;
 export declare function belayStateDir(config: BelayConfigV3, repoRoot: string): string;
 export declare function pendingApprovalsFile(config: BelayConfigV3, repoRoot: string): string;
 export declare function approvedApprovalsFile(config: BelayConfigV3, repoRoot: string): string;

@@ -43,6 +43,8 @@ export interface UpgradeOptions {
 
 export interface DoctorOptions {
   targetDir?: string
+  fix?: boolean
+  dryRun?: boolean
 }
 
 export interface DoctorReport {

@@ -1,6 +1,7 @@
 import { matchesCustomCommand } from './custom-command-match.js';
 import { shellFingerprint } from './fingerprint.js';
 import { hasOutsideRepoPath, normalizeToken, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
+import { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
 import { commandKey, extractRedirectTargets, normalizeShellCommand, tokenizeShell, } from './shell-tokenizer.js';
 const READ_ONLY_COMMANDS = new Set([
     'cat',
@@ -131,16 +132,44 @@ function targetsControlPlane(paths, cwd, controlPlaneDir) {
         return pathWithinRoot(controlPlaneDir, resolved);
     });
 }
-function extractCommandSubstitution(command) {
-    const parenMatch = command.match(/\$\(([^)]+)\)/);
-    if (parenMatch?.[1]) {
-        return parenMatch[1].trim();
+function classifySubstitutionInners(params) {
+    const { command, cwd, repoRoot, options, depth } = params;
+    if (depth >= MAX_SUBSTITUTION_DEPTH) {
+        return null;
     }
-    const backtickMatch = command.match(/`([^`]+)`/);
-    if (backtickMatch?.[1]) {
-        return backtickMatch[1].trim();
+    const substitutions = findCommandSubstitutions(command);
+    if (substitutions.length === 0) {
+        return null;
     }
-    return null;
+    const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
+    const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+    let worst = null;
+    for (const substitution of substitutions) {
+        const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+        if (options.unknownLocalEffect === 'deny') {
+            return denyResult({
+                reason: 'command_substitution',
+                normalizedCommand,
+                cwdRelative,
+                assessment: {
+                    reversibility: 'irreversible',
+                    external: inner.assessment.external,
+                    blastRadius: 'command substitution',
+                    confidence: 0.9,
+                    signals: ['command_substitution', ...inner.assessment.signals],
+                },
+            });
+        }
+        const wrapped = wrapInnerVerdict({
+            inner,
+            normalizedCommand,
+            cwdRelative,
+            wrapReason: 'command_substitution',
+            wrapSignal: 'command_substitution',
+        });
+        worst = worst ? worseVerdict(worst, wrapped) : wrapped;
+    }
+    return worst;
 }
 function unknownLocalEffectResult(params) {
     const { normalizedCommand, cwdRelative, assessment, options } = params;
@@ -491,33 +520,13 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     });
 }
 export function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
-    const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
-    if (substitution) {
-        const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-        const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-        const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
-        if (options.unknownLocalEffect === 'deny') {
-            return denyResult({
-                reason: 'command_substitution',
-                normalizedCommand,
-                cwdRelative,
-                assessment: {
-                    reversibility: 'irreversible',
-                    external: inner.assessment.external,
-                    blastRadius: 'command substitution',
-                    confidence: 0.9,
-                    signals: ['command_substitution', ...inner.assessment.signals],
-                },
-            });
-        }
-        return wrapInnerVerdict({
-            inner,
-            normalizedCommand,
-            cwdRelative,
-            wrapReason: 'command_substitution',
-            wrapSignal: 'command_substitution',
-        });
-    }
+    const substitutionResult = classifySubstitutionInners({
+        command,
+        cwd,
+        repoRoot,
+        options,
+        depth,
+    });
     const tokens = tokenizeShell(command);
     const segments = splitSegmentsWithSeparators(tokens);
     const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -539,8 +548,11 @@ export function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
         const result = classifySegment(segments[index], cwd, repoRoot, normalizedCommand, cwdRelative, options, depth);
         effective = worseVerdict(effective, result);
         if (result.verdict === 'deny_pending_approval' && options.strictChains !== true) {
-            return result;
+            break;
         }
+    }
+    if (substitutionResult) {
+        effective = worseVerdict(effective, substitutionResult);
     }
     return effective;
 }

@@ -42,7 +42,7 @@ security-relevant reports.
 
 - **Fail-closed shell mode** — `policy.unknownLocalEffect: "deny"` blocks unrecognized local commands (default remains `allow_flagged` until dogfood).
 - **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; `allow` wins over `external`.
-- **Chain hardening** — denies `eval`/`source`, command substitution wrappers (single-level), pipe-to-shell, outside-repo redirects, and control-plane path mutations via shell or file tools.
+- **Chain hardening** — denies `eval`/`source`, command substitution wrappers (including nested/multi `$(...)`), pipe-to-shell, outside-repo redirects, and control-plane path mutations via shell or file tools.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and control-plane files.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
@@ -51,7 +51,7 @@ security-relevant reports.
 - Classification is heuristic, not proof of safety.
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
-- Command substitution detection is single-level only (no nested `$(...)`, multiple substitutions, or escaped `\$(...)`).
+- Command substitution parsing does not cover `${...}` brace expansion; complex quoting edge cases may still evade detection.
 - Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/agent-belay/` are not deleted automatically.
 - Cursor sandbox behavior for hooks writing outside the workspace should be validated on target hosts (see `docs/spikes/oq3-control-plane.md`).
 
