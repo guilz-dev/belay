@@ -1,6 +1,6 @@
-import { type BelayConfigV2 } from './core/config.js';
+import { type BelayConfigV3 } from './core/config.js';
 export declare const PACKAGE_NAME = "agent-belay";
-export declare const DEFAULT_CONFIG: BelayConfigV2;
+export declare const DEFAULT_CONFIG: BelayConfigV3;
 export type ManagedHookDefinition = {
     command: string;
     placement: 'prepend' | 'append';

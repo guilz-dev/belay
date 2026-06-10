@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { compactApprovals, isExpired } from './core/approval.js'
-import { type BelayConfigV2, mergeConfig } from './core/config.js'
+import { type BelayConfigV3, mergeConfig } from './core/config.js'
 import type { ApprovalStateFile } from './core/types.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 
@@ -22,7 +22,7 @@ export function runtimeCorePath(repoRoot: string): string {
   return path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs')
 }
 
-export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV2> {
+export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV3> {
   const configPath = configPathFor(repoRoot)
   if (!existsSync(configPath)) {
     return { ...DEFAULT_CONFIG }
@@ -31,11 +31,11 @@ export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV2> {
   return mergeConfig(JSON.parse(raw))
 }
 
-export async function writeConfigFile(repoRoot: string, config: BelayConfigV2): Promise<void> {
+export async function writeConfigFile(repoRoot: string, config: BelayConfigV3): Promise<void> {
   await writeFile(configPathFor(repoRoot), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
 }
 
-export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfigV2> {
+export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfigV3> {
   const configPath = configPathFor(repoRoot)
   let existing: unknown = {}
   if (existsSync(configPath)) {

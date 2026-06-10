@@ -38,9 +38,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   } else {
     try {
       const config = await loadConfigFile(repoRoot)
-      if (config.version !== 2) {
+      if (config.version !== 3) {
         warnings.push(
-          `Config version is ${config.version}; expected 2. Run agent-belay upgrade to migrate.`,
+          `Config version is ${config.version}; expected 3. Run agent-belay upgrade to migrate.`,
         )
       }
       notes.push(`Config mode: ${config.mode}`)

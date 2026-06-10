@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Config v3 schema with `policy`, `overrides`, `redaction`, and `controlPlane` sections
+- Automatic v1/v2 → v3 migration with `custom*` → `overrides` mapping (M1)
+- OQ3 control-plane filesystem spike (`runControlPlaneSpike`, `docs/spikes/oq3-control-plane.md`)
+- `docs/SPEC-v0.3.md` and `docs/ROADMAP.md`
+
 ## 0.2.0
 
 ### Added

@@ -1,5 +1,5 @@
 export { cursorAdapter } from './adapters/cursor/adapter.js';
-export { classifyShell, classifySubagent, classifyToolUse, DEFAULT_CONFIG_V2, mergeConfig, migrateConfig, } from './core/index.js';
+export { classifyShell, classifySubagent, classifyToolUse, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, mergeConfig, migrateConfig, } from './core/index.js';
 export { doctorProject, formatDoctorReport } from './doctor.js';
 export { explainCommand, formatExplainReport } from './explain.js';
 export { initProject, upgradeProject } from './installer.js';

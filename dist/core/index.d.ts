@@ -2,7 +2,7 @@ export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createAp
 export { classifyShell } from './classify-shell.js';
 export { classifySubagent } from './classify-subagent.js';
 export { classifyToolUse } from './classify-tool.js';
-export { type BelayConfig, type BelayConfigV1, type BelayConfigV2, classifierOptionsFromConfig, DEFAULT_CONFIG_V2, mergeConfig, migrateConfig, normalizeConfig, } from './config.js';
+export { type BelayConfig, type BelayConfigV1, type BelayConfigV2, type BelayConfigV3, type BelayControlPlaneConfig, type BelayOverridesConfig, type BelayPolicyConfig, type BelayRedactionConfig, classifierOptionsFromConfig, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, defaultControlPlaneDir, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, resolveControlPlaneDir, } from './config.js';
 export { matchesCustomCommand } from './custom-command-match.js';
 export { canonicalStringify, hashValue, shellFingerprint, subagentFingerprint, toolFingerprint, } from './fingerprint.js';
 export { matchesSensitivePath } from './glob.js';

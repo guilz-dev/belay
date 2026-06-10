@@ -7,7 +7,7 @@ import process from 'node:process'
 import {
   type ApprovalStateFile,
   approvalCommandMatch,
-  type BelayConfigV2,
+  type BelayConfigV3,
   buildRetryInstruction,
   type ClassifyResult,
   canonicalStringify,
@@ -76,7 +76,7 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
 
 async function loadConfig(
   repoRoot: string,
-): Promise<{ configPath: string; config: BelayConfigV2 }> {
+): Promise<{ configPath: string; config: BelayConfigV3 }> {
   const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
   const loaded = await loadJsonFile(configPath, {})
   return {
@@ -103,7 +103,7 @@ async function loadApprovals(repoRoot: string, fileName: string) {
 
 async function appendAudit(
   repoRoot: string,
-  config: BelayConfigV2,
+  config: BelayConfigV3,
   event: Record<string, unknown>,
 ) {
   const auditPath = path.join(repoRoot, config.audit.logPath)
@@ -122,7 +122,7 @@ async function ensurePendingApproval(
   repoRoot: string,
   kind: 'shell' | 'subagent' | 'tool',
   result: ClassifyResult,
-  config: BelayConfigV2,
+  config: BelayConfigV3,
 ) {
   const pending = await loadApprovals(repoRoot, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
@@ -201,7 +201,7 @@ async function gateDecisionToResponse(params: {
   repoRoot: string
   kind: 'shell' | 'subagent' | 'tool'
   result: ClassifyResult
-  config: BelayConfigV2
+  config: BelayConfigV3
 }) {
   const { repoRoot, kind, result, config } = params
   const approved = await consumeApprovedApproval(repoRoot, kind, result.fingerprint)

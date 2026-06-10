@@ -5,6 +5,7 @@ export {
   classifySubagent,
   classifyToolUse,
   DEFAULT_CONFIG_V2,
+  DEFAULT_CONFIG_V3,
   mergeConfig,
   migrateConfig,
 } from './core/index.js'
@@ -21,6 +22,7 @@ export type {
   BelayConfig,
   BelayConfigV1,
   BelayConfigV2,
+  BelayConfigV3,
   ClassifyResult,
   DoctorOptions,
   DoctorReport,

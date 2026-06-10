@@ -13,11 +13,21 @@ export {
   type BelayConfig,
   type BelayConfigV1,
   type BelayConfigV2,
+  type BelayConfigV3,
+  type BelayControlPlaneConfig,
+  type BelayOverridesConfig,
+  type BelayPolicyConfig,
+  type BelayRedactionConfig,
   classifierOptionsFromConfig,
   DEFAULT_CONFIG_V2,
+  DEFAULT_CONFIG_V3,
+  defaultControlPlaneDir,
+  mapLegacyClassifierToOverrides,
   mergeConfig,
   migrateConfig,
+  migrateV2ToV3,
   normalizeConfig,
+  resolveControlPlaneDir,
 } from './config.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {

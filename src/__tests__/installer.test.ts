@@ -71,7 +71,7 @@ describe('agent-belay installer', () => {
     expect(await readFile(runnerPath, 'utf8')).toContain('resolve_node')
     expect(await readFile(runnerCmdPath, 'utf8')).toContain('NODE_BIN')
     expect(await readFile(configPath, 'utf8')).toContain('"mode": "enforce"')
-    expect(await readFile(configPath, 'utf8')).toContain('"version": 2')
+    expect(await readFile(configPath, 'utf8')).toContain('"version": 3')
   })
 
   it('is idempotent across repeated init runs', async () => {

@@ -35,8 +35,8 @@ export async function doctorProject(options = {}) {
     else {
         try {
             const config = await loadConfigFile(repoRoot);
-            if (config.version !== 2) {
-                warnings.push(`Config version is ${config.version}; expected 2. Run agent-belay upgrade to migrate.`);
+            if (config.version !== 3) {
+                warnings.push(`Config version is ${config.version}; expected 3. Run agent-belay upgrade to migrate.`);
             }
             notes.push(`Config mode: ${config.mode}`);
         }

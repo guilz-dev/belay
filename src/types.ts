@@ -1,4 +1,15 @@
-export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayMode } from './core/config.js'
+export type {
+  BelayConfig,
+  BelayConfigV1,
+  BelayConfigV2,
+  BelayConfigV3,
+  BelayControlPlaneConfig,
+  BelayMode,
+  BelayOverridesConfig,
+  BelayPolicyConfig,
+  BelayRedactionConfig,
+  UnknownLocalEffectPolicy,
+} from './core/config.js'
 export type {
   ApprovalRecord,
   ApprovalStateFile,

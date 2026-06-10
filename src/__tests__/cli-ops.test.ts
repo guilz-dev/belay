@@ -64,7 +64,7 @@ describe('v0.2 operational commands', () => {
     const merged = await loadConfigFile(repoRoot)
 
     expect(merged.approvalTtlMinutes).toBe(45)
-    expect(merged.version).toBe(2)
+    expect(merged.version).toBe(3)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
     expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.2\.0@/)

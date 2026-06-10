@@ -2,14 +2,14 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { BelayConfigV2 } from './core/config.js'
+import type { BelayConfigV3 } from './core/config.js'
 import { PACKAGE_VERSION } from './version.js'
 
 function inlineJson(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
-export function renderConfig(config: BelayConfigV2): string {
+export function renderConfig(config: BelayConfigV3): string {
   return `${inlineJson(config)}\n`
 }
 

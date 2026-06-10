@@ -1,6 +1,6 @@
-import { DEFAULT_CONFIG_V2 } from './core/config.js';
+import { DEFAULT_CONFIG_V3 } from './core/config.js';
 export const PACKAGE_NAME = 'agent-belay';
-export const DEFAULT_CONFIG = DEFAULT_CONFIG_V2;
+export const DEFAULT_CONFIG = DEFAULT_CONFIG_V3;
 function runnerCommand(platform, hookName, ...args) {
     const base = platform === 'win32' ? '.\\.cursor\\hooks\\belay-runner.cmd' : './.cursor/hooks/belay-runner';
     return [base, hookName, ...args].join(' ');

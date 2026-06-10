@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path3 from "node:path";
-import process from "node:process";
+import process2 from "node:process";
 
 // src/core/approval.ts
 function nowIso() {
@@ -1050,6 +1050,24 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
 }
 
 // src/core/config.ts
+var DEFAULT_POLICY_V3 = {
+  unknownLocalEffect: "allow_flagged"
+};
+var DEFAULT_OVERRIDES_V3 = {
+  allow: [],
+  external: []
+};
+var DEFAULT_REDACTION_V3 = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+var DEFAULT_CONTROL_PLANE_V3 = {
+  enabled: false,
+  configDir: null
+};
 var DEFAULT_CONFIG_V2 = {
   version: 2,
   mode: "enforce",
@@ -1062,8 +1080,6 @@ var DEFAULT_CONFIG_V2 = {
     toolShell: true
   },
   classifier: {
-    // When true, scan every chained segment and keep the strictest verdict.
-    // When false, return immediately on the first deny segment.
     strictChains: true,
     customExternalCommands: [],
     customAllowCommands: [],
@@ -1074,48 +1090,135 @@ var DEFAULT_CONFIG_V2 = {
     includeAssessment: true
   }
 };
+var DEFAULT_CONFIG_V3 = {
+  version: 3,
+  mode: DEFAULT_CONFIG_V2.mode,
+  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
+  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
+  gates: { ...DEFAULT_CONFIG_V2.gates },
+  classifier: {
+    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
+    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
+  },
+  policy: { ...DEFAULT_POLICY_V3 },
+  overrides: { ...DEFAULT_OVERRIDES_V3 },
+  redaction: { ...DEFAULT_REDACTION_V3 },
+  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  audit: { ...DEFAULT_CONFIG_V2.audit }
+};
+function uniqueStrings(values) {
+  return [...new Set(values)];
+}
+function mergeOverrideLists(primary, secondary) {
+  return uniqueStrings([...primary, ...secondary]);
+}
+function mapLegacyClassifierToOverrides(classifier) {
+  return {
+    allow: Array.isArray(classifier.customAllowCommands) ? classifier.customAllowCommands : [],
+    external: Array.isArray(classifier.customExternalCommands) ? classifier.customExternalCommands : []
+  };
+}
+function migrateV2ToV3(v2, rawOverrides) {
+  const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
+  return normalizeConfig({
+    version: 3,
+    mode: v2.mode,
+    approvalTtlMinutes: v2.approvalTtlMinutes,
+    tokenPrefix: v2.tokenPrefix,
+    gates: v2.gates,
+    classifier: {
+      strictChains: v2.classifier.strictChains,
+      sensitivePaths: v2.classifier.sensitivePaths
+    },
+    policy: { ...DEFAULT_POLICY_V3 },
+    overrides: {
+      allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
+      external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external)
+    },
+    redaction: { ...DEFAULT_REDACTION_V3 },
+    controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+    audit: v2.audit
+  });
+}
 function migrateConfig(loaded) {
   if (typeof loaded !== "object" || loaded === null) {
-    return { ...DEFAULT_CONFIG_V2 };
+    return { ...DEFAULT_CONFIG_V3 };
   }
   const raw = loaded;
-  const base = { ...DEFAULT_CONFIG_V2 };
-  if (raw.version === 1 || raw.version === void 0) {
+  if (raw.version === 3) {
     return normalizeConfig({
-      ...base,
-      mode: raw.mode ?? base.mode,
-      approvalTtlMinutes: raw.approvalTtlMinutes ?? base.approvalTtlMinutes,
-      tokenPrefix: raw.tokenPrefix ?? base.tokenPrefix,
+      ...DEFAULT_CONFIG_V3,
+      ...raw,
+      version: 3,
       gates: {
-        ...base.gates,
-        shell: raw.gates?.shell ?? base.gates.shell,
-        subagent: raw.gates?.subagent ?? base.gates.subagent
+        ...DEFAULT_CONFIG_V3.gates,
+        ...raw.gates ?? {}
+      },
+      classifier: {
+        ...DEFAULT_CONFIG_V3.classifier,
+        ...raw.classifier ?? {}
+      },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        ...raw.policy ?? {}
+      },
+      overrides: {
+        ...DEFAULT_CONFIG_V3.overrides,
+        ...raw.overrides ?? {}
+      },
+      redaction: {
+        ...DEFAULT_CONFIG_V3.redaction,
+        ...raw.redaction ?? {}
+      },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        ...raw.controlPlane ?? {}
       },
       audit: {
-        ...base.audit,
-        logPath: raw.audit?.logPath ?? base.audit.logPath
+        ...DEFAULT_CONFIG_V3.audit,
+        ...raw.audit ?? {}
       }
     });
   }
-  return normalizeConfig({
-    ...base,
+  const baseV2 = { ...DEFAULT_CONFIG_V2 };
+  if (raw.version === 1 || raw.version === void 0) {
+    const migratedV22 = normalizeConfigV2({
+      ...baseV2,
+      mode: raw.mode ?? baseV2.mode,
+      approvalTtlMinutes: raw.approvalTtlMinutes ?? baseV2.approvalTtlMinutes,
+      tokenPrefix: raw.tokenPrefix ?? baseV2.tokenPrefix,
+      gates: {
+        ...baseV2.gates,
+        shell: raw.gates?.shell ?? baseV2.gates.shell,
+        subagent: raw.gates?.subagent ?? baseV2.gates.subagent
+      },
+      audit: {
+        ...baseV2.audit,
+        logPath: raw.audit?.logPath ?? baseV2.audit.logPath
+      }
+    });
+    return migrateV2ToV3(migratedV22, raw.overrides);
+  }
+  const migratedV2 = normalizeConfigV2({
+    ...baseV2,
     ...raw,
     version: 2,
     gates: {
-      ...base.gates,
+      ...baseV2.gates,
       ...raw.gates ?? {}
     },
     classifier: {
-      ...base.classifier,
+      ...baseV2.classifier,
       ...raw.classifier ?? {}
     },
     audit: {
-      ...base.audit,
+      ...baseV2.audit,
       ...raw.audit ?? {}
     }
   });
+  return migrateV2ToV3(migratedV2, raw.overrides);
 }
-function normalizeConfig(config) {
+function normalizeConfigV2(config) {
   return {
     version: 2,
     mode: config.mode === "audit" ? "audit" : "enforce",
@@ -1139,7 +1242,51 @@ function normalizeConfig(config) {
     }
   };
 }
-function mergeConfig(existing, defaults = DEFAULT_CONFIG_V2) {
+function normalizeConfig(config) {
+  if (config.version === 2) {
+    return normalizeConfigV2(config);
+  }
+  const v3 = config;
+  return {
+    version: 3,
+    mode: v3.mode === "audit" ? "audit" : "enforce",
+    approvalTtlMinutes: typeof v3.approvalTtlMinutes === "number" && v3.approvalTtlMinutes > 0 ? v3.approvalTtlMinutes : DEFAULT_CONFIG_V3.approvalTtlMinutes,
+    tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
+    gates: {
+      shell: v3.gates.shell !== false,
+      subagent: v3.gates.subagent !== false,
+      fileMutation: v3.gates.fileMutation !== false,
+      toolShell: v3.gates.toolShell !== false
+    },
+    classifier: {
+      strictChains: v3.classifier?.strictChains !== false,
+      sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths) ? v3.classifier.sensitivePaths : DEFAULT_CONFIG_V3.classifier.sensitivePaths
+    },
+    policy: {
+      unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : DEFAULT_POLICY_V3.unknownLocalEffect
+    },
+    overrides: {
+      allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
+      external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : []
+    },
+    redaction: {
+      maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
+      maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
+      maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
+      maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
+      maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true
+    },
+    controlPlane: {
+      enabled: v3.controlPlane?.enabled === true,
+      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null
+    },
+    audit: {
+      logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
+      includeAssessment: v3.audit?.includeAssessment !== false
+    }
+  };
+}
+function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
   const migrated = migrateConfig(existing);
   return normalizeConfig({
     ...defaults,
@@ -1152,6 +1299,22 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V2) {
       ...defaults.classifier,
       ...migrated.classifier
     },
+    policy: {
+      ...defaults.policy,
+      ...migrated.policy
+    },
+    overrides: {
+      allow: mergeOverrideLists(defaults.overrides.allow, migrated.overrides.allow),
+      external: mergeOverrideLists(defaults.overrides.external, migrated.overrides.external)
+    },
+    redaction: {
+      ...defaults.redaction,
+      ...migrated.redaction
+    },
+    controlPlane: {
+      ...defaults.controlPlane,
+      ...migrated.controlPlane
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit
@@ -1161,8 +1324,8 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V2) {
 function classifierOptionsFromConfig(config) {
   return {
     strictChains: config.classifier.strictChains,
-    customExternalCommands: config.classifier.customExternalCommands,
-    customAllowCommands: config.classifier.customAllowCommands,
+    customExternalCommands: config.overrides.external,
+    customAllowCommands: config.overrides.allow,
     sensitivePaths: config.classifier.sensitivePaths
   };
 }
@@ -1173,12 +1336,12 @@ var EMPTY_APPROVALS = {
   approvals: []
 };
 function jsonResponse(value) {
-  process.stdout.write(`${JSON.stringify(value)}
+  process2.stdout.write(`${JSON.stringify(value)}
 `);
 }
 async function readStdinJson() {
   const chunks = [];
-  for await (const chunk of process.stdin) {
+  for await (const chunk of process2.stdin) {
     chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
   }
   const raw = chunks.join("").trim();
@@ -1363,7 +1526,7 @@ async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson();
     const prompt = String(payload.prompt ?? "");
-    const repoRoot = findRepoRoot(process.cwd());
+    const repoRoot = findRepoRoot(process2.cwd());
     const { config } = await loadConfig(repoRoot);
     const approvalId = approvalCommandMatch(prompt, config.tokenPrefix);
     if (!approvalId) {
@@ -1394,7 +1557,7 @@ async function runShellGateHook() {
   try {
     const payload = await readStdinJson();
     const command = String(payload.command ?? "").trim();
-    const cwd = String(payload.cwd ?? process.cwd()).trim() || process.cwd();
+    const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
     const repoRoot = findRepoRoot(cwd);
     const { config } = await loadConfig(repoRoot);
     if (!config.gates.shell) {
@@ -1426,7 +1589,7 @@ function isFileMutationTool(toolName) {
 async function runToolGateHook(eventName) {
   try {
     const payload = await readStdinJson();
-    const cwd = process.cwd();
+    const cwd = process2.cwd();
     const repoRoot = findRepoRoot(cwd);
     const { config } = await loadConfig(repoRoot);
     const options = classifierOptionsFromConfig(config);
@@ -1502,7 +1665,7 @@ async function runToolGateHook(eventName) {
 async function runAuditHook(eventName) {
   try {
     const payload = await readStdinJson();
-    const repoRoot = findRepoRoot(process.cwd());
+    const repoRoot = findRepoRoot(process2.cwd());
     const { config } = await loadConfig(repoRoot);
     await appendAudit(repoRoot, config, {
       event: eventName,
