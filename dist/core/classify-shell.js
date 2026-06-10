@@ -527,9 +527,6 @@ export function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
         options,
         depth,
     });
-    if (substitutionResult) {
-        return substitutionResult;
-    }
     const tokens = tokenizeShell(command);
     const segments = splitSegmentsWithSeparators(tokens);
     const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -551,8 +548,11 @@ export function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
         const result = classifySegment(segments[index], cwd, repoRoot, normalizedCommand, cwdRelative, options, depth);
         effective = worseVerdict(effective, result);
         if (result.verdict === 'deny_pending_approval' && options.strictChains !== true) {
-            return result;
+            break;
         }
+    }
+    if (substitutionResult) {
+        effective = worseVerdict(effective, substitutionResult);
     }
     return effective;
 }

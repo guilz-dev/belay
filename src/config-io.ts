@@ -42,6 +42,28 @@ export async function ensureBelayStateDir(
 
 const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json'] as const
 
+function approvalFilesExist(dir: string): boolean {
+  return APPROVAL_STATE_FILES.some((fileName) => existsSync(path.join(dir, fileName)))
+}
+
+async function repoLocalApprovalsEmpty(repoRoot: string): Promise<boolean> {
+  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
+  if (!approvalFilesExist(repoLocalDir)) {
+    return true
+  }
+  for (const fileName of APPROVAL_STATE_FILES) {
+    const filePath = path.join(repoLocalDir, fileName)
+    if (!existsSync(filePath)) {
+      continue
+    }
+    const state = await readApprovalStateFile(filePath)
+    if (state.approvals.length > 0) {
+      return false
+    }
+  }
+  return true
+}
+
 async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFile> {
   const raw = await readFile(filePath, 'utf8')
   const parsed = JSON.parse(raw) as ApprovalStateFile
@@ -123,7 +145,10 @@ export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfig
   if (merged.controlPlane.enabled) {
     await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged)
   } else {
-    await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged)
+    const sourceDir = configuredControlPlaneDir(merged)
+    if (approvalFilesExist(sourceDir) && (await repoLocalApprovalsEmpty(repoRoot))) {
+      await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged, sourceDir)
+    }
   }
   return merged
 }

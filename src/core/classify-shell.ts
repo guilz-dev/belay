@@ -652,9 +652,6 @@ export function classifyShell(
     options,
     depth,
   })
-  if (substitutionResult) {
-    return substitutionResult
-  }
 
   const tokens = tokenizeShell(command)
   const segments = splitSegmentsWithSeparators(tokens)
@@ -687,8 +684,12 @@ export function classifyShell(
     )
     effective = worseVerdict(effective, result)
     if (result.verdict === 'deny_pending_approval' && options.strictChains !== true) {
-      return result
+      break
     }
+  }
+
+  if (substitutionResult) {
+    effective = worseVerdict(effective, substitutionResult)
   }
 
   return effective

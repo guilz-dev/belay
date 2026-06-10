@@ -117,7 +117,11 @@ export function computeAuditMetrics(
       )
       if (approvalRecordedCount > 0) {
         notes.push(
-          `${approvalRecordedCount} approval(s) recorded during audit — these likely indicate actions operators wanted.`,
+          `${approvalRecordedCount} approval(s) recorded — these likely indicate actions operators wanted.`,
+        )
+      } else {
+        notes.push(
+          'Review top would-block summaries and add overrides.allow for legitimate commands before switching to enforce.',
         )
       }
       if (wouldBlockRate < 0.05 && gateEvents >= 20) {

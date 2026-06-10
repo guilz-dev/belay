@@ -81,7 +81,10 @@ export function computeAuditMetrics(records, options = {}) {
         else {
             notes.push(`${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic). Review top summaries and add overrides.allow where appropriate.`);
             if (approvalRecordedCount > 0) {
-                notes.push(`${approvalRecordedCount} approval(s) recorded during audit — these likely indicate actions operators wanted.`);
+                notes.push(`${approvalRecordedCount} approval(s) recorded — these likely indicate actions operators wanted.`);
+            }
+            else {
+                notes.push('Review top would-block summaries and add overrides.allow for legitimate commands before switching to enforce.');
             }
             if (wouldBlockRate < 0.05 && gateEvents >= 20) {
                 readyForEnforce = true;

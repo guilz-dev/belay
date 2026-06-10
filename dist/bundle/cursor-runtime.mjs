@@ -154,8 +154,35 @@ var MAX_SUBSTITUTION_DEPTH = 8;
 function findCommandSubstitutions(command) {
   const results = [];
   let index = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
   while (index < command.length) {
     const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      index += 1;
+      continue;
+    }
     if (char === "\\" && index + 1 < command.length) {
       index += 2;
       continue;
@@ -881,9 +908,6 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
     options,
     depth
   });
-  if (substitutionResult) {
-    return substitutionResult;
-  }
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -913,8 +937,11 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
     );
     effective = worseVerdict(effective, result);
     if (result.verdict === "deny_pending_approval" && options.strictChains !== true) {
-      return result;
+      break;
     }
+  }
+  if (substitutionResult) {
+    effective = worseVerdict(effective, substitutionResult);
   }
   return effective;
 }

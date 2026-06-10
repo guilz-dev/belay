@@ -8,9 +8,36 @@ export { MAX_SUBSTITUTION_DEPTH }
 export function findCommandSubstitutions(command: string): string[] {
   const results: string[] = []
   let index = 0
+  let inSingle = false
+  let inDouble = false
+  let escaping = false
 
   while (index < command.length) {
     const char = command[index]
+    if (escaping) {
+      escaping = false
+      index += 1
+      continue
+    }
+    if (char === '\\' && (inSingle || inDouble)) {
+      escaping = true
+      index += 1
+      continue
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle
+      index += 1
+      continue
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble
+      index += 1
+      continue
+    }
+    if (inSingle || inDouble) {
+      index += 1
+      continue
+    }
     if (char === '\\' && index + 1 < command.length) {
       index += 2
       continue

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Shell classifier merges substitution analysis with outer command segments (no bypass via benign `$(...)`)
+- Command substitution ignored inside single/double quotes
+- Reverse control-plane migration on upgrade only when repo-local approvals are empty
+- Dogfood metrics notes updated for audit mode without pending approvals
+
 ## 0.3.1
 
 ### Added

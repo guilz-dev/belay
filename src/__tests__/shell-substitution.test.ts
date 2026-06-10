@@ -39,4 +39,22 @@ describe('classifyShell nested substitution', () => {
     const result = classifyShell('echo \\$(git push origin main)', cwd, repoRoot)
     expect(result.verdict).toBe('allow')
   })
+
+  it('ignores substitution inside single quotes', () => {
+    expect(findCommandSubstitutions("echo '$(git push origin main)'")).toEqual([])
+    const result = classifyShell("echo '$(git push origin main)'", cwd, repoRoot)
+    expect(result.verdict).toBe('allow')
+  })
+
+  it('still denies when outer command is external alongside benign substitution', () => {
+    const result = classifyShell('git push origin main $(git status)', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
+  })
+
+  it('denies chained external commands even when later substitution is benign', () => {
+    const result = classifyShell('git push origin main; echo $(git status)', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
+  })
 })
