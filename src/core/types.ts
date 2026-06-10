@@ -21,11 +21,23 @@ export interface ClassifyResult {
   summary?: string
 }
 
+export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny'
+
+export interface ScrubOptions {
+  maskApprovalIds?: boolean
+  maskBearerTokens?: boolean
+  maskAuthHeaders?: boolean
+  maskKeyValueSecrets?: boolean
+  maskHighEntropyStrings?: boolean
+}
+
 export interface ClassifierOptions {
   strictChains?: boolean
   customExternalCommands?: string[]
   customAllowCommands?: string[]
   sensitivePaths?: string[]
+  unknownLocalEffect?: UnknownLocalEffectPolicy
+  controlPlaneDir?: string | null
 }
 
 export interface ApprovalRecord {

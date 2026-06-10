@@ -295,12 +295,17 @@ export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
         },
     });
 }
+export function scrubOptionsFromConfig(config) {
+    return { ...config.redaction };
+}
 export function classifierOptionsFromConfig(config) {
     return {
         strictChains: config.classifier.strictChains,
         customExternalCommands: config.overrides.external,
         customAllowCommands: config.overrides.allow,
         sensitivePaths: config.classifier.sensitivePaths,
+        unknownLocalEffect: config.policy.unknownLocalEffect,
+        controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     };
 }
 export function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? '') {
@@ -313,4 +318,16 @@ export function resolveControlPlaneDir(config) {
         return config.controlPlane.configDir;
     }
     return defaultControlPlaneDir();
+}
+export function belayStateDir(config, repoRoot) {
+    if (config.controlPlane.enabled) {
+        return resolveControlPlaneDir(config);
+    }
+    return path.join(repoRoot, '.cursor', 'belay');
+}
+export function pendingApprovalsFile(config, repoRoot) {
+    return path.join(belayStateDir(config, repoRoot), 'pending-approvals.json');
+}
+export function approvedApprovalsFile(config, repoRoot) {
+    return path.join(belayStateDir(config, repoRoot), 'approved-approvals.json');
 }

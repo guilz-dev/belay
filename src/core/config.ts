@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import type { ClassifierOptions } from './types.js'
+import type { ClassifierOptions, ScrubOptions } from './types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -436,12 +436,18 @@ export function mergeConfig(
   })
 }
 
+export function scrubOptionsFromConfig(config: BelayConfigV3): ScrubOptions {
+  return { ...config.redaction }
+}
+
 export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOptions {
   return {
     strictChains: config.classifier.strictChains,
     customExternalCommands: config.overrides.external,
     customAllowCommands: config.overrides.allow,
     sensitivePaths: config.classifier.sensitivePaths,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
   }
 }
 
@@ -459,4 +465,19 @@ export function resolveControlPlaneDir(config: BelayConfigV3): string {
     return config.controlPlane.configDir
   }
   return defaultControlPlaneDir()
+}
+
+export function belayStateDir(config: BelayConfigV3, repoRoot: string): string {
+  if (config.controlPlane.enabled) {
+    return resolveControlPlaneDir(config)
+  }
+  return path.join(repoRoot, '.cursor', 'belay')
+}
+
+export function pendingApprovalsFile(config: BelayConfigV3, repoRoot: string): string {
+  return path.join(belayStateDir(config, repoRoot), 'pending-approvals.json')
+}
+
+export function approvedApprovalsFile(config: BelayConfigV3, repoRoot: string): string {
+  return path.join(belayStateDir(config, repoRoot), 'approved-approvals.json')
 }

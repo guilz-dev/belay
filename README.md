@@ -144,14 +144,15 @@ npx agent-belay revoke <approval-id>
 `mode: "audit"` is supported in `.cursor/belay.config.json`. In audit mode,
 Belay records would-be denies but allows execution to continue.
 
-### Config v2 highlights
+### Config v3 highlights
 
-`belay.config.json` uses `version: 2` with per-gate toggles and classifier
-overrides:
+`belay.config.json` uses `version: 3`. v1/v2 configs migrate automatically on
+load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
 
 ```json
 {
-  "version": 2,
+  "version": 3,
+  "mode": "enforce",
   "gates": {
     "shell": true,
     "subagent": true,
@@ -160,9 +161,25 @@ overrides:
   },
   "classifier": {
     "strictChains": true,
-    "customExternalCommands": [],
-    "customAllowCommands": [],
     "sensitivePaths": [".env", ".env.*", "**/credentials/**"]
+  },
+  "policy": {
+    "unknownLocalEffect": "allow_flagged"
+  },
+  "overrides": {
+    "allow": ["pnpm release:staging"],
+    "external": ["./scripts/release.sh"]
+  },
+  "redaction": {
+    "maskApprovalIds": true,
+    "maskBearerTokens": true,
+    "maskAuthHeaders": true,
+    "maskKeyValueSecrets": true,
+    "maskHighEntropyStrings": false
+  },
+  "controlPlane": {
+    "enabled": false,
+    "configDir": null
   },
   "audit": {
     "logPath": ".cursor/belay/audit.ndjson",
@@ -171,13 +188,16 @@ overrides:
 }
 ```
 
+`policy.unknownLocalEffect: "deny"` enables fail-closed shell classification for
+unrecognized local commands. Use with `overrides.allow` and `npx agent-belay explain`
+to tune before enabling in `enforce` mode.
+
+`controlPlane.enabled: true` stores approval state under
+`~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). File-mutation tools
+cannot write control-plane paths when this is enabled.
+
 `strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
-the strictest verdict. Set it to `false` to stop at the first deny segment.
-
-`customAllowCommands` and `customExternalCommands` use exact command or segment
-key matches only (no substring wildcards).
-
-v0.1 configs are migrated automatically on load.
+the strictest verdict. Override lists use exact command or segment key matches only.
 
 ## Approval flow
 

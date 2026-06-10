@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { loadApprovalState, saveApprovalState } from './config-io.js';
+import { loadApprovalState, loadConfigFile, saveApprovalState } from './config-io.js';
 import { compactApprovals } from './core/approval.js';
 export async function revokeApproval(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json');
+    const config = await loadConfigFile(repoRoot);
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config);
     const compacted = compactApprovals(pending);
     const index = compacted.approvals.findIndex((approval) => approval.approvalId === options.approvalId);
     if (index === -1) {
@@ -13,7 +14,7 @@ export async function revokeApproval(options) {
         };
     }
     compacted.approvals.splice(index, 1);
-    await saveApprovalState(repoRoot, 'pending-approvals.json', compacted);
+    await saveApprovalState(repoRoot, 'pending-approvals.json', compacted, config);
     return {
         ok: true,
         message: `Revoked pending approval ${options.approvalId}.`,

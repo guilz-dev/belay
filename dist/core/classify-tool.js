@@ -2,7 +2,7 @@ import path from 'node:path';
 import { classifyShell } from './classify-shell.js';
 import { canonicalStringify, toolFingerprint } from './fingerprint.js';
 import { matchesSensitivePath } from './glob.js';
-import { relativeWithinRepo } from './path-utils.js';
+import { pathWithinRoot, relativeWithinRepo } from './path-utils.js';
 import { scrubValue } from './scrub.js';
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**'];
 function extractFilePath(payload) {
@@ -73,7 +73,23 @@ export function classifyToolUse(payload, repoRoot, cwd, options = {}) {
             };
         }
         const signals = [];
-        const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+        const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+        if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+            signals.push('control_plane_path');
+            return {
+                verdict: 'deny_pending_approval',
+                reason: 'control_plane_mutation',
+                summary: filePath,
+                fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+                assessment: {
+                    reversibility: 'irreversible',
+                    external: false,
+                    blastRadius: 'agent-belay control plane',
+                    confidence: 0.97,
+                    signals,
+                },
+            };
+        }
         const relativePath = relativeWithinRepo(repoRoot, resolvedPath);
         if (relativePath === null) {
             signals.push('outside_repo_path');

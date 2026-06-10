@@ -1,7 +1,25 @@
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
+function resolveRealpath(targetPath) {
+    try {
+        return realpathSync.native(targetPath);
+    }
+    catch {
+        return path.resolve(targetPath);
+    }
+}
+export function pathWithinRoot(root, targetPath) {
+    const resolvedRoot = resolveRealpath(root);
+    const resolvedTarget = resolveRealpath(targetPath);
+    const relativePath = path.relative(resolvedRoot, resolvedTarget);
+    if (relativePath === '') {
+        return true;
+    }
+    return !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
+}
 export function relativeWithinRepo(repoRoot, targetPath) {
-    const resolvedRoot = path.resolve(repoRoot);
-    const resolvedTarget = path.resolve(targetPath);
+    const resolvedRoot = resolveRealpath(repoRoot);
+    const resolvedTarget = resolveRealpath(targetPath);
     const relativePath = path.relative(resolvedRoot, resolvedTarget);
     if (relativePath === '') {
         return '.';
@@ -26,15 +44,15 @@ export function resolveMutationTarget(token, cwd) {
         return null;
     }
     if (path.isAbsolute(token)) {
-        return path.resolve(token);
+        return resolveRealpath(token);
     }
     if (token.startsWith('./') || token.startsWith('../')) {
-        return path.resolve(cwd, token);
+        return resolveRealpath(path.resolve(cwd, token));
     }
     if (!token.includes('/') && !token.includes('\\')) {
-        return path.resolve(cwd, token);
+        return resolveRealpath(path.resolve(cwd, token));
     }
-    return path.resolve(cwd, token);
+    return resolveRealpath(path.resolve(cwd, token));
 }
 export function hasOutsideRepoPath(tokens, cwd, repoRoot) {
     return tokens.some((token) => {

@@ -60,6 +60,7 @@ const EXTERNAL_COMMANDS = new Set([
     'wget',
 ]);
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish']);
+const DYNAMIC_SHELL_COMMANDS = new Set(['eval', 'source', 'exec']);
 const INTERPRETER_SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval']);
 const EXTERNAL_SCRIPT_TERMS = ['deploy', 'publish', 'release', 'ship', 'prod'];
 const VERDICT_RANK = {
@@ -111,6 +112,41 @@ function splitSegmentsWithSeparators(tokens) {
 function isExternalKey(key, normalizedCommand, options) {
     return (EXTERNAL_COMMANDS.has(key) ||
         (options.customExternalCommands ?? []).some((pattern) => matchesCustomCommand(normalizedCommand, key, pattern)));
+}
+function matchesCustomAllow(normalizedCommand, key, options) {
+    return (options.customAllowCommands ?? []).some((pattern) => matchesCustomCommand(normalizedCommand, key, pattern));
+}
+function matchesCustomExternal(normalizedCommand, key, options) {
+    return (options.customExternalCommands ?? []).some((pattern) => matchesCustomCommand(normalizedCommand, key, pattern));
+}
+function extractCommandSubstitution(command) {
+    const parenMatch = command.match(/\$\(([^)]+)\)/);
+    if (parenMatch?.[1]) {
+        return parenMatch[1].trim();
+    }
+    const backtickMatch = command.match(/`([^`]+)`/);
+    if (backtickMatch?.[1]) {
+        return backtickMatch[1].trim();
+    }
+    return null;
+}
+function unknownLocalEffectResult(params) {
+    const { normalizedCommand, cwdRelative, assessment, options } = params;
+    if (options.unknownLocalEffect === 'deny') {
+        return denyResult({
+            reason: 'unknown_local_effect',
+            normalizedCommand,
+            cwdRelative,
+            assessment,
+        });
+    }
+    return {
+        verdict: 'allow_flagged',
+        reason: 'unknown_local_effect',
+        normalizedCommand,
+        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+        assessment,
+    };
 }
 function extractInterpreterScript(tokens) {
     for (let index = 1; index < tokens.length; index += 1) {
@@ -173,38 +209,49 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     const key = commandKey(segmentTokens);
     const redirects = extractRedirectTargets(segmentTokens);
     const signals = [];
-    for (const custom of options.customAllowCommands ?? []) {
-        if (matchesCustomCommand(normalizedCommand, key, custom)) {
-            return {
-                verdict: 'allow',
-                reason: 'custom_allow',
-                normalizedCommand,
-                fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-                assessment: {
-                    reversibility: 'reversible',
-                    external: false,
-                    blastRadius: 'this repository',
-                    confidence: 0.99,
-                    signals: ['custom_allow_command'],
-                },
-            };
-        }
+    if (matchesCustomAllow(normalizedCommand, key, options)) {
+        return {
+            verdict: 'allow',
+            reason: 'custom_allow',
+            normalizedCommand,
+            fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+            assessment: {
+                reversibility: 'reversible',
+                external: false,
+                blastRadius: 'this repository',
+                confidence: 0.99,
+                signals: ['custom_allow_command'],
+            },
+        };
     }
-    for (const custom of options.customExternalCommands ?? []) {
-        if (matchesCustomCommand(normalizedCommand, key, custom)) {
-            return denyResult({
-                reason: 'custom_external',
-                normalizedCommand,
-                cwdRelative,
-                assessment: {
-                    reversibility: 'irreversible',
-                    external: true,
-                    blastRadius: 'custom external command',
-                    confidence: 0.95,
-                    signals: ['custom_external_command'],
-                },
-            });
-        }
+    if (matchesCustomExternal(normalizedCommand, key, options)) {
+        return denyResult({
+            reason: 'custom_external',
+            normalizedCommand,
+            cwdRelative,
+            assessment: {
+                reversibility: 'irreversible',
+                external: true,
+                blastRadius: 'custom external command',
+                confidence: 0.95,
+                signals: ['custom_external_command'],
+            },
+        });
+    }
+    if (DYNAMIC_SHELL_COMMANDS.has(key) || (key === '.' && segmentTokens.length > 1)) {
+        signals.push('dynamic_shell_evaluation');
+        return denyResult({
+            reason: 'dynamic_shell_evaluation',
+            normalizedCommand,
+            cwdRelative,
+            assessment: {
+                reversibility: 'irreversible',
+                external: true,
+                blastRadius: 'dynamic shell evaluation',
+                confidence: 0.93,
+                signals,
+            },
+        });
     }
     const hasOutsideRedirect = redirects.some((target) => {
         const resolved = resolveMutationTarget(target, cwd);
@@ -358,11 +405,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     }
     if (key === 'node' || key === 'sed') {
         signals.push(key === 'node' ? 'node_execution' : 'sed_execution');
-        return {
-            verdict: 'allow_flagged',
-            reason: 'unknown_local_effect',
+        return unknownLocalEffectResult({
             normalizedCommand,
-            fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+            cwdRelative,
+            options,
             assessment: {
                 reversibility: 'recoverable_with_cost',
                 external: false,
@@ -370,7 +416,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
                 confidence: 0.64,
                 signals,
             },
-        };
+        });
     }
     if (FLAGGED_COMMANDS.has(key) || redirects.length > 0) {
         signals.push('local_mutation');
@@ -389,11 +435,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
         };
     }
     signals.push('unknown_local_effect');
-    return {
-        verdict: 'allow_flagged',
-        reason: 'unknown_local_effect',
+    return unknownLocalEffectResult({
         normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+        cwdRelative,
+        options,
         assessment: {
             reversibility: 'recoverable_with_cost',
             external: false,
@@ -401,9 +446,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
             confidence: 0.61,
             signals,
         },
-    };
+    });
 }
 export function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
+    const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
+    if (substitution) {
+        const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+        const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
+        const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+        return wrapInnerVerdict({
+            inner,
+            normalizedCommand,
+            cwdRelative,
+            wrapReason: 'command_substitution',
+            wrapSignal: 'command_substitution',
+        });
+    }
     const tokens = tokenizeShell(command);
     const segments = splitSegmentsWithSeparators(tokens);
     const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);

@@ -2,7 +2,13 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { loadConfigFile, runtimeCorePath } from './config-io.js'
+import {
+  approvedApprovalsPath,
+  belayStateDir,
+  loadConfigFile,
+  pendingApprovalsPath,
+  runtimeCorePath,
+} from './config-io.js'
 import { getManagedHookEntries } from './defaults.js'
 import { loadHooksFile } from './installer.js'
 import { resolveNodeBinary } from './node-resolution.js'
@@ -33,22 +39,29 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   const notes: string[] = []
   const warnings: string[] = []
 
+  let loadedConfig = null
   if (!existsSync(configPath)) {
     issues.push(`Missing config: ${configPath}`)
   } else {
     try {
-      const config = await loadConfigFile(repoRoot)
-      if (config.version !== 3) {
+      loadedConfig = await loadConfigFile(repoRoot)
+      if (loadedConfig.version !== 3) {
         warnings.push(
-          `Config version is ${config.version}; expected 3. Run agent-belay upgrade to migrate.`,
+          `Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`,
         )
       }
-      notes.push(`Config mode: ${config.mode}`)
+      notes.push(`Config mode: ${loadedConfig.mode}`)
+      if (loadedConfig.controlPlane.enabled) {
+        notes.push(`Control plane: ${belayStateDir(loadedConfig, repoRoot)}`)
+      }
     } catch (error) {
       issues.push(error instanceof Error ? error.message : 'Failed to parse belay.config.json')
     }
   }
 
+  const stateDir = loadedConfig
+    ? belayStateDir(loadedConfig, repoRoot)
+    : path.join(cursorDir, 'belay')
   const requiredPaths = [
     path.join(cursorDir, 'hooks', 'belay-runner'),
     path.join(cursorDir, 'hooks', 'belay-runner.cmd'),
@@ -57,9 +70,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     path.join(cursorDir, 'hooks', 'belay-tool-gate.mjs'),
     path.join(cursorDir, 'hooks', 'belay-audit.mjs'),
     corePath,
-    path.join(cursorDir, 'belay', 'pending-approvals.json'),
-    path.join(cursorDir, 'belay', 'approved-approvals.json'),
-    path.join(cursorDir, 'belay', 'audit.ndjson'),
+    loadedConfig
+      ? pendingApprovalsPath(repoRoot, loadedConfig)
+      : path.join(stateDir, 'pending-approvals.json'),
+    loadedConfig
+      ? approvedApprovalsPath(repoRoot, loadedConfig)
+      : path.join(stateDir, 'approved-approvals.json'),
+    path.join(repoRoot, loadedConfig?.audit.logPath ?? '.cursor/belay/audit.ndjson'),
   ]
   for (const requiredPath of requiredPaths) {
     if (!existsSync(requiredPath)) {

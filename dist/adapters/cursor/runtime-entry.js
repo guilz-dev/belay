@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { approvalCommandMatch, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, compactApprovals, createApprovalRecord, mergeConfig, scrubValue, } from '../../core/index.js';
+import { approvalCommandMatch, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, compactApprovals, createApprovalRecord, approvedApprovalsFile, mergeConfig, pendingApprovalsFile, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 const EMPTY_APPROVALS = {
     version: 1,
     approvals: [],
@@ -61,11 +61,13 @@ async function loadConfig(repoRoot) {
         config: mergeConfig(loaded),
     };
 }
-function approvalsPath(repoRoot, fileName) {
-    return path.join(repoRoot, '.cursor', 'belay', fileName);
+function approvalsPath(repoRoot, config, fileName) {
+    return fileName === 'pending-approvals.json'
+        ? pendingApprovalsFile(config, repoRoot)
+        : approvedApprovalsFile(config, repoRoot);
 }
-async function loadApprovals(repoRoot, fileName) {
-    const filePath = approvalsPath(repoRoot, fileName);
+async function loadApprovals(repoRoot, config, fileName) {
+    const filePath = approvalsPath(repoRoot, config, fileName);
     const loaded = await loadJsonFile(filePath, EMPTY_APPROVALS);
     return {
         filePath,
@@ -88,7 +90,7 @@ async function appendAudit(repoRoot, config, event) {
     });
 }
 async function ensurePendingApproval(repoRoot, kind, result, config) {
-    const pending = await loadApprovals(repoRoot, 'pending-approvals.json');
+    const pending = await loadApprovals(repoRoot, config, 'pending-approvals.json');
     pending.state = compactApprovals(pending.state);
     const existing = pending.state.approvals.find((approval) => approval.kind === kind &&
         approval.fingerprint === result.fingerprint &&
@@ -110,8 +112,8 @@ async function ensurePendingApproval(repoRoot, kind, result, config) {
     await writeJsonFile(pending.filePath, pending.state);
     return approval;
 }
-async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
-    const approved = await loadApprovals(repoRoot, 'approved-approvals.json');
+async function consumeApprovedApproval(repoRoot, config, kind, fingerprint) {
+    const approved = await loadApprovals(repoRoot, config, 'approved-approvals.json');
     approved.state = compactApprovals(approved.state);
     const index = approved.state.approvals.findIndex((approval) => approval.kind === kind &&
         approval.fingerprint === fingerprint &&
@@ -124,8 +126,8 @@ async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
     await writeJsonFile(approved.filePath, approved.state);
     return approval;
 }
-async function movePendingToApproved(repoRoot, approvalId) {
-    const pending = await loadApprovals(repoRoot, 'pending-approvals.json');
+async function movePendingToApproved(repoRoot, config, approvalId) {
+    const pending = await loadApprovals(repoRoot, config, 'pending-approvals.json');
     pending.state = compactApprovals(pending.state);
     const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId);
     if (index === -1) {
@@ -134,7 +136,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
     }
     const [approval] = pending.state.approvals.splice(index, 1);
     await writeJsonFile(pending.filePath, pending.state);
-    const approved = await loadApprovals(repoRoot, 'approved-approvals.json');
+    const approved = await loadApprovals(repoRoot, config, 'approved-approvals.json');
     approved.state = compactApprovals(approved.state);
     approved.state.approvals.push({
         ...approval,
@@ -148,7 +150,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
 }
 async function gateDecisionToResponse(params) {
     const { repoRoot, kind, result, config } = params;
-    const approved = await consumeApprovedApproval(repoRoot, kind, result.fingerprint);
+    const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint);
     if (approved) {
         await appendAudit(repoRoot, config, {
             event: kind === 'shell' ? 'beforeShellExecution' : kind === 'tool' ? 'preToolUse' : 'subagentGate',
@@ -205,7 +207,7 @@ export async function runBeforeSubmitPromptHook() {
             jsonResponse({ continue: true });
             return;
         }
-        const moved = await movePendingToApproved(repoRoot, approvalId);
+        const moved = await movePendingToApproved(repoRoot, config, approvalId);
         await appendAudit(repoRoot, config, {
             event: 'beforeSubmitPrompt',
             kind: 'approval',
@@ -347,7 +349,7 @@ export async function runAuditHook(eventName) {
             kind: 'audit',
             verdict: 'allow',
             reason: 'observed',
-            summary: canonicalStringify(scrubValue(payload)),
+            summary: canonicalStringify(scrubValue(payload, scrubOptionsFromConfig(config))),
         });
         jsonResponse({});
     }

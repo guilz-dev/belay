@@ -5,6 +5,8 @@ export declare function explainCommand(options: ExplainOptions): Promise<{
     kind: string;
     command: string;
     cwd: string;
+    policy: import("./types.js").BelayPolicyConfig;
+    overrides: import("./types.js").BelayOverridesConfig;
     result: ClassifyResult;
 }>;
 export declare function formatExplainReport(report: Awaited<ReturnType<typeof explainCommand>>): string;

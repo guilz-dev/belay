@@ -1,8 +1,14 @@
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { compactApprovals, isExpired } from './core/approval.js'
-import { type BelayConfigV3, mergeConfig } from './core/config.js'
+import {
+  approvedApprovalsFile,
+  type BelayConfigV3,
+  belayStateDir,
+  mergeConfig,
+  pendingApprovalsFile,
+} from './core/config.js'
 import type { ApprovalStateFile } from './core/types.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 
@@ -10,16 +16,27 @@ export function configPathFor(repoRoot: string): string {
   return path.join(repoRoot, '.cursor', 'belay.config.json')
 }
 
-export function pendingApprovalsPath(repoRoot: string): string {
-  return path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json')
+export { belayStateDir }
+
+export function pendingApprovalsPath(repoRoot: string, config: BelayConfigV3): string {
+  return pendingApprovalsFile(config, repoRoot)
 }
 
-export function approvedApprovalsPath(repoRoot: string): string {
-  return path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json')
+export function approvedApprovalsPath(repoRoot: string, config: BelayConfigV3): string {
+  return approvedApprovalsFile(config, repoRoot)
 }
 
 export function runtimeCorePath(repoRoot: string): string {
   return path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs')
+}
+
+export async function ensureBelayStateDir(
+  config: BelayConfigV3,
+  repoRoot: string,
+): Promise<string> {
+  const stateDir = belayStateDir(config, repoRoot)
+  await mkdir(stateDir, { recursive: true })
+  return stateDir
 }
 
 export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV3> {
@@ -43,17 +60,19 @@ export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfig
   }
   const merged = mergeConfig(existing)
   await writeConfigFile(repoRoot, merged)
+  await ensureBelayStateDir(merged, repoRoot)
   return merged
 }
 
 export async function loadApprovalState(
   repoRoot: string,
   fileName: 'pending-approvals.json' | 'approved-approvals.json',
+  config: BelayConfigV3,
 ): Promise<ApprovalStateFile> {
   const filePath =
     fileName === 'pending-approvals.json'
-      ? pendingApprovalsPath(repoRoot)
-      : approvedApprovalsPath(repoRoot)
+      ? pendingApprovalsPath(repoRoot, config)
+      : approvedApprovalsPath(repoRoot, config)
   if (!existsSync(filePath)) {
     return { version: 1, approvals: [] }
   }
@@ -69,11 +88,13 @@ export async function saveApprovalState(
   repoRoot: string,
   fileName: 'pending-approvals.json' | 'approved-approvals.json',
   state: ApprovalStateFile,
+  config: BelayConfigV3,
 ): Promise<void> {
   const filePath =
     fileName === 'pending-approvals.json'
-      ? pendingApprovalsPath(repoRoot)
-      : approvedApprovalsPath(repoRoot)
+      ? pendingApprovalsPath(repoRoot, config)
+      : approvedApprovalsPath(repoRoot, config)
+  await mkdir(path.dirname(filePath), { recursive: true })
   await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
 }
 

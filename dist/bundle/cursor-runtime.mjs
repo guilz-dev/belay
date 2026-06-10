@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path3 from "node:path";
+import path4 from "node:path";
 import process2 from "node:process";
 
 // src/core/approval.ts
@@ -84,10 +84,27 @@ function toolFingerprint(toolName, scrubbed, repoRoot) {
 }
 
 // src/core/path-utils.ts
+import { realpathSync } from "node:fs";
 import path from "node:path";
+function resolveRealpath(targetPath) {
+  try {
+    return realpathSync.native(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+function pathWithinRoot(root, targetPath) {
+  const resolvedRoot = resolveRealpath(root);
+  const resolvedTarget = resolveRealpath(targetPath);
+  const relativePath = path.relative(resolvedRoot, resolvedTarget);
+  if (relativePath === "") {
+    return true;
+  }
+  return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
 function relativeWithinRepo(repoRoot, targetPath) {
-  const resolvedRoot = path.resolve(repoRoot);
-  const resolvedTarget = path.resolve(targetPath);
+  const resolvedRoot = resolveRealpath(repoRoot);
+  const resolvedTarget = resolveRealpath(targetPath);
   const relativePath = path.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
@@ -112,15 +129,15 @@ function resolveMutationTarget(token, cwd) {
     return null;
   }
   if (path.isAbsolute(token)) {
-    return path.resolve(token);
+    return resolveRealpath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return path.resolve(cwd, token);
+    return resolveRealpath(path.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return path.resolve(cwd, token);
+    return resolveRealpath(path.resolve(cwd, token));
   }
-  return path.resolve(cwd, token);
+  return resolveRealpath(path.resolve(cwd, token));
 }
 function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   return tokens.some((token) => {
@@ -291,6 +308,7 @@ var EXTERNAL_COMMANDS = /* @__PURE__ */ new Set([
   "wget"
 ]);
 var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var DYNAMIC_SHELL_COMMANDS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
 var VERDICT_RANK = {
@@ -343,6 +361,45 @@ function isExternalKey(key, normalizedCommand, options) {
   return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some(
     (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
   );
+}
+function matchesCustomAllow(normalizedCommand, key, options) {
+  return (options.customAllowCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+}
+function matchesCustomExternal(normalizedCommand, key, options) {
+  return (options.customExternalCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+}
+function extractCommandSubstitution(command) {
+  const parenMatch = command.match(/\$\(([^)]+)\)/);
+  if (parenMatch?.[1]) {
+    return parenMatch[1].trim();
+  }
+  const backtickMatch = command.match(/`([^`]+)`/);
+  if (backtickMatch?.[1]) {
+    return backtickMatch[1].trim();
+  }
+  return null;
+}
+function unknownLocalEffectResult(params) {
+  const { normalizedCommand, cwdRelative, assessment, options } = params;
+  if (options.unknownLocalEffect === "deny") {
+    return denyResult({
+      reason: "unknown_local_effect",
+      normalizedCommand,
+      cwdRelative,
+      assessment
+    });
+  }
+  return {
+    verdict: "allow_flagged",
+    reason: "unknown_local_effect",
+    normalizedCommand,
+    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    assessment
+  };
 }
 function extractInterpreterScript(tokens) {
   for (let index = 1; index < tokens.length; index += 1) {
@@ -405,38 +462,49 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   const key = commandKey(segmentTokens);
   const redirects = extractRedirectTargets(segmentTokens);
   const signals = [];
-  for (const custom of options.customAllowCommands ?? []) {
-    if (matchesCustomCommand(normalizedCommand, key, custom)) {
-      return {
-        verdict: "allow",
-        reason: "custom_allow",
-        normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-        assessment: {
-          reversibility: "reversible",
-          external: false,
-          blastRadius: "this repository",
-          confidence: 0.99,
-          signals: ["custom_allow_command"]
-        }
-      };
-    }
+  if (matchesCustomAllow(normalizedCommand, key, options)) {
+    return {
+      verdict: "allow",
+      reason: "custom_allow",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "reversible",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.99,
+        signals: ["custom_allow_command"]
+      }
+    };
   }
-  for (const custom of options.customExternalCommands ?? []) {
-    if (matchesCustomCommand(normalizedCommand, key, custom)) {
-      return denyResult({
-        reason: "custom_external",
-        normalizedCommand,
-        cwdRelative,
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: "custom external command",
-          confidence: 0.95,
-          signals: ["custom_external_command"]
-        }
-      });
-    }
+  if (matchesCustomExternal(normalizedCommand, key, options)) {
+    return denyResult({
+      reason: "custom_external",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: true,
+        blastRadius: "custom external command",
+        confidence: 0.95,
+        signals: ["custom_external_command"]
+      }
+    });
+  }
+  if (DYNAMIC_SHELL_COMMANDS.has(key) || key === "." && segmentTokens.length > 1) {
+    signals.push("dynamic_shell_evaluation");
+    return denyResult({
+      reason: "dynamic_shell_evaluation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: true,
+        blastRadius: "dynamic shell evaluation",
+        confidence: 0.93,
+        signals
+      }
+    });
   }
   const hasOutsideRedirect = redirects.some((target) => {
     const resolved = resolveMutationTarget(target, cwd);
@@ -592,11 +660,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   }
   if (key === "node" || key === "sed") {
     signals.push(key === "node" ? "node_execution" : "sed_execution");
-    return {
-      verdict: "allow_flagged",
-      reason: "unknown_local_effect",
+    return unknownLocalEffectResult({
       normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      cwdRelative,
+      options,
       assessment: {
         reversibility: "recoverable_with_cost",
         external: false,
@@ -604,7 +671,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
         confidence: 0.64,
         signals
       }
-    };
+    });
   }
   if (FLAGGED_COMMANDS.has(key) || redirects.length > 0) {
     signals.push("local_mutation");
@@ -623,11 +690,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     };
   }
   signals.push("unknown_local_effect");
-  return {
-    verdict: "allow_flagged",
-    reason: "unknown_local_effect",
+  return unknownLocalEffectResult({
     normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    cwdRelative,
+    options,
     assessment: {
       reversibility: "recoverable_with_cost",
       external: false,
@@ -635,9 +701,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       confidence: 0.61,
       signals
     }
-  };
+  });
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
+  const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
+  if (substitution) {
+    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+    const normalizedCommand2 = normalizeShellCommand(command, repoRoot, normalizeToken);
+    const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+    return wrapInnerVerdict({
+      inner,
+      normalizedCommand: normalizedCommand2,
+      cwdRelative: cwdRelative2,
+      wrapReason: "command_substitution",
+      wrapSignal: "command_substitution"
+    });
+  }
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -678,20 +757,63 @@ var UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 var TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 var APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi;
 var TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi;
-function scrubString(value) {
-  return value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>").replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
+var BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi;
+var AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi;
+var KEY_VALUE_SECRET_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi;
+var HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g;
+var DEFAULT_SCRUB_OPTIONS = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+function resolvedScrubOptions(options = {}) {
+  return {
+    maskApprovalIds: options.maskApprovalIds !== false,
+    maskBearerTokens: options.maskBearerTokens !== false,
+    maskAuthHeaders: options.maskAuthHeaders !== false,
+    maskKeyValueSecrets: options.maskKeyValueSecrets !== false,
+    maskHighEntropyStrings: options.maskHighEntropyStrings === true
+  };
 }
-function scrubValue(value) {
+function scrubString(value, options = {}) {
+  const resolved = resolvedScrubOptions(options);
+  let scrubbed = value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>");
+  if (resolved.maskApprovalIds) {
+    scrubbed = scrubbed.replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
+  }
+  if (resolved.maskBearerTokens) {
+    scrubbed = scrubbed.replace(BEARER_PATTERN, "Bearer <redacted>");
+  }
+  if (resolved.maskAuthHeaders) {
+    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>");
+  }
+  if (resolved.maskKeyValueSecrets) {
+    scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
+      const separatorIndex = Math.max(match.indexOf("="), match.indexOf(":"));
+      if (separatorIndex === -1) {
+        return "<secret>";
+      }
+      return `${match.slice(0, separatorIndex + 1)}<redacted>`;
+    });
+  }
+  if (resolved.maskHighEntropyStrings) {
+    scrubbed = scrubbed.replace(HIGH_ENTROPY_PATTERN, "<high-entropy>");
+  }
+  return scrubbed;
+}
+function scrubValue(value, options = DEFAULT_SCRUB_OPTIONS) {
   if (typeof value === "string") {
-    return scrubString(value);
+    return scrubString(value, options);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => scrubValue(item));
+    return value.map((item) => scrubValue(item, options));
   }
   if (value && typeof value === "object") {
     const result = {};
     for (const [key, child] of Object.entries(value)) {
-      result[key] = scrubValue(child);
+      result[key] = scrubValue(child, options);
     }
     return result;
   }
@@ -969,7 +1091,23 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path2.isAbsolute(filePath) ? filePath : path2.join(repoRoot, filePath);
+    const resolvedPath = path2.isAbsolute(filePath) ? filePath : path2.resolve(cwd, filePath);
+    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+      signals.push("control_plane_path");
+      return {
+        verdict: "deny_pending_approval",
+        reason: "control_plane_mutation",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "irreversible",
+          external: false,
+          blastRadius: "agent-belay control plane",
+          confidence: 0.97,
+          signals
+        }
+      };
+    }
     const relativePath = relativeWithinRepo(repoRoot, resolvedPath);
     if (relativePath === null) {
       signals.push("outside_repo_path");
@@ -1050,6 +1188,7 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
 }
 
 // src/core/config.ts
+import path3 from "node:path";
 var DEFAULT_POLICY_V3 = {
   unknownLocalEffect: "allow_flagged"
 };
@@ -1321,13 +1460,41 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
     }
   });
 }
+function scrubOptionsFromConfig(config) {
+  return { ...config.redaction };
+}
 function classifierOptionsFromConfig(config) {
   return {
     strictChains: config.classifier.strictChains,
     customExternalCommands: config.overrides.external,
     customAllowCommands: config.overrides.allow,
-    sensitivePaths: config.classifier.sensitivePaths
+    sensitivePaths: config.classifier.sensitivePaths,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
   };
+}
+function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? "") {
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const base = xdgConfigHome || path3.join(homedir(), ".config");
+  return path3.join(base, "agent-belay");
+}
+function resolveControlPlaneDir(config) {
+  if (config.controlPlane.configDir) {
+    return config.controlPlane.configDir;
+  }
+  return defaultControlPlaneDir();
+}
+function belayStateDir(config, repoRoot) {
+  if (config.controlPlane.enabled) {
+    return resolveControlPlaneDir(config);
+  }
+  return path3.join(repoRoot, ".cursor", "belay");
+}
+function pendingApprovalsFile(config, repoRoot) {
+  return path3.join(belayStateDir(config, repoRoot), "pending-approvals.json");
+}
+function approvedApprovalsFile(config, repoRoot) {
+  return path3.join(belayStateDir(config, repoRoot), "approved-approvals.json");
 }
 
 // src/adapters/cursor/runtime-entry.ts
@@ -1355,14 +1522,14 @@ async function readStdinJson() {
   }
 }
 function findRepoRoot(startPath) {
-  let current = path3.resolve(startPath);
+  let current = path4.resolve(startPath);
   while (true) {
-    if (existsSync(path3.join(current, ".git")) || existsSync(path3.join(current, ".cursor"))) {
+    if (existsSync(path4.join(current, ".git")) || existsSync(path4.join(current, ".cursor"))) {
       return current;
     }
-    const parent = path3.dirname(current);
+    const parent = path4.dirname(current);
     if (parent === current) {
-      return path3.resolve(startPath);
+      return path4.resolve(startPath);
     }
     current = parent;
   }
@@ -1376,23 +1543,23 @@ async function loadJsonFile(filePath, fallback) {
   }
 }
 async function writeJsonFile(filePath, value) {
-  await mkdir(path3.dirname(filePath), { recursive: true });
+  await mkdir(path4.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}
 `, "utf8");
 }
 async function loadConfig(repoRoot) {
-  const configPath = path3.join(repoRoot, ".cursor", "belay.config.json");
+  const configPath = path4.join(repoRoot, ".cursor", "belay.config.json");
   const loaded = await loadJsonFile(configPath, {});
   return {
     configPath,
     config: mergeConfig(loaded)
   };
 }
-function approvalsPath(repoRoot, fileName) {
-  return path3.join(repoRoot, ".cursor", "belay", fileName);
+function approvalsPath(repoRoot, config, fileName) {
+  return fileName === "pending-approvals.json" ? pendingApprovalsFile(config, repoRoot) : approvedApprovalsFile(config, repoRoot);
 }
-async function loadApprovals(repoRoot, fileName) {
-  const filePath = approvalsPath(repoRoot, fileName);
+async function loadApprovals(repoRoot, config, fileName) {
+  const filePath = approvalsPath(repoRoot, config, fileName);
   const loaded = await loadJsonFile(filePath, EMPTY_APPROVALS);
   return {
     filePath,
@@ -1403,8 +1570,8 @@ async function loadApprovals(repoRoot, fileName) {
   };
 }
 async function appendAudit(repoRoot, config, event) {
-  const auditPath = path3.join(repoRoot, config.audit.logPath);
-  await mkdir(path3.dirname(auditPath), { recursive: true });
+  const auditPath = path4.join(repoRoot, config.audit.logPath);
+  await mkdir(path4.dirname(auditPath), { recursive: true });
   const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
   if (!config.audit.includeAssessment) {
     delete record.assessment;
@@ -1416,7 +1583,7 @@ async function appendAudit(repoRoot, config, event) {
   });
 }
 async function ensurePendingApproval(repoRoot, kind, result, config) {
-  const pending = await loadApprovals(repoRoot, "pending-approvals.json");
+  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
   pending.state = compactApprovals(pending.state);
   const existing = pending.state.approvals.find(
     (approval2) => approval2.kind === kind && approval2.fingerprint === result.fingerprint && approval2.repoRoot === repoRoot
@@ -1438,8 +1605,8 @@ async function ensurePendingApproval(repoRoot, kind, result, config) {
   await writeJsonFile(pending.filePath, pending.state);
   return approval;
 }
-async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
-  const approved = await loadApprovals(repoRoot, "approved-approvals.json");
+async function consumeApprovedApproval(repoRoot, config, kind, fingerprint) {
+  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
   approved.state = compactApprovals(approved.state);
   const index = approved.state.approvals.findIndex(
     (approval2) => approval2.kind === kind && approval2.fingerprint === fingerprint && approval2.repoRoot === repoRoot
@@ -1452,8 +1619,8 @@ async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
   await writeJsonFile(approved.filePath, approved.state);
   return approval;
 }
-async function movePendingToApproved(repoRoot, approvalId) {
-  const pending = await loadApprovals(repoRoot, "pending-approvals.json");
+async function movePendingToApproved(repoRoot, config, approvalId) {
+  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
   pending.state = compactApprovals(pending.state);
   const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
   if (index === -1) {
@@ -1462,7 +1629,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
   }
   const [approval] = pending.state.approvals.splice(index, 1);
   await writeJsonFile(pending.filePath, pending.state);
-  const approved = await loadApprovals(repoRoot, "approved-approvals.json");
+  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
   approved.state = compactApprovals(approved.state);
   approved.state.approvals.push({
     ...approval,
@@ -1476,7 +1643,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
 }
 async function gateDecisionToResponse(params) {
   const { repoRoot, kind, result, config } = params;
-  const approved = await consumeApprovedApproval(repoRoot, kind, result.fingerprint);
+  const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint);
   if (approved) {
     await appendAudit(repoRoot, config, {
       event: kind === "shell" ? "beforeShellExecution" : kind === "tool" ? "preToolUse" : "subagentGate",
@@ -1533,7 +1700,7 @@ async function runBeforeSubmitPromptHook() {
       jsonResponse({ continue: true });
       return;
     }
-    const moved = await movePendingToApproved(repoRoot, approvalId);
+    const moved = await movePendingToApproved(repoRoot, config, approvalId);
     await appendAudit(repoRoot, config, {
       event: "beforeSubmitPrompt",
       kind: "approval",
@@ -1672,7 +1839,7 @@ async function runAuditHook(eventName) {
       kind: "audit",
       verdict: "allow",
       reason: "observed",
-      summary: canonicalStringify(scrubValue(payload))
+      summary: canonicalStringify(scrubValue(payload, scrubOptionsFromConfig(config)))
     });
     jsonResponse({});
   } catch (error) {

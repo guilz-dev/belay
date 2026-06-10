@@ -110,18 +110,18 @@ Control-plane runtime wiring is out of scope for the config-v3 PR; see OQ3 spike
 
 | ID | Description | v0.3 PR |
 |----|-------------|---------|
-| M1 | `custom*` → `overrides` auto-mapping | config v3 |
-| R1–R4 | Fail-closed shell + chain hardening | follow-up (with R13) |
-| R5 | realpath resolution | parallel |
-| R6–R8 | Control plane move | after OQ3 spike |
-| R9 | SECURITY.md | after implementation |
-| R10 | Redaction extension | parallel |
-| R13 | `overrides` runtime wiring | with fail-closed |
-| T1 | Shell classifier unit tests | with fail-closed |
-| T3 | Control plane e2e | with R6–R8 |
-| T4 | Override precedence tests | with fail-closed |
-| OQ1 | `unknown_local_effect` deny default | after dogfood in audit mode |
-| OQ3 | Hook can access `~/.config/agent-belay/` | spike |
+| M1 | `custom*` → `overrides` auto-mapping | done |
+| R1–R4 | Fail-closed shell + chain hardening | done |
+| R5 | realpath resolution | done |
+| R6–R8 | Control plane move | done |
+| R9 | SECURITY.md | done |
+| R10 | Redaction extension | done |
+| R13 | `overrides` runtime wiring | done |
+| T1 | Shell classifier unit tests | done |
+| T3 | Control plane e2e | done |
+| T4 | Override precedence tests | done |
+| OQ1 | `unknown_local_effect` deny default | opt-in; default unchanged until dogfood |
+| OQ3 | Hook can access `~/.config/agent-belay/` | spike done; Cursor re-validation pending |
 
 ## Non-goals (v0.3)
 

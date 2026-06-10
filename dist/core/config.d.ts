@@ -1,4 +1,4 @@
-import type { ClassifierOptions } from './types.js';
+import type { ClassifierOptions, ScrubOptions } from './types.js';
 export type BelayMode = 'enforce' | 'audit';
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny';
 export interface BelayConfigV1 {
@@ -92,6 +92,10 @@ export declare function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2;
 export declare function normalizeConfig(config: BelayConfigV3): BelayConfigV3;
 export declare function normalizeConfig(config: BelayConfigV2): BelayConfigV2;
 export declare function mergeConfig(existing: unknown, defaults?: BelayConfigV3): BelayConfigV3;
+export declare function scrubOptionsFromConfig(config: BelayConfigV3): ScrubOptions;
 export declare function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOptions;
 export declare function defaultControlPlaneDir(env?: NodeJS.ProcessEnv, homedir?: () => string): string;
 export declare function resolveControlPlaneDir(config: BelayConfigV3): string;
+export declare function belayStateDir(config: BelayConfigV3, repoRoot: string): string;
+export declare function pendingApprovalsFile(config: BelayConfigV3, repoRoot: string): string;
+export declare function approvedApprovalsFile(config: BelayConfigV3, repoRoot: string): string;

@@ -2,9 +2,9 @@ export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createAp
 export { classifyShell } from './classify-shell.js';
 export { classifySubagent } from './classify-subagent.js';
 export { classifyToolUse } from './classify-tool.js';
-export { classifierOptionsFromConfig, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, defaultControlPlaneDir, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, resolveControlPlaneDir, } from './config.js';
+export { approvedApprovalsFile, belayStateDir, classifierOptionsFromConfig, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, defaultControlPlaneDir, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, } from './config.js';
 export { matchesCustomCommand } from './custom-command-match.js';
 export { canonicalStringify, hashValue, shellFingerprint, subagentFingerprint, toolFingerprint, } from './fingerprint.js';
 export { matchesSensitivePath } from './glob.js';
-export { hasOutsideRepoPath, normalizeToken, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
+export { hasOutsideRepoPath, normalizeToken, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
 export { scrubString, scrubValue } from './scrub.js';

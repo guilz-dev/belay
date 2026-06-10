@@ -6,8 +6,19 @@
 
 - Config v3 schema with `policy`, `overrides`, `redaction`, and `controlPlane` sections
 - Automatic v1/v2 → v3 migration with `custom*` → `overrides` mapping (M1)
+- Fail-closed shell policy via `policy.unknownLocalEffect: "deny"` with override escape hatches
+- Shell hardening: `eval`/`source` deny, command substitution wrapping, override precedence (T4)
+- User-level control plane for approval state (`controlPlane.enabled`)
+- Write-tool deny for control-plane path mutations (R8)
+- Audit redaction for bearer tokens, auth headers, key/value secrets, optional high-entropy strings
+- Symlink-aware path resolution via `realpath` (R5)
 - OQ3 control-plane filesystem spike (`runControlPlaneSpike`, `docs/spikes/oq3-control-plane.md`)
-- `docs/SPEC-v0.3.md` and `docs/ROADMAP.md`
+- `docs/SPEC-v0.3.md`, `docs/ROADMAP.md`, and SECURITY.md threat model update
+
+### Changed
+
+- `explain` output includes active policy and override lists
+- Approval state paths resolve to control plane or repo-local based on config
 
 ## 0.2.0
 

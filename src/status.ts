@@ -1,13 +1,19 @@
 import path from 'node:path'
 
-import { countExpiredPending, loadApprovalState, pendingApprovalsPath } from './config-io.js'
+import {
+  countExpiredPending,
+  loadApprovalState,
+  loadConfigFile,
+  pendingApprovalsPath,
+} from './config-io.js'
 import { compactApprovals } from './core/approval.js'
 import type { StatusOptions, StatusReport } from './types.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const pendingRaw = await loadApprovalState(repoRoot, 'pending-approvals.json')
-  const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json')
+  const config = await loadConfigFile(repoRoot)
+  const pendingRaw = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+  const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config)
   const expiredPendingCount = countExpiredPending(pendingRaw)
 
   return {
