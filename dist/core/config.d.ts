@@ -1,6 +1,6 @@
-import type { ClassifierOptions, ScrubOptions } from './types.js';
+import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js';
 export type BelayMode = 'enforce' | 'audit';
-export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny';
+export type { UnknownLocalEffectPolicy };
 export interface BelayConfigV1 {
     version: 1;
     mode: BelayMode;

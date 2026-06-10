@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -65,6 +65,65 @@ describe('config-io control plane migration', () => {
     expect(migrated.approvals[0].approvalId).toBe('belay_test123')
     expect(pendingApprovalsPath(repoRoot, merged)).toBe(
       path.join(controlPlaneDir, 'pending-approvals.json'),
+    )
+  })
+
+  it('merges repo-local approvals into existing control-plane files by approvalId', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cp-merge-'))
+    tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
+    const config = mergeConfig({
+      version: 3,
+      controlPlane: { enabled: true, configDir: controlPlaneDir },
+    })
+
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
+      `${JSON.stringify({
+        version: 1,
+        approvals: [
+          {
+            approvalId: 'belay_local',
+            kind: 'shell',
+            fingerprint: 'local',
+            repoRoot,
+            reason: 'external_effect',
+            summary: 'local push',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+    await mkdir(controlPlaneDir, { recursive: true })
+    await writeFile(
+      path.join(controlPlaneDir, 'pending-approvals.json'),
+      `${JSON.stringify({
+        version: 1,
+        approvals: [
+          {
+            approvalId: 'belay_cp',
+            kind: 'shell',
+            fingerprint: 'cp',
+            repoRoot,
+            reason: 'external_effect',
+            summary: 'cp push',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+
+    await migrateRepoLocalApprovalsToControlPlane(repoRoot, config)
+    const merged = JSON.parse(
+      await readFile(path.join(controlPlaneDir, 'pending-approvals.json'), 'utf8'),
+    )
+
+    expect(merged.approvals).toHaveLength(2)
+    expect(merged.approvals.map((approval: { approvalId: string }) => approval.approvalId)).toEqual(
+      expect.arrayContaining(['belay_cp', 'belay_local']),
     )
   })
 

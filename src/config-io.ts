@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { compactApprovals, isExpired } from './core/approval.js'
+import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
 import {
   approvedApprovalsFile,
   type BelayConfigV3,
@@ -41,6 +41,20 @@ export async function ensureBelayStateDir(
 
 const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json'] as const
 
+async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFile> {
+  const raw = await readFile(filePath, 'utf8')
+  const parsed = JSON.parse(raw) as ApprovalStateFile
+  return {
+    version: 1,
+    approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
+  }
+}
+
+async function writeApprovalStateFile(filePath: string, state: ApprovalStateFile): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
+}
+
 export async function migrateRepoLocalApprovalsToControlPlane(
   repoRoot: string,
   config: BelayConfigV3,
@@ -54,9 +68,16 @@ export async function migrateRepoLocalApprovalsToControlPlane(
   for (const fileName of APPROVAL_STATE_FILES) {
     const from = path.join(repoLocalDir, fileName)
     const to = path.join(targetDir, fileName)
-    if (existsSync(from) && !existsSync(to)) {
-      await copyFile(from, to)
+    if (!existsSync(from)) {
+      continue
     }
+    if (!existsSync(to)) {
+      await copyFile(from, to)
+      continue
+    }
+    const targetState = await readApprovalStateFile(to)
+    const sourceState = await readApprovalStateFile(from)
+    await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState))
   }
 }
 
@@ -100,12 +121,7 @@ export async function loadApprovalState(
   if (!existsSync(filePath)) {
     return { version: 1, approvals: [] }
   }
-  const raw = await readFile(filePath, 'utf8')
-  const parsed = JSON.parse(raw) as ApprovalStateFile
-  return {
-    version: 1,
-    approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
-  }
+  return readApprovalStateFile(filePath)
 }
 
 export async function saveApprovalState(
@@ -118,8 +134,7 @@ export async function saveApprovalState(
     fileName === 'pending-approvals.json'
       ? pendingApprovalsPath(repoRoot, config)
       : approvedApprovalsPath(repoRoot, config)
-  await mkdir(path.dirname(filePath), { recursive: true })
-  await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
+  await writeApprovalStateFile(filePath, state)
 }
 
 export function countExpiredPending(state: ApprovalStateFile): number {

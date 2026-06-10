@@ -51,6 +51,8 @@ security-relevant reports.
 - Classification is heuristic, not proof of safety.
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
+- Command substitution detection is single-level only (no nested `$(...)`, multiple substitutions, or escaped `\$(...)`).
+- Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/agent-belay/` are not deleted automatically.
 - Cursor sandbox behavior for hooks writing outside the workspace should be validated on target hosts (see `docs/spikes/oq3-control-plane.md`).
 
 ## Response Expectations

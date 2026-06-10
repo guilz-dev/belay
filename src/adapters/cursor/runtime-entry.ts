@@ -437,7 +437,7 @@ export async function runAuditHook(eventName: string) {
       kind: 'audit',
       verdict: 'allow',
       reason: 'observed',
-      summary: canonicalStringify(scrubValue(payload, scrubOptionsFromConfig(config))),
+      summary: canonicalStringify(payload),
     })
     jsonResponse({})
   } catch (error) {

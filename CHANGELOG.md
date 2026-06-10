@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Merge repo-local approvals into existing control-plane files by `approvalId` (target wins)
+- Classifier fingerprints and summaries honor config `redaction` settings
+- Remove redundant pre-scrub in postToolUse audit hook (`appendAudit` scrubs once)
+- Doctor warns on orphaned control-plane or stale repo-local approval files
+
 ## 0.3.0
 
 ### Added

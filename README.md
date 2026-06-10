@@ -196,8 +196,11 @@ to tune before enabling in `enforce` mode.
 
 `controlPlane.enabled: true` stores approval state under
 `~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). The same path is
-shared across repositories for the current OS user. File-mutation tools and shell
-redirects cannot write control-plane paths when this is enabled.
+shared across repositories for the current OS user. Existing repo-local approval
+files are copied or merged into the control plane on `upgrade`. Disabling control
+plane switches back to repo-local paths without deleting the user-level files.
+File-mutation tools and shell redirects cannot write control-plane paths when
+this is enabled.
 
 `strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
 the strictest verdict. Override lists use exact command or segment key matches only.

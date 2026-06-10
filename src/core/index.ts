@@ -4,6 +4,7 @@ export {
   compactApprovals,
   createApprovalRecord,
   isExpired,
+  mergeApprovalStates,
   nowIso,
 } from './approval.js'
 export { classifyShell } from './classify-shell.js'

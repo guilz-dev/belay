@@ -31,6 +31,7 @@ export interface ClassifierOptions {
     sensitivePaths?: string[];
     unknownLocalEffect?: UnknownLocalEffectPolicy;
     controlPlaneDir?: string | null;
+    scrubOptions?: ScrubOptions;
 }
 export interface ApprovalRecord {
     approvalId: string;

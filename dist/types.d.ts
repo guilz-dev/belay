@@ -1,8 +1,7 @@
 export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, BelayControlPlaneConfig, BelayMode, BelayOverridesConfig, BelayPolicyConfig, BelayRedactionConfig, UnknownLocalEffectPolicy, } from './core/config.js';
 export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifyResult, HookVerdict, } from './core/types.js';
 import type { BelayOverridesConfig, BelayPolicyConfig } from './core/config.js';
-import type { ClassifyResult } from './core/types.js';
-import type { ApprovalRecord } from './core/types.js';
+import type { ApprovalRecord, ClassifyResult } from './core/types.js';
 export interface HookEntry {
     command: string;
     matcher?: string;

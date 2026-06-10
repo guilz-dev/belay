@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { approvedApprovalsPath, belayStateDir, loadConfigFile, pendingApprovalsPath, runtimeCorePath, } from './config-io.js';
+import { defaultControlPlaneDir } from './core/config.js';
 import { getManagedHookEntries } from './defaults.js';
 import { loadHooksFile } from './installer.js';
 import { resolveNodeBinary } from './node-resolution.js';
@@ -46,6 +47,24 @@ export async function doctorProject(options = {}) {
             notes.push(`Config mode: ${loadedConfig.mode}`);
             if (loadedConfig.controlPlane.enabled) {
                 notes.push(`Control plane: ${belayStateDir(loadedConfig, repoRoot)}`);
+                const repoLocalPending = path.join(cursorDir, 'belay', 'pending-approvals.json');
+                const repoLocalApproved = path.join(cursorDir, 'belay', 'approved-approvals.json');
+                if (existsSync(repoLocalPending) || existsSync(repoLocalApproved)) {
+                    warnings.push('Repo-local approval files remain while control plane is enabled. The runtime ignores them.');
+                }
+            }
+            else {
+                const controlPlaneDirs = new Set([defaultControlPlaneDir()]);
+                if (loadedConfig.controlPlane.configDir) {
+                    controlPlaneDirs.add(loadedConfig.controlPlane.configDir);
+                }
+                for (const controlPlaneDir of controlPlaneDirs) {
+                    const hasApprovalFiles = existsSync(path.join(controlPlaneDir, 'pending-approvals.json')) ||
+                        existsSync(path.join(controlPlaneDir, 'approved-approvals.json'));
+                    if (hasApprovalFiles) {
+                        warnings.push(`Control plane is disabled but approval files still exist at ${controlPlaneDir}. Re-enable control plane or archive them manually.`);
+                    }
+                }
             }
         }
         catch (error) {

@@ -27,4 +27,26 @@ describe('doctorProject', () => {
     const report = await doctorProject({ targetDir: repoRoot })
     expect(report.warnings.some((warning) => warning.includes('missing "version"'))).toBe(true)
   })
+
+  it('warns when repo-local approval files remain with control plane enabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-cp-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        version: 3,
+        controlPlane: { enabled: true, configDir: path.join(repoRoot, 'cp') },
+      })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(
+      report.warnings.some((warning) => warning.includes('Repo-local approval files remain')),
+    ).toBe(true)
+  })
 })

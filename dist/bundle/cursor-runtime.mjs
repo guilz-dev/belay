@@ -912,7 +912,7 @@ var EXTERNAL_TERMS = [
   "email",
   "prod"
 ];
-function extractSubagentText(payload) {
+function extractSubagentText(payload, options) {
   const toolInput = payload.tool_input;
   if (toolInput && typeof toolInput === "object") {
     const input = toolInput;
@@ -930,34 +930,40 @@ function extractSubagentText(payload) {
     const prompt = typeof taskObj.prompt === "string" ? taskObj.prompt : "";
     return [description, prompt].filter(Boolean).join(" ");
   }
-  return canonicalStringify(scrubValue(payload));
+  return canonicalStringify(scrubValue(payload, options.scrubOptions));
 }
-function fingerprintSource(payload) {
+function fingerprintSource(payload, options) {
   const toolInput = payload.tool_input;
   if (toolInput && typeof toolInput === "object") {
     const input = toolInput;
-    return scrubValue({
-      description: input.description ?? "",
-      prompt: input.prompt ?? ""
-    });
+    return scrubValue(
+      {
+        description: input.description ?? "",
+        prompt: input.prompt ?? ""
+      },
+      options.scrubOptions
+    );
   }
   const task = payload.task;
   if (typeof task === "string") {
-    return scrubValue({ task });
+    return scrubValue({ task }, options.scrubOptions);
   }
   if (task && typeof task === "object") {
     const taskObj = task;
-    return scrubValue({
-      description: taskObj.description ?? "",
-      prompt: taskObj.prompt ?? ""
-    });
+    return scrubValue(
+      {
+        description: taskObj.description ?? "",
+        prompt: taskObj.prompt ?? ""
+      },
+      options.scrubOptions
+    );
   }
-  return scrubValue(payload);
+  return scrubValue(payload, options.scrubOptions);
 }
-function classifySubagent(payload, repoRoot, _options = {}) {
+function classifySubagent(payload, repoRoot, options = {}) {
   const kind = payload.tool_name === "Task" ? "Task" : String(payload.subagent_type ?? "generalPurpose");
-  const scrubbed = fingerprintSource(payload);
-  const summary = extractSubagentText(payload);
+  const scrubbed = fingerprintSource(payload, options);
+  const summary = extractSubagentText(payload, options);
   const lowered = summary.toLowerCase();
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot);
   const signals = [];
@@ -1079,6 +1085,9 @@ function matchesSensitivePath(filePath, patterns) {
 
 // src/core/classify-tool.ts
 var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
+function scrubPayload(value, options) {
+  return scrubValue(value, options.scrubOptions);
+}
 function extractFilePath(payload) {
   const toolInput = payload.tool_input;
   if (!toolInput || typeof toolInput !== "object") {
@@ -1112,8 +1121,12 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       return {
         verdict: "allow_flagged",
         reason: "tool_shell_missing_command",
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
         assessment: {
           reversibility: "recoverable_with_cost",
           external: false,
@@ -1135,8 +1148,12 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       return {
         verdict: "allow_flagged",
         reason: "file_mutation_missing_path",
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
         assessment: {
           reversibility: "recoverable_with_cost",
           external: false,
@@ -1231,8 +1248,8 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   return {
     verdict: "allow",
     reason: "unclassified_tool",
-    summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-    fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    fingerprint: toolFingerprint(toolName, scrubPayload(payload.tool_input ?? {}, options), repoRoot),
     assessment: {
       reversibility: "reversible",
       external: false,
@@ -1556,7 +1573,8 @@ function classifierOptionsFromConfig(config) {
     customAllowCommands: config.overrides.allow,
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
-    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
+    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
+    scrubOptions: scrubOptionsFromConfig(config)
   };
 }
 function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? "") {
@@ -1926,7 +1944,7 @@ async function runAuditHook(eventName) {
       kind: "audit",
       verdict: "allow",
       reason: "observed",
-      summary: canonicalStringify(scrubValue(payload, scrubOptionsFromConfig(config)))
+      summary: canonicalStringify(payload)
     });
     jsonResponse({});
   } catch (error) {

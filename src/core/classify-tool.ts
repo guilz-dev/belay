@@ -8,6 +8,10 @@ import type { ClassifierOptions, ClassifyResult } from './types.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
 
+function scrubPayload(value: unknown, options: ClassifierOptions): unknown {
+  return scrubValue(value, options.scrubOptions)
+}
+
 function extractFilePath(payload: Record<string, unknown>): string | null {
   const toolInput = payload.tool_input
   if (!toolInput || typeof toolInput !== 'object') {
@@ -49,8 +53,12 @@ export function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'tool_shell_missing_command',
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot,
+        ),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -73,8 +81,12 @@ export function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'file_mutation_missing_path',
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot,
+        ),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -176,8 +188,12 @@ export function classifyToolUse(
   return {
     verdict: 'allow',
     reason: 'unclassified_tool',
-    summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-    fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    fingerprint: toolFingerprint(
+      toolName,
+      scrubPayload(payload.tool_input ?? {}, options),
+      repoRoot,
+    ),
     assessment: {
       reversibility: 'reversible',
       external: false,

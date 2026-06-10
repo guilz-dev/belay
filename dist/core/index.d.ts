@@ -1,4 +1,4 @@
-export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createApprovalRecord, isExpired, nowIso, } from './approval.js';
+export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createApprovalRecord, mergeApprovalStates, isExpired, nowIso, } from './approval.js';
 export { classifyShell } from './classify-shell.js';
 export { classifySubagent } from './classify-subagent.js';
 export { classifyToolUse } from './classify-tool.js';

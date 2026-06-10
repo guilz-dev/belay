@@ -1,10 +1,10 @@
 import path from 'node:path'
 
-import type { ClassifierOptions, ScrubOptions } from './types.js'
+import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
-export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny'
+export type { UnknownLocalEffectPolicy }
 
 export interface BelayConfigV1 {
   version: 1
@@ -495,6 +495,7 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
+    scrubOptions: scrubOptionsFromConfig(config),
   }
 }
 

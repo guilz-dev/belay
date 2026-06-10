@@ -343,6 +343,7 @@ export function classifierOptionsFromConfig(config) {
         sensitivePaths: config.classifier.sensitivePaths,
         unknownLocalEffect: config.policy.unknownLocalEffect,
         controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
+        scrubOptions: scrubOptionsFromConfig(config),
     };
 }
 export function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? '') {
