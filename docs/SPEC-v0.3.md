@@ -95,8 +95,17 @@ User-level state directory for approvals and shared config (R6–R8).
 |-------|------|---------|-------|
 | `enabled` | `boolean` | `false` | When `true`, runtime reads/writes `~/.config/agent-belay/` instead of repo-local `.cursor/belay/` |
 | `configDir` | `string` \| `null` | `null` | Override; default resolves via `XDG_CONFIG_HOME` or `~/.config/agent-belay` |
+| `spikeOnPrompt` | `boolean` | `false` | When `true`, run OQ3 filesystem spike once per hook process on `beforeSubmitPrompt` |
 
-When `controlPlane.enabled` is `true`, approval state lives under the resolved control-plane directory. Enabling control plane on `upgrade` copies existing repo-local approval files if the destination is empty. See `docs/spikes/oq3-control-plane.md` for hook filesystem validation.
+When `controlPlane.enabled` is `true`, approval state lives under the resolved control-plane directory. Enabling control plane on `upgrade` copies existing repo-local approval files if the destination is empty. Disabling merges control-plane approvals back to repo-local. See `docs/spikes/oq3-control-plane.md` for hook filesystem validation.
+
+### OQ1 dogfood workflow (v0.3.1+)
+
+1. Set `mode: "audit"` and `policy.unknownLocalEffect: "deny"`.
+2. Run normal agent work; gate events record `wouldBlock: true` without creating pending approvals.
+3. Run `agent-belay metrics` to review would-block rate and top reasons.
+4. Tune with `overrides.allow` and `agent-belay explain`.
+5. Switch to `mode: "enforce"` when metrics report ready.
 
 ## Migration matrix
 
@@ -120,8 +129,8 @@ When `controlPlane.enabled` is `true`, approval state lives under the resolved c
 | T1 | Shell classifier unit tests | done |
 | T3 | Control plane e2e | done |
 | T4 | Override precedence tests | done |
-| OQ1 | `unknown_local_effect` deny default | opt-in; default unchanged until dogfood |
-| OQ3 | Hook can access `~/.config/agent-belay/` | spike done; Cursor re-validation pending |
+| OQ1 | `unknown_local_effect` deny default | dogfood tooling shipped (`metrics` CLI); default unchanged |
+| OQ3 | Hook can access `~/.config/agent-belay/` | hook spike via `spikeOnPrompt`; validate in real Cursor workspace |
 
 ## Non-goals (v0.3)
 

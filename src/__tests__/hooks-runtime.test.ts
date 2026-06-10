@@ -205,6 +205,65 @@ describe('generated hook runtime', () => {
     expect(auditRaw).toContain('Authorization: <redacted>')
   })
 
+  it('allows denied shell actions in audit mode and records wouldBlock without pending approvals', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          mode: 'audit',
+          policy: { unknownLocalEffect: 'deny' },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout)).toEqual({ permission: 'allow' })
+
+    const pending = await readJson(
+      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
+    )
+    expect(pending.approvals).toHaveLength(0)
+
+    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(auditRaw).toContain('"wouldBlock":true')
+    expect(auditRaw).toContain('"mode":"audit"')
+  })
+
+  it('records control plane spike from beforeSubmitPrompt when spikeOnPrompt is enabled', async () => {
+    const repoRoot = await createTempRepo()
+    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
+    await initProject({ targetDir: repoRoot })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const result = await runRunner(repoRoot, 'belay-before-submit', {
+      prompt: 'hello',
+    })
+    expect(JSON.parse(result.stdout)).toEqual({ continue: true })
+    const spikeRecord = JSON.parse(
+      await readFile(path.join(controlPlaneDir, 'oq3-spike-last.json'), 'utf8'),
+    )
+    expect(spikeRecord.ok).toBe(true)
+
+    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(auditRaw).toContain('"event":"controlPlaneSpike"')
+  })
+
   it('stores approvals in the control plane when enabled (T3)', async () => {
     const repoRoot = await createTempRepo()
     const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')

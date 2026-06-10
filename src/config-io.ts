@@ -6,6 +6,7 @@ import {
   approvedApprovalsFile,
   type BelayConfigV3,
   belayStateDir,
+  configuredControlPlaneDir,
   mergeConfig,
   pendingApprovalsFile,
 } from './core/config.js'
@@ -55,18 +56,10 @@ async function writeApprovalStateFile(filePath: string, state: ApprovalStateFile
   await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
 }
 
-export async function migrateRepoLocalApprovalsToControlPlane(
-  repoRoot: string,
-  config: BelayConfigV3,
-): Promise<void> {
-  if (!config.controlPlane.enabled) {
-    return
-  }
-  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
-  const targetDir = belayStateDir(config, repoRoot)
+async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string): Promise<void> {
   await mkdir(targetDir, { recursive: true })
   for (const fileName of APPROVAL_STATE_FILES) {
-    const from = path.join(repoLocalDir, fileName)
+    const from = path.join(sourceDir, fileName)
     const to = path.join(targetDir, fileName)
     if (!existsSync(from)) {
       continue
@@ -79,6 +72,30 @@ export async function migrateRepoLocalApprovalsToControlPlane(
     const sourceState = await readApprovalStateFile(from)
     await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState))
   }
+}
+
+export async function migrateRepoLocalApprovalsToControlPlane(
+  repoRoot: string,
+  config: BelayConfigV3,
+): Promise<void> {
+  if (!config.controlPlane.enabled) {
+    return
+  }
+  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
+  const targetDir = belayStateDir(config, repoRoot)
+  await migrateApprovalFilesBetween(repoLocalDir, targetDir)
+}
+
+export async function migrateControlPlaneApprovalsToRepoLocal(
+  repoRoot: string,
+  config: BelayConfigV3,
+  sourceDir: string = configuredControlPlaneDir(config),
+): Promise<void> {
+  if (config.controlPlane.enabled) {
+    return
+  }
+  const targetDir = path.join(repoRoot, '.cursor', 'belay')
+  await migrateApprovalFilesBetween(sourceDir, targetDir)
 }
 
 export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV3> {
@@ -105,6 +122,8 @@ export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfig
   await ensureBelayStateDir(merged, repoRoot)
   if (merged.controlPlane.enabled) {
     await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged)
+  } else {
+    await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged)
   }
   return merged
 }

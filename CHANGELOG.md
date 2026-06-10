@@ -1,13 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
-### Fixed
+### Added
 
-- Merge repo-local approvals into existing control-plane files by `approvalId` (target wins)
-- Classifier fingerprints and summaries honor config `redaction` settings
-- Remove redundant pre-scrub in postToolUse audit hook (`appendAudit` scrubs once)
-- Doctor warns on orphaned control-plane or stale repo-local approval files
+- `agent-belay metrics` — audit log analysis for OQ1 dogfood (`wouldBlock` rate, top reasons, enforce readiness)
+- Gate audit records include `mode`, `wouldBlock`, and `permission` for dogfood measurement
+- `controlPlane.spikeOnPrompt` and `BELAY_OQ3_SPIKE=1` run OQ3 filesystem validation from `beforeSubmitPrompt`
+- `agent-belay doctor --fix` / `--dry-run` migrate or archive orphaned approval state files
+- Reverse control-plane → repo-local approval migration when control plane is disabled
+- Nested and multiple `$(...)` / backtick substitution detection with escaped `\$(...)` support
+
+### Changed
+
+- Audit mode records would-block events without creating pending approvals
 
 ## 0.3.0
 
@@ -31,6 +37,10 @@
 
 ### Fixed
 
+- Merge repo-local approvals into existing control-plane files by `approvalId` (target wins)
+- Classifier fingerprints and summaries honor config `redaction` settings
+- Remove redundant pre-scrub in postToolUse audit hook (`appendAudit` scrubs once)
+- Doctor warns on orphaned control-plane or stale repo-local approval files
 - Gate audit events use config-driven redaction
 - Version-less configs with v3 sections migrate correctly; doctor warns when `version` is missing
 - Fail-closed mode denies all command substitution, not only risky inner commands

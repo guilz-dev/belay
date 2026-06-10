@@ -3,6 +3,7 @@ import process from 'node:process';
 import { doctorProject, formatDoctorReport } from './doctor.js';
 import { explainCommand, formatExplainReport } from './explain.js';
 import { initProject, upgradeProject } from './installer.js';
+import { formatMetricsReport, metricsProject } from './metrics.js';
 import { revokeApproval } from './revoke.js';
 import { formatStatusReport, statusProject } from './status.js';
 function parseArgs(argv) {
@@ -16,6 +17,14 @@ function parseArgs(argv) {
         }
         if (token === '--json') {
             options.json = true;
+            continue;
+        }
+        if (token === '--fix') {
+            options.fix = true;
+            continue;
+        }
+        if (token === '--dry-run') {
+            options.dryRun = true;
             continue;
         }
         if (token === '--target') {
@@ -84,7 +93,8 @@ function printHelp() {
 Usage:
   agent-belay init [--target <dir>] [--with-skill]
   agent-belay upgrade [--target <dir>] [--with-skill]
-  agent-belay doctor [--target <dir>] [--json]
+  agent-belay doctor [--target <dir>] [--json] [--fix] [--dry-run]
+  agent-belay metrics [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
   agent-belay revoke <approval-id> [--target <dir>]
@@ -114,7 +124,11 @@ async function main() {
             return;
         }
         if (command === 'doctor') {
-            const report = await doctorProject({ targetDir: options.targetDir });
+            const report = await doctorProject({
+                targetDir: options.targetDir,
+                fix: options.fix,
+                dryRun: options.dryRun,
+            });
             if (options.json) {
                 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
             }
@@ -122,6 +136,19 @@ async function main() {
                 process.stdout.write(formatDoctorReport(report));
             }
             process.exitCode = report.ok ? 0 : 1;
+            return;
+        }
+        if (command === 'metrics') {
+            const report = await metricsProject({
+                targetDir: options.targetDir,
+                json: options.json,
+            });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatMetricsReport(report));
+            }
             return;
         }
         if (command === 'status') {

@@ -34,11 +34,23 @@ Spike **passes** in standard Node subprocess context:
 | Hook `cwd` is repo-local | Control-plane paths must not depend on repo `cwd` for resolution (already true in spike) |
 | Cursor sandbox unknown | Re-run spike inside an actual Cursor `beforeSubmitPrompt` hook after `init` on a dogfood repo |
 
-## Follow-up before R6 merge
+## Hook integration (v0.3.1)
 
-1. Install hooks in a real Cursor workspace and trigger `beforeSubmitPrompt` with a spike hook entry.
-2. Confirm no sandbox blocks writes outside the workspace (if blocked, R8 Write-tool deny + in-repo fallback required).
-3. Document final path layout: `pending-approvals.json`, `approved-approvals.json`, optional shared config.
+Enable in config:
+
+```json
+{ "controlPlane": { "spikeOnPrompt": true } }
+```
+
+Or set `BELAY_OQ3_SPIKE=1` in the hook environment. The runtime runs the spike once per hook process on the first `beforeSubmitPrompt`, writes `oq3-spike-last.json` under the resolved control-plane directory, and appends a `controlPlaneSpike` audit event.
+
+## Validation checklist
+
+1. `agent-belay init` in a real Cursor workspace.
+2. Submit any chat prompt (triggers `beforeSubmitPrompt`).
+3. Verify `~/.config/agent-belay/oq3-spike-last.json` has `"ok": true`.
+4. Check `.cursor/belay/audit.ndjson` for `controlPlaneSpike` events.
+5. If blocked, keep control plane disabled or use repo-local fallback; R8 already denies Write/shell mutations to control-plane paths.
 
 ## Artifacts
 

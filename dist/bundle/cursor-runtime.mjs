@@ -2,9 +2,9 @@
 
 // src/adapters/cursor/runtime-entry.ts
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path4 from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import path5 from "node:path";
 import process2 from "node:process";
 
 // src/core/approval.ts
@@ -147,6 +147,106 @@ function hasOutsideRepoPath(tokens, cwd, repoRoot) {
     }
     return relativeWithinRepo(repoRoot, resolved) === null;
   });
+}
+
+// src/core/shell-substitution.ts
+var MAX_SUBSTITUTION_DEPTH = 8;
+function findCommandSubstitutions(command) {
+  const results = [];
+  let index = 0;
+  while (index < command.length) {
+    const char = command[index];
+    if (char === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (char === "`") {
+      const end = findClosingBacktick(command, index + 1);
+      if (end === -1) {
+        break;
+      }
+      const inner = command.slice(index + 1, end).trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      const closed = extractBalancedParenContent(command, index + 2);
+      if (!closed) {
+        index += 1;
+        continue;
+      }
+      const inner = closed.content.trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = closed.endIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return results;
+}
+function findClosingBacktick(command, start) {
+  let index = start;
+  while (index < command.length) {
+    if (command[index] === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (command[index] === "`") {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+function extractBalancedParenContent(command, start) {
+  let depth = 1;
+  let index = start;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length && depth > 0) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          return {
+            content: command.slice(start, index),
+            endIndex: index + 1
+          };
+        }
+      }
+    }
+    index += 1;
+  }
+  return null;
 }
 
 // src/core/shell-tokenizer.ts
@@ -384,16 +484,44 @@ function targetsControlPlane(paths, cwd, controlPlaneDir) {
     return pathWithinRoot(controlPlaneDir, resolved);
   });
 }
-function extractCommandSubstitution(command) {
-  const parenMatch = command.match(/\$\(([^)]+)\)/);
-  if (parenMatch?.[1]) {
-    return parenMatch[1].trim();
+function classifySubstitutionInners(params) {
+  const { command, cwd, repoRoot, options, depth } = params;
+  if (depth >= MAX_SUBSTITUTION_DEPTH) {
+    return null;
   }
-  const backtickMatch = command.match(/`([^`]+)`/);
-  if (backtickMatch?.[1]) {
-    return backtickMatch[1].trim();
+  const substitutions = findCommandSubstitutions(command);
+  if (substitutions.length === 0) {
+    return null;
   }
-  return null;
+  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
+  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+  let worst = null;
+  for (const substitution of substitutions) {
+    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+    if (options.unknownLocalEffect === "deny") {
+      return denyResult({
+        reason: "command_substitution",
+        normalizedCommand,
+        cwdRelative,
+        assessment: {
+          reversibility: "irreversible",
+          external: inner.assessment.external,
+          blastRadius: "command substitution",
+          confidence: 0.9,
+          signals: ["command_substitution", ...inner.assessment.signals]
+        }
+      });
+    }
+    const wrapped = wrapInnerVerdict({
+      inner,
+      normalizedCommand,
+      cwdRelative,
+      wrapReason: "command_substitution",
+      wrapSignal: "command_substitution"
+    });
+    worst = worst ? worseVerdict(worst, wrapped) : wrapped;
+  }
+  return worst;
 }
 function unknownLocalEffectResult(params) {
   const { normalizedCommand, cwdRelative, assessment, options } = params;
@@ -746,32 +874,15 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   });
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
-  const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
-  if (substitution) {
-    const normalizedCommand2 = normalizeShellCommand(command, repoRoot, normalizeToken);
-    const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
-    if (options.unknownLocalEffect === "deny") {
-      return denyResult({
-        reason: "command_substitution",
-        normalizedCommand: normalizedCommand2,
-        cwdRelative: cwdRelative2,
-        assessment: {
-          reversibility: "irreversible",
-          external: inner.assessment.external,
-          blastRadius: "command substitution",
-          confidence: 0.9,
-          signals: ["command_substitution", ...inner.assessment.signals]
-        }
-      });
-    }
-    return wrapInnerVerdict({
-      inner,
-      normalizedCommand: normalizedCommand2,
-      cwdRelative: cwdRelative2,
-      wrapReason: "command_substitution",
-      wrapSignal: "command_substitution"
-    });
+  const substitutionResult = classifySubstitutionInners({
+    command,
+    cwd,
+    repoRoot,
+    options,
+    depth
+  });
+  if (substitutionResult) {
+    return substitutionResult;
   }
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
@@ -1249,7 +1360,11 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
     verdict: "allow",
     reason: "unclassified_tool",
     summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-    fingerprint: toolFingerprint(toolName, scrubPayload(payload.tool_input ?? {}, options), repoRoot),
+    fingerprint: toolFingerprint(
+      toolName,
+      scrubPayload(payload.tool_input ?? {}, options),
+      repoRoot
+    ),
     assessment: {
       reversibility: "reversible",
       external: false,
@@ -1278,7 +1393,8 @@ var DEFAULT_REDACTION_V3 = {
 };
 var DEFAULT_CONTROL_PLANE_V3 = {
   enabled: false,
-  configDir: null
+  configDir: null,
+  spikeOnPrompt: false
 };
 var DEFAULT_CONFIG_V2 = {
   version: 2,
@@ -1520,7 +1636,8 @@ function normalizeConfig(config) {
     },
     controlPlane: {
       enabled: v3.controlPlane?.enabled === true,
-      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null
+      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null,
+      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true
     },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -1601,11 +1718,69 @@ function approvedApprovalsFile(config, repoRoot) {
   return path3.join(belayStateDir(config, repoRoot), "approved-approvals.json");
 }
 
+// src/core/control-plane-spike.ts
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path4 from "node:path";
+async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
+  const outputPath = path4.join(
+    controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
+    "oq3-spike-last.json"
+  );
+  await mkdir(path4.dirname(outputPath), { recursive: true });
+  await writeFile(
+    outputPath,
+    `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
+`,
+    "utf8"
+  );
+  return outputPath;
+}
+async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
+  const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
+  const testFile = path4.join(controlPlaneDir, "oq3-spike.json");
+  const payload = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    cwd,
+    pid: process.pid
+  };
+  const base = {
+    ok: false,
+    controlPlaneDir,
+    testFile,
+    home: homedir(),
+    xdgConfigHome: env.XDG_CONFIG_HOME?.trim() || null,
+    cwd,
+    wrote: false,
+    readBack: null
+  };
+  try {
+    await mkdir(controlPlaneDir, { recursive: true });
+    await writeFile(testFile, `${JSON.stringify(payload)}
+`, "utf8");
+    const readBack = await readFile(testFile, "utf8");
+    const parsed = JSON.parse(readBack.trim());
+    await rm(testFile, { force: true });
+    return {
+      ...base,
+      ok: parsed.cwd === cwd && existsSync(controlPlaneDir),
+      wrote: true,
+      readBack: readBack.trim()
+    };
+  } catch (error) {
+    return {
+      ...base,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 // src/adapters/cursor/runtime-entry.ts
 var EMPTY_APPROVALS = {
   version: 1,
   approvals: []
 };
+var controlPlaneSpikeRan = false;
 function jsonResponse(value) {
   process2.stdout.write(`${JSON.stringify(value)}
 `);
@@ -1626,33 +1801,33 @@ async function readStdinJson() {
   }
 }
 function findRepoRoot(startPath) {
-  let current = path4.resolve(startPath);
+  let current = path5.resolve(startPath);
   while (true) {
-    if (existsSync(path4.join(current, ".git")) || existsSync(path4.join(current, ".cursor"))) {
+    if (existsSync2(path5.join(current, ".git")) || existsSync2(path5.join(current, ".cursor"))) {
       return current;
     }
-    const parent = path4.dirname(current);
+    const parent = path5.dirname(current);
     if (parent === current) {
-      return path4.resolve(startPath);
+      return path5.resolve(startPath);
     }
     current = parent;
   }
 }
 async function loadJsonFile(filePath, fallback) {
   try {
-    const raw = await readFile(filePath, "utf8");
+    const raw = await readFile2(filePath, "utf8");
     return JSON.parse(raw);
   } catch {
     return fallback;
   }
 }
 async function writeJsonFile(filePath, value) {
-  await mkdir(path4.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}
+  await mkdir2(path5.dirname(filePath), { recursive: true });
+  await writeFile2(filePath, `${JSON.stringify(value, null, 2)}
 `, "utf8");
 }
 async function loadConfig(repoRoot) {
-  const configPath = path4.join(repoRoot, ".cursor", "belay.config.json");
+  const configPath = path5.join(repoRoot, ".cursor", "belay.config.json");
   const loaded = await loadJsonFile(configPath, {});
   return {
     configPath,
@@ -1674,14 +1849,14 @@ async function loadApprovals(repoRoot, config, fileName) {
   };
 }
 async function appendAudit(repoRoot, config, event) {
-  const auditPath = path4.join(repoRoot, config.audit.logPath);
-  await mkdir(path4.dirname(auditPath), { recursive: true });
+  const auditPath = path5.join(repoRoot, config.audit.logPath);
+  await mkdir2(path5.dirname(auditPath), { recursive: true });
   const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
   if (!config.audit.includeAssessment) {
     delete record.assessment;
   }
   const scrubbed = scrubValue(record, scrubOptionsFromConfig(config));
-  await writeFile(auditPath, `${JSON.stringify(scrubbed)}
+  await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
 `, {
     encoding: "utf8",
     flag: "a"
@@ -1746,53 +1921,100 @@ async function movePendingToApproved(repoRoot, config, approvalId) {
     message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`
   };
 }
+function gateAuditEventName(kind) {
+  if (kind === "shell") {
+    return "beforeShellExecution";
+  }
+  if (kind === "tool") {
+    return "preToolUse";
+  }
+  return "subagentGate";
+}
 async function gateDecisionToResponse(params) {
   const { repoRoot, kind, result, config } = params;
+  const gateBase = {
+    event: gateAuditEventName(kind),
+    kind,
+    fingerprint: result.fingerprint,
+    summary: result.normalizedCommand ?? result.summary ?? "",
+    assessment: result.assessment,
+    mode: config.mode
+  };
   const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint);
   if (approved) {
     await appendAudit(repoRoot, config, {
-      event: kind === "shell" ? "beforeShellExecution" : kind === "tool" ? "preToolUse" : "subagentGate",
-      kind,
+      ...gateBase,
       verdict: "allow",
       reason: "approved_once",
       approvalId: approved.approvalId,
-      fingerprint: result.fingerprint,
-      summary: result.normalizedCommand ?? result.summary ?? "",
-      assessment: result.assessment
+      wouldBlock: false,
+      permission: "allow"
     });
     return { permission: "allow" };
   }
   if (result.verdict === "allow" || result.verdict === "allow_flagged") {
     await appendAudit(repoRoot, config, {
-      event: kind === "shell" ? "beforeShellExecution" : kind === "tool" ? "preToolUse" : "subagentGate",
-      kind,
+      ...gateBase,
       verdict: result.verdict,
       reason: result.reason,
-      fingerprint: result.fingerprint,
-      summary: result.normalizedCommand ?? result.summary ?? "",
-      assessment: result.assessment
+      wouldBlock: false,
+      permission: "allow"
+    });
+    return { permission: "allow" };
+  }
+  if (config.mode === "audit") {
+    await appendAudit(repoRoot, config, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: true,
+      permission: "allow"
     });
     return { permission: "allow" };
   }
   const approval = await ensurePendingApproval(repoRoot, kind, result, config);
   await appendAudit(repoRoot, config, {
-    event: kind === "shell" ? "beforeShellExecution" : kind === "tool" ? "preToolUse" : "subagentGate",
-    kind,
+    ...gateBase,
     verdict: result.verdict,
     reason: result.reason,
     approvalId: approval.approvalId,
-    fingerprint: result.fingerprint,
-    summary: result.normalizedCommand ?? result.summary ?? "",
-    assessment: result.assessment
+    wouldBlock: true,
+    permission: "deny"
   });
-  if (config.mode === "audit") {
-    return { permission: "allow" };
-  }
   return {
     permission: "deny",
     user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(config.tokenPrefix, approval.approvalId)}`,
     agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`
   };
+}
+async function maybeRunControlPlaneSpike(repoRoot, config) {
+  const envEnabled = process2.env.BELAY_OQ3_SPIKE === "1";
+  if (!envEnabled && !config.controlPlane.spikeOnPrompt) {
+    return;
+  }
+  if (controlPlaneSpikeRan) {
+    return;
+  }
+  controlPlaneSpikeRan = true;
+  const controlPlaneDir = config.controlPlane.configDir ?? resolveControlPlaneDir(config);
+  const homedir = () => process2.env.HOME ?? "";
+  const spike = await runControlPlaneSpike(process2.env, process2.cwd(), homedir, controlPlaneDir);
+  const spikePath = await persistControlPlaneSpikeResult(
+    spike,
+    process2.env,
+    homedir,
+    controlPlaneDir
+  );
+  await appendAudit(repoRoot, config, {
+    event: "controlPlaneSpike",
+    kind: "diagnostic",
+    verdict: spike.ok ? "allow" : "deny_pending_approval",
+    reason: spike.ok ? "control_plane_writable" : "control_plane_blocked",
+    summary: spike.error ?? spikePath,
+    mode: config.mode,
+    wouldBlock: !spike.ok,
+    permission: "allow"
+  });
 }
 async function runBeforeSubmitPromptHook() {
   try {
@@ -1800,6 +2022,7 @@ async function runBeforeSubmitPromptHook() {
     const prompt = String(payload.prompt ?? "");
     const repoRoot = findRepoRoot(process2.cwd());
     const { config } = await loadConfig(repoRoot);
+    await maybeRunControlPlaneSpike(repoRoot, config);
     const approvalId = approvalCommandMatch(prompt, config.tokenPrefix);
     if (!approvalId) {
       jsonResponse({ continue: true });

@@ -6,8 +6,10 @@
 |---------|-------|--------|
 | **v0.1** | Cursor hook adapter, one-shot approval, basic heuristics | Shipped |
 | **v0.2** | Testable core, stronger classifier, config v2, ops CLI | Shipped — see [v0.2-plan.md](./v0.2-plan.md) |
+| **v0.3** | Config v3, fail-closed shell, control plane, redaction | Shipped — see [SPEC-v0.3.md](./SPEC-v0.3.md) |
+| **v0.3.1** | OQ1 dogfood metrics, OQ3 hook spike, orphan cleanup, substitution hardening | Shipped |
 
-## v0.3 (shipped in 0.3.0)
+## v0.3 (0.3.0)
 
 **Theme:** Harden defaults, move control state out of the repo, prepare for multi-adapter.
 
@@ -28,8 +30,16 @@ Recommended implementation order (dependency-driven):
 - Extended audit redaction
 - SECURITY.md threat model update
 
+## v0.3.1 (shipped)
+
+- **OQ1 dogfood** — `agent-belay metrics`, enriched audit fields (`wouldBlock`), audit mode without pending-approval noise
+- **OQ3 validation** — `controlPlane.spikeOnPrompt` writes `oq3-spike-last.json` from `beforeSubmitPrompt`
+- **Orphan cleanup** — `doctor --fix`, reverse migration on disable
+- **Shell** — nested/multi command substitution parsing
+
 ## v0.4+ (planned)
 
+- Flip `unknownLocalEffect` default to `deny` after dogfood metrics justify it (OQ1)
 - Second runtime adapter behind `BelayAdapter`
 - Agent-side `Assessment` ingestion
 - Optional policy bundles / team presets

@@ -16,6 +16,7 @@ export const DEFAULT_REDACTION_V3 = {
 export const DEFAULT_CONTROL_PLANE_V3 = {
     enabled: false,
     configDir: null,
+    spikeOnPrompt: false,
 };
 export const DEFAULT_CONFIG_V2 = {
     version: 2,
@@ -290,6 +291,7 @@ export function normalizeConfig(config) {
             configDir: typeof v3.controlPlane?.configDir === 'string' && v3.controlPlane.configDir.trim()
                 ? v3.controlPlane.configDir.trim()
                 : null,
+            spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
         },
         audit: {
             logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -356,6 +358,10 @@ export function resolveControlPlaneDir(config) {
         return config.controlPlane.configDir;
     }
     return defaultControlPlaneDir();
+}
+/** Control-plane directory regardless of enabled flag (for orphan migration). */
+export function configuredControlPlaneDir(config) {
+    return resolveControlPlaneDir(config);
 }
 export function belayStateDir(config, repoRoot) {
     if (config.controlPlane.enabled) {

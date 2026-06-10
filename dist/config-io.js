@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js';
-import { approvedApprovalsFile, belayStateDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
+import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 export function configPathFor(repoRoot) {
     return path.join(repoRoot, '.cursor', 'belay.config.json');
@@ -35,15 +35,10 @@ async function writeApprovalStateFile(filePath, state) {
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8');
 }
-export async function migrateRepoLocalApprovalsToControlPlane(repoRoot, config) {
-    if (!config.controlPlane.enabled) {
-        return;
-    }
-    const repoLocalDir = path.join(repoRoot, '.cursor', 'belay');
-    const targetDir = belayStateDir(config, repoRoot);
+async function migrateApprovalFilesBetween(sourceDir, targetDir) {
     await mkdir(targetDir, { recursive: true });
     for (const fileName of APPROVAL_STATE_FILES) {
-        const from = path.join(repoLocalDir, fileName);
+        const from = path.join(sourceDir, fileName);
         const to = path.join(targetDir, fileName);
         if (!existsSync(from)) {
             continue;
@@ -56,6 +51,21 @@ export async function migrateRepoLocalApprovalsToControlPlane(repoRoot, config) 
         const sourceState = await readApprovalStateFile(from);
         await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState));
     }
+}
+export async function migrateRepoLocalApprovalsToControlPlane(repoRoot, config) {
+    if (!config.controlPlane.enabled) {
+        return;
+    }
+    const repoLocalDir = path.join(repoRoot, '.cursor', 'belay');
+    const targetDir = belayStateDir(config, repoRoot);
+    await migrateApprovalFilesBetween(repoLocalDir, targetDir);
+}
+export async function migrateControlPlaneApprovalsToRepoLocal(repoRoot, config, sourceDir = configuredControlPlaneDir(config)) {
+    if (config.controlPlane.enabled) {
+        return;
+    }
+    const targetDir = path.join(repoRoot, '.cursor', 'belay');
+    await migrateApprovalFilesBetween(sourceDir, targetDir);
 }
 export async function loadConfigFile(repoRoot) {
     const configPath = configPathFor(repoRoot);
@@ -79,6 +89,9 @@ export async function mergeAndWriteConfig(repoRoot) {
     await ensureBelayStateDir(merged, repoRoot);
     if (merged.controlPlane.enabled) {
         await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged);
+    }
+    else {
+        await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged);
     }
     return merged;
 }

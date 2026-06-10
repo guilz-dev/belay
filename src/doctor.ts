@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { cleanupOrphanApprovalState } from './cleanup-orphans.js'
 import {
   approvedApprovalsPath,
   belayStateDir,
@@ -64,7 +65,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         const repoLocalApproved = path.join(cursorDir, 'belay', 'approved-approvals.json')
         if (existsSync(repoLocalPending) || existsSync(repoLocalApproved)) {
           warnings.push(
-            'Repo-local approval files remain while control plane is enabled. The runtime ignores them.',
+            'Repo-local approval files remain while control plane is enabled. Run agent-belay doctor --fix to archive them.',
           )
         }
       } else {
@@ -78,7 +79,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
             existsSync(path.join(controlPlaneDir, 'approved-approvals.json'))
           if (hasApprovalFiles) {
             warnings.push(
-              `Control plane is disabled but approval files still exist at ${controlPlaneDir}. Re-enable control plane or archive them manually.`,
+              `Control plane is disabled but approval files still exist at ${controlPlaneDir}. Run agent-belay doctor --fix to migrate and archive them.`,
             )
           }
         }
@@ -154,6 +155,17 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     }
     if (runtimeVersions.stamp?.startsWith(`${PACKAGE_VERSION}@`)) {
       notes.push(`Runtime version matches package (${PACKAGE_VERSION}).`)
+    }
+  }
+
+  if (options.fix && loadedConfig) {
+    const cleanup = await cleanupOrphanApprovalState(repoRoot, loadedConfig, {
+      dryRun: options.dryRun === true,
+    })
+    if (cleanup.actions.length > 0) {
+      notes.push(...cleanup.actions)
+    } else {
+      notes.push('No orphan approval cleanup actions were needed.')
     }
   }
 

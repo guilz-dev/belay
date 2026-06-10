@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -48,5 +49,37 @@ describe('doctorProject', () => {
     expect(
       report.warnings.some((warning) => warning.includes('Repo-local approval files remain')),
     ).toBe(true)
+  })
+
+  it('archives stale repo-local approvals with doctor --fix when control plane is enabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-fix-'))
+    tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'cp')
+    await initProject({ targetDir: repoRoot })
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
+      `${JSON.stringify({ version: 1, approvals: [] })}\n`,
+    )
+    await mkdir(controlPlaneDir, { recursive: true })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        version: 3,
+        controlPlane: { enabled: true, configDir: controlPlaneDir },
+      })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot, fix: true })
+    expect(
+      report.notes.some((note) => note.includes('Archived stale repo-local approval files')),
+    ).toBe(true)
+    expect(existsSync(path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'))).toBe(
+      false,
+    )
   })
 })

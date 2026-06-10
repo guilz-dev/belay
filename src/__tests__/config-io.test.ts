@@ -127,6 +127,50 @@ describe('config-io control plane migration', () => {
     )
   })
 
+  it('migrates control-plane approvals to repo-local when control plane is disabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cp-reverse-'))
+    tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
+    await initProject({ targetDir: repoRoot })
+    await mkdir(controlPlaneDir, { recursive: true })
+    await writeFile(
+      path.join(controlPlaneDir, 'pending-approvals.json'),
+      `${JSON.stringify({
+        version: 1,
+        approvals: [
+          {
+            approvalId: 'belay_cp_only',
+            kind: 'shell',
+            fingerprint: 'cp',
+            repoRoot,
+            reason: 'external_effect',
+            summary: 'cp push',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const existing = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...existing,
+        version: 3,
+        controlPlane: { enabled: false, configDir: controlPlaneDir },
+      })}\n`,
+    )
+
+    await mergeAndWriteConfig(repoRoot)
+    const migrated = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'), 'utf8'),
+    )
+    expect(migrated.approvals).toHaveLength(1)
+    expect(migrated.approvals[0].approvalId).toBe('belay_cp_only')
+  })
+
   it('migrateRepoLocalApprovalsToControlPlane is a no-op when control plane is disabled', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cp-noop-'))
     tempDirs.push(repoRoot)

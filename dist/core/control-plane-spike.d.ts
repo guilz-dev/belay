@@ -13,4 +13,5 @@ export interface ControlPlaneSpikeResult {
  * OQ3 spike: verify hook-like Node context can read/write the user control-plane dir.
  * Does not require Cursor; simulates the filesystem access pattern for beforeSubmitPrompt.
  */
-export declare function runControlPlaneSpike(env?: NodeJS.ProcessEnv, cwd?: string, homedir?: () => string): Promise<ControlPlaneSpikeResult>;
+export declare function persistControlPlaneSpikeResult(result: ControlPlaneSpikeResult, env?: NodeJS.ProcessEnv, homedir?: () => string, controlPlaneDir?: string): Promise<string>;
+export declare function runControlPlaneSpike(env?: NodeJS.ProcessEnv, cwd?: string, homedir?: () => string, controlPlaneDirOverride?: string): Promise<ControlPlaneSpikeResult>;

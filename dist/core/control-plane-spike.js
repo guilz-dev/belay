@@ -6,8 +6,14 @@ import { defaultControlPlaneDir } from './config.js';
  * OQ3 spike: verify hook-like Node context can read/write the user control-plane dir.
  * Does not require Cursor; simulates the filesystem access pattern for beforeSubmitPrompt.
  */
-export async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? '') {
-    const controlPlaneDir = defaultControlPlaneDir(env, homedir);
+export async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? '', controlPlaneDir) {
+    const outputPath = path.join(controlPlaneDir ?? defaultControlPlaneDir(env, homedir), 'oq3-spike-last.json');
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify({ ...result, recordedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+    return outputPath;
+}
+export async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? '', controlPlaneDirOverride) {
+    const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
     const testFile = path.join(controlPlaneDir, 'oq3-spike.json');
     const payload = {
         timestamp: new Date().toISOString(),
