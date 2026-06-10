@@ -27,6 +27,7 @@ export type {
   DoctorOptions,
   DoctorReport,
   ExplainOptions,
+  ExplainReport,
   InitOptions,
   RevokeOptions,
   StatusOptions,

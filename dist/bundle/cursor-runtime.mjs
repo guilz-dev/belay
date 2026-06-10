@@ -748,9 +748,23 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
   if (substitution) {
-    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
     const normalizedCommand2 = normalizeShellCommand(command, repoRoot, normalizeToken);
     const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+    if (options.unknownLocalEffect === "deny") {
+      return denyResult({
+        reason: "command_substitution",
+        normalizedCommand: normalizedCommand2,
+        cwdRelative: cwdRelative2,
+        assessment: {
+          reversibility: "irreversible",
+          external: inner.assessment.external,
+          blastRadius: "command substitution",
+          confidence: 0.9,
+          signals: ["command_substitution", ...inner.assessment.signals]
+        }
+      });
+    }
     return wrapInnerVerdict({
       inner,
       normalizedCommand: normalizedCommand2,

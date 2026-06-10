@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, } from './config-io.js';
+import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, } from './config-io.js';
 import { compactApprovals } from './core/approval.js';
 export async function statusProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
@@ -9,6 +9,7 @@ export async function statusProject(options = {}) {
     const expiredPendingCount = countExpiredPending(pendingRaw);
     return {
         repoRoot,
+        approvalStateDir: belayStateDir(config, repoRoot),
         pending: compactApprovals(pendingRaw).approvals,
         approved: compactApprovals(approvedRaw).approvals,
         expiredPendingCount,
@@ -17,6 +18,7 @@ export async function statusProject(options = {}) {
 export function formatStatusReport(report) {
     const lines = [
         `agent-belay status for ${report.repoRoot}`,
+        `Approval state: ${report.approvalStateDir}`,
         `Pending: ${report.pending.length}`,
         `Approved (awaiting use): ${report.approved.length}`,
         `Expired pending (not yet compacted): ${report.expiredPendingCount}`,

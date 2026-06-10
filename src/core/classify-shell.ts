@@ -607,9 +607,23 @@ export function classifyShell(
 ): ClassifyResult {
   const substitution = depth === 0 ? extractCommandSubstitution(command) : null
   if (substitution) {
-    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1)
     const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken)
     const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd
+    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1)
+    if (options.unknownLocalEffect === 'deny') {
+      return denyResult({
+        reason: 'command_substitution',
+        normalizedCommand,
+        cwdRelative,
+        assessment: {
+          reversibility: 'irreversible',
+          external: inner.assessment.external,
+          blastRadius: 'command substitution',
+          confidence: 0.9,
+          signals: ['command_substitution', ...inner.assessment.signals],
+        },
+      })
+    }
     return wrapInnerVerdict({
       inner,
       normalizedCommand,

@@ -177,6 +177,14 @@ describe('classifyShell', () => {
     expect(result.reason).toBe('control_plane_mutation')
   })
 
+  it('denies command substitution under fail-closed policy even when inner is read-only', () => {
+    const result = classifyShell('echo $(git status)', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('command_substitution')
+  })
+
   it('denies shell mutations targeting control plane paths via cp', () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
     const result = classifyShell(

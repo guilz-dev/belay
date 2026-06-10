@@ -1,30 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 ### Added
 
 - Config v3 schema with `policy`, `overrides`, `redaction`, and `controlPlane` sections
 - Automatic v1/v2 → v3 migration with `custom*` → `overrides` mapping (M1)
 - Fail-closed shell policy via `policy.unknownLocalEffect: "deny"` with override escape hatches
-- Shell hardening: `eval`/`source` deny, command substitution wrapping, override precedence (T4)
+- Shell hardening: `eval`/`source` deny, command substitution handling, override precedence (T4)
 - User-level control plane for approval state (`controlPlane.enabled`)
-- Write-tool deny for control-plane path mutations (R8)
-- Audit redaction for bearer tokens, auth headers, key/value secrets, optional high-entropy strings
+- Approval file migration from repo-local to control plane on first enable
+- Write-tool and shell deny for control-plane path mutations (R8)
+- Config-driven audit redaction for bearer tokens, auth headers, key/value secrets
 - Symlink-aware path resolution via `realpath` (R5)
-- OQ3 control-plane filesystem spike (`runControlPlaneSpike`, `docs/spikes/oq3-control-plane.md`)
-- `docs/SPEC-v0.3.md`, `docs/ROADMAP.md`, and SECURITY.md threat model update
+- OQ3 control-plane filesystem spike and `docs/SPEC-v0.3.md` / `docs/ROADMAP.md`
 
 ### Changed
 
-- `explain` output includes active policy and override lists
+- `explain` and `status` output include policy, overrides, and approval state directory
 - Approval state paths resolve to control plane or repo-local based on config
 
 ### Fixed
 
-- Gate audit events now use config-driven redaction (not only postToolUse hook)
-- Shell classifier denies redirects and mutations targeting the control plane (R8)
+- Gate audit events use config-driven redaction
 - Version-less configs with v3 sections migrate correctly; doctor warns when `version` is missing
+- Fail-closed mode denies all command substitution, not only risky inner commands
 
 ## 0.2.0
 

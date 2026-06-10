@@ -7,7 +7,7 @@
 | **v0.1** | Cursor hook adapter, one-shot approval, basic heuristics | Shipped |
 | **v0.2** | Testable core, stronger classifier, config v2, ops CLI | Shipped — see [v0.2-plan.md](./v0.2-plan.md) |
 
-## v0.3 (in progress)
+## v0.3 (shipped in 0.3.0)
 
 **Theme:** Harden defaults, move control state out of the repo, prepare for multi-adapter.
 

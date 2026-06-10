@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { compactApprovals, isExpired } from './core/approval.js'
 import {
@@ -39,6 +39,27 @@ export async function ensureBelayStateDir(
   return stateDir
 }
 
+const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json'] as const
+
+export async function migrateRepoLocalApprovalsToControlPlane(
+  repoRoot: string,
+  config: BelayConfigV3,
+): Promise<void> {
+  if (!config.controlPlane.enabled) {
+    return
+  }
+  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
+  const targetDir = belayStateDir(config, repoRoot)
+  await mkdir(targetDir, { recursive: true })
+  for (const fileName of APPROVAL_STATE_FILES) {
+    const from = path.join(repoLocalDir, fileName)
+    const to = path.join(targetDir, fileName)
+    if (existsSync(from) && !existsSync(to)) {
+      await copyFile(from, to)
+    }
+  }
+}
+
 export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV3> {
   const configPath = configPathFor(repoRoot)
   if (!existsSync(configPath)) {
@@ -61,6 +82,9 @@ export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfig
   const merged = mergeConfig(existing)
   await writeConfigFile(repoRoot, merged)
   await ensureBelayStateDir(merged, repoRoot)
+  if (merged.controlPlane.enabled) {
+    await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged)
+  }
   return merged
 }
 

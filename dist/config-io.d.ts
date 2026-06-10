@@ -6,6 +6,7 @@ export declare function pendingApprovalsPath(repoRoot: string, config: BelayConf
 export declare function approvedApprovalsPath(repoRoot: string, config: BelayConfigV3): string;
 export declare function runtimeCorePath(repoRoot: string): string;
 export declare function ensureBelayStateDir(config: BelayConfigV3, repoRoot: string): Promise<string>;
+export declare function migrateRepoLocalApprovalsToControlPlane(repoRoot: string, config: BelayConfigV3): Promise<void>;
 export declare function loadConfigFile(repoRoot: string): Promise<BelayConfigV3>;
 export declare function writeConfigFile(repoRoot: string, config: BelayConfigV3): Promise<void>;
 export declare function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfigV3>;

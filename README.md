@@ -80,14 +80,16 @@ This installs the runtime hooks and also writes helper artifacts for:
 npx agent-belay init
 ```
 
-### Upgrade from v0.1
+### Upgrade from v0.1 / v0.2
 
 ```bash
 npx agent-belay upgrade
 ```
 
 `upgrade` refreshes hook scripts and the bundled runtime while merging your
-existing `.cursor/belay.config.json` settings.
+existing `.cursor/belay.config.json` settings (v1/v2 configs migrate to v3).
+When you newly enable `controlPlane`, existing repo-local approval files are
+copied into the control-plane directory if it is empty.
 
 ### Skill only (skills CLI)
 
@@ -113,9 +115,9 @@ Current adapter artifacts:
 - `.cursor/hooks/belay-tool-gate.mjs`
 - `.cursor/hooks/belay-audit.mjs`
 - `.cursor/belay/runtime/core.mjs`
-- `.cursor/belay/pending-approvals.json`
-- `.cursor/belay/approved-approvals.json`
-- `.cursor/belay/audit.ndjson`
+- `.cursor/belay/pending-approvals.json` (or `~/.config/agent-belay/` when `controlPlane.enabled`)
+- `.cursor/belay/approved-approvals.json` (or control-plane directory)
+- `.cursor/belay/audit.ndjson` (always repo-local via `audit.logPath`)
 
 Optional skill and command artifacts (with `--with-skill`):
 
@@ -193,8 +195,9 @@ unrecognized local commands. Use with `overrides.allow` and `npx agent-belay exp
 to tune before enabling in `enforce` mode.
 
 `controlPlane.enabled: true` stores approval state under
-`~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). File-mutation tools
-cannot write control-plane paths when this is enabled.
+`~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). The same path is
+shared across repositories for the current OS user. File-mutation tools and shell
+redirects cannot write control-plane paths when this is enabled.
 
 `strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
 the strictest verdict. Override lists use exact command or segment key matches only.

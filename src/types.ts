@@ -18,7 +18,8 @@ export type {
   HookVerdict,
 } from './core/types.js'
 
-import type { ApprovalRecord } from './core/types.js'
+import type { BelayOverridesConfig, BelayPolicyConfig } from './core/config.js'
+import type { ApprovalRecord, ClassifyResult } from './core/types.js'
 
 export interface HookEntry {
   command: string
@@ -66,12 +67,23 @@ export interface StatusOptions {
 
 export interface StatusReport {
   repoRoot: string
+  approvalStateDir: string
   pending: ApprovalRecord[]
   approved: ApprovalRecord[]
   expiredPendingCount: number
 }
 
 export type ExplainKind = 'shell' | 'tool' | 'subagent'
+
+export interface ExplainReport {
+  repoRoot: string
+  kind: string
+  command: string
+  cwd: string
+  policy: BelayPolicyConfig
+  overrides: BelayOverridesConfig
+  result: ClassifyResult
+}
 
 export interface ExplainOptions {
   targetDir?: string

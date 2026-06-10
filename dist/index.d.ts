@@ -7,5 +7,5 @@ export { initProject, upgradeProject } from './installer.js';
 export { resolveNodeBinary } from './node-resolution.js';
 export { revokeApproval } from './revoke.js';
 export { formatStatusReport, statusProject } from './status.js';
-export type { ApprovalRecord, ApprovalStateFile, Assessment, BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, ClassifyResult, DoctorOptions, DoctorReport, ExplainOptions, InitOptions, RevokeOptions, StatusOptions, StatusReport, UpgradeOptions, } from './types.js';
+export type { ApprovalRecord, ApprovalStateFile, Assessment, BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, ClassifyResult, DoctorOptions, DoctorReport, ExplainOptions, ExplainReport, InitOptions, RevokeOptions, StatusOptions, StatusReport, UpgradeOptions, } from './types.js';
 export { PACKAGE_VERSION } from './version.js';

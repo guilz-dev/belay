@@ -8,7 +8,7 @@ import {
   classifyToolUse,
 } from './core/index.js'
 import type { ClassifyResult } from './core/types.js'
-import type { ExplainOptions } from './types.js'
+import type { ExplainOptions, ExplainReport } from './types.js'
 
 function classifyExplainTarget(
   options: ExplainOptions,
@@ -69,7 +69,7 @@ function classifyExplainTarget(
   throw new Error(`Unknown explain kind: ${kind}`)
 }
 
-export async function explainCommand(options: ExplainOptions) {
+export async function explainCommand(options: ExplainOptions): Promise<ExplainReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot
   const config = await loadConfigFile(repoRoot)
@@ -87,7 +87,7 @@ export async function explainCommand(options: ExplainOptions) {
   }
 }
 
-export function formatExplainReport(report: Awaited<ReturnType<typeof explainCommand>>): string {
+export function formatExplainReport(report: ExplainReport): string {
   const { result } = report
   const lines = [
     `agent-belay explain for ${report.repoRoot}`,

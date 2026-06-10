@@ -34,7 +34,7 @@ export interface ClassifierOptions {
 }
 export interface ApprovalRecord {
     approvalId: string;
-    kind: 'shell' | 'subagent' | 'tool' | 'tool';
+    kind: 'shell' | 'subagent' | 'tool';
     fingerprint: string;
     repoRoot: string;
     reason: string;

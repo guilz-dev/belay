@@ -76,7 +76,7 @@ Controls audit log scrubbing (see `src/core/scrub.ts`).
 }
 ```
 
-v0.3 config ships the schema and defaults; extended scrub patterns land in a follow-up PR (R10).
+v0.3 implements configurable scrub patterns in `src/core/scrub.ts`; gate and postToolUse audit events honor `redaction` settings.
 
 #### `controlPlane`
 
@@ -96,7 +96,7 @@ User-level state directory for approvals and shared config (R6–R8).
 | `enabled` | `boolean` | `false` | When `true`, runtime reads/writes `~/.config/agent-belay/` instead of repo-local `.cursor/belay/` |
 | `configDir` | `string` \| `null` | `null` | Override; default resolves via `XDG_CONFIG_HOME` or `~/.config/agent-belay` |
 
-Control-plane runtime wiring is out of scope for the config-v3 PR; see OQ3 spike results in `docs/spikes/oq3-control-plane.md`.
+When `controlPlane.enabled` is `true`, approval state lives under the resolved control-plane directory. Enabling control plane on `upgrade` copies existing repo-local approval files if the destination is empty. See `docs/spikes/oq3-control-plane.md` for hook filesystem validation.
 
 ## Migration matrix
 

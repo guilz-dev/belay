@@ -1,12 +1,3 @@
-import type { ClassifyResult } from './core/types.js';
-import type { ExplainOptions } from './types.js';
-export declare function explainCommand(options: ExplainOptions): Promise<{
-    repoRoot: string;
-    kind: string;
-    command: string;
-    cwd: string;
-    policy: import("./types.js").BelayPolicyConfig;
-    overrides: import("./types.js").BelayOverridesConfig;
-    result: ClassifyResult;
-}>;
-export declare function formatExplainReport(report: Awaited<ReturnType<typeof explainCommand>>): string;
+import type { ExplainOptions, ExplainReport } from './types.js';
+export declare function explainCommand(options: ExplainOptions): Promise<ExplainReport>;
+export declare function formatExplainReport(report: ExplainReport): string;
