@@ -1,11 +1,34 @@
+export { cursorAdapter } from './adapters/cursor/adapter.js'
+export type { BelayAdapter } from './adapters/types.js'
+export {
+  classifyShell,
+  classifySubagent,
+  classifyToolUse,
+  DEFAULT_CONFIG_V2,
+  mergeConfig,
+  migrateConfig,
+} from './core/index.js'
 export { doctorProject, formatDoctorReport } from './doctor.js'
-export { initProject } from './installer.js'
+export { explainCommand, formatExplainReport } from './explain.js'
+export { initProject, upgradeProject } from './installer.js'
 export { resolveNodeBinary } from './node-resolution.js'
+export { revokeApproval } from './revoke.js'
+export { formatStatusReport, statusProject } from './status.js'
 export type {
   ApprovalRecord,
   ApprovalStateFile,
+  Assessment,
   BelayConfig,
+  BelayConfigV1,
+  BelayConfigV2,
+  ClassifyResult,
   DoctorOptions,
   DoctorReport,
+  ExplainOptions,
   InitOptions,
+  RevokeOptions,
+  StatusOptions,
+  StatusReport,
+  UpgradeOptions,
 } from './types.js'
+export { PACKAGE_VERSION } from './version.js'

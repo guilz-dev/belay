@@ -1,7 +1,7 @@
-import type { BelayConfig } from './types.js';
-export declare function renderConfig(config: BelayConfig): string;
+import type { BelayConfigV2 } from './core/config.js';
+export declare function renderConfig(config: BelayConfigV2): string;
 export declare function renderBeforeSubmitHook(): string;
 export declare function renderShellGateHook(): string;
 export declare function renderToolGateHook(): string;
 export declare function renderAuditHook(): string;
-export declare function renderRuntimeCore(config: BelayConfig): string;
+export declare function renderRuntimeCore(): Promise<string>;
