@@ -32,6 +32,41 @@ When that judgment gets uncertain, or an action looks like it crosses a real
 safety boundary, it falls back to explicit approval and audit — instead of
 pretending a static denylist solved the problem.
 
+## How it works
+
+`agent-belay` hooks into specific agent runtime events and gates them before
+they take effect. In the current Cursor-style adapter, it gates two kinds of
+actions:
+
+- **Shell execution** (`beforeShellExecution`)
+- **Subagent / Task launches** (`preToolUse` for `Task`, `subagentStart`)
+
+When one of these events fires, Belay runs its own lightweight classifier on the
+payload to estimate reversibility, external effects, blast radius, and
+confidence. It does not rely on an agent-side `Assessment` being present in the
+payload; it always forms its own judgment.
+
+Based on that judgment, Belay assigns one of three verdicts:
+
+- `allow` — Safe enough to execute without intervention (e.g., read-only
+  commands)
+- `allow_flagged` — Local mutation or unknown-but-local effect; allowed, but
+  recorded for audit
+- `deny_pending_approval` — High-risk or ambiguous (external effects,
+  irreversible-looking mutations, writes outside the repo); blocks execution and
+  issues an approval ID
+
+When an action is denied, the user can approve the next matching action once by
+sending `/belay-approve <approval-id>`. Approvals are one-shot and expire after
+15 minutes by default. Every decision is written to `.cursor/belay/audit.ndjson`
+for later review.
+
+If `mode` is set to `"audit"` in `.cursor/belay.config.json`, would-be denies
+are recorded but execution is still allowed to continue.
+
+This creates a dynamic, context-aware gate rather than a static command
+denylist.
+
 ## Scope
 
 `agent-belay` is an **agent-skill-oriented hook heuristic for Belay-style gating**, not the
