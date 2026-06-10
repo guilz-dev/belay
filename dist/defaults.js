@@ -1,55 +1,150 @@
+import { DEFAULT_CONFIG_V2 } from './core/config.js';
 export const PACKAGE_NAME = 'agent-belay';
+export const DEFAULT_CONFIG = DEFAULT_CONFIG_V2;
 function runnerCommand(platform, hookName, ...args) {
     const base = platform === 'win32' ? '.\\.cursor\\hooks\\belay-runner.cmd' : './.cursor/hooks/belay-runner';
     return [base, hookName, ...args].join(' ');
 }
-export function getManagedHookEvents(platform = process.platform) {
-    return {
-        beforeSubmitPrompt: {
-            command: runnerCommand(platform, 'belay-before-submit'),
-            placement: 'prepend',
+export function getManagedHookEntries(platform = process.platform) {
+    const toolGate = runnerCommand(platform, 'belay-tool-gate', 'preToolUse');
+    const subagentGate = runnerCommand(platform, 'belay-tool-gate', 'subagentStart');
+    return [
+        {
+            event: 'beforeSubmitPrompt',
+            definition: {
+                command: runnerCommand(platform, 'belay-before-submit'),
+                placement: 'prepend',
+            },
         },
-        beforeShellExecution: {
-            command: runnerCommand(platform, 'belay-shell-gate'),
-            placement: 'prepend',
+        {
+            event: 'beforeShellExecution',
+            definition: {
+                command: runnerCommand(platform, 'belay-shell-gate'),
+                placement: 'prepend',
+            },
         },
-        preToolUse: {
-            command: runnerCommand(platform, 'belay-tool-gate', 'preToolUse'),
-            placement: 'prepend',
-            matcher: 'Task',
+        {
+            event: 'preToolUse',
+            definition: {
+                command: toolGate,
+                placement: 'prepend',
+                matcher: 'Task',
+            },
         },
-        subagentStart: {
-            command: runnerCommand(platform, 'belay-tool-gate', 'subagentStart'),
-            placement: 'prepend',
-            matcher: 'generalPurpose',
+        {
+            event: 'preToolUse',
+            definition: {
+                command: toolGate,
+                placement: 'prepend',
+                matcher: 'Shell',
+            },
         },
-        postToolUse: {
-            command: runnerCommand(platform, 'belay-audit', 'postToolUse'),
-            placement: 'append',
+        {
+            event: 'preToolUse',
+            definition: {
+                command: toolGate,
+                placement: 'prepend',
+                matcher: 'Write',
+            },
         },
-        stop: {
-            command: runnerCommand(platform, 'belay-audit', 'stop'),
-            placement: 'append',
+        {
+            event: 'preToolUse',
+            definition: {
+                command: toolGate,
+                placement: 'prepend',
+                matcher: 'StrReplace',
+            },
         },
-        sessionEnd: {
-            command: runnerCommand(platform, 'belay-audit', 'sessionEnd'),
-            placement: 'append',
+        {
+            event: 'preToolUse',
+            definition: {
+                command: toolGate,
+                placement: 'prepend',
+                matcher: 'Delete',
+            },
         },
-    };
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'generalPurpose',
+            },
+        },
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'computerUse',
+            },
+        },
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'debug',
+            },
+        },
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'explore',
+            },
+        },
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'videoReview',
+            },
+        },
+        {
+            event: 'subagentStart',
+            definition: {
+                command: subagentGate,
+                placement: 'prepend',
+                matcher: 'bugbot',
+            },
+        },
+        {
+            event: 'postToolUse',
+            definition: {
+                command: runnerCommand(platform, 'belay-audit', 'postToolUse'),
+                placement: 'append',
+            },
+        },
+        {
+            event: 'stop',
+            definition: {
+                command: runnerCommand(platform, 'belay-audit', 'stop'),
+                placement: 'append',
+            },
+        },
+        {
+            event: 'sessionEnd',
+            definition: {
+                command: runnerCommand(platform, 'belay-audit', 'sessionEnd'),
+                placement: 'append',
+            },
+        },
+    ];
 }
-export const DEFAULT_CONFIG = {
-    version: 1,
-    mode: 'enforce',
-    approvalTtlMinutes: 15,
-    tokenPrefix: '/belay-approve',
-    gates: {
-        shell: true,
-        subagent: true,
-    },
-    audit: {
-        logPath: '.cursor/belay/audit.ndjson',
-    },
-};
+/** @deprecated Use getManagedHookEntries instead. */
+export function getManagedHookEvents(platform = process.platform) {
+    const entries = getManagedHookEntries(platform);
+    const result = {};
+    for (const entry of entries) {
+        if (!result[entry.event]) {
+            result[entry.event] = entry.definition;
+        }
+    }
+    return result;
+}
 export const EMPTY_APPROVALS = {
     version: 1,
     approvals: [],

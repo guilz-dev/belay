@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { getManagedHookEvents } from '../defaults.js'
+import { getManagedHookEntries } from '../defaults.js'
 import { doctorProject } from '../doctor.js'
 import { initProject } from '../installer.js'
 
@@ -35,21 +35,26 @@ describe('agent-belay installer', () => {
 
     const hooksPath = path.join(cursorDir, 'hooks.json')
     const hooks = await readJson(hooksPath)
-    const managed = getManagedHookEvents(process.platform)
+    const managed = getManagedHookEntries(process.platform)
+    const managedByEvent = Object.fromEntries(
+      managed.map((entry) => [entry.event, entry.definition]),
+    )
 
-    expect(hooks.hooks.beforeSubmitPrompt[0].command).toBe(managed.beforeSubmitPrompt.command)
-    expect(hooks.hooks.beforeShellExecution[0].command).toBe(managed.beforeShellExecution.command)
-    expect(hooks.hooks.preToolUse[0]).toEqual({
-      command: managed.preToolUse.command,
-      matcher: 'Task',
-    })
-    expect(hooks.hooks.subagentStart[0]).toEqual({
-      command: managed.subagentStart.command,
-      matcher: 'generalPurpose',
-    })
-    expect(hooks.hooks.postToolUse.at(-1).command).toBe(managed.postToolUse.command)
-    expect(hooks.hooks.stop.at(-1).command).toBe(managed.stop.command)
-    expect(hooks.hooks.sessionEnd.at(-1).command).toBe(managed.sessionEnd.command)
+    expect(hooks.hooks.beforeSubmitPrompt[0].command).toBe(
+      managedByEvent.beforeSubmitPrompt.command,
+    )
+    expect(hooks.hooks.beforeShellExecution[0].command).toBe(
+      managedByEvent.beforeShellExecution.command,
+    )
+    expect(
+      hooks.hooks.preToolUse.map((entry: { matcher?: string }) => entry.matcher).sort(),
+    ).toEqual(['Delete', 'Shell', 'StrReplace', 'Task', 'Write'])
+    expect(
+      hooks.hooks.subagentStart.map((entry: { matcher?: string }) => entry.matcher).sort(),
+    ).toEqual(['bugbot', 'computerUse', 'debug', 'explore', 'generalPurpose', 'videoReview'])
+    expect(hooks.hooks.postToolUse.at(-1).command).toBe(managedByEvent.postToolUse.command)
+    expect(hooks.hooks.stop.at(-1).command).toBe(managedByEvent.stop.command)
+    expect(hooks.hooks.sessionEnd.at(-1).command).toBe(managedByEvent.sessionEnd.command)
 
     const skillPath = path.join(cursorDir, 'skills', 'belay', 'SKILL.md')
     const commandPath = path.join(cursorDir, 'commands', 'belay-approve.md')
@@ -66,6 +71,7 @@ describe('agent-belay installer', () => {
     expect(await readFile(runnerPath, 'utf8')).toContain('resolve_node')
     expect(await readFile(runnerCmdPath, 'utf8')).toContain('NODE_BIN')
     expect(await readFile(configPath, 'utf8')).toContain('"mode": "enforce"')
+    expect(await readFile(configPath, 'utf8')).toContain('"version": 2')
   })
 
   it('is idempotent across repeated init runs', async () => {
@@ -78,34 +84,6 @@ describe('agent-belay installer', () => {
     const second = await readFile(hooksPath, 'utf8')
 
     expect(second).toBe(first)
-  })
-
-  it('supports deprecated nightly option as an alias for withSkill', async () => {
-    const repoWithSkill = await createTempRepo()
-    const repoNightly = await createTempRepo()
-
-    await initProject({ targetDir: repoWithSkill, withSkill: true })
-    await initProject({ targetDir: repoNightly, nightly: true })
-
-    const withSkillSkill = await readFile(
-      path.join(repoWithSkill, '.cursor', 'skills', 'belay', 'SKILL.md'),
-      'utf8',
-    )
-    const nightlySkill = await readFile(
-      path.join(repoNightly, '.cursor', 'skills', 'belay', 'SKILL.md'),
-      'utf8',
-    )
-    const withSkillCommand = await readFile(
-      path.join(repoWithSkill, '.cursor', 'commands', 'belay-approve.md'),
-      'utf8',
-    )
-    const nightlyCommand = await readFile(
-      path.join(repoNightly, '.cursor', 'commands', 'belay-approve.md'),
-      'utf8',
-    )
-
-    expect(nightlySkill).toBe(withSkillSkill)
-    expect(nightlyCommand).toBe(withSkillCommand)
   })
 
   it('preserves existing hook ordering around prepend and append merges', async () => {
@@ -131,13 +109,15 @@ describe('agent-belay installer', () => {
     await initProject({ targetDir: repoRoot })
 
     const hooks = await readJson(path.join(cursorDir, 'hooks.json'))
-    const managed = getManagedHookEvents(process.platform)
+    const managed = getManagedHookEntries(process.platform)
+    const shellHook = managed.find((entry) => entry.event === 'beforeShellExecution')?.definition
+    const postHook = managed.find((entry) => entry.event === 'postToolUse')?.definition
     expect(
       hooks.hooks.beforeShellExecution.map((entry: { command: string }) => entry.command),
-    ).toEqual([managed.beforeShellExecution.command, 'python3 existing-shell.py'])
+    ).toEqual([shellHook?.command, 'python3 existing-shell.py'])
     expect(hooks.hooks.postToolUse.map((entry: { command: string }) => entry.command)).toEqual([
       'python3 existing-post.py',
-      managed.postToolUse.command,
+      postHook?.command,
     ])
   })
 

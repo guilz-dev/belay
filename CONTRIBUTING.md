@@ -17,14 +17,17 @@ pnpm test
 pnpm build
 ```
 
-## Current Adapter Boundary
+`pnpm test` runs `pnpm build` first because hook integration tests install the
+esbuild-bundled Cursor runtime from `dist/bundle/cursor-runtime.mjs`.
 
-`agent-belay` is intended as an agent-facing package, but the current v0.1
-runtime adapter is implemented for Cursor-style hooks.
+## Architecture (v0.2+)
 
-- Core ideas: approval state, fingerprinting, audit, runtime classification
-- Current integration: `.cursor/` installer, hook runner, optional Skill files
-- Future work: additional adapters for other agent runtimes
+- `src/core/` — runtime-agnostic classification, config migration, approval helpers
+- `src/adapters/cursor/` — Cursor hook runtime and adapter interface implementation
+- `scripts/build-runtime.mjs` — bundles the Cursor runtime into `dist/bundle/`
+
+When changing hook semantics, update core modules and tests first, then rebuild
+so generated `.cursor/belay/runtime/core.mjs` artifacts pick up the bundle.
 
 ## Changes
 
@@ -33,8 +36,7 @@ When changing behavior, prefer updating:
 - `README.md` for public-facing runtime and scope changes
 - tests under `src/__tests__/` for observable behavior changes
 - `skills/belay/SKILL.md` for the distributed skill content
-- generated runtime template logic in `src/templates.ts` when hook semantics
-  change
+- `docs/v0.2-plan.md` when scope or milestone decisions change
 
 ## Releases
 

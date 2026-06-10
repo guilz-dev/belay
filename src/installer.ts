@@ -2,22 +2,17 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import {
-  DEFAULT_CONFIG,
-  EMPTY_APPROVALS,
-  getManagedHookEvents,
-  type ManagedHookDefinition,
-} from './defaults.js'
+import { mergeAndWriteConfig } from './config-io.js'
+import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
 import {
   renderAuditHook,
   renderBeforeSubmitHook,
-  renderConfig,
   renderRuntimeCore,
   renderShellGateHook,
   renderToolGateHook,
 } from './templates.js'
-import type { HookEntry, HooksFile, InitOptions } from './types.js'
+import type { HookEntry, HooksFile, InitOptions, UpgradeOptions } from './types.js'
 
 const BUNDLED_SKILL_TEMPLATE_URL = new URL('../skills/belay/SKILL.md', import.meta.url)
 const BUNDLED_COMMAND_TEMPLATE_URL = new URL('../skills/belay/belay-approve.md', import.meta.url)
@@ -110,12 +105,10 @@ function mergeHooksFile(current: HooksFile): HooksFile {
     version: current.version || 1,
     hooks: { ...current.hooks },
   }
-  const managedEntries = Object.entries(getManagedHookEvents(process.platform)) as Array<
-    [string, ManagedHookDefinition]
-  >
-  for (const [eventName, definition] of managedEntries) {
-    next.hooks[eventName] = mergeHookEntry(
-      current.hooks[eventName],
+  const managedEntries = getManagedHookEntries(process.platform)
+  for (const { event, definition } of managedEntries) {
+    next.hooks[event] = mergeHookEntry(
+      next.hooks[event],
       {
         command: definition.command,
         matcher: definition.matcher,
@@ -126,31 +119,16 @@ function mergeHooksFile(current: HooksFile): HooksFile {
   return next
 }
 
-export async function initProject(
-  options: InitOptions = {},
-): Promise<{ repoRoot: string; withSkill: boolean }> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const withSkill = options.withSkill === true || options.nightly === true
+async function writeRuntimeArtifacts(repoRoot: string): Promise<void> {
   const cursorDir = path.join(repoRoot, '.cursor')
   const hooksDir = path.join(cursorDir, 'hooks')
-  const belayDir = path.join(cursorDir, 'belay')
-  const runtimeDir = path.join(belayDir, 'runtime')
-  const skillsDir = path.join(cursorDir, 'skills', 'belay')
-  const commandsDir = path.join(cursorDir, 'commands')
-  const hooksPath = path.join(cursorDir, 'hooks.json')
-  const hooksFile = await loadHooksFile(hooksPath)
-  const merged = mergeHooksFile(hooksFile)
+  const runtimeDir = path.join(cursorDir, 'belay', 'runtime')
 
-  await ensureDir(hooksDir)
-  await ensureDir(runtimeDir)
-  await ensureDir(belayDir)
-
-  await writeTextFile(path.join(cursorDir, 'belay.config.json'), renderConfig(DEFAULT_CONFIG))
   await writeTextFile(path.join(hooksDir, 'belay-before-submit.mjs'), renderBeforeSubmitHook())
   await writeTextFile(path.join(hooksDir, 'belay-shell-gate.mjs'), renderShellGateHook())
   await writeTextFile(path.join(hooksDir, 'belay-tool-gate.mjs'), renderToolGateHook())
   await writeTextFile(path.join(hooksDir, 'belay-audit.mjs'), renderAuditHook())
-  await writeTextFile(path.join(runtimeDir, 'core.mjs'), renderRuntimeCore(DEFAULT_CONFIG))
+  await writeTextFile(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore())
   await writeTextFile(
     path.join(hooksDir, 'belay-runner'),
     buildRunnerScript(process.execPath),
@@ -160,23 +138,71 @@ export async function initProject(
     path.join(hooksDir, 'belay-runner.cmd'),
     buildWindowsRunnerScript(process.execPath),
   )
+}
+
+async function writeSkillArtifacts(repoRoot: string): Promise<void> {
+  const cursorDir = path.join(repoRoot, '.cursor')
+  const skillsDir = path.join(cursorDir, 'skills', 'belay')
+  const commandsDir = path.join(cursorDir, 'commands')
+  await ensureDir(skillsDir)
+  await ensureDir(commandsDir)
+  const bundledSkill = await readBundledTemplate(BUNDLED_SKILL_TEMPLATE_URL)
+  const bundledCommand = await readBundledTemplate(BUNDLED_COMMAND_TEMPLATE_URL)
+  await writeTextFile(path.join(skillsDir, 'SKILL.md'), bundledSkill)
+  await writeTextFile(path.join(commandsDir, 'belay-approve.md'), bundledCommand)
+}
+
+async function installBase(repoRoot: string, withSkill: boolean): Promise<void> {
+  const cursorDir = path.join(repoRoot, '.cursor')
+  const hooksDir = path.join(cursorDir, 'hooks')
+  const belayDir = path.join(cursorDir, 'belay')
+  const hooksPath = path.join(cursorDir, 'hooks.json')
+  const hooksFile = await loadHooksFile(hooksPath)
+  const merged = mergeHooksFile(hooksFile)
+
+  await ensureDir(hooksDir)
+  await ensureDir(path.join(belayDir, 'runtime'))
+  await ensureDir(belayDir)
+
+  await mergeAndWriteConfig(repoRoot)
+
+  await writeRuntimeArtifacts(repoRoot)
 
   await writeJsonIfMissing(path.join(belayDir, 'pending-approvals.json'), EMPTY_APPROVALS)
   await writeJsonIfMissing(path.join(belayDir, 'approved-approvals.json'), EMPTY_APPROVALS)
   await writeTextIfMissing(path.join(belayDir, 'audit.ndjson'), '')
 
   if (withSkill) {
-    await ensureDir(skillsDir)
-    await ensureDir(commandsDir)
-    const bundledSkill = await readBundledTemplate(BUNDLED_SKILL_TEMPLATE_URL)
-    const bundledCommand = await readBundledTemplate(BUNDLED_COMMAND_TEMPLATE_URL)
-    await writeTextFile(path.join(skillsDir, 'SKILL.md'), bundledSkill)
-    await writeTextFile(path.join(commandsDir, 'belay-approve.md'), bundledCommand)
+    await writeSkillArtifacts(repoRoot)
   }
 
   await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+}
 
+export async function initProject(
+  options: InitOptions = {},
+): Promise<{ repoRoot: string; withSkill: boolean }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const withSkill = options.withSkill === true
+  await installBase(repoRoot, withSkill)
   return { repoRoot, withSkill }
+}
+
+export async function upgradeProject(options: UpgradeOptions = {}): Promise<{ repoRoot: string }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  await mergeAndWriteConfig(repoRoot)
+  await writeRuntimeArtifacts(repoRoot)
+
+  const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+  const hooksFile = await loadHooksFile(hooksPath)
+  const merged = mergeHooksFile(hooksFile)
+  await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+
+  if (options.withSkill) {
+    await writeSkillArtifacts(repoRoot)
+  }
+
+  return { repoRoot }
 }
 
 export { loadHooksFile, mergeHooksFile }

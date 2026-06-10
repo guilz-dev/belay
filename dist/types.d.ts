@@ -1,33 +1,6 @@
-export type BelayMode = 'enforce' | 'audit';
-export type HookVerdict = 'allow' | 'allow_flagged' | 'deny_pending_approval';
-export interface BelayConfig {
-    version: 1;
-    mode: BelayMode;
-    approvalTtlMinutes: number;
-    tokenPrefix: string;
-    gates: {
-        shell: boolean;
-        subagent: boolean;
-    };
-    audit: {
-        logPath: string;
-    };
-}
-export interface ApprovalRecord {
-    approvalId: string;
-    kind: 'shell' | 'subagent';
-    fingerprint: string;
-    repoRoot: string;
-    reason: string;
-    summary: string;
-    createdAt: string;
-    expiresAt: string;
-    approvedAt?: string;
-}
-export interface ApprovalStateFile {
-    version: 1;
-    approvals: ApprovalRecord[];
-}
+export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayMode } from './core/config.js';
+export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifyResult, HookVerdict, } from './core/types.js';
+import type { ApprovalRecord } from './core/types.js';
 export interface HookEntry {
     command: string;
     matcher?: string;
@@ -39,8 +12,10 @@ export interface HooksFile {
 export interface InitOptions {
     targetDir?: string;
     withSkill?: boolean;
-    /** @deprecated Use withSkill instead. */
-    nightly?: boolean;
+}
+export interface UpgradeOptions {
+    targetDir?: string;
+    withSkill?: boolean;
 }
 export interface DoctorOptions {
     targetDir?: string;
@@ -57,4 +32,29 @@ export interface DoctorReport {
     };
     issues: string[];
     notes: string[];
+    warnings: string[];
+}
+export interface StatusOptions {
+    targetDir?: string;
+    json?: boolean;
+}
+export interface StatusReport {
+    repoRoot: string;
+    pending: ApprovalRecord[];
+    approved: ApprovalRecord[];
+    expiredPendingCount: number;
+}
+export type ExplainKind = 'shell' | 'tool' | 'subagent';
+export interface ExplainOptions {
+    targetDir?: string;
+    command?: string;
+    cwd?: string;
+    json?: boolean;
+    kind?: ExplainKind;
+    toolName?: string;
+    payload?: Record<string, unknown>;
+}
+export interface RevokeOptions {
+    targetDir?: string;
+    approvalId: string;
 }

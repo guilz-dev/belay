@@ -132,6 +132,28 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(deniedCopy.stdout).permission).toBe('deny')
   })
 
+  it('denies chained shell commands when a later segment is external', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git status && git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+  })
+
+  it('denies shell interpreter pipes', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'echo hi | bash',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+  })
+
   it('denies high-risk subagent payloads and fingerprints payload changes separately', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
