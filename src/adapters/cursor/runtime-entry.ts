@@ -7,7 +7,8 @@ import process from 'node:process'
 import {
   type ApprovalStateFile,
   approvalCommandMatch,
-  type BelayConfigV2,
+  approvedApprovalsFile,
+  type BelayConfigV3,
   buildRetryInstruction,
   type ClassifyResult,
   canonicalStringify,
@@ -18,6 +19,8 @@ import {
   compactApprovals,
   createApprovalRecord,
   mergeConfig,
+  pendingApprovalsFile,
+  scrubOptionsFromConfig,
   scrubValue,
 } from '../../core/index.js'
 
@@ -76,7 +79,7 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
 
 async function loadConfig(
   repoRoot: string,
-): Promise<{ configPath: string; config: BelayConfigV2 }> {
+): Promise<{ configPath: string; config: BelayConfigV3 }> {
   const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
   const loaded = await loadJsonFile(configPath, {})
   return {
@@ -85,12 +88,22 @@ async function loadConfig(
   }
 }
 
-function approvalsPath(repoRoot: string, fileName: string): string {
-  return path.join(repoRoot, '.cursor', 'belay', fileName)
+function approvalsPath(
+  repoRoot: string,
+  config: BelayConfigV3,
+  fileName: 'pending-approvals.json' | 'approved-approvals.json',
+): string {
+  return fileName === 'pending-approvals.json'
+    ? pendingApprovalsFile(config, repoRoot)
+    : approvedApprovalsFile(config, repoRoot)
 }
 
-async function loadApprovals(repoRoot: string, fileName: string) {
-  const filePath = approvalsPath(repoRoot, fileName)
+async function loadApprovals(
+  repoRoot: string,
+  config: BelayConfigV3,
+  fileName: 'pending-approvals.json' | 'approved-approvals.json',
+) {
+  const filePath = approvalsPath(repoRoot, config, fileName)
   const loaded = await loadJsonFile<ApprovalStateFile>(filePath, EMPTY_APPROVALS)
   return {
     filePath,
@@ -103,7 +116,7 @@ async function loadApprovals(repoRoot: string, fileName: string) {
 
 async function appendAudit(
   repoRoot: string,
-  config: BelayConfigV2,
+  config: BelayConfigV3,
   event: Record<string, unknown>,
 ) {
   const auditPath = path.join(repoRoot, config.audit.logPath)
@@ -112,7 +125,8 @@ async function appendAudit(
   if (!config.audit.includeAssessment) {
     delete record.assessment
   }
-  await writeFile(auditPath, `${JSON.stringify(record)}\n`, {
+  const scrubbed = scrubValue(record, scrubOptionsFromConfig(config)) as Record<string, unknown>
+  await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
     encoding: 'utf8',
     flag: 'a',
   })
@@ -122,9 +136,9 @@ async function ensurePendingApproval(
   repoRoot: string,
   kind: 'shell' | 'subagent' | 'tool',
   result: ClassifyResult,
-  config: BelayConfigV2,
+  config: BelayConfigV3,
 ) {
-  const pending = await loadApprovals(repoRoot, 'pending-approvals.json')
+  const pending = await loadApprovals(repoRoot, config, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
   const existing = pending.state.approvals.find(
     (approval) =>
@@ -153,10 +167,11 @@ async function ensurePendingApproval(
 
 async function consumeApprovedApproval(
   repoRoot: string,
+  config: BelayConfigV3,
   kind: 'shell' | 'subagent' | 'tool',
   fingerprint: string,
 ) {
-  const approved = await loadApprovals(repoRoot, 'approved-approvals.json')
+  const approved = await loadApprovals(repoRoot, config, 'approved-approvals.json')
   approved.state = compactApprovals(approved.state)
   const index = approved.state.approvals.findIndex(
     (approval) =>
@@ -173,8 +188,8 @@ async function consumeApprovedApproval(
   return approval
 }
 
-async function movePendingToApproved(repoRoot: string, approvalId: string) {
-  const pending = await loadApprovals(repoRoot, 'pending-approvals.json')
+async function movePendingToApproved(repoRoot: string, config: BelayConfigV3, approvalId: string) {
+  const pending = await loadApprovals(repoRoot, config, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
   const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId)
   if (index === -1) {
@@ -184,7 +199,7 @@ async function movePendingToApproved(repoRoot: string, approvalId: string) {
   const [approval] = pending.state.approvals.splice(index, 1)
   await writeJsonFile(pending.filePath, pending.state)
 
-  const approved = await loadApprovals(repoRoot, 'approved-approvals.json')
+  const approved = await loadApprovals(repoRoot, config, 'approved-approvals.json')
   approved.state = compactApprovals(approved.state)
   approved.state.approvals.push({
     ...approval,
@@ -201,10 +216,10 @@ async function gateDecisionToResponse(params: {
   repoRoot: string
   kind: 'shell' | 'subagent' | 'tool'
   result: ClassifyResult
-  config: BelayConfigV2
+  config: BelayConfigV3
 }) {
   const { repoRoot, kind, result, config } = params
-  const approved = await consumeApprovedApproval(repoRoot, kind, result.fingerprint)
+  const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint)
   if (approved) {
     await appendAudit(repoRoot, config, {
       event:
@@ -270,7 +285,7 @@ export async function runBeforeSubmitPromptHook() {
       return
     }
 
-    const moved = await movePendingToApproved(repoRoot, approvalId)
+    const moved = await movePendingToApproved(repoRoot, config, approvalId)
     await appendAudit(repoRoot, config, {
       event: 'beforeSubmitPrompt',
       kind: 'approval',
@@ -422,7 +437,7 @@ export async function runAuditHook(eventName: string) {
       kind: 'audit',
       verdict: 'allow',
       reason: 'observed',
-      summary: canonicalStringify(scrubValue(payload)),
+      summary: canonicalStringify(payload),
     })
     jsonResponse({})
   } catch (error) {

@@ -40,7 +40,7 @@ const EXTERNAL_TERMS = [
   'prod',
 ]
 
-function extractSubagentText(payload: Record<string, unknown>): string {
+function extractSubagentText(payload: Record<string, unknown>, options: ClassifierOptions): string {
   const toolInput = payload.tool_input
   if (toolInput && typeof toolInput === 'object') {
     const input = toolInput as Record<string, unknown>
@@ -58,41 +58,47 @@ function extractSubagentText(payload: Record<string, unknown>): string {
     const prompt = typeof taskObj.prompt === 'string' ? taskObj.prompt : ''
     return [description, prompt].filter(Boolean).join(' ')
   }
-  return canonicalStringify(scrubValue(payload))
+  return canonicalStringify(scrubValue(payload, options.scrubOptions))
 }
 
-function fingerprintSource(payload: Record<string, unknown>): unknown {
+function fingerprintSource(payload: Record<string, unknown>, options: ClassifierOptions): unknown {
   const toolInput = payload.tool_input
   if (toolInput && typeof toolInput === 'object') {
     const input = toolInput as Record<string, unknown>
-    return scrubValue({
-      description: input.description ?? '',
-      prompt: input.prompt ?? '',
-    })
+    return scrubValue(
+      {
+        description: input.description ?? '',
+        prompt: input.prompt ?? '',
+      },
+      options.scrubOptions,
+    )
   }
   const task = payload.task
   if (typeof task === 'string') {
-    return scrubValue({ task })
+    return scrubValue({ task }, options.scrubOptions)
   }
   if (task && typeof task === 'object') {
     const taskObj = task as Record<string, unknown>
-    return scrubValue({
-      description: taskObj.description ?? '',
-      prompt: taskObj.prompt ?? '',
-    })
+    return scrubValue(
+      {
+        description: taskObj.description ?? '',
+        prompt: taskObj.prompt ?? '',
+      },
+      options.scrubOptions,
+    )
   }
-  return scrubValue(payload)
+  return scrubValue(payload, options.scrubOptions)
 }
 
 export function classifySubagent(
   payload: Record<string, unknown>,
   repoRoot: string,
-  _options: ClassifierOptions = {},
+  options: ClassifierOptions = {},
 ): ClassifyResult {
   const kind =
     payload.tool_name === 'Task' ? 'Task' : String(payload.subagent_type ?? 'generalPurpose')
-  const scrubbed = fingerprintSource(payload)
-  const summary = extractSubagentText(payload)
+  const scrubbed = fingerprintSource(payload, options)
+  const summary = extractSubagentText(payload, options)
   const lowered = summary.toLowerCase()
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot)
   const signals: string[] = []

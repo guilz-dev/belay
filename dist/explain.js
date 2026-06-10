@@ -59,6 +59,8 @@ export async function explainCommand(options) {
         kind: classified.kind,
         command: classified.input,
         cwd,
+        policy: config.policy,
+        overrides: config.overrides,
         result: classified.result,
     };
 }
@@ -69,6 +71,9 @@ export function formatExplainReport(report) {
         `Kind: ${report.kind}`,
         `Input: ${report.command}`,
         `CWD: ${report.cwd}`,
+        `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
+        `Overrides allow: ${report.overrides.allow.join(', ') || '(none)'}`,
+        `Overrides external: ${report.overrides.external.join(', ') || '(none)'}`,
         '',
         `Verdict: ${result.verdict}`,
         `Reason: ${result.reason}`,

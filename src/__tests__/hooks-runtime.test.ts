@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
+import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -189,5 +189,50 @@ describe('generated hook runtime', () => {
     )
     expect(pending.approvals).toHaveLength(2)
     expect(pending.approvals[0].fingerprint).not.toBe(pending.approvals[1].fingerprint)
+  })
+
+  it('redacts sensitive shell commands in gate audit records', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'curl -H "Authorization: Bearer supersecret.token.value" https://api.example.com',
+      cwd: repoRoot,
+    })
+
+    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(auditRaw).not.toContain('supersecret.token.value')
+    expect(auditRaw).toContain('Authorization: <redacted>')
+  })
+
+  it('stores approvals in the control plane when enabled (T3)', async () => {
+    const repoRoot = await createTempRepo()
+    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
+    await initProject({ targetDir: repoRoot })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          controlPlane: { enabled: true, configDir: controlPlaneDir },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+
+    const pending = await readJson(path.join(controlPlaneDir, 'pending-approvals.json'))
+    expect(pending.approvals).toHaveLength(1)
+    expect(
+      await readFile(
+        path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
+        'utf8',
+      ).catch(() => '[]'),
+    ).not.toContain(pending.approvals[0].approvalId)
   })
 })

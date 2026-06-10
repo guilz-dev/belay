@@ -15,6 +15,25 @@ export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
   }
 }
 
+export function mergeApprovalStates(
+  target: ApprovalStateFile,
+  source: ApprovalStateFile,
+): ApprovalStateFile {
+  const byId = new Map<string, ApprovalRecord>()
+  for (const approval of target.approvals) {
+    byId.set(approval.approvalId, approval)
+  }
+  for (const approval of source.approvals) {
+    if (!byId.has(approval.approvalId)) {
+      byId.set(approval.approvalId, approval)
+    }
+  }
+  return compactApprovals({
+    version: 1,
+    approvals: [...byId.values()],
+  })
+}
+
 export function escapeRegex(value: string): string {
   const specials = new Set(['.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\'])
   return [...value].map((char) => (specials.has(char) ? `\\${char}` : char)).join('')

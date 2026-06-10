@@ -2,11 +2,15 @@ import path from 'node:path'
 import { classifyShell } from './classify-shell.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
-import { relativeWithinRepo } from './path-utils.js'
+import { pathWithinRoot, relativeWithinRepo } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
+
+function scrubPayload(value: unknown, options: ClassifierOptions): unknown {
+  return scrubValue(value, options.scrubOptions)
+}
 
 function extractFilePath(payload: Record<string, unknown>): string | null {
   const toolInput = payload.tool_input
@@ -49,8 +53,12 @@ export function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'tool_shell_missing_command',
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot,
+        ),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -73,8 +81,12 @@ export function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'file_mutation_missing_path',
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot,
+        ),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -86,7 +98,25 @@ export function classifyToolUse(
     }
 
     const signals: string[] = []
-    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath)
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath)
+
+    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+      signals.push('control_plane_path')
+      return {
+        verdict: 'deny_pending_approval',
+        reason: 'control_plane_mutation',
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: 'irreversible',
+          external: false,
+          blastRadius: 'agent-belay control plane',
+          confidence: 0.97,
+          signals,
+        },
+      }
+    }
+
     const relativePath = relativeWithinRepo(repoRoot, resolvedPath)
     if (relativePath === null) {
       signals.push('outside_repo_path')
@@ -158,8 +188,12 @@ export function classifyToolUse(
   return {
     verdict: 'allow',
     reason: 'unclassified_tool',
-    summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-    fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    fingerprint: toolFingerprint(
+      toolName,
+      scrubPayload(payload.tool_input ?? {}, options),
+      repoRoot,
+    ),
     assessment: {
       reversibility: 'reversible',
       external: false,

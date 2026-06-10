@@ -1,20 +1,61 @@
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { compactApprovals, isExpired } from './core/approval.js';
-import { mergeConfig } from './core/config.js';
+import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js';
+import { approvedApprovalsFile, belayStateDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 export function configPathFor(repoRoot) {
     return path.join(repoRoot, '.cursor', 'belay.config.json');
 }
-export function pendingApprovalsPath(repoRoot) {
-    return path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json');
+export { belayStateDir };
+export function pendingApprovalsPath(repoRoot, config) {
+    return pendingApprovalsFile(config, repoRoot);
 }
-export function approvedApprovalsPath(repoRoot) {
-    return path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json');
+export function approvedApprovalsPath(repoRoot, config) {
+    return approvedApprovalsFile(config, repoRoot);
 }
 export function runtimeCorePath(repoRoot) {
     return path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs');
+}
+export async function ensureBelayStateDir(config, repoRoot) {
+    const stateDir = belayStateDir(config, repoRoot);
+    await mkdir(stateDir, { recursive: true });
+    return stateDir;
+}
+const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json'];
+async function readApprovalStateFile(filePath) {
+    const raw = await readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return {
+        version: 1,
+        approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
+    };
+}
+async function writeApprovalStateFile(filePath, state) {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8');
+}
+export async function migrateRepoLocalApprovalsToControlPlane(repoRoot, config) {
+    if (!config.controlPlane.enabled) {
+        return;
+    }
+    const repoLocalDir = path.join(repoRoot, '.cursor', 'belay');
+    const targetDir = belayStateDir(config, repoRoot);
+    await mkdir(targetDir, { recursive: true });
+    for (const fileName of APPROVAL_STATE_FILES) {
+        const from = path.join(repoLocalDir, fileName);
+        const to = path.join(targetDir, fileName);
+        if (!existsSync(from)) {
+            continue;
+        }
+        if (!existsSync(to)) {
+            await copyFile(from, to);
+            continue;
+        }
+        const targetState = await readApprovalStateFile(to);
+        const sourceState = await readApprovalStateFile(from);
+        await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState));
+    }
 }
 export async function loadConfigFile(repoRoot) {
     const configPath = configPathFor(repoRoot);
@@ -35,27 +76,26 @@ export async function mergeAndWriteConfig(repoRoot) {
     }
     const merged = mergeConfig(existing);
     await writeConfigFile(repoRoot, merged);
+    await ensureBelayStateDir(merged, repoRoot);
+    if (merged.controlPlane.enabled) {
+        await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged);
+    }
     return merged;
 }
-export async function loadApprovalState(repoRoot, fileName) {
+export async function loadApprovalState(repoRoot, fileName, config) {
     const filePath = fileName === 'pending-approvals.json'
-        ? pendingApprovalsPath(repoRoot)
-        : approvedApprovalsPath(repoRoot);
+        ? pendingApprovalsPath(repoRoot, config)
+        : approvedApprovalsPath(repoRoot, config);
     if (!existsSync(filePath)) {
         return { version: 1, approvals: [] };
     }
-    const raw = await readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    return {
-        version: 1,
-        approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
-    };
+    return readApprovalStateFile(filePath);
 }
-export async function saveApprovalState(repoRoot, fileName, state) {
+export async function saveApprovalState(repoRoot, fileName, state, config) {
     const filePath = fileName === 'pending-approvals.json'
-        ? pendingApprovalsPath(repoRoot)
-        : approvedApprovalsPath(repoRoot);
-    await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8');
+        ? pendingApprovalsPath(repoRoot, config)
+        : approvedApprovalsPath(repoRoot, config);
+    await writeApprovalStateFile(filePath, state);
 }
 export function countExpiredPending(state) {
     return state.approvals.filter((approval) => isExpired(approval)).length;

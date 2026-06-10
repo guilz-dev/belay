@@ -119,4 +119,81 @@ describe('classifyShell', () => {
     })
     expect(denied.verdict).toBe('deny_pending_approval')
   })
+
+  it('denies unknown commands when fail-closed policy is enabled', () => {
+    const result = classifyShell('make build', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('unknown_local_effect')
+  })
+
+  it('allows unknown commands via override even under fail-closed policy', () => {
+    const result = classifyShell('make build', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+      customAllowCommands: ['make build'],
+    })
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('custom_allow')
+  })
+
+  it('prefers overrides.allow over overrides.external (T4)', () => {
+    const result = classifyShell('pnpm release:staging', cwd, repoRoot, {
+      customAllowCommands: ['pnpm release:staging'],
+      customExternalCommands: ['pnpm release:staging'],
+    })
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('custom_allow')
+  })
+
+  it('denies eval and source builtins', () => {
+    expect(classifyShell('eval "git push"', cwd, repoRoot).reason).toBe('dynamic_shell_evaluation')
+    expect(classifyShell('source ./script.sh', cwd, repoRoot).reason).toBe(
+      'dynamic_shell_evaluation',
+    )
+  })
+
+  it('wraps command substitution with the inner verdict', () => {
+    const result = classifyShell('echo $(git push origin main)', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('command_substitution')
+  })
+
+  it('wraps backtick substitution with the inner verdict', () => {
+    const result = classifyShell('echo `git push origin main`', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('command_substitution')
+  })
+
+  it('denies shell redirects targeting the control plane (R8)', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyShell(
+      `echo '{}' > ${controlPlaneDir}/pending-approvals.json`,
+      cwd,
+      repoRoot,
+      { controlPlaneDir },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
+
+  it('denies command substitution under fail-closed policy even when inner is read-only', () => {
+    const result = classifyShell('echo $(git status)', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('command_substitution')
+  })
+
+  it('denies shell mutations targeting control plane paths via cp', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyShell(
+      `cp notes.txt ${controlPlaneDir}/pending-approvals.json`,
+      cwd,
+      repoRoot,
+      { controlPlaneDir },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
 })

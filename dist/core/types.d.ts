@@ -16,15 +16,26 @@ export interface ClassifyResult {
     normalizedCommand?: string;
     summary?: string;
 }
+export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny';
+export interface ScrubOptions {
+    maskApprovalIds?: boolean;
+    maskBearerTokens?: boolean;
+    maskAuthHeaders?: boolean;
+    maskKeyValueSecrets?: boolean;
+    maskHighEntropyStrings?: boolean;
+}
 export interface ClassifierOptions {
     strictChains?: boolean;
     customExternalCommands?: string[];
     customAllowCommands?: string[];
     sensitivePaths?: string[];
+    unknownLocalEffect?: UnknownLocalEffectPolicy;
+    controlPlaneDir?: string | null;
+    scrubOptions?: ScrubOptions;
 }
 export interface ApprovalRecord {
     approvalId: string;
-    kind: 'shell' | 'subagent' | 'tool' | 'tool';
+    kind: 'shell' | 'subagent' | 'tool';
     fingerprint: string;
     repoRoot: string;
     reason: string;

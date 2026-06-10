@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { mergeAndWriteConfig } from './config-io.js';
+import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js';
 import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from './templates.js';
@@ -127,10 +127,10 @@ async function installBase(repoRoot, withSkill) {
     await ensureDir(hooksDir);
     await ensureDir(path.join(belayDir, 'runtime'));
     await ensureDir(belayDir);
-    await mergeAndWriteConfig(repoRoot);
+    const config = await mergeAndWriteConfig(repoRoot);
     await writeRuntimeArtifacts(repoRoot);
-    await writeJsonIfMissing(path.join(belayDir, 'pending-approvals.json'), EMPTY_APPROVALS);
-    await writeJsonIfMissing(path.join(belayDir, 'approved-approvals.json'), EMPTY_APPROVALS);
+    await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
+    await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
     await writeTextIfMissing(path.join(belayDir, 'audit.ndjson'), '');
     if (withSkill) {
         await writeSkillArtifacts(repoRoot);

@@ -10,6 +10,21 @@ export function compactApprovals(state) {
         approvals: state.approvals.filter((approval) => !isExpired(approval)),
     };
 }
+export function mergeApprovalStates(target, source) {
+    const byId = new Map();
+    for (const approval of target.approvals) {
+        byId.set(approval.approvalId, approval);
+    }
+    for (const approval of source.approvals) {
+        if (!byId.has(approval.approvalId)) {
+            byId.set(approval.approvalId, approval);
+        }
+    }
+    return compactApprovals({
+        version: 1,
+        approvals: [...byId.values()],
+    });
+}
 export function escapeRegex(value) {
     const specials = new Set(['.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']);
     return [...value].map((char) => (specials.has(char) ? `\\${char}` : char)).join('');

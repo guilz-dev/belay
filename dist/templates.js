@@ -51,6 +51,6 @@ export async function renderRuntimeCore() {
         .replace(/^export const RUNTIME_BUILD_STAMP = .*;\n/gm, '')
         .replace(/^export const RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
         .replace(/^var RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
-        .replace(/\n  RUNTIME_PACKAGE_VERSION,\n/, '\n');
+        .replace(/\n {2}RUNTIME_PACKAGE_VERSION,\n/, '\n');
     return `${versionLine}${stamp}${withoutStamp}`;
 }

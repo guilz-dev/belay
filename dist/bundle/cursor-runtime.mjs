@@ -4,8 +4,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path3 from "node:path";
-import process from "node:process";
+import path4 from "node:path";
+import process2 from "node:process";
 
 // src/core/approval.ts
 function nowIso() {
@@ -84,10 +84,27 @@ function toolFingerprint(toolName, scrubbed, repoRoot) {
 }
 
 // src/core/path-utils.ts
+import { realpathSync } from "node:fs";
 import path from "node:path";
+function resolveRealpath(targetPath) {
+  try {
+    return realpathSync.native(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+function pathWithinRoot(root, targetPath) {
+  const resolvedRoot = resolveRealpath(root);
+  const resolvedTarget = resolveRealpath(targetPath);
+  const relativePath = path.relative(resolvedRoot, resolvedTarget);
+  if (relativePath === "") {
+    return true;
+  }
+  return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
 function relativeWithinRepo(repoRoot, targetPath) {
-  const resolvedRoot = path.resolve(repoRoot);
-  const resolvedTarget = path.resolve(targetPath);
+  const resolvedRoot = resolveRealpath(repoRoot);
+  const resolvedTarget = resolveRealpath(targetPath);
   const relativePath = path.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
@@ -112,15 +129,15 @@ function resolveMutationTarget(token, cwd) {
     return null;
   }
   if (path.isAbsolute(token)) {
-    return path.resolve(token);
+    return resolveRealpath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return path.resolve(cwd, token);
+    return resolveRealpath(path.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return path.resolve(cwd, token);
+    return resolveRealpath(path.resolve(cwd, token));
   }
-  return path.resolve(cwd, token);
+  return resolveRealpath(path.resolve(cwd, token));
 }
 function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   return tokens.some((token) => {
@@ -291,6 +308,7 @@ var EXTERNAL_COMMANDS = /* @__PURE__ */ new Set([
   "wget"
 ]);
 var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var DYNAMIC_SHELL_COMMANDS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
 var VERDICT_RANK = {
@@ -343,6 +361,57 @@ function isExternalKey(key, normalizedCommand, options) {
   return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some(
     (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
   );
+}
+function matchesCustomAllow(normalizedCommand, key, options) {
+  return (options.customAllowCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+}
+function matchesCustomExternal(normalizedCommand, key, options) {
+  return (options.customExternalCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+}
+function targetsControlPlane(paths, cwd, controlPlaneDir) {
+  if (!controlPlaneDir) {
+    return false;
+  }
+  return paths.some((target) => {
+    const resolved = resolveMutationTarget(target, cwd);
+    if (!resolved) {
+      return false;
+    }
+    return pathWithinRoot(controlPlaneDir, resolved);
+  });
+}
+function extractCommandSubstitution(command) {
+  const parenMatch = command.match(/\$\(([^)]+)\)/);
+  if (parenMatch?.[1]) {
+    return parenMatch[1].trim();
+  }
+  const backtickMatch = command.match(/`([^`]+)`/);
+  if (backtickMatch?.[1]) {
+    return backtickMatch[1].trim();
+  }
+  return null;
+}
+function unknownLocalEffectResult(params) {
+  const { normalizedCommand, cwdRelative, assessment, options } = params;
+  if (options.unknownLocalEffect === "deny") {
+    return denyResult({
+      reason: "unknown_local_effect",
+      normalizedCommand,
+      cwdRelative,
+      assessment
+    });
+  }
+  return {
+    verdict: "allow_flagged",
+    reason: "unknown_local_effect",
+    normalizedCommand,
+    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    assessment
+  };
 }
 function extractInterpreterScript(tokens) {
   for (let index = 1; index < tokens.length; index += 1) {
@@ -405,38 +474,79 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   const key = commandKey(segmentTokens);
   const redirects = extractRedirectTargets(segmentTokens);
   const signals = [];
-  for (const custom of options.customAllowCommands ?? []) {
-    if (matchesCustomCommand(normalizedCommand, key, custom)) {
-      return {
-        verdict: "allow",
-        reason: "custom_allow",
-        normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-        assessment: {
-          reversibility: "reversible",
-          external: false,
-          blastRadius: "this repository",
-          confidence: 0.99,
-          signals: ["custom_allow_command"]
-        }
-      };
-    }
+  if (matchesCustomAllow(normalizedCommand, key, options)) {
+    return {
+      verdict: "allow",
+      reason: "custom_allow",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "reversible",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.99,
+        signals: ["custom_allow_command"]
+      }
+    };
   }
-  for (const custom of options.customExternalCommands ?? []) {
-    if (matchesCustomCommand(normalizedCommand, key, custom)) {
-      return denyResult({
-        reason: "custom_external",
-        normalizedCommand,
-        cwdRelative,
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: "custom external command",
-          confidence: 0.95,
-          signals: ["custom_external_command"]
-        }
-      });
-    }
+  if (matchesCustomExternal(normalizedCommand, key, options)) {
+    return denyResult({
+      reason: "custom_external",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: true,
+        blastRadius: "custom external command",
+        confidence: 0.95,
+        signals: ["custom_external_command"]
+      }
+    });
+  }
+  if (DYNAMIC_SHELL_COMMANDS.has(key) || key === "." && segmentTokens.length > 1) {
+    signals.push("dynamic_shell_evaluation");
+    return denyResult({
+      reason: "dynamic_shell_evaluation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: true,
+        blastRadius: "dynamic shell evaluation",
+        confidence: 0.93,
+        signals
+      }
+    });
+  }
+  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+    signals.push("control_plane_redirect");
+    return denyResult({
+      reason: "control_plane_mutation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "agent-belay control plane",
+        confidence: 0.97,
+        signals
+      }
+    });
+  }
+  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+    signals.push("control_plane_path");
+    return denyResult({
+      reason: "control_plane_mutation",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "agent-belay control plane",
+        confidence: 0.97,
+        signals
+      }
+    });
   }
   const hasOutsideRedirect = redirects.some((target) => {
     const resolved = resolveMutationTarget(target, cwd);
@@ -592,11 +702,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   }
   if (key === "node" || key === "sed") {
     signals.push(key === "node" ? "node_execution" : "sed_execution");
-    return {
-      verdict: "allow_flagged",
-      reason: "unknown_local_effect",
+    return unknownLocalEffectResult({
       normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      cwdRelative,
+      options,
       assessment: {
         reversibility: "recoverable_with_cost",
         external: false,
@@ -604,7 +713,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
         confidence: 0.64,
         signals
       }
-    };
+    });
   }
   if (FLAGGED_COMMANDS.has(key) || redirects.length > 0) {
     signals.push("local_mutation");
@@ -623,11 +732,10 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     };
   }
   signals.push("unknown_local_effect");
-  return {
-    verdict: "allow_flagged",
-    reason: "unknown_local_effect",
+  return unknownLocalEffectResult({
     normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    cwdRelative,
+    options,
     assessment: {
       reversibility: "recoverable_with_cost",
       external: false,
@@ -635,9 +743,36 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       confidence: 0.61,
       signals
     }
-  };
+  });
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
+  const substitution = depth === 0 ? extractCommandSubstitution(command) : null;
+  if (substitution) {
+    const normalizedCommand2 = normalizeShellCommand(command, repoRoot, normalizeToken);
+    const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
+    if (options.unknownLocalEffect === "deny") {
+      return denyResult({
+        reason: "command_substitution",
+        normalizedCommand: normalizedCommand2,
+        cwdRelative: cwdRelative2,
+        assessment: {
+          reversibility: "irreversible",
+          external: inner.assessment.external,
+          blastRadius: "command substitution",
+          confidence: 0.9,
+          signals: ["command_substitution", ...inner.assessment.signals]
+        }
+      });
+    }
+    return wrapInnerVerdict({
+      inner,
+      normalizedCommand: normalizedCommand2,
+      cwdRelative: cwdRelative2,
+      wrapReason: "command_substitution",
+      wrapSignal: "command_substitution"
+    });
+  }
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -678,20 +813,63 @@ var UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 var TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 var APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi;
 var TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi;
-function scrubString(value) {
-  return value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>").replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
+var BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi;
+var AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi;
+var KEY_VALUE_SECRET_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi;
+var HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g;
+var DEFAULT_SCRUB_OPTIONS = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+function resolvedScrubOptions(options = {}) {
+  return {
+    maskApprovalIds: options.maskApprovalIds !== false,
+    maskBearerTokens: options.maskBearerTokens !== false,
+    maskAuthHeaders: options.maskAuthHeaders !== false,
+    maskKeyValueSecrets: options.maskKeyValueSecrets !== false,
+    maskHighEntropyStrings: options.maskHighEntropyStrings === true
+  };
 }
-function scrubValue(value) {
+function scrubString(value, options = {}) {
+  const resolved = resolvedScrubOptions(options);
+  let scrubbed = value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>");
+  if (resolved.maskApprovalIds) {
+    scrubbed = scrubbed.replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
+  }
+  if (resolved.maskBearerTokens) {
+    scrubbed = scrubbed.replace(BEARER_PATTERN, "Bearer <redacted>");
+  }
+  if (resolved.maskAuthHeaders) {
+    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>");
+  }
+  if (resolved.maskKeyValueSecrets) {
+    scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
+      const separatorIndex = Math.max(match.indexOf("="), match.indexOf(":"));
+      if (separatorIndex === -1) {
+        return "<secret>";
+      }
+      return `${match.slice(0, separatorIndex + 1)}<redacted>`;
+    });
+  }
+  if (resolved.maskHighEntropyStrings) {
+    scrubbed = scrubbed.replace(HIGH_ENTROPY_PATTERN, "<high-entropy>");
+  }
+  return scrubbed;
+}
+function scrubValue(value, options = DEFAULT_SCRUB_OPTIONS) {
   if (typeof value === "string") {
-    return scrubString(value);
+    return scrubString(value, options);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => scrubValue(item));
+    return value.map((item) => scrubValue(item, options));
   }
   if (value && typeof value === "object") {
     const result = {};
     for (const [key, child] of Object.entries(value)) {
-      result[key] = scrubValue(child);
+      result[key] = scrubValue(child, options);
     }
     return result;
   }
@@ -734,7 +912,7 @@ var EXTERNAL_TERMS = [
   "email",
   "prod"
 ];
-function extractSubagentText(payload) {
+function extractSubagentText(payload, options) {
   const toolInput = payload.tool_input;
   if (toolInput && typeof toolInput === "object") {
     const input = toolInput;
@@ -752,34 +930,40 @@ function extractSubagentText(payload) {
     const prompt = typeof taskObj.prompt === "string" ? taskObj.prompt : "";
     return [description, prompt].filter(Boolean).join(" ");
   }
-  return canonicalStringify(scrubValue(payload));
+  return canonicalStringify(scrubValue(payload, options.scrubOptions));
 }
-function fingerprintSource(payload) {
+function fingerprintSource(payload, options) {
   const toolInput = payload.tool_input;
   if (toolInput && typeof toolInput === "object") {
     const input = toolInput;
-    return scrubValue({
-      description: input.description ?? "",
-      prompt: input.prompt ?? ""
-    });
+    return scrubValue(
+      {
+        description: input.description ?? "",
+        prompt: input.prompt ?? ""
+      },
+      options.scrubOptions
+    );
   }
   const task = payload.task;
   if (typeof task === "string") {
-    return scrubValue({ task });
+    return scrubValue({ task }, options.scrubOptions);
   }
   if (task && typeof task === "object") {
     const taskObj = task;
-    return scrubValue({
-      description: taskObj.description ?? "",
-      prompt: taskObj.prompt ?? ""
-    });
+    return scrubValue(
+      {
+        description: taskObj.description ?? "",
+        prompt: taskObj.prompt ?? ""
+      },
+      options.scrubOptions
+    );
   }
-  return scrubValue(payload);
+  return scrubValue(payload, options.scrubOptions);
 }
-function classifySubagent(payload, repoRoot, _options = {}) {
+function classifySubagent(payload, repoRoot, options = {}) {
   const kind = payload.tool_name === "Task" ? "Task" : String(payload.subagent_type ?? "generalPurpose");
-  const scrubbed = fingerprintSource(payload);
-  const summary = extractSubagentText(payload);
+  const scrubbed = fingerprintSource(payload, options);
+  const summary = extractSubagentText(payload, options);
   const lowered = summary.toLowerCase();
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot);
   const signals = [];
@@ -901,6 +1085,9 @@ function matchesSensitivePath(filePath, patterns) {
 
 // src/core/classify-tool.ts
 var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
+function scrubPayload(value, options) {
+  return scrubValue(value, options.scrubOptions);
+}
 function extractFilePath(payload) {
   const toolInput = payload.tool_input;
   if (!toolInput || typeof toolInput !== "object") {
@@ -934,8 +1121,12 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       return {
         verdict: "allow_flagged",
         reason: "tool_shell_missing_command",
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
         assessment: {
           reversibility: "recoverable_with_cost",
           external: false,
@@ -957,8 +1148,12 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       return {
         verdict: "allow_flagged",
         reason: "file_mutation_missing_path",
-        summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-        fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
         assessment: {
           reversibility: "recoverable_with_cost",
           external: false,
@@ -969,7 +1164,23 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path2.isAbsolute(filePath) ? filePath : path2.join(repoRoot, filePath);
+    const resolvedPath = path2.isAbsolute(filePath) ? filePath : path2.resolve(cwd, filePath);
+    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+      signals.push("control_plane_path");
+      return {
+        verdict: "deny_pending_approval",
+        reason: "control_plane_mutation",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "irreversible",
+          external: false,
+          blastRadius: "agent-belay control plane",
+          confidence: 0.97,
+          signals
+        }
+      };
+    }
     const relativePath = relativeWithinRepo(repoRoot, resolvedPath);
     if (relativePath === null) {
       signals.push("outside_repo_path");
@@ -1037,8 +1248,8 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   return {
     verdict: "allow",
     reason: "unclassified_tool",
-    summary: canonicalStringify(scrubValue(payload.tool_input ?? {})),
-    fingerprint: toolFingerprint(toolName, scrubValue(payload.tool_input ?? {}), repoRoot),
+    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    fingerprint: toolFingerprint(toolName, scrubPayload(payload.tool_input ?? {}, options), repoRoot),
     assessment: {
       reversibility: "reversible",
       external: false,
@@ -1050,6 +1261,25 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
 }
 
 // src/core/config.ts
+import path3 from "node:path";
+var DEFAULT_POLICY_V3 = {
+  unknownLocalEffect: "allow_flagged"
+};
+var DEFAULT_OVERRIDES_V3 = {
+  allow: [],
+  external: []
+};
+var DEFAULT_REDACTION_V3 = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+var DEFAULT_CONTROL_PLANE_V3 = {
+  enabled: false,
+  configDir: null
+};
 var DEFAULT_CONFIG_V2 = {
   version: 2,
   mode: "enforce",
@@ -1062,8 +1292,6 @@ var DEFAULT_CONFIG_V2 = {
     toolShell: true
   },
   classifier: {
-    // When true, scan every chained segment and keep the strictest verdict.
-    // When false, return immediately on the first deny segment.
     strictChains: true,
     customExternalCommands: [],
     customAllowCommands: [],
@@ -1074,48 +1302,165 @@ var DEFAULT_CONFIG_V2 = {
     includeAssessment: true
   }
 };
-function migrateConfig(loaded) {
-  if (typeof loaded !== "object" || loaded === null) {
-    return { ...DEFAULT_CONFIG_V2 };
-  }
-  const raw = loaded;
-  const base = { ...DEFAULT_CONFIG_V2 };
-  if (raw.version === 1 || raw.version === void 0) {
-    return normalizeConfig({
-      ...base,
-      mode: raw.mode ?? base.mode,
-      approvalTtlMinutes: raw.approvalTtlMinutes ?? base.approvalTtlMinutes,
-      tokenPrefix: raw.tokenPrefix ?? base.tokenPrefix,
-      gates: {
-        ...base.gates,
-        shell: raw.gates?.shell ?? base.gates.shell,
-        subagent: raw.gates?.subagent ?? base.gates.subagent
-      },
-      audit: {
-        ...base.audit,
-        logPath: raw.audit?.logPath ?? base.audit.logPath
-      }
-    });
-  }
+var DEFAULT_CONFIG_V3 = {
+  version: 3,
+  mode: DEFAULT_CONFIG_V2.mode,
+  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
+  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
+  gates: { ...DEFAULT_CONFIG_V2.gates },
+  classifier: {
+    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
+    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
+  },
+  policy: { ...DEFAULT_POLICY_V3 },
+  overrides: { ...DEFAULT_OVERRIDES_V3 },
+  redaction: { ...DEFAULT_REDACTION_V3 },
+  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  audit: { ...DEFAULT_CONFIG_V2.audit }
+};
+function uniqueStrings(values) {
+  return [...new Set(values)];
+}
+function mergeOverrideLists(primary, secondary) {
+  return uniqueStrings([...primary, ...secondary]);
+}
+function mapLegacyClassifierToOverrides(classifier) {
+  return {
+    allow: Array.isArray(classifier.customAllowCommands) ? classifier.customAllowCommands : [],
+    external: Array.isArray(classifier.customExternalCommands) ? classifier.customExternalCommands : []
+  };
+}
+function migrateV2ToV3(v2, rawOverrides) {
+  const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
+  return normalizeConfig({
+    version: 3,
+    mode: v2.mode,
+    approvalTtlMinutes: v2.approvalTtlMinutes,
+    tokenPrefix: v2.tokenPrefix,
+    gates: v2.gates,
+    classifier: {
+      strictChains: v2.classifier.strictChains,
+      sensitivePaths: v2.classifier.sensitivePaths
+    },
+    policy: { ...DEFAULT_POLICY_V3 },
+    overrides: {
+      allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
+      external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external)
+    },
+    redaction: { ...DEFAULT_REDACTION_V3 },
+    controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+    audit: v2.audit
+  });
+}
+function hasV3Sections(raw) {
+  return raw.policy !== void 0 || raw.overrides !== void 0 || raw.redaction !== void 0 || raw.controlPlane !== void 0;
+}
+function looksLikeV2Config(raw) {
+  return raw.gates?.fileMutation !== void 0 || raw.gates?.toolShell !== void 0 || raw.classifier?.customAllowCommands !== void 0 || raw.classifier?.customExternalCommands !== void 0 || raw.audit?.includeAssessment !== void 0;
+}
+function mergeV3FromRaw(base, raw) {
   return normalizeConfig({
     ...base,
+    policy: {
+      ...base.policy,
+      ...raw.policy ?? {}
+    },
+    overrides: {
+      allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
+      external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? [])
+    },
+    redaction: {
+      ...base.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      ...base.controlPlane,
+      ...raw.controlPlane ?? {}
+    }
+  });
+}
+function normalizeV3Raw(raw) {
+  return normalizeConfig({
+    ...DEFAULT_CONFIG_V3,
     ...raw,
-    version: 2,
+    version: 3,
     gates: {
-      ...base.gates,
+      ...DEFAULT_CONFIG_V3.gates,
       ...raw.gates ?? {}
     },
     classifier: {
-      ...base.classifier,
+      ...DEFAULT_CONFIG_V3.classifier,
       ...raw.classifier ?? {}
     },
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...raw.policy ?? {}
+    },
+    overrides: {
+      ...DEFAULT_CONFIG_V3.overrides,
+      ...raw.overrides ?? {}
+    },
+    redaction: {
+      ...DEFAULT_CONFIG_V3.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      ...raw.controlPlane ?? {}
+    },
     audit: {
-      ...base.audit,
+      ...DEFAULT_CONFIG_V3.audit,
       ...raw.audit ?? {}
     }
   });
 }
-function normalizeConfig(config) {
+function migrateConfig(loaded) {
+  if (typeof loaded !== "object" || loaded === null) {
+    return { ...DEFAULT_CONFIG_V3 };
+  }
+  const raw = loaded;
+  if (raw.version === 3 || raw.version === void 0 && hasV3Sections(raw)) {
+    return normalizeV3Raw(raw);
+  }
+  const baseV2 = { ...DEFAULT_CONFIG_V2 };
+  if (raw.version === 1 || raw.version === void 0 && !looksLikeV2Config(raw)) {
+    const migratedV22 = normalizeConfigV2({
+      ...baseV2,
+      mode: raw.mode ?? baseV2.mode,
+      approvalTtlMinutes: raw.approvalTtlMinutes ?? baseV2.approvalTtlMinutes,
+      tokenPrefix: raw.tokenPrefix ?? baseV2.tokenPrefix,
+      gates: {
+        ...baseV2.gates,
+        shell: raw.gates?.shell ?? baseV2.gates.shell,
+        subagent: raw.gates?.subagent ?? baseV2.gates.subagent
+      },
+      audit: {
+        ...baseV2.audit,
+        logPath: raw.audit?.logPath ?? baseV2.audit.logPath
+      }
+    });
+    return mergeV3FromRaw(migrateV2ToV3(migratedV22, raw.overrides), raw);
+  }
+  const migratedV2 = normalizeConfigV2({
+    ...baseV2,
+    ...raw,
+    version: 2,
+    gates: {
+      ...baseV2.gates,
+      ...raw.gates ?? {}
+    },
+    classifier: {
+      ...baseV2.classifier,
+      ...raw.classifier ?? {}
+    },
+    audit: {
+      ...baseV2.audit,
+      ...raw.audit ?? {}
+    }
+  });
+  return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw);
+}
+function normalizeConfigV2(config) {
   return {
     version: 2,
     mode: config.mode === "audit" ? "audit" : "enforce",
@@ -1139,7 +1484,51 @@ function normalizeConfig(config) {
     }
   };
 }
-function mergeConfig(existing, defaults = DEFAULT_CONFIG_V2) {
+function normalizeConfig(config) {
+  if (config.version === 2) {
+    return normalizeConfigV2(config);
+  }
+  const v3 = config;
+  return {
+    version: 3,
+    mode: v3.mode === "audit" ? "audit" : "enforce",
+    approvalTtlMinutes: typeof v3.approvalTtlMinutes === "number" && v3.approvalTtlMinutes > 0 ? v3.approvalTtlMinutes : DEFAULT_CONFIG_V3.approvalTtlMinutes,
+    tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
+    gates: {
+      shell: v3.gates.shell !== false,
+      subagent: v3.gates.subagent !== false,
+      fileMutation: v3.gates.fileMutation !== false,
+      toolShell: v3.gates.toolShell !== false
+    },
+    classifier: {
+      strictChains: v3.classifier?.strictChains !== false,
+      sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths) ? v3.classifier.sensitivePaths : DEFAULT_CONFIG_V3.classifier.sensitivePaths
+    },
+    policy: {
+      unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : DEFAULT_POLICY_V3.unknownLocalEffect
+    },
+    overrides: {
+      allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
+      external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : []
+    },
+    redaction: {
+      maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
+      maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
+      maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
+      maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
+      maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true
+    },
+    controlPlane: {
+      enabled: v3.controlPlane?.enabled === true,
+      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null
+    },
+    audit: {
+      logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
+      includeAssessment: v3.audit?.includeAssessment !== false
+    }
+  };
+}
+function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
   const migrated = migrateConfig(existing);
   return normalizeConfig({
     ...defaults,
@@ -1152,19 +1541,64 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V2) {
       ...defaults.classifier,
       ...migrated.classifier
     },
+    policy: {
+      ...defaults.policy,
+      ...migrated.policy
+    },
+    overrides: {
+      allow: mergeOverrideLists(defaults.overrides.allow, migrated.overrides.allow),
+      external: mergeOverrideLists(defaults.overrides.external, migrated.overrides.external)
+    },
+    redaction: {
+      ...defaults.redaction,
+      ...migrated.redaction
+    },
+    controlPlane: {
+      ...defaults.controlPlane,
+      ...migrated.controlPlane
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit
     }
   });
 }
+function scrubOptionsFromConfig(config) {
+  return { ...config.redaction };
+}
 function classifierOptionsFromConfig(config) {
   return {
     strictChains: config.classifier.strictChains,
-    customExternalCommands: config.classifier.customExternalCommands,
-    customAllowCommands: config.classifier.customAllowCommands,
-    sensitivePaths: config.classifier.sensitivePaths
+    customExternalCommands: config.overrides.external,
+    customAllowCommands: config.overrides.allow,
+    sensitivePaths: config.classifier.sensitivePaths,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
+    scrubOptions: scrubOptionsFromConfig(config)
   };
+}
+function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? "") {
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const base = xdgConfigHome || path3.join(homedir(), ".config");
+  return path3.join(base, "agent-belay");
+}
+function resolveControlPlaneDir(config) {
+  if (config.controlPlane.configDir) {
+    return config.controlPlane.configDir;
+  }
+  return defaultControlPlaneDir();
+}
+function belayStateDir(config, repoRoot) {
+  if (config.controlPlane.enabled) {
+    return resolveControlPlaneDir(config);
+  }
+  return path3.join(repoRoot, ".cursor", "belay");
+}
+function pendingApprovalsFile(config, repoRoot) {
+  return path3.join(belayStateDir(config, repoRoot), "pending-approvals.json");
+}
+function approvedApprovalsFile(config, repoRoot) {
+  return path3.join(belayStateDir(config, repoRoot), "approved-approvals.json");
 }
 
 // src/adapters/cursor/runtime-entry.ts
@@ -1173,12 +1607,12 @@ var EMPTY_APPROVALS = {
   approvals: []
 };
 function jsonResponse(value) {
-  process.stdout.write(`${JSON.stringify(value)}
+  process2.stdout.write(`${JSON.stringify(value)}
 `);
 }
 async function readStdinJson() {
   const chunks = [];
-  for await (const chunk of process.stdin) {
+  for await (const chunk of process2.stdin) {
     chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
   }
   const raw = chunks.join("").trim();
@@ -1192,14 +1626,14 @@ async function readStdinJson() {
   }
 }
 function findRepoRoot(startPath) {
-  let current = path3.resolve(startPath);
+  let current = path4.resolve(startPath);
   while (true) {
-    if (existsSync(path3.join(current, ".git")) || existsSync(path3.join(current, ".cursor"))) {
+    if (existsSync(path4.join(current, ".git")) || existsSync(path4.join(current, ".cursor"))) {
       return current;
     }
-    const parent = path3.dirname(current);
+    const parent = path4.dirname(current);
     if (parent === current) {
-      return path3.resolve(startPath);
+      return path4.resolve(startPath);
     }
     current = parent;
   }
@@ -1213,23 +1647,23 @@ async function loadJsonFile(filePath, fallback) {
   }
 }
 async function writeJsonFile(filePath, value) {
-  await mkdir(path3.dirname(filePath), { recursive: true });
+  await mkdir(path4.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}
 `, "utf8");
 }
 async function loadConfig(repoRoot) {
-  const configPath = path3.join(repoRoot, ".cursor", "belay.config.json");
+  const configPath = path4.join(repoRoot, ".cursor", "belay.config.json");
   const loaded = await loadJsonFile(configPath, {});
   return {
     configPath,
     config: mergeConfig(loaded)
   };
 }
-function approvalsPath(repoRoot, fileName) {
-  return path3.join(repoRoot, ".cursor", "belay", fileName);
+function approvalsPath(repoRoot, config, fileName) {
+  return fileName === "pending-approvals.json" ? pendingApprovalsFile(config, repoRoot) : approvedApprovalsFile(config, repoRoot);
 }
-async function loadApprovals(repoRoot, fileName) {
-  const filePath = approvalsPath(repoRoot, fileName);
+async function loadApprovals(repoRoot, config, fileName) {
+  const filePath = approvalsPath(repoRoot, config, fileName);
   const loaded = await loadJsonFile(filePath, EMPTY_APPROVALS);
   return {
     filePath,
@@ -1240,20 +1674,21 @@ async function loadApprovals(repoRoot, fileName) {
   };
 }
 async function appendAudit(repoRoot, config, event) {
-  const auditPath = path3.join(repoRoot, config.audit.logPath);
-  await mkdir(path3.dirname(auditPath), { recursive: true });
+  const auditPath = path4.join(repoRoot, config.audit.logPath);
+  await mkdir(path4.dirname(auditPath), { recursive: true });
   const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
   if (!config.audit.includeAssessment) {
     delete record.assessment;
   }
-  await writeFile(auditPath, `${JSON.stringify(record)}
+  const scrubbed = scrubValue(record, scrubOptionsFromConfig(config));
+  await writeFile(auditPath, `${JSON.stringify(scrubbed)}
 `, {
     encoding: "utf8",
     flag: "a"
   });
 }
 async function ensurePendingApproval(repoRoot, kind, result, config) {
-  const pending = await loadApprovals(repoRoot, "pending-approvals.json");
+  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
   pending.state = compactApprovals(pending.state);
   const existing = pending.state.approvals.find(
     (approval2) => approval2.kind === kind && approval2.fingerprint === result.fingerprint && approval2.repoRoot === repoRoot
@@ -1275,8 +1710,8 @@ async function ensurePendingApproval(repoRoot, kind, result, config) {
   await writeJsonFile(pending.filePath, pending.state);
   return approval;
 }
-async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
-  const approved = await loadApprovals(repoRoot, "approved-approvals.json");
+async function consumeApprovedApproval(repoRoot, config, kind, fingerprint) {
+  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
   approved.state = compactApprovals(approved.state);
   const index = approved.state.approvals.findIndex(
     (approval2) => approval2.kind === kind && approval2.fingerprint === fingerprint && approval2.repoRoot === repoRoot
@@ -1289,8 +1724,8 @@ async function consumeApprovedApproval(repoRoot, kind, fingerprint) {
   await writeJsonFile(approved.filePath, approved.state);
   return approval;
 }
-async function movePendingToApproved(repoRoot, approvalId) {
-  const pending = await loadApprovals(repoRoot, "pending-approvals.json");
+async function movePendingToApproved(repoRoot, config, approvalId) {
+  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
   pending.state = compactApprovals(pending.state);
   const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
   if (index === -1) {
@@ -1299,7 +1734,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
   }
   const [approval] = pending.state.approvals.splice(index, 1);
   await writeJsonFile(pending.filePath, pending.state);
-  const approved = await loadApprovals(repoRoot, "approved-approvals.json");
+  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
   approved.state = compactApprovals(approved.state);
   approved.state.approvals.push({
     ...approval,
@@ -1313,7 +1748,7 @@ async function movePendingToApproved(repoRoot, approvalId) {
 }
 async function gateDecisionToResponse(params) {
   const { repoRoot, kind, result, config } = params;
-  const approved = await consumeApprovedApproval(repoRoot, kind, result.fingerprint);
+  const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint);
   if (approved) {
     await appendAudit(repoRoot, config, {
       event: kind === "shell" ? "beforeShellExecution" : kind === "tool" ? "preToolUse" : "subagentGate",
@@ -1363,14 +1798,14 @@ async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson();
     const prompt = String(payload.prompt ?? "");
-    const repoRoot = findRepoRoot(process.cwd());
+    const repoRoot = findRepoRoot(process2.cwd());
     const { config } = await loadConfig(repoRoot);
     const approvalId = approvalCommandMatch(prompt, config.tokenPrefix);
     if (!approvalId) {
       jsonResponse({ continue: true });
       return;
     }
-    const moved = await movePendingToApproved(repoRoot, approvalId);
+    const moved = await movePendingToApproved(repoRoot, config, approvalId);
     await appendAudit(repoRoot, config, {
       event: "beforeSubmitPrompt",
       kind: "approval",
@@ -1394,7 +1829,7 @@ async function runShellGateHook() {
   try {
     const payload = await readStdinJson();
     const command = String(payload.command ?? "").trim();
-    const cwd = String(payload.cwd ?? process.cwd()).trim() || process.cwd();
+    const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
     const repoRoot = findRepoRoot(cwd);
     const { config } = await loadConfig(repoRoot);
     if (!config.gates.shell) {
@@ -1426,7 +1861,7 @@ function isFileMutationTool(toolName) {
 async function runToolGateHook(eventName) {
   try {
     const payload = await readStdinJson();
-    const cwd = process.cwd();
+    const cwd = process2.cwd();
     const repoRoot = findRepoRoot(cwd);
     const { config } = await loadConfig(repoRoot);
     const options = classifierOptionsFromConfig(config);
@@ -1502,14 +1937,14 @@ async function runToolGateHook(eventName) {
 async function runAuditHook(eventName) {
   try {
     const payload = await readStdinJson();
-    const repoRoot = findRepoRoot(process.cwd());
+    const repoRoot = findRepoRoot(process2.cwd());
     const { config } = await loadConfig(repoRoot);
     await appendAudit(repoRoot, config, {
       event: eventName,
       kind: "audit",
       verdict: "allow",
       reason: "observed",
-      summary: canonicalStringify(scrubValue(payload))
+      summary: canonicalStringify(payload)
     });
     jsonResponse({});
   } catch (error) {

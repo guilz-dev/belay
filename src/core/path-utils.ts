@@ -1,8 +1,27 @@
+import { realpathSync } from 'node:fs'
 import path from 'node:path'
 
+function resolveRealpath(targetPath: string): string {
+  try {
+    return realpathSync.native(targetPath)
+  } catch {
+    return path.resolve(targetPath)
+  }
+}
+
+export function pathWithinRoot(root: string, targetPath: string): boolean {
+  const resolvedRoot = resolveRealpath(root)
+  const resolvedTarget = resolveRealpath(targetPath)
+  const relativePath = path.relative(resolvedRoot, resolvedTarget)
+  if (relativePath === '') {
+    return true
+  }
+  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+}
+
 export function relativeWithinRepo(repoRoot: string, targetPath: string): string | null {
-  const resolvedRoot = path.resolve(repoRoot)
-  const resolvedTarget = path.resolve(targetPath)
+  const resolvedRoot = resolveRealpath(repoRoot)
+  const resolvedTarget = resolveRealpath(targetPath)
   const relativePath = path.relative(resolvedRoot, resolvedTarget)
   if (relativePath === '') {
     return '.'
@@ -29,15 +48,15 @@ export function resolveMutationTarget(token: string, cwd: string): string | null
     return null
   }
   if (path.isAbsolute(token)) {
-    return path.resolve(token)
+    return resolveRealpath(token)
   }
   if (token.startsWith('./') || token.startsWith('../')) {
-    return path.resolve(cwd, token)
+    return resolveRealpath(path.resolve(cwd, token))
   }
   if (!token.includes('/') && !token.includes('\\')) {
-    return path.resolve(cwd, token)
+    return resolveRealpath(path.resolve(cwd, token))
   }
-  return path.resolve(cwd, token)
+  return resolveRealpath(path.resolve(cwd, token))
 }
 
 export function hasOutsideRepoPath(tokens: string[], cwd: string, repoRoot: string): boolean {

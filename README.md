@@ -59,7 +59,7 @@ agent runtimes, not as a proof that a command is truly reversible.
 
 - `v0.1`: Cursor-style hook adapter with one-shot approval and audit
 - `v0.2`: testable core, stronger classifier, tool gates, config v2, ops CLI — see [docs/v0.2-plan.md](./docs/v0.2-plan.md)
-- `v0.3`: additional runtime adapters
+- `v0.3`: config v3, fail-closed shell mode, user control plane — see [docs/SPEC-v0.3.md](./docs/SPEC-v0.3.md) and [docs/ROADMAP.md](./docs/ROADMAP.md)
 
 ## Install
 
@@ -80,14 +80,16 @@ This installs the runtime hooks and also writes helper artifacts for:
 npx agent-belay init
 ```
 
-### Upgrade from v0.1
+### Upgrade from v0.1 / v0.2
 
 ```bash
 npx agent-belay upgrade
 ```
 
 `upgrade` refreshes hook scripts and the bundled runtime while merging your
-existing `.cursor/belay.config.json` settings.
+existing `.cursor/belay.config.json` settings (v1/v2 configs migrate to v3).
+When you newly enable `controlPlane`, existing repo-local approval files are
+copied into the control-plane directory if it is empty.
 
 ### Skill only (skills CLI)
 
@@ -113,9 +115,9 @@ Current adapter artifacts:
 - `.cursor/hooks/belay-tool-gate.mjs`
 - `.cursor/hooks/belay-audit.mjs`
 - `.cursor/belay/runtime/core.mjs`
-- `.cursor/belay/pending-approvals.json`
-- `.cursor/belay/approved-approvals.json`
-- `.cursor/belay/audit.ndjson`
+- `.cursor/belay/pending-approvals.json` (or `~/.config/agent-belay/` when `controlPlane.enabled`)
+- `.cursor/belay/approved-approvals.json` (or control-plane directory)
+- `.cursor/belay/audit.ndjson` (always repo-local via `audit.logPath`)
 
 Optional skill and command artifacts (with `--with-skill`):
 
@@ -144,14 +146,15 @@ npx agent-belay revoke <approval-id>
 `mode: "audit"` is supported in `.cursor/belay.config.json`. In audit mode,
 Belay records would-be denies but allows execution to continue.
 
-### Config v2 highlights
+### Config v3 highlights
 
-`belay.config.json` uses `version: 2` with per-gate toggles and classifier
-overrides:
+`belay.config.json` uses `version: 3`. v1/v2 configs migrate automatically on
+load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
 
 ```json
 {
-  "version": 2,
+  "version": 3,
+  "mode": "enforce",
   "gates": {
     "shell": true,
     "subagent": true,
@@ -160,9 +163,25 @@ overrides:
   },
   "classifier": {
     "strictChains": true,
-    "customExternalCommands": [],
-    "customAllowCommands": [],
     "sensitivePaths": [".env", ".env.*", "**/credentials/**"]
+  },
+  "policy": {
+    "unknownLocalEffect": "allow_flagged"
+  },
+  "overrides": {
+    "allow": ["pnpm release:staging"],
+    "external": ["./scripts/release.sh"]
+  },
+  "redaction": {
+    "maskApprovalIds": true,
+    "maskBearerTokens": true,
+    "maskAuthHeaders": true,
+    "maskKeyValueSecrets": true,
+    "maskHighEntropyStrings": false
+  },
+  "controlPlane": {
+    "enabled": false,
+    "configDir": null
   },
   "audit": {
     "logPath": ".cursor/belay/audit.ndjson",
@@ -171,13 +190,20 @@ overrides:
 }
 ```
 
+`policy.unknownLocalEffect: "deny"` enables fail-closed shell classification for
+unrecognized local commands. Use with `overrides.allow` and `npx agent-belay explain`
+to tune before enabling in `enforce` mode.
+
+`controlPlane.enabled: true` stores approval state under
+`~/.config/agent-belay/` (or `XDG_CONFIG_HOME/agent-belay`). The same path is
+shared across repositories for the current OS user. Existing repo-local approval
+files are copied or merged into the control plane on `upgrade`. Disabling control
+plane switches back to repo-local paths without deleting the user-level files.
+File-mutation tools and shell redirects cannot write control-plane paths when
+this is enabled.
+
 `strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
-the strictest verdict. Set it to `false` to stop at the first deny segment.
-
-`customAllowCommands` and `customExternalCommands` use exact command or segment
-key matches only (no substring wildcards).
-
-v0.1 configs are migrated automatically on load.
+the strictest verdict. Override lists use exact command or segment key matches only.
 
 ## Approval flow
 

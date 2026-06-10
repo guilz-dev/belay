@@ -51,4 +51,22 @@ describe('classifyToolUse', () => {
     )
     expect(result.verdict).toBe('allow_flagged')
   })
+
+  it('denies writes to the control plane directory (R8)', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: {
+          path: path.join(controlPlaneDir, 'pending-approvals.json'),
+          contents: '{}',
+        },
+      },
+      repoRoot,
+      cwd,
+      { controlPlaneDir },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
 })
