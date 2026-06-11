@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- **Transactional execution (L2, opt-in)** — `policy.transactional.enabled` runs low-confidence local shell mutations in an isolated git worktree, evaluates the observed file diff, commits safe changes, and escalates dangerous effects to L4
+- Diff categories: repo-outside paths, sensitive paths, control-plane artifacts, and large deletions (`maxDeletionCount`)
+- Audit records include `predictedAssessment` vs `observedAssessment` when the transactional path runs
+- `explain` reports transactional eligibility and confidence band; corpus helper `assessmentsDiverge` for prediction vs observation metrics
+
+### Changed
+
+- Config v3 `policy` adds `transactional` section (`enabled`, `minConfidence`, `maxConfidence`, `timeoutMs`, `maxDeletionCount`, `gates.shell`)
+
 ## 0.7.0
 
 ### Added

@@ -3,6 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyShell } from '../core/classify-shell.js';
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js';
+export function assessmentsDiverge(predicted, observed) {
+    return (predicted.reversibility !== observed.reversibility ||
+        predicted.external !== observed.external ||
+        predicted.blastRadius !== observed.blastRadius);
+}
 const VERDICTS = ['allow', 'allow_flagged', 'deny_pending_approval'];
 export async function loadCorpusCases(corpusDir) {
     const raw = await readFile(path.join(corpusDir, 'shell-commands.json'), 'utf8');

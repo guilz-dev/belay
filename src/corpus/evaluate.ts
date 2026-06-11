@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { classifyShell } from '../core/classify-shell.js'
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
-import type { HookVerdict } from '../core/types.js'
+import type { Assessment, HookVerdict } from '../core/types.js'
 
 export interface CorpusCase {
   command: string
@@ -20,6 +20,14 @@ export interface CorpusMetrics {
   recall: Record<string, number>
   falsePositiveRate: number
   mismatches: Array<{ command: string; expected: string; actual: string; reason: string }>
+}
+
+export function assessmentsDiverge(predicted: Assessment, observed: Assessment): boolean {
+  return (
+    predicted.reversibility !== observed.reversibility ||
+    predicted.external !== observed.external ||
+    predicted.blastRadius !== observed.blastRadius
+  )
 }
 
 const VERDICTS: HookVerdict[] = ['allow', 'allow_flagged', 'deny_pending_approval']

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
 import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from './core/index.js';
+import { isTransactionalEligible } from './core/transactional/index.js';
 import { egressStatus } from './egress-service.js';
 function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
     const kind = options.kind ?? 'shell';
@@ -63,6 +64,7 @@ export async function explainCommand(options) {
             !egress.foreignProxy,
     };
     const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
+    const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);
     return {
         repoRoot,
         kind: classified.kind,
@@ -73,6 +75,7 @@ export async function explainCommand(options) {
         egress: config.egress,
         egressProxyRunning: egress.running && !egress.foreignProxy && !egress.repoRootMismatch,
         egressL3DemotionActive: classifierOptions.demoteL3External === true,
+        transactionalEligible,
         result: classified.result,
     };
 }
@@ -88,6 +91,10 @@ export function formatExplainReport(report) {
         report.egress.enabled
             ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
             : 'Egress proxy: not configured',
+        `Transactional (L2): ${report.policy.transactional.enabled ? 'enabled' : 'disabled'} (eligible for this command=${report.transactionalEligible})`,
+        report.policy.transactional.enabled
+            ? `Transactional band: [${report.policy.transactional.minConfidence}, ${report.policy.transactional.maxConfidence})`
+            : 'Transactional band: not configured',
         `Overrides allow: ${report.overrides.allow.join(', ') || '(none)'}`,
         `Overrides external: ${report.overrides.external.join(', ') || '(none)'}`,
         '',
@@ -95,12 +102,15 @@ export function formatExplainReport(report) {
         `Reason: ${result.reason}`,
         `Fingerprint: ${result.fingerprint}`,
         '',
-        'Assessment:',
+        'Predicted assessment:',
         `  reversibility: ${result.assessment.reversibility}`,
         `  external: ${result.assessment.external}`,
         `  blastRadius: ${result.assessment.blastRadius}`,
         `  confidence: ${result.assessment.confidence}`,
         `  signals: ${result.assessment.signals.join(', ') || '(none)'}`,
+        report.transactionalEligible
+            ? 'Observed assessment: would be measured in an isolated git worktree when this gate runs.'
+            : 'Observed assessment: not applicable (transactional path not eligible).',
     ];
     return `${lines.join('\n')}\n`;
 }

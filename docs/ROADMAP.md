@@ -17,6 +17,7 @@
 | **v0.5** | Policy-as-code judgment, corpus metrics, confidence thresholds | Shipped — see [v0.5-plan.md](./v0.5-plan.md) |
 | **v0.6** | Audit tooling, simulation, layered config, signed OOB approval | Shipped — see [v0.6-plan.md](./v0.6-plan.md) |
 | **v0.7** | Egress chokepoint (L1), approval broker reuse, L3 external demotion | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md) |
+| **v0.8** | Transactional execution (L2), observed diff assessment, predicted vs observed audit | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md) |
 
 ## v0.3 (0.3.0)
 

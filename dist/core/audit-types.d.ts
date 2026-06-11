@@ -14,6 +14,13 @@ export interface AuditRecord {
     permission?: string;
     mode?: string;
     assessment?: Assessment;
+    predictedAssessment?: Assessment;
+    observedAssessment?: Assessment;
+    transactional?: boolean;
+    transactionalReason?: string;
+    transactionalCategories?: string[];
+    transactionalChangeCount?: number;
+    transactionalSkipReason?: string;
     [key: string]: unknown;
 }
 export interface AuditFilter {

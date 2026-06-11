@@ -239,6 +239,16 @@ function normalizeConfig(config) {
         enabled: v3.policy?.modelAssist?.enabled === true,
         model: v3.policy?.modelAssist?.model,
         timeoutMs: typeof v3.policy?.modelAssist?.timeoutMs === "number" ? v3.policy.modelAssist.timeoutMs : DEFAULT_MODEL_ASSIST.timeoutMs
+      },
+      transactional: {
+        enabled: v3.policy?.transactional?.enabled === true,
+        minConfidence: typeof v3.policy?.transactional?.minConfidence === "number" ? v3.policy.transactional.minConfidence : DEFAULT_TRANSACTIONAL_V3.minConfidence,
+        maxConfidence: typeof v3.policy?.transactional?.maxConfidence === "number" ? v3.policy.transactional.maxConfidence : DEFAULT_TRANSACTIONAL_V3.maxConfidence,
+        timeoutMs: typeof v3.policy?.transactional?.timeoutMs === "number" && v3.policy.transactional.timeoutMs > 0 ? v3.policy.transactional.timeoutMs : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
+        maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === "number" && v3.policy.transactional.maxDeletionCount >= 0 ? v3.policy.transactional.maxDeletionCount : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
+        gates: {
+          shell: v3.policy?.transactional?.gates?.shell !== false
+        }
       }
     },
     overrides: {
@@ -384,7 +394,7 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
-var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
+var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
 var init_config = __esm({
   "src/core/config.ts"() {
     "use strict";
@@ -396,17 +406,29 @@ var init_config = __esm({
       enabled: false,
       timeoutMs: 3e3
     };
+    DEFAULT_TRANSACTIONAL_V3 = {
+      enabled: false,
+      minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
+      maxConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+      timeoutMs: 3e4,
+      maxDeletionCount: 10,
+      gates: {
+        shell: true
+      }
+    };
     LEGACY_POLICY_V3 = {
       unknownLocalEffect: "allow_flagged",
       unparseableShell: "allow_flagged",
       confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-      modelAssist: { ...DEFAULT_MODEL_ASSIST }
+      modelAssist: { ...DEFAULT_MODEL_ASSIST },
+      transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
     };
     DEFAULT_POLICY_V3 = {
       unknownLocalEffect: "deny",
       unparseableShell: "deny",
       confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-      modelAssist: { ...DEFAULT_MODEL_ASSIST }
+      modelAssist: { ...DEFAULT_MODEL_ASSIST },
+      transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
     };
     DEFAULT_OVERRIDES_V3 = {
       allow: [],
@@ -604,7 +626,8 @@ var init_presets = __esm({
           unknownLocalEffect: "deny",
           unparseableShell: "deny",
           confidenceThresholds: { allow: 0.9, flag: 0.8 },
-          modelAssist: { enabled: false }
+          modelAssist: { enabled: false },
+          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
         }
       },
       standard: {
@@ -616,7 +639,8 @@ var init_presets = __esm({
           unknownLocalEffect: "deny",
           unparseableShell: "deny",
           confidenceThresholds: { allow: 0.88, flag: 0.72 },
-          modelAssist: { enabled: false }
+          modelAssist: { enabled: false },
+          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
         }
       }
     };
@@ -722,10 +746,10 @@ init_cursor();
 import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync as existsSync4 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path10 from "node:path";
+import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import path12 from "node:path";
 
 // src/core/approval-service.ts
 init_approval();
@@ -3008,6 +3032,323 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
   }
 }
 
+// src/core/transactional/diff-evaluator.ts
+import path8 from "node:path";
+function categorizeChange(change, ctx) {
+  const absolutePath = path8.resolve(ctx.repoRoot, change.relativePath);
+  if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
+    return "repo_outside";
+  }
+  if (ctx.protectedRoots.some((root) => pathWithinRoot(root, absolutePath) || root === absolutePath)) {
+    return "control_plane";
+  }
+  if (matchesSensitivePath(change.relativePath, ctx.sensitivePaths)) {
+    return "sensitive_path";
+  }
+  return "repo_local";
+}
+function observedAssessment(evaluation) {
+  const signals = ["transactional_observed"];
+  for (const category of evaluation.categories) {
+    if (category !== "repo_local") {
+      signals.push(`observed_${category}`);
+    }
+  }
+  if (evaluation.deletedCount > 0) {
+    signals.push("observed_deletions");
+  }
+  if (evaluation.categories.includes("repo_outside") || evaluation.categories.includes("control_plane") || evaluation.categories.includes("sensitive_path")) {
+    return {
+      reversibility: "irreversible",
+      external: evaluation.categories.includes("repo_outside"),
+      blastRadius: evaluation.categories.includes("control_plane") ? "agent-belay control plane" : evaluation.categories.includes("repo_outside") ? "outside the repository" : "sensitive path",
+      confidence: 1,
+      signals
+    };
+  }
+  if (evaluation.categories.includes("large_deletion")) {
+    return {
+      reversibility: "irreversible",
+      external: false,
+      blastRadius: "directory tree",
+      confidence: 1,
+      signals
+    };
+  }
+  return {
+    reversibility: evaluation.deletedCount > 0 ? "recoverable_with_cost" : "reversible",
+    external: false,
+    blastRadius: evaluation.changes.length <= 1 ? "single file" : "this repository",
+    confidence: 1,
+    signals
+  };
+}
+function evaluateTransactionalDiff(changes, ctx) {
+  const categories = /* @__PURE__ */ new Set();
+  const deletedCount = changes.filter((change) => change.kind === "deleted").length;
+  for (const change of changes) {
+    categories.add(categorizeChange(change, ctx));
+  }
+  if (deletedCount > ctx.maxDeletionCount) {
+    categories.add("large_deletion");
+  }
+  const categoryList = [...categories];
+  const dangerous = categoryList.includes("repo_outside") || categoryList.includes("control_plane") || categoryList.includes("sensitive_path") || categoryList.includes("large_deletion");
+  const base = {
+    categories: categoryList,
+    changes,
+    deletedCount,
+    verdict: dangerous ? "deny_pending_approval" : "allow",
+    reason: dangerous ? "transactional_observed_risk" : "transactional_observed_safe"
+  };
+  return {
+    ...base,
+    assessment: observedAssessment(base)
+  };
+}
+
+// src/core/transactional/eligibility.ts
+var EXCLUDED_REASONS = /* @__PURE__ */ new Set([
+  "unparseable_shell",
+  "external_effect",
+  "l3_external_hint",
+  "custom_external",
+  "external_script",
+  "outside_repo_redirect",
+  "outside_repo_mutation",
+  "control_plane_mutation",
+  "dynamic_shell_evaluation",
+  "pipe_to_shell",
+  "command_substitution",
+  "agent_assessment_mismatch",
+  "find_dangerous_action",
+  "read_only",
+  "custom_allow"
+]);
+function isTransactionalEligible(config, kind, result) {
+  const transactional = config.policy.transactional;
+  if (!transactional.enabled) {
+    return false;
+  }
+  if (kind !== "shell" || !config.gates.shell || !transactional.gates.shell) {
+    return false;
+  }
+  if (EXCLUDED_REASONS.has(result.reason)) {
+    return false;
+  }
+  const { assessment } = result;
+  if (assessment.external) {
+    return false;
+  }
+  if (result.verdict === "deny_pending_approval") {
+    return false;
+  }
+  if (result.verdict === "allow" && assessment.confidence >= transactional.maxConfidence) {
+    return false;
+  }
+  const confidence = assessment.confidence;
+  if (confidence < transactional.minConfidence || confidence >= transactional.maxConfidence) {
+    return false;
+  }
+  return result.verdict === "allow_flagged";
+}
+
+// src/core/transactional/git-worktree.ts
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir as mkdir3, rm as rm2 } from "node:fs/promises";
+import path9 from "node:path";
+function execGit(repoRoot, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", repoRoot, ...args], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString("utf8"));
+        return;
+      }
+      reject(
+        new Error(
+          `git ${args.join(" ")} failed (${code}): ${Buffer.concat(stderr).toString("utf8").trim()}`
+        )
+      );
+    });
+  });
+}
+async function isGitWorktreeAvailable(repoRoot) {
+  try {
+    await execGit(repoRoot, ["rev-parse", "--git-dir"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function createGitWorktreeSnapshot(repoRoot, stateDir) {
+  const worktreePath = path9.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  await mkdir3(stateDir, { recursive: true });
+  await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
+  return {
+    worktreePath,
+    cleanup: async () => {
+      try {
+        await execGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+      } catch {
+        await rm2(worktreePath, { recursive: true, force: true });
+        try {
+          await execGit(repoRoot, ["worktree", "prune"]);
+        } catch {
+        }
+      }
+    }
+  };
+}
+function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
+  const resolvedCwd = path9.resolve(cwd);
+  const relative = path9.relative(path9.resolve(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path9.isAbsolute(relative)) {
+    return worktreePath;
+  }
+  if (relative === "") {
+    return worktreePath;
+  }
+  return path9.join(worktreePath, relative);
+}
+function runShellCommand(command, cwd, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      stdio: "ignore",
+      env: process.env
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, timeoutMs);
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve({ exitCode: 1, signal: null, timedOut });
+    });
+    child.on("close", (exitCode, signal) => {
+      clearTimeout(timer);
+      resolve({
+        exitCode,
+        signal: signal ? String(signal) : null,
+        timedOut
+      });
+    });
+  });
+}
+function parseStatusLine(line) {
+  if (line.length < 4) {
+    return null;
+  }
+  const status = line.slice(0, 2);
+  const relativePath = line.slice(3).trim();
+  if (!relativePath) {
+    return null;
+  }
+  if (status.includes("D")) {
+    return { relativePath, kind: "deleted" };
+  }
+  if (status === "??") {
+    return { relativePath, kind: "added" };
+  }
+  if (status.includes("A") || status.includes("?")) {
+    return { relativePath, kind: "added" };
+  }
+  return { relativePath, kind: "modified" };
+}
+async function collectWorktreeChanges(worktreePath) {
+  const status = await execGit(worktreePath, ["status", "--porcelain"]);
+  const changes = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const line of status.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    const change = parseStatusLine(line);
+    if (!change || seen.has(change.relativePath)) {
+      continue;
+    }
+    seen.add(change.relativePath);
+    changes.push(change);
+  }
+  return changes;
+}
+async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
+  for (const change of changes) {
+    const target = path9.join(repoRoot, change.relativePath);
+    if (change.kind === "deleted") {
+      await rm2(target, { force: true });
+      continue;
+    }
+    const source = path9.join(worktreePath, change.relativePath);
+    await mkdir3(path9.dirname(target), { recursive: true });
+    await copyFile(source, target);
+  }
+}
+
+// src/core/transactional/runner.ts
+async function runTransactionalExecution(params) {
+  const { predicted, repoRoot, stateDir, command, cwd, timeoutMs, diffContext } = params;
+  if (!await isGitWorktreeAvailable(repoRoot)) {
+    return {
+      ok: false,
+      skipped: true,
+      skipReason: "git_worktree_unavailable",
+      predicted,
+      result: predicted
+    };
+  }
+  let snapshot = null;
+  try {
+    snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir);
+    const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd);
+    const shellResult = await runShellCommand(command, execCwd, timeoutMs);
+    const changes = await collectWorktreeChanges(snapshot.worktreePath);
+    const observed = evaluateTransactionalDiff(changes, diffContext);
+    if (observed.verdict === "allow") {
+      await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes);
+    }
+    const result = {
+      ...predicted,
+      verdict: observed.verdict,
+      reason: observed.reason,
+      assessment: observed.assessment
+    };
+    return {
+      ok: true,
+      predicted,
+      observed,
+      result,
+      worktreePath: snapshot.worktreePath,
+      commandExitCode: shellResult.exitCode,
+      commandSignal: shellResult.signal,
+      timedOut: shellResult.timedOut
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      skipped: true,
+      skipReason: error instanceof Error ? error.message : "transactional_execution_failed",
+      predicted,
+      result: predicted
+    };
+  } finally {
+    if (snapshot) {
+      await snapshot.cleanup();
+    }
+  }
+}
+
 // src/core/notify.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -3051,7 +3392,7 @@ async function notifyDeny(config, event) {
 
 // src/egress-service.ts
 import { existsSync as existsSync3, readFileSync } from "node:fs";
-import path8 from "node:path";
+import path10 from "node:path";
 init_config_io();
 init_config();
 
@@ -3067,9 +3408,9 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
     belayStateDir(config, repoLocalStateDir),
     configuredControlPlaneDir(config)
   ]);
-  const resolvedRepoRoot = path8.resolve(repoRoot);
+  const resolvedRepoRoot = path10.resolve(repoRoot);
   for (const stateDir of stateDirs) {
-    const statusPath = path8.join(stateDir, "egress-proxy.json");
+    const statusPath = path10.join(stateDir, "egress-proxy.json");
     if (!existsSync3(statusPath)) {
       continue;
     }
@@ -3078,7 +3419,7 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
       if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
         continue;
       }
-      if (raw.repoRoot && path8.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+      if (raw.repoRoot && path10.resolve(raw.repoRoot) !== resolvedRepoRoot) {
         continue;
       }
       return true;
@@ -3097,7 +3438,7 @@ function isProcessAlive(pid) {
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path9 from "node:path";
+import path11 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -3109,7 +3450,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path9.resolve(entry));
+  return roots.map((entry) => path11.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -3131,8 +3472,8 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path10.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir3(path10.dirname(auditPath), { recursive: true });
+      const auditPath = path12.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir4(path12.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
@@ -3157,7 +3498,7 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir3(path10.dirname(filePath), { recursive: true });
+      await mkdir4(path12.dirname(filePath), { recursive: true });
       await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
@@ -3216,7 +3557,7 @@ async function ensurePendingApproval(ctx, deps, kind, result) {
     reason: result.reason,
     summary: result.normalizedCommand ?? result.summary ?? "",
     approvalTtlMinutes: ctx.config.approvalTtlMinutes,
-    approvalId: `belay_${randomUUID().replaceAll("-", "").slice(0, 12)}`
+    approvalId: `belay_${randomUUID2().replaceAll("-", "").slice(0, 12)}`
   });
   pending.state.approvals.push(approval);
   await deps.writeApprovals(pending.filePath, pending.state);
@@ -3285,21 +3626,63 @@ async function evaluateGatedAction(ctx, deps, params) {
       wouldBlock: false
     });
   }
-  const result = await classifyGatedActionAsync(
-    action,
-    ctx.config,
-    runtimeClassifierOptions(ctx, ctx.config)
-  );
-  return gateDecisionToVerdict(ctx, deps, params.kind, result);
+  const classifierOptions = runtimeClassifierOptions(ctx, ctx.config);
+  const predicted = await classifyGatedActionAsync(action, ctx.config, classifierOptions);
+  let result = predicted;
+  let predictedAssessment;
+  let observedAssessment2;
+  let transactionalLayer;
+  if (isTransactionalEligible(ctx.config, params.kind, predicted) && params.kind === "shell" && params.command) {
+    const transactional = ctx.config.policy.transactional;
+    const txResult = await runTransactionalExecution({
+      command: params.command,
+      cwd: params.cwd,
+      repoRoot: ctx.repoRoot,
+      stateDir: path12.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
+      timeoutMs: transactional.timeoutMs,
+      predicted,
+      diffContext: {
+        repoRoot: ctx.repoRoot,
+        sensitivePaths: ctx.config.classifier.sensitivePaths,
+        protectedRoots: classifierOptions.protectedArtifactRoots ?? [],
+        maxDeletionCount: transactional.maxDeletionCount
+      }
+    });
+    if (!txResult.skipped && txResult.observed) {
+      result = txResult.result;
+      predictedAssessment = txResult.predicted.assessment;
+      observedAssessment2 = txResult.observed.assessment;
+      transactionalLayer = {
+        transactional: true,
+        transactionalReason: txResult.observed.reason,
+        transactionalCategories: txResult.observed.categories,
+        transactionalChangeCount: txResult.observed.changes.length,
+        transactionalTimedOut: txResult.timedOut === true
+      };
+    } else if (txResult.skipReason) {
+      transactionalLayer = {
+        transactional: false,
+        transactionalSkipReason: txResult.skipReason
+      };
+    }
+  }
+  return gateDecisionToVerdict(ctx, deps, params.kind, result, {
+    predictedAssessment,
+    observedAssessment: observedAssessment2,
+    transactionalLayer
+  });
 }
-async function gateDecisionToVerdict(ctx, deps, kind, result) {
+async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) {
   const gateBase = {
     event: gateAuditEventName(kind),
     kind,
     fingerprint: result.fingerprint,
     summary: result.normalizedCommand ?? result.summary ?? "",
     assessment: result.assessment,
-    mode: ctx.config.mode
+    predictedAssessment: auditExtras.predictedAssessment,
+    observedAssessment: auditExtras.observedAssessment,
+    mode: ctx.config.mode,
+    ...auditExtras.transactionalLayer
   };
   const approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
   if (approved) {
@@ -3477,18 +3860,18 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 
 // src/adapters/shared/repo-root.ts
 import { existsSync as existsSync5 } from "node:fs";
-import path11 from "node:path";
+import path13 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path11.resolve(startPath);
+  let current = path13.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync5(path11.join(current, marker))) {
+      if (existsSync5(path13.join(current, marker))) {
         return current;
       }
     }
-    const parent = path11.dirname(current);
+    const parent = path13.dirname(current);
     if (parent === current) {
-      return path11.resolve(startPath);
+      return path13.resolve(startPath);
     }
     current = parent;
   }

@@ -15,4 +15,6 @@ export { matchesSensitivePath } from './glob.js';
 export { hasOutsideRepoPath, normalizeToken, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
 export { scrubString, scrubValue } from './scrub.js';
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
+export type { TransactionalDiffEvaluation, TransactionalExecutionResult, } from './transactional/index.js';
+export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js';
 export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifierOptions, ClassifyResult, HookVerdict, Reversibility, ScrubOptions, UnknownLocalEffectPolicy, } from './types.js';

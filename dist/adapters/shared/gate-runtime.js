@@ -9,6 +9,7 @@ import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../cor
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
 import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 import { notifyDeny } from '../../core/notify.js';
+import { isTransactionalEligible, runTransactionalExecution, } from '../../core/transactional/index.js';
 import { isEgressProxyActiveForRepo } from '../../egress-service.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
@@ -181,17 +182,66 @@ export async function evaluateGatedAction(ctx, deps, params) {
             wouldBlock: false,
         });
     }
-    const result = await classifyGatedActionAsync(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
-    return gateDecisionToVerdict(ctx, deps, params.kind, result);
+    const classifierOptions = runtimeClassifierOptions(ctx, ctx.config);
+    const predicted = await classifyGatedActionAsync(action, ctx.config, classifierOptions);
+    let result = predicted;
+    let predictedAssessment;
+    let observedAssessment;
+    let transactionalLayer;
+    if (isTransactionalEligible(ctx.config, params.kind, predicted) &&
+        params.kind === 'shell' &&
+        params.command) {
+        const transactional = ctx.config.policy.transactional;
+        const txResult = await runTransactionalExecution({
+            command: params.command,
+            cwd: params.cwd,
+            repoRoot: ctx.repoRoot,
+            stateDir: path.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), 'transactional'),
+            timeoutMs: transactional.timeoutMs,
+            predicted,
+            diffContext: {
+                repoRoot: ctx.repoRoot,
+                sensitivePaths: ctx.config.classifier.sensitivePaths,
+                protectedRoots: classifierOptions.protectedArtifactRoots ?? [],
+                maxDeletionCount: transactional.maxDeletionCount,
+            },
+        });
+        if (!txResult.skipped && txResult.observed) {
+            result = txResult.result;
+            predictedAssessment = txResult.predicted.assessment;
+            observedAssessment = txResult.observed.assessment;
+            transactionalLayer = {
+                transactional: true,
+                transactionalReason: txResult.observed.reason,
+                transactionalCategories: txResult.observed.categories,
+                transactionalChangeCount: txResult.observed.changes.length,
+                transactionalTimedOut: txResult.timedOut === true,
+            };
+        }
+        else if (txResult.skipReason) {
+            transactionalLayer = {
+                transactional: false,
+                transactionalSkipReason: txResult.skipReason,
+            };
+        }
+    }
+    return gateDecisionToVerdict(ctx, deps, params.kind, result, {
+        predictedAssessment,
+        observedAssessment,
+        transactionalLayer,
+    });
 }
-async function gateDecisionToVerdict(ctx, deps, kind, result) {
+async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) {
     const gateBase = {
         event: gateAuditEventName(kind),
         kind,
         fingerprint: result.fingerprint,
         summary: result.normalizedCommand ?? result.summary ?? '',
         assessment: result.assessment,
+        predictedAssessment: auditExtras.predictedAssessment,
+        observedAssessment: auditExtras.observedAssessment,
         mode: ctx.config.mode,
+        ...auditExtras.transactionalLayer,
     };
     const approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
     if (approved) {

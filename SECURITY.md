@@ -74,6 +74,25 @@ When those conditions hold:
 - **Loopback bind only** — non-loopback `egress.listenHost` values are coerced
   to `127.0.0.1` during config normalization.
 
+### Transactional execution (v0.8, opt-in) — partial L2
+
+v0.8 transactional mode is **not a complete L2 boundary**. It is a **git-worktree,
+partial L2**: enforcement applies only when (1) `policy.transactional.enabled` is
+true, (2) the repository is a git repo with `git worktree` available, (3) the
+predicted verdict is `allow_flagged` with confidence in the configured band, and
+(4) the command is a local shell mutation (not external, dynamic, or unparseable).
+
+When those conditions hold:
+
+- **Observed effects** — the command runs in a detached worktree; file changes are
+  categorized from the real diff; safe changes are applied to the working tree,
+  dangerous changes are discarded and escalated to human approval.
+- **L3 passthrough** — high-confidence `allow` and predicted `deny_pending_approval`
+  bypass transactional execution (L3 remains the fast path / L4 escalation).
+- **Not covered** — effects outside the snapshot (processes, IPC, clocks), non-git
+  repositories, and external network I/O (L1 egress remains separate). Overlayfs /
+  APFS clone backends are future optimizations.
+
 ### Known limitations
 
 - Classification is heuristic, not proof of safety.

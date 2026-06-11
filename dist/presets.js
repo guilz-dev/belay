@@ -7,6 +7,7 @@ export const CONFIG_PRESETS = {
             unparseableShell: 'deny',
             confidenceThresholds: { allow: 0.9, flag: 0.8 },
             modelAssist: { enabled: false },
+            transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
         },
     },
     standard: {
@@ -19,6 +20,7 @@ export const CONFIG_PRESETS = {
             unparseableShell: 'deny',
             confidenceThresholds: { allow: 0.88, flag: 0.72 },
             modelAssist: { enabled: false },
+            transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
         },
     },
 };

@@ -109,6 +109,31 @@ describe('config migration', () => {
     expect(normalized.controlPlane.configDir).toBe('/tmp/belay')
   })
 
+  it('normalizes transactional policy defaults and overrides', () => {
+    const defaults = normalizeConfig({ ...DEFAULT_CONFIG_V3 })
+    expect(defaults.policy.transactional.enabled).toBe(false)
+    expect(defaults.policy.transactional.gates.shell).toBe(true)
+
+    const enabled = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          enabled: true,
+          minConfidence: 0.6,
+          maxConfidence: 0.85,
+          timeoutMs: 5000,
+          maxDeletionCount: 3,
+          gates: { shell: false },
+        },
+      },
+    })
+    expect(enabled.policy.transactional.enabled).toBe(true)
+    expect(enabled.policy.transactional.minConfidence).toBe(0.6)
+    expect(enabled.policy.transactional.maxDeletionCount).toBe(3)
+    expect(enabled.policy.transactional.gates.shell).toBe(false)
+  })
+
   it('resolves default control plane directory from XDG_CONFIG_HOME', () => {
     expect(defaultControlPlaneDir({ XDG_CONFIG_HOME: '/custom/config' }, () => '/home/user')).toBe(
       '/custom/config/agent-belay',

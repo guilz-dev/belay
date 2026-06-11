@@ -45,11 +45,22 @@ export interface BelayModelAssistConfig {
     model?: string;
     timeoutMs?: number;
 }
+export interface BelayTransactionalConfig {
+    enabled: boolean;
+    minConfidence: number;
+    maxConfidence: number;
+    timeoutMs: number;
+    maxDeletionCount: number;
+    gates: {
+        shell: boolean;
+    };
+}
 export interface BelayPolicyConfig {
     unknownLocalEffect: UnknownLocalEffectPolicy;
     unparseableShell: UnparseableShellPolicy;
     confidenceThresholds: BelayConfidenceThresholds;
     modelAssist: BelayModelAssistConfig;
+    transactional: BelayTransactionalConfig;
 }
 export interface BelayOverridesConfig {
     allow: string[];
@@ -109,6 +120,7 @@ export type BelayConfig = BelayConfigV3;
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
 export declare const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds;
 export declare const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig;
+export declare const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig;
 export declare const LEGACY_POLICY_V3: BelayPolicyConfig;
 /** Fresh v0.4+ install defaults (fail-closed). */
 export declare const DEFAULT_POLICY_V3: BelayPolicyConfig;

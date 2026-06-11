@@ -9,6 +9,7 @@ export type {
   BelayOverridesConfig,
   BelayPolicyConfig,
   BelayRedactionConfig,
+  BelayTransactionalConfig,
   UnknownLocalEffectPolicy,
 } from './core/config.js'
 export type {
@@ -142,6 +143,7 @@ export interface ExplainReport {
   egress: BelayEgressConfig
   egressProxyRunning: boolean
   egressL3DemotionActive: boolean
+  transactionalEligible: boolean
   result: ClassifyResult
 }
 

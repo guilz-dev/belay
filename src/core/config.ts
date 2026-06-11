@@ -60,11 +60,23 @@ export interface BelayModelAssistConfig {
   timeoutMs?: number
 }
 
+export interface BelayTransactionalConfig {
+  enabled: boolean
+  minConfidence: number
+  maxConfidence: number
+  timeoutMs: number
+  maxDeletionCount: number
+  gates: {
+    shell: boolean
+  }
+}
+
 export interface BelayPolicyConfig {
   unknownLocalEffect: UnknownLocalEffectPolicy
   unparseableShell: UnparseableShellPolicy
   confidenceThresholds: BelayConfidenceThresholds
   modelAssist: BelayModelAssistConfig
+  transactional: BelayTransactionalConfig
 }
 
 export interface BelayOverridesConfig {
@@ -142,11 +154,23 @@ export const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig = {
   timeoutMs: 3000,
 }
 
+export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
+  enabled: false,
+  minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
+  maxConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+  timeoutMs: 30_000,
+  maxDeletionCount: 10,
+  gates: {
+    shell: true,
+  },
+}
+
 export const LEGACY_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'allow_flagged',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
 }
 
 /** Fresh v0.4+ install defaults (fail-closed). */
@@ -155,6 +179,7 @@ export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   unparseableShell: 'deny',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
 }
 
 export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
@@ -579,6 +604,30 @@ export function normalizeConfig(
           typeof v3.policy?.modelAssist?.timeoutMs === 'number'
             ? v3.policy.modelAssist.timeoutMs
             : DEFAULT_MODEL_ASSIST.timeoutMs,
+      },
+      transactional: {
+        enabled: v3.policy?.transactional?.enabled === true,
+        minConfidence:
+          typeof v3.policy?.transactional?.minConfidence === 'number'
+            ? v3.policy.transactional.minConfidence
+            : DEFAULT_TRANSACTIONAL_V3.minConfidence,
+        maxConfidence:
+          typeof v3.policy?.transactional?.maxConfidence === 'number'
+            ? v3.policy.transactional.maxConfidence
+            : DEFAULT_TRANSACTIONAL_V3.maxConfidence,
+        timeoutMs:
+          typeof v3.policy?.transactional?.timeoutMs === 'number' &&
+          v3.policy.transactional.timeoutMs > 0
+            ? v3.policy.transactional.timeoutMs
+            : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
+        maxDeletionCount:
+          typeof v3.policy?.transactional?.maxDeletionCount === 'number' &&
+          v3.policy.transactional.maxDeletionCount >= 0
+            ? v3.policy.transactional.maxDeletionCount
+            : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
+        gates: {
+          shell: v3.policy?.transactional?.gates?.shell !== false,
+        },
       },
     },
     overrides: {

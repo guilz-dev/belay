@@ -1,4 +1,4 @@
-import type { HookVerdict } from '../core/types.js';
+import type { Assessment, HookVerdict } from '../core/types.js';
 export interface CorpusCase {
     command: string;
     verdict: HookVerdict;
@@ -18,6 +18,7 @@ export interface CorpusMetrics {
         reason: string;
     }>;
 }
+export declare function assessmentsDiverge(predicted: Assessment, observed: Assessment): boolean;
 export declare function loadCorpusCases(corpusDir: string): Promise<CorpusCase[]>;
 export declare function evaluateCorpus(cases: CorpusCase[], repoRoot?: string): CorpusMetrics;
 export declare function runCorpusEvaluation(corpusDir?: string): Promise<CorpusMetrics>;
