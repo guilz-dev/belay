@@ -2,11 +2,12 @@ import { classifyShell } from './classify-shell.js'
 import { classifySubagent } from './classify-subagent.js'
 import { classifyToolUse } from './classify-tool.js'
 import type { BelayConfigV3 } from './config.js'
-import { classifierOptionsFromConfig } from './config.js'
+import { classifierOptionsFromConfig, DEFAULT_CONFIDENCE_THRESHOLDS } from './config.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
-import { mergeAgentAssessment } from './judgment.js'
-import type { ClassifierOptions, ClassifyResult } from './types.js'
+import { mergeAgentAssessment, verdictFromConfidence } from './judgment.js'
+import { maybeAssistAssessment } from './model-assist.js'
+import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -15,6 +16,52 @@ export class GateNormalizationError extends Error {
     super(message)
     this.name = 'GateNormalizationError'
   }
+}
+
+function parseAssessment(value: unknown): Assessment | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const record = value as Record<string, unknown>
+  if (
+    (record.reversibility === 'reversible' ||
+      record.reversibility === 'recoverable_with_cost' ||
+      record.reversibility === 'irreversible') &&
+    typeof record.external === 'boolean' &&
+    typeof record.blastRadius === 'string' &&
+    typeof record.confidence === 'number' &&
+    Array.isArray(record.signals) &&
+    record.signals.every((signal) => typeof signal === 'string')
+  ) {
+    return {
+      reversibility: record.reversibility,
+      external: record.external,
+      blastRadius: record.blastRadius,
+      confidence: record.confidence,
+      signals: record.signals,
+    }
+  }
+  return undefined
+}
+
+export function extractAgentAssessment(payload?: Record<string, unknown>): Assessment | undefined {
+  if (!payload) {
+    return undefined
+  }
+
+  for (const key of ['agentAssessment', 'assessment'] as const) {
+    const parsed = parseAssessment(payload[key])
+    if (parsed) {
+      return parsed
+    }
+  }
+
+  const toolInput = payload.tool_input
+  if (toolInput && typeof toolInput === 'object') {
+    return extractAgentAssessment(toolInput as Record<string, unknown>)
+  }
+
+  return undefined
 }
 
 function shellCommandFromPayload(payload: Record<string, unknown>): string {
@@ -105,6 +152,87 @@ export function classifyGatedAction(
   }
 
   return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options)
+}
+
+function applyModelAssistToResult(
+  result: ClassifyResult,
+  assistedAssessment: Assessment,
+  options: ClassifierOptions,
+): ClassifyResult {
+  if (result.reason !== 'unknown_local_effect' && result.reason !== 'unparseable_shell') {
+    return { ...result, assessment: assistedAssessment }
+  }
+
+  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS
+  const unknownLocalEffect = options.unknownLocalEffect ?? 'allow_flagged'
+  const unparseableShell = options.unparseableShell ?? 'allow_flagged'
+
+  if (result.reason === 'unparseable_shell') {
+    return {
+      ...result,
+      assessment: assistedAssessment,
+      verdict: unparseableShell === 'deny' ? 'deny_pending_approval' : 'allow_flagged',
+    }
+  }
+
+  return {
+    ...result,
+    assessment: assistedAssessment,
+    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect),
+  }
+}
+
+export async function classifyGatedActionAsync(
+  action: GatedAction,
+  config: BelayConfigV3,
+  extraOptions: ClassifierOptions = {},
+): Promise<ClassifyResult> {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
+  const result = classifyGatedAction(action, config, extraOptions)
+
+  if (action.kind !== 'shell' || !config.policy.modelAssist.enabled) {
+    return result
+  }
+
+  const command = action.command ?? shellCommandFromPayload(action.payload ?? {})
+  if (!command) {
+    return result
+  }
+
+  const assisted = await maybeAssistAssessment(
+    {
+      command,
+      attributes: {
+        commandKey: '',
+        normalizedCommand: command,
+        cwdRelative: '',
+        flags: [],
+        targetScope: 'repo',
+        redirectKind: 'none',
+        signals: result.assessment.signals,
+        isUnparseable: result.reason === 'unparseable_shell',
+        isDynamicEval: false,
+        hasPipeToShell: false,
+        hitsProtectedArtifact: false,
+        hitsOutsideRepo: false,
+        isCustomAllow: false,
+        isCustomExternal: false,
+        isReadOnlyKey: false,
+        isFlaggedKey: false,
+        isExternalKey: false,
+        hasCredentialHeader: false,
+        findDangerous: false,
+      },
+      heuristicAssessment: result.assessment,
+    },
+    config.policy.modelAssist,
+  )
+
+  if (!assisted.assisted) {
+    return result
+  }
+
+  return applyModelAssistToResult(result, assisted.assessment, options)
 }
 
 export function gateEnabledForAction(config: BelayConfigV3, action: GatedAction): boolean {

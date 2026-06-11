@@ -28,7 +28,11 @@ export function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULE
         return {
             verdict: 'allow',
             reason: 'custom_allow',
-            assessment: { ...assessment, confidence: 0.99, signals: [...assessment.signals, 'custom_allow_command'] },
+            assessment: {
+                ...assessment,
+                confidence: 0.99,
+                signals: [...assessment.signals, 'custom_allow_command'],
+            },
             matchedRuleId: 'custom_allow_over_external',
         };
     }
@@ -36,9 +40,7 @@ export function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULE
         if (!matchesPolicyRule(rule.match, attributes)) {
             continue;
         }
-        if (rule.id === 'custom_allow' &&
-            attributes.isCustomExternal &&
-            !rule.nonOverridable) {
+        if (rule.id === 'custom_allow' && attributes.isCustomExternal && !rule.nonOverridable) {
             continue;
         }
         if (rule.id === 'custom_external' && attributes.isCustomAllow && attributes.isCustomExternal) {

@@ -1,5 +1,5 @@
-import type { Assessment, ConfidenceThresholds, HookVerdict } from './types.js';
 import type { BlastRadiusScope, ShellAttributes } from './policy/types.js';
+import type { Assessment, ConfidenceThresholds, HookVerdict } from './types.js';
 export declare function blastRadiusLabel(scope: BlastRadiusScope): string;
 export declare function computeAssessmentFromAttributes(attributes: ShellAttributes): Assessment;
 /** Corpus-calibrated confidence: strong signals increase, ambiguity decreases. */

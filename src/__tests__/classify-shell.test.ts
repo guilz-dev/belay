@@ -129,6 +129,26 @@ describe('classifyShell', () => {
     expect(result.reason).toBe('unknown_local_effect')
   })
 
+  it('changes unknown-local verdict when confidence thresholds are adjusted', () => {
+    const permissive = classifyShell('make build', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+      confidenceThresholds: { allow: 0.5, flag: 0.4 },
+    })
+    expect(permissive.verdict).toBe('allow')
+
+    const strict = classifyShell('make build', cwd, repoRoot, {
+      unknownLocalEffect: 'deny',
+      confidenceThresholds: { allow: 0.99, flag: 0.95 },
+    })
+    expect(strict.verdict).toBe('deny_pending_approval')
+  })
+
+  it('denies rm outside the repository', () => {
+    const result = classifyShell('rm -rf /tmp/build', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
+  })
+
   it('allows unknown commands via override even under fail-closed policy', () => {
     const result = classifyShell('make build', cwd, repoRoot, {
       unknownLocalEffect: 'deny',

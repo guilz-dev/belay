@@ -15,6 +15,7 @@ import {
 } from '../core/gate-contract.js'
 import {
   classifyGatedAction,
+  extractAgentAssessment,
   GateNormalizationError,
   normalizeGatedAction,
 } from '../core/gate-engine.js'
@@ -51,6 +52,38 @@ describe('gate contract', () => {
     })
     const result = classifyGatedAction(action, DEFAULT_CONFIG_V3)
     expect(result.verdict).toBe('allow')
+  })
+
+  it('extracts agent assessment from hook payloads', () => {
+    const assessment = extractAgentAssessment({
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 0.99,
+        signals: ['agent_claim'],
+      },
+    })
+    expect(assessment?.confidence).toBe(0.99)
+  })
+
+  it('escalates when agent assessment mismatches independent judgment', () => {
+    const action = normalizeGatedAction({
+      kind: 'shell',
+      repoRoot: '/repo',
+      cwd: '/repo',
+      command: 'git push origin main',
+      agentAssessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 0.99,
+        signals: [],
+      },
+    })
+    const result = classifyGatedAction(action, DEFAULT_CONFIG_V3)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('agent_assessment_mismatch')
   })
 
   it('maps unnormalized actions to deny verdicts', () => {

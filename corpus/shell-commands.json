@@ -61,7 +61,11 @@
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
-  { "command": "rm -rf /tmp/build", "verdict": "allow_flagged", "reason": "local_mutation" },
+  {
+    "command": "rm -rf /tmp/build",
+    "verdict": "deny_pending_approval",
+    "reason": "outside_repo_mutation"
+  },
   {
     "command": "git push --force origin main",
     "verdict": "deny_pending_approval",

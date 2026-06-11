@@ -1,3 +1,4 @@
+import { FLAGGED_COMMAND_KEYS, READ_ONLY_COMMAND_KEYS, } from './command-keys.js';
 /** Built-in policy rules — same language as operator custom rules. Higher priority wins. */
 export const DEFAULT_POLICY_RULES = [
     {
@@ -88,14 +89,19 @@ export const DEFAULT_POLICY_RULES = [
     {
         id: 'read_only',
         priority: 500,
-        match: { commandKey: ['cat', 'cd', 'echo', 'git diff', 'git log', 'git rev-parse', 'git show', 'git status', 'head', 'ls', 'pwd', 'rg', 'sort', 'tail', 'wc', 'which', 'find'] },
+        match: {
+            commandKey: [...READ_ONLY_COMMAND_KEYS],
+            redirectKind: 'none',
+        },
         action: 'allow',
         reason: 'read_only',
     },
     {
         id: 'local_mutation',
         priority: 400,
-        match: { commandKey: ['chmod', 'cp', 'git add', 'git clean', 'git commit', 'git mv', 'git reset', 'mkdir', 'mv', 'rm', 'tee', 'touch', 'truncate', 'sed'] },
+        match: {
+            commandKey: [...FLAGGED_COMMAND_KEYS],
+        },
         action: 'flag',
         reason: 'local_mutation',
     },

@@ -1,5 +1,5 @@
-import type { Assessment } from './types.js';
 import type { ShellAttributes } from './policy/types.js';
+import type { Assessment } from './types.js';
 export interface ModelAssistConfig {
     enabled: boolean;
     model?: string;

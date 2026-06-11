@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
-import { classifyGatedAction, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
+import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
 import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, createApprovalRecord, mergeConfig, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
@@ -123,6 +123,7 @@ export async function evaluateGatedAction(ctx, deps, params) {
             command: params.command,
             payload: params.payload,
             toolName: params.toolName,
+            agentAssessment: extractAgentAssessment(params.payload),
         });
     }
     catch {
@@ -162,7 +163,7 @@ export async function evaluateGatedAction(ctx, deps, params) {
             wouldBlock: false,
         });
     }
-    const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
+    const result = await classifyGatedActionAsync(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
     return gateDecisionToVerdict(ctx, deps, params.kind, result);
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result) {

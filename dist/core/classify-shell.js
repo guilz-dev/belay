@@ -1,10 +1,10 @@
+import { DEFAULT_CONFIDENCE_THRESHOLDS } from './config.js';
 import { shellFingerprint } from './fingerprint.js';
 import { normalizeToken, relativeWithinRepo } from './path-utils.js';
-import { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
-import { commandKey, normalizeShellCommand, tokenizeShell, } from './shell-tokenizer.js';
-import { DEFAULT_CONFIDENCE_THRESHOLDS } from './config.js';
 import { evaluatePolicyRules, policyResultToClassifyResult } from './policy/evaluator.js';
 import { analyzeShellSegment } from './shell-analysis.js';
+import { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
+import { commandKey, normalizeShellCommand, tokenizeShell } from './shell-tokenizer.js';
 import { detectUnparseableShell } from './shell-unparseable.js';
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish']);
 const INTERPRETER_SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval']);

@@ -10,8 +10,7 @@ export async function maybeAssistAssessment(input, config) {
     if (!apiKey) {
         return { assessment: input.heuristicAssessment, assisted: false };
     }
-    if (input.heuristicAssessment.confidence >= 0.88 ||
-        input.heuristicAssessment.confidence < 0.55) {
+    if (input.heuristicAssessment.confidence >= 0.88 || input.heuristicAssessment.confidence < 0.55) {
         return { assessment: input.heuristicAssessment, assisted: false };
     }
     try {

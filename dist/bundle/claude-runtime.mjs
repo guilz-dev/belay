@@ -581,238 +581,6 @@ function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   });
 }
 
-// src/core/shell-substitution.ts
-var MAX_SUBSTITUTION_DEPTH = 8;
-function findCommandSubstitutions(command) {
-  const results = [];
-  let index = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (inSingle || inDouble) {
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (char === "`") {
-      const end = findClosingBacktick(command, index + 1);
-      if (end === -1) {
-        break;
-      }
-      const inner = command.slice(index + 1, end).trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = end + 1;
-      continue;
-    }
-    if (char === "$" && command[index + 1] === "(") {
-      const closed = extractBalancedParenContent(command, index + 2);
-      if (!closed) {
-        index += 1;
-        continue;
-      }
-      const inner = closed.content.trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = closed.endIndex;
-      continue;
-    }
-    index += 1;
-  }
-  return results;
-}
-function findClosingBacktick(command, start) {
-  let index = start;
-  while (index < command.length) {
-    if (command[index] === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (command[index] === "`") {
-      return index;
-    }
-    index += 1;
-  }
-  return -1;
-}
-function extractBalancedParenContent(command, start) {
-  let depth = 1;
-  let index = start;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length && depth > 0) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && !inDouble) {
-      if (char === "(") {
-        depth += 1;
-      } else if (char === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          return {
-            content: command.slice(start, index),
-            endIndex: index + 1
-          };
-        }
-      }
-    }
-    index += 1;
-  }
-  return null;
-}
-
-// src/core/shell-tokenizer.ts
-var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
-function tokenizeShell(input) {
-  const tokens = [];
-  let buffer = "";
-  let quote = null;
-  let escaping = false;
-  const flush = () => {
-    if (buffer.length > 0) {
-      tokens.push(buffer);
-      buffer = "";
-    }
-  };
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    const next = input[index + 1] ?? "";
-    if (escaping) {
-      buffer += char;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        buffer += char;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === "&" && next === "&") {
-      flush();
-      tokens.push("&&");
-      index += 1;
-      continue;
-    }
-    if (char === "|" && next === "|") {
-      flush();
-      tokens.push("||");
-      index += 1;
-      continue;
-    }
-    if (char === ">" && next === ">") {
-      flush();
-      tokens.push(">>");
-      index += 1;
-      continue;
-    }
-    if (char === "|" || char === ";" || char === ">" || char === "<") {
-      flush();
-      tokens.push(char);
-      continue;
-    }
-    if (char === "\n" || char === "\r") {
-      flush();
-      tokens.push(";");
-      continue;
-    }
-    if (/\s/.test(char)) {
-      flush();
-      continue;
-    }
-    buffer += char;
-  }
-  flush();
-  return tokens;
-}
-function normalizeShellCommand(command, repoRoot, normalizeToken2) {
-  const tokens = tokenizeShell(command);
-  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
-    tokens.shift();
-  }
-  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
-  return normalized.join(" ").trim();
-}
-function commandKey(tokens) {
-  const filtered = tokens.filter((token) => token !== "sudo");
-  const first = filtered[0] ?? "";
-  const second = filtered[1] ?? "";
-  if ((first === "git" || first === "npm" || first === "pnpm" || first === "docker" || first === "terraform" || first === "fly" || first === "firebase") && second) {
-    return `${first} ${second}`;
-  }
-  return first;
-}
-function extractRedirectTargets(tokens) {
-  const targets = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === ">" || token === ">>" || token === "<") {
-      const next = tokens[index + 1];
-      if (next) {
-        targets.push(next);
-      }
-    }
-  }
-  return targets;
-}
-
 // src/core/judgment.ts
 var SCOPE_BLAST_RADIUS = {
   none: "none",
@@ -949,6 +717,174 @@ function matchesCustomCommand(normalizedCommand, key, pattern) {
   return normalizedCommand === trimmed || key === trimmed;
 }
 
+// src/core/policy/command-keys.ts
+var READ_ONLY_COMMAND_KEYS = [
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+];
+var FLAGGED_COMMAND_KEYS = [
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+];
+var EXTERNAL_COMMAND_KEYS = [
+  "aws",
+  "curl",
+  "docker push",
+  "docker run",
+  "firebase deploy",
+  "fly deploy",
+  "gh",
+  "git push",
+  "gcloud",
+  "heroku",
+  "kubectl",
+  "netlify",
+  "npm publish",
+  "pnpm publish",
+  "rsync",
+  "scp",
+  "ssh",
+  "supabase",
+  "terraform apply",
+  "vercel",
+  "wget"
+];
+var READ_ONLY_KEYS = new Set(READ_ONLY_COMMAND_KEYS);
+var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
+var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
+
+// src/core/shell-tokenizer.ts
+var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
+function tokenizeShell(input) {
+  const tokens = [];
+  let buffer = "";
+  let quote = null;
+  let escaping = false;
+  const flush = () => {
+    if (buffer.length > 0) {
+      tokens.push(buffer);
+      buffer = "";
+    }
+  };
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1] ?? "";
+    if (escaping) {
+      buffer += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        buffer += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "&" && next === "&") {
+      flush();
+      tokens.push("&&");
+      index += 1;
+      continue;
+    }
+    if (char === "|" && next === "|") {
+      flush();
+      tokens.push("||");
+      index += 1;
+      continue;
+    }
+    if (char === ">" && next === ">") {
+      flush();
+      tokens.push(">>");
+      index += 1;
+      continue;
+    }
+    if (char === "|" || char === ";" || char === ">" || char === "<") {
+      flush();
+      tokens.push(char);
+      continue;
+    }
+    if (char === "\n" || char === "\r") {
+      flush();
+      tokens.push(";");
+      continue;
+    }
+    if (/\s/.test(char)) {
+      flush();
+      continue;
+    }
+    buffer += char;
+  }
+  flush();
+  return tokens;
+}
+function normalizeShellCommand(command, repoRoot, normalizeToken2) {
+  const tokens = tokenizeShell(command);
+  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
+    tokens.shift();
+  }
+  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
+  return normalized.join(" ").trim();
+}
+function commandKey(tokens) {
+  const filtered = tokens.filter((token) => token !== "sudo");
+  const first = filtered[0] ?? "";
+  const second = filtered[1] ?? "";
+  if ((first === "git" || first === "npm" || first === "pnpm" || first === "docker" || first === "terraform" || first === "fly" || first === "firebase") && second) {
+    return `${first} ${second}`;
+  }
+  return first;
+}
+function extractRedirectTargets(tokens) {
+  const targets = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === ">" || token === ">>" || token === "<") {
+      const next = tokens[index + 1];
+      if (next) {
+        targets.push(next);
+      }
+    }
+  }
+  return targets;
+}
+
 // src/core/shell-unparseable.ts
 function detectUnparseableShell(command) {
   if (hasProcessSubstitution(command)) {
@@ -1045,63 +981,6 @@ function hasUnbalancedDollarParen(command) {
 }
 
 // src/core/shell-analysis.ts
-var READ_ONLY_KEYS = /* @__PURE__ */ new Set([
-  "cat",
-  "cd",
-  "echo",
-  "git diff",
-  "git log",
-  "git rev-parse",
-  "git show",
-  "git status",
-  "head",
-  "ls",
-  "pwd",
-  "rg",
-  "sort",
-  "tail",
-  "wc",
-  "which",
-  "find"
-]);
-var FLAGGED_KEYS = /* @__PURE__ */ new Set([
-  "chmod",
-  "cp",
-  "git add",
-  "git clean",
-  "git commit",
-  "git mv",
-  "git reset",
-  "mkdir",
-  "mv",
-  "rm",
-  "tee",
-  "touch",
-  "truncate"
-]);
-var EXTERNAL_KEYS = /* @__PURE__ */ new Set([
-  "aws",
-  "curl",
-  "docker push",
-  "docker run",
-  "firebase deploy",
-  "fly deploy",
-  "gh",
-  "git push",
-  "gcloud",
-  "heroku",
-  "kubectl",
-  "netlify",
-  "npm publish",
-  "pnpm publish",
-  "rsync",
-  "scp",
-  "ssh",
-  "supabase",
-  "terraform apply",
-  "vercel",
-  "wget"
-]);
 var DYNAMIC_KEYS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
 var FIND_DANGEROUS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
@@ -1270,7 +1149,7 @@ function analyzeShellSegment(params) {
     hitsOutsideRepo,
     isCustomAllow,
     isCustomExternal,
-    isReadOnlyKey: READ_ONLY_KEYS.has(key),
+    isReadOnlyKey: READ_ONLY_KEYS.has(key) && redirect === "none",
     isFlaggedKey: FLAGGED_KEYS.has(key),
     isExternalKey: isExternalKey(key, normalizedCommand, options),
     hasCredentialHeader,
@@ -1413,14 +1292,19 @@ var DEFAULT_POLICY_RULES = [
   {
     id: "read_only",
     priority: 500,
-    match: { commandKey: ["cat", "cd", "echo", "git diff", "git log", "git rev-parse", "git show", "git status", "head", "ls", "pwd", "rg", "sort", "tail", "wc", "which", "find"] },
+    match: {
+      commandKey: [...READ_ONLY_COMMAND_KEYS],
+      redirectKind: "none"
+    },
     action: "allow",
     reason: "read_only"
   },
   {
     id: "local_mutation",
     priority: 400,
-    match: { commandKey: ["chmod", "cp", "git add", "git clean", "git commit", "git mv", "git reset", "mkdir", "mv", "rm", "tee", "touch", "truncate", "sed"] },
+    match: {
+      commandKey: [...FLAGGED_COMMAND_KEYS]
+    },
     action: "flag",
     reason: "local_mutation"
   },
@@ -1460,7 +1344,11 @@ function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
     return {
       verdict: "allow",
       reason: "custom_allow",
-      assessment: { ...assessment, confidence: 0.99, signals: [...assessment.signals, "custom_allow_command"] },
+      assessment: {
+        ...assessment,
+        confidence: 0.99,
+        signals: [...assessment.signals, "custom_allow_command"]
+      },
       matchedRuleId: "custom_allow_over_external"
     };
   }
@@ -1497,6 +1385,133 @@ function policyResultToClassifyResult(attributes, result) {
     fingerprint: shellFingerprint(attributes.cwdRelative, attributes.normalizedCommand),
     assessment: result.assessment
   };
+}
+
+// src/core/shell-substitution.ts
+var MAX_SUBSTITUTION_DEPTH = 8;
+function findCommandSubstitutions(command) {
+  const results = [];
+  let index = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (char === "`") {
+      const end = findClosingBacktick(command, index + 1);
+      if (end === -1) {
+        break;
+      }
+      const inner = command.slice(index + 1, end).trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      const closed = extractBalancedParenContent(command, index + 2);
+      if (!closed) {
+        index += 1;
+        continue;
+      }
+      const inner = closed.content.trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = closed.endIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return results;
+}
+function findClosingBacktick(command, start) {
+  let index = start;
+  while (index < command.length) {
+    if (command[index] === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (command[index] === "`") {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+function extractBalancedParenContent(command, start) {
+  let depth = 1;
+  let index = start;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length && depth > 0) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          return {
+            content: command.slice(start, index),
+            endIndex: index + 1
+          };
+        }
+      }
+    }
+    index += 1;
+  }
+  return null;
 }
 
 // src/core/classify-shell.ts
@@ -2246,6 +2261,81 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   };
 }
 
+// src/core/model-assist.ts
+var DEFAULT_MODEL = "claude-sonnet-4-20250514";
+async function maybeAssistAssessment(input, config) {
+  if (!config.enabled) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  const apiKey = process.env[config.apiKeyEnv ?? "ANTHROPIC_API_KEY"];
+  if (!apiKey) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  if (input.heuristicAssessment.confidence >= 0.88 || input.heuristicAssessment.confidence < 0.55) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  try {
+    const assisted = await callAnthropicAssessment(input, apiKey, config);
+    return {
+      assessment: {
+        ...assisted,
+        signals: [...input.heuristicAssessment.signals, "model_assisted"]
+      },
+      assisted: true
+    };
+  } catch {
+    return {
+      assessment: {
+        ...input.heuristicAssessment,
+        confidence: Math.min(input.heuristicAssessment.confidence, 0.55),
+        signals: [...input.heuristicAssessment.signals, "model_assist_failed"]
+      },
+      assisted: false
+    };
+  }
+}
+async function callAnthropicAssessment(input, apiKey, config) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 3e3);
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: config.model ?? DEFAULT_MODEL,
+        max_tokens: 256,
+        messages: [
+          {
+            role: "user",
+            content: `Classify this shell command for safety. Return JSON only with keys reversibility (reversible|recoverable_with_cost|irreversible), external (boolean), blastRadius (string), confidence (0-1 number).
+Command: ${input.command}`
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`model assist HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const text = payload.content?.find((block) => block.type === "text")?.text ?? "";
+    const parsed = JSON.parse(text);
+    return {
+      reversibility: parsed.reversibility ?? input.heuristicAssessment.reversibility,
+      external: parsed.external ?? input.heuristicAssessment.external,
+      blastRadius: parsed.blastRadius ?? input.heuristicAssessment.blastRadius,
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.6,
+      signals: input.heuristicAssessment.signals
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // src/core/gate-engine.ts
 var GateNormalizationError = class extends Error {
   reason = "normalization_failed";
@@ -2254,6 +2344,38 @@ var GateNormalizationError = class extends Error {
     this.name = "GateNormalizationError";
   }
 };
+function parseAssessment(value) {
+  if (!value || typeof value !== "object") {
+    return void 0;
+  }
+  const record = value;
+  if ((record.reversibility === "reversible" || record.reversibility === "recoverable_with_cost" || record.reversibility === "irreversible") && typeof record.external === "boolean" && typeof record.blastRadius === "string" && typeof record.confidence === "number" && Array.isArray(record.signals) && record.signals.every((signal) => typeof signal === "string")) {
+    return {
+      reversibility: record.reversibility,
+      external: record.external,
+      blastRadius: record.blastRadius,
+      confidence: record.confidence,
+      signals: record.signals
+    };
+  }
+  return void 0;
+}
+function extractAgentAssessment(payload) {
+  if (!payload) {
+    return void 0;
+  }
+  for (const key of ["agentAssessment", "assessment"]) {
+    const parsed = parseAssessment(payload[key]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  const toolInput = payload.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    return extractAgentAssessment(toolInput);
+  }
+  return void 0;
+}
 function shellCommandFromPayload(payload) {
   const direct = payload.command;
   if (typeof direct === "string" && direct.trim()) {
@@ -2320,6 +2442,69 @@ function classifyGatedAction(action, config, extraOptions = {}) {
     return classifySubagent(action.payload ?? {}, action.repoRoot, options);
   }
   return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
+}
+function applyModelAssistToResult(result, assistedAssessment, options) {
+  if (result.reason !== "unknown_local_effect" && result.reason !== "unparseable_shell") {
+    return { ...result, assessment: assistedAssessment };
+  }
+  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
+  const unknownLocalEffect = options.unknownLocalEffect ?? "allow_flagged";
+  const unparseableShell = options.unparseableShell ?? "allow_flagged";
+  if (result.reason === "unparseable_shell") {
+    return {
+      ...result,
+      assessment: assistedAssessment,
+      verdict: unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged"
+    };
+  }
+  return {
+    ...result,
+    assessment: assistedAssessment,
+    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect)
+  };
+}
+async function classifyGatedActionAsync(action, config, extraOptions = {}) {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
+  const result = classifyGatedAction(action, config, extraOptions);
+  if (action.kind !== "shell" || !config.policy.modelAssist.enabled) {
+    return result;
+  }
+  const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
+  if (!command) {
+    return result;
+  }
+  const assisted = await maybeAssistAssessment(
+    {
+      command,
+      attributes: {
+        commandKey: "",
+        normalizedCommand: command,
+        cwdRelative: "",
+        flags: [],
+        targetScope: "repo",
+        redirectKind: "none",
+        signals: result.assessment.signals,
+        isUnparseable: result.reason === "unparseable_shell",
+        isDynamicEval: false,
+        hasPipeToShell: false,
+        hitsProtectedArtifact: false,
+        hitsOutsideRepo: false,
+        isCustomAllow: false,
+        isCustomExternal: false,
+        isReadOnlyKey: false,
+        isFlaggedKey: false,
+        isExternalKey: false,
+        hasCredentialHeader: false,
+        findDangerous: false
+      },
+      heuristicAssessment: result.assessment
+    },
+    config.policy.modelAssist
+  );
+  if (!assisted.assisted) {
+    return result;
+  }
+  return applyModelAssistToResult(result, assisted.assessment, options);
 }
 function gateEnabledForAction(config, action) {
   if (action.kind === "shell") {
@@ -2571,7 +2756,8 @@ async function evaluateGatedAction(ctx, deps, params) {
       cwd: params.cwd,
       command: params.command,
       payload: params.payload,
-      toolName: params.toolName
+      toolName: params.toolName,
+      agentAssessment: extractAgentAssessment(params.payload)
     });
   } catch {
     const verdict = unnormalizedGateVerdict({
@@ -2610,7 +2796,11 @@ async function evaluateGatedAction(ctx, deps, params) {
       wouldBlock: false
     });
   }
-  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
+  const result = await classifyGatedActionAsync(
+    action,
+    ctx.config,
+    runtimeClassifierOptions(ctx, ctx.config)
+  );
   return gateDecisionToVerdict(ctx, deps, params.kind, result);
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result) {

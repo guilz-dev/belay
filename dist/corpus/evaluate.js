@@ -2,8 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyShell } from '../core/classify-shell.js';
-import { DEFAULT_CONFIG_V3 } from '../core/config.js';
-import { classifierOptionsFromConfig } from '../core/config.js';
+import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js';
 const VERDICTS = ['allow', 'allow_flagged', 'deny_pending_approval'];
 export async function loadCorpusCases(corpusDir) {
     const raw = await readFile(path.join(corpusDir, 'shell-commands.json'), 'utf8');

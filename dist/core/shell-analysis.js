@@ -1,64 +1,8 @@
 import { matchesCustomCommand } from './custom-command-match.js';
 import { hasOutsideRepoPath, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
+import { EXTERNAL_KEYS, FLAGGED_KEYS, READ_ONLY_KEYS, } from './policy/command-keys.js';
 import { commandKey, extractRedirectTargets, tokenizeShell } from './shell-tokenizer.js';
 import { detectUnparseableShell } from './shell-unparseable.js';
-const READ_ONLY_KEYS = new Set([
-    'cat',
-    'cd',
-    'echo',
-    'git diff',
-    'git log',
-    'git rev-parse',
-    'git show',
-    'git status',
-    'head',
-    'ls',
-    'pwd',
-    'rg',
-    'sort',
-    'tail',
-    'wc',
-    'which',
-    'find',
-]);
-const FLAGGED_KEYS = new Set([
-    'chmod',
-    'cp',
-    'git add',
-    'git clean',
-    'git commit',
-    'git mv',
-    'git reset',
-    'mkdir',
-    'mv',
-    'rm',
-    'tee',
-    'touch',
-    'truncate',
-]);
-const EXTERNAL_KEYS = new Set([
-    'aws',
-    'curl',
-    'docker push',
-    'docker run',
-    'firebase deploy',
-    'fly deploy',
-    'gh',
-    'git push',
-    'gcloud',
-    'heroku',
-    'kubectl',
-    'netlify',
-    'npm publish',
-    'pnpm publish',
-    'rsync',
-    'scp',
-    'ssh',
-    'supabase',
-    'terraform apply',
-    'vercel',
-    'wget',
-]);
 const DYNAMIC_KEYS = new Set(['eval', 'source', 'exec']);
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish']);
 const FIND_DANGEROUS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir']);
@@ -217,7 +161,7 @@ export function analyzeShellSegment(params) {
         hitsOutsideRepo,
         isCustomAllow,
         isCustomExternal,
-        isReadOnlyKey: READ_ONLY_KEYS.has(key),
+        isReadOnlyKey: READ_ONLY_KEYS.has(key) && redirect === 'none',
         isFlaggedKey: FLAGGED_KEYS.has(key),
         isExternalKey: isExternalKey(key, normalizedCommand, options),
         hasCredentialHeader,

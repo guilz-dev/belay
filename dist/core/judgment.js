@@ -56,7 +56,9 @@ export function computeAssessmentFromAttributes(attributes) {
             signals: [...signals, 'read_only_command'],
         };
     }
-    if (attributes.isFlaggedKey || attributes.redirectKind === 'truncate' || attributes.redirectKind === 'append') {
+    if (attributes.isFlaggedKey ||
+        attributes.redirectKind === 'truncate' ||
+        attributes.redirectKind === 'append') {
         const reversibility = attributes.flags.includes('-rf') || attributes.flags.includes('-fr')
             ? 'irreversible'
             : attributes.redirectKind === 'append'
