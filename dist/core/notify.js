@@ -5,11 +5,19 @@ export async function notifyDeny(config, event) {
     const payload = JSON.stringify(event);
     if (config.webhookUrl) {
         try {
-            await fetch(config.webhookUrl, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: payload,
-            });
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
+            try {
+                await fetch(config.webhookUrl, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: payload,
+                    signal: controller.signal,
+                });
+            }
+            finally {
+                clearTimeout(timeout);
+            }
         }
         catch {
             // best-effort notification

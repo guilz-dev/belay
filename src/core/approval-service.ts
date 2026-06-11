@@ -16,19 +16,10 @@ export async function recordApproval(params: {
   config: BelayConfigV3
   store: ApprovalStore
   token?: string
+  /** When true, require a signed token (out-of-band CLI path). Editor prompts skip this. */
+  requireSignedToken?: boolean
 }): Promise<{ ok: boolean; message: string; approval?: ApprovalStateFile['approvals'][number] }> {
-  const { approvalId, config, store, token } = params
-
-  if (config.approvalSigning.required) {
-    if (!token) {
-      return { ok: false, message: 'Signed approval token required for out-of-band approval.' }
-    }
-    const controlPlaneDir = configuredControlPlaneDir(config)
-    const verified = await verifyApprovalToken(token, controlPlaneDir)
-    if (!verified || verified.approvalId !== approvalId) {
-      return { ok: false, message: 'Invalid or expired signed approval token.' }
-    }
-  }
+  const { approvalId, config, store, token, requireSignedToken = false } = params
 
   const pending = await store.loadPending()
   pending.state = compactApprovals(pending.state)
@@ -38,7 +29,26 @@ export async function recordApproval(params: {
     return { ok: false, message: 'Belay approval not found or expired.' }
   }
 
-  const [approval] = pending.state.approvals.splice(index, 1)
+  const [approval] = pending.state.approvals.slice(index, index + 1)
+
+  if (requireSignedToken) {
+    if (!token) {
+      return { ok: false, message: 'Signed approval token required for out-of-band approval.' }
+    }
+    const controlPlaneDir = configuredControlPlaneDir(config)
+    const verified = await verifyApprovalToken(token, controlPlaneDir)
+    if (!verified || verified.approvalId !== approvalId) {
+      return { ok: false, message: 'Invalid or expired signed approval token.' }
+    }
+    if (
+      verified.fingerprint !== approval.fingerprint ||
+      verified.repoRoot !== approval.repoRoot
+    ) {
+      return { ok: false, message: 'Signed approval token does not match the pending approval.' }
+    }
+  }
+
+  pending.state.approvals.splice(index, 1)
   await store.writePending(pending.filePath, pending.state)
 
   const approved = await store.loadApproved()

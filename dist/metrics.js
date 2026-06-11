@@ -34,6 +34,24 @@ export function formatMetricsReport(report) {
     if (report.bypassAttemptCount > 0) {
         lines.push(`Bypass attempts detected: ${report.bypassAttemptCount}`);
     }
+    if (Object.keys(report.byVerdict).length > 0) {
+        lines.push('', 'By verdict:');
+        for (const [verdict, count] of Object.entries(report.byVerdict).sort((a, b) => b[1] - a[1])) {
+            lines.push(`- ${verdict}: ${count}`);
+        }
+    }
+    if (Object.keys(report.gateEventsByDay).length > 0) {
+        lines.push('', 'Gate events by day:');
+        for (const [day, count] of Object.entries(report.gateEventsByDay).sort()) {
+            lines.push(`- ${day}: ${count}`);
+        }
+    }
+    if (report.noisyRuleCandidates.length > 0) {
+        lines.push('', 'Noisy rule candidates:');
+        for (const rule of report.noisyRuleCandidates) {
+            lines.push(`- ${rule.reason}: ${(rule.approvalRate * 100).toFixed(0)}% approved after deny (${rule.approvedCount}/${rule.denyCount})`);
+        }
+    }
     if (Object.keys(report.byReason).length > 0) {
         lines.push('', 'By reason:');
         for (const [reason, count] of Object.entries(report.byReason).sort((a, b) => b[1] - a[1])) {

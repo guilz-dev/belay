@@ -20,6 +20,18 @@ describe('config layers', () => {
     expect(result.provenance.some((entry) => entry.source === 'repo')).toBe(true)
   })
 
+  it('prevents disabling control plane from team config', () => {
+    const result = resolveLayeredConfig({
+      repoConfig: {},
+      adapterDefaults: DEFAULT_CONFIG_V3,
+      teamConfig: { config: { controlPlane: { enabled: false } } },
+      teamConfigPath: '/home/user/.config/agent-belay/team.config.json',
+    })
+
+    expect(result.config.controlPlane.enabled).toBe(true)
+    expect(result.provenance.some((entry) => entry.source === 'protected')).toBe(true)
+  })
+
   it('prevents weakening protected integrity from none to hash-pinned default', () => {
     const result = resolveLayeredConfig({
       repoConfig: { controlPlane: { integrity: 'none' } },

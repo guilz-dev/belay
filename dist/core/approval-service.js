@@ -2,8 +2,16 @@ import { verifyApprovalToken } from './approval-token.js';
 import { compactApprovals } from './approval.js';
 import { configuredControlPlaneDir } from './config.js';
 export async function recordApproval(params) {
-    const { approvalId, config, store, token } = params;
-    if (config.approvalSigning.required) {
+    const { approvalId, config, store, token, requireSignedToken = false } = params;
+    const pending = await store.loadPending();
+    pending.state = compactApprovals(pending.state);
+    const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId);
+    if (index === -1) {
+        await store.writePending(pending.filePath, pending.state);
+        return { ok: false, message: 'Belay approval not found or expired.' };
+    }
+    const [approval] = pending.state.approvals.slice(index, index + 1);
+    if (requireSignedToken) {
         if (!token) {
             return { ok: false, message: 'Signed approval token required for out-of-band approval.' };
         }
@@ -12,15 +20,12 @@ export async function recordApproval(params) {
         if (!verified || verified.approvalId !== approvalId) {
             return { ok: false, message: 'Invalid or expired signed approval token.' };
         }
+        if (verified.fingerprint !== approval.fingerprint ||
+            verified.repoRoot !== approval.repoRoot) {
+            return { ok: false, message: 'Signed approval token does not match the pending approval.' };
+        }
     }
-    const pending = await store.loadPending();
-    pending.state = compactApprovals(pending.state);
-    const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId);
-    if (index === -1) {
-        await store.writePending(pending.filePath, pending.state);
-        return { ok: false, message: 'Belay approval not found or expired.' };
-    }
-    const [approval] = pending.state.approvals.splice(index, 1);
+    pending.state.approvals.splice(index, 1);
     await store.writePending(pending.filePath, pending.state);
     const approved = await store.loadApproved();
     approved.state = compactApprovals(approved.state);

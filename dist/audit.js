@@ -37,9 +37,10 @@ export async function auditProject(options) {
         return { subcommand: 'query', records: filtered, count: filtered.length };
     }
     if (options.subcommand === 'summarize') {
-        const trips = buildApprovalRoundTrips(records);
-        const bypassAttempts = detectBypassAttempts(records);
-        const noisyRules = detectNoisyRules(records, trips);
+        const filtered = filterAuditRecords(records, filter);
+        const trips = buildApprovalRoundTrips(filtered);
+        const bypassAttempts = detectBypassAttempts(filtered);
+        const noisyRules = detectNoisyRules(filtered, trips);
         return {
             subcommand: 'summarize',
             roundTrips: trips,
@@ -50,16 +51,24 @@ export async function auditProject(options) {
     }
     const config = await loadConfigFile(repoRoot);
     let candidateConfig = config;
-    if (options.configPath && existsSync(options.configPath)) {
-        const raw = JSON.parse(await readFile(options.configPath, 'utf8'));
-        candidateConfig = mergeConfig(raw, config);
+    let configWarning;
+    if (options.configPath) {
+        if (!existsSync(options.configPath)) {
+            configWarning = `Candidate config not found: ${options.configPath}`;
+        }
+        else {
+            const raw = JSON.parse(await readFile(options.configPath, 'utf8'));
+            candidateConfig = mergeConfig(raw, config);
+        }
     }
-    const diffs = records
+    const filtered = filterAuditRecords(records, filter);
+    const diffs = filtered
         .map((record) => diffReclassification(record, candidateConfig, repoRoot))
         .filter((diff) => diff !== null);
     return {
         subcommand: 'replay',
         candidateConfigPath: options.configPath ?? null,
+        configWarning,
         changedCount: diffs.length,
         diffs,
     };
@@ -108,6 +117,7 @@ export function formatAuditReport(report) {
     const lines = [
         `audit replay: ${report.changedCount} verdict change(s)`,
         report.candidateConfigPath ? `Candidate config: ${report.candidateConfigPath}` : '',
+        report.configWarning ?? '',
     ].filter(Boolean);
     const diffs = report.diffs ?? [];
     for (const diff of diffs.slice(0, 30)) {

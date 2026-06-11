@@ -17,6 +17,8 @@ export declare function recordApproval(params: {
     config: BelayConfigV3;
     store: ApprovalStore;
     token?: string;
+    /** When true, require a signed token (out-of-band CLI path). Editor prompts skip this. */
+    requireSignedToken?: boolean;
 }): Promise<{
     ok: boolean;
     message: string;

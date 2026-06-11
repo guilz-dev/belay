@@ -30,15 +30,22 @@ export function teamConfigPath(
 }
 
 function applyProtectedLayer(config: BelayConfigV3, builtin: BelayConfigV3): BelayConfigV3 {
-  const protectedIntegrity =
-    builtin.controlPlane.integrity === 'hash-pinned' ? 'hash-pinned' : config.controlPlane.integrity
+  const controlPlane = { ...config.controlPlane }
+
+  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
+    controlPlane.enabled = true
+  }
+
+  if (
+    builtin.controlPlane.integrity === 'hash-pinned' &&
+    controlPlane.integrity === 'none'
+  ) {
+    controlPlane.integrity = 'hash-pinned'
+  }
 
   return {
     ...config,
-    controlPlane: {
-      ...config.controlPlane,
-      integrity: config.controlPlane.integrity === 'none' ? protectedIntegrity : config.controlPlane.integrity,
-    },
+    controlPlane,
   }
 }
 

@@ -405,6 +405,7 @@ export async function processApprovalPrompt(
   const recorded = await recordApproval({
     approvalId,
     config: ctx.config,
+    requireSignedToken: false,
     store: {
       loadPending: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
       loadApproved: () => deps.loadApprovals(ctx, 'approved-approvals.json'),

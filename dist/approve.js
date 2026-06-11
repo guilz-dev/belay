@@ -8,6 +8,7 @@ export async function approvePending(options) {
         approvalId: options.approvalId,
         config,
         token: options.token,
+        requireSignedToken: config.approvalSigning.required,
         store: {
             async loadPending() {
                 const filePath = pendingApprovalsPath(repoRoot, config);

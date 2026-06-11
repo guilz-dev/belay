@@ -100,7 +100,18 @@ function parseArgs(argv: string[]) {
       continue
     }
     if (token === '--kind') {
-      options.kind = rest[index + 1]
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--kind requires a value.')
+      }
+      if (command === 'audit') {
+        options.kind = next
+      } else {
+        if (!['shell', 'tool', 'subagent'].includes(next)) {
+          throw new Error('--kind requires shell, tool, or subagent.')
+        }
+        options.explainKind = next as 'shell' | 'tool' | 'subagent'
+      }
       index += 1
       continue
     }
@@ -164,15 +175,6 @@ function parseArgs(argv: string[]) {
         throw new Error('--cwd requires a path value.')
       }
       options.explainCwd = next
-      index += 1
-      continue
-    }
-    if (token === '--kind') {
-      const next = rest[index + 1]
-      if (!next || !['shell', 'tool', 'subagent'].includes(next)) {
-        throw new Error('--kind requires shell, tool, or subagent.')
-      }
-      options.explainKind = next as 'shell' | 'tool' | 'subagent'
       index += 1
       continue
     }

@@ -23,6 +23,7 @@ export declare function auditProject(options: AuditOptions): Promise<{
     bypassAttempts?: undefined;
     noisyRules?: undefined;
     candidateConfigPath?: undefined;
+    configWarning?: undefined;
     changedCount?: undefined;
     diffs?: undefined;
 } | {
@@ -34,11 +35,13 @@ export declare function auditProject(options: AuditOptions): Promise<{
     records?: undefined;
     count?: undefined;
     candidateConfigPath?: undefined;
+    configWarning?: undefined;
     changedCount?: undefined;
     diffs?: undefined;
 } | {
     subcommand: string;
     candidateConfigPath: string | null;
+    configWarning: string | undefined;
     changedCount: number;
     diffs: import("./core/reclassify.js").ReclassifyDiff[];
     records?: undefined;

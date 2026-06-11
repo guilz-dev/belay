@@ -7,13 +7,17 @@ export function teamConfigPath(homedir = () => process.env.HOME ?? process.env.U
     return path.join(base, 'agent-belay', 'team.config.json');
 }
 function applyProtectedLayer(config, builtin) {
-    const protectedIntegrity = builtin.controlPlane.integrity === 'hash-pinned' ? 'hash-pinned' : config.controlPlane.integrity;
+    const controlPlane = { ...config.controlPlane };
+    if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
+        controlPlane.enabled = true;
+    }
+    if (builtin.controlPlane.integrity === 'hash-pinned' &&
+        controlPlane.integrity === 'none') {
+        controlPlane.integrity = 'hash-pinned';
+    }
     return {
         ...config,
-        controlPlane: {
-            ...config.controlPlane,
-            integrity: config.controlPlane.integrity === 'none' ? protectedIntegrity : config.controlPlane.integrity,
-        },
+        controlPlane,
     };
 }
 function asV3Layer(raw) {

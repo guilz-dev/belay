@@ -2670,8 +2670,16 @@ function createApprovalRecord(params) {
 
 // src/core/approval-service.ts
 async function recordApproval(params) {
-  const { approvalId, config, store, token } = params;
-  if (config.approvalSigning.required) {
+  const { approvalId, config, store, token, requireSignedToken = false } = params;
+  const pending = await store.loadPending();
+  pending.state = compactApprovals(pending.state);
+  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
+  if (index === -1) {
+    await store.writePending(pending.filePath, pending.state);
+    return { ok: false, message: "Belay approval not found or expired." };
+  }
+  const [approval] = pending.state.approvals.slice(index, index + 1);
+  if (requireSignedToken) {
     if (!token) {
       return { ok: false, message: "Signed approval token required for out-of-band approval." };
     }
@@ -2680,15 +2688,11 @@ async function recordApproval(params) {
     if (!verified || verified.approvalId !== approvalId) {
       return { ok: false, message: "Invalid or expired signed approval token." };
     }
+    if (verified.fingerprint !== approval.fingerprint || verified.repoRoot !== approval.repoRoot) {
+      return { ok: false, message: "Signed approval token does not match the pending approval." };
+    }
   }
-  const pending = await store.loadPending();
-  pending.state = compactApprovals(pending.state);
-  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
-  if (index === -1) {
-    await store.writePending(pending.filePath, pending.state);
-    return { ok: false, message: "Belay approval not found or expired." };
-  }
-  const [approval] = pending.state.approvals.splice(index, 1);
+  pending.state.approvals.splice(index, 1);
   await store.writePending(pending.filePath, pending.state);
   const approved = await store.loadApproved();
   approved.state = compactApprovals(approved.state);
@@ -2752,13 +2756,16 @@ function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROF
   return path6.join(base, "agent-belay", "team.config.json");
 }
 function applyProtectedLayer(config, builtin) {
-  const protectedIntegrity = builtin.controlPlane.integrity === "hash-pinned" ? "hash-pinned" : config.controlPlane.integrity;
+  const controlPlane = { ...config.controlPlane };
+  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
+    controlPlane.enabled = true;
+  }
+  if (builtin.controlPlane.integrity === "hash-pinned" && controlPlane.integrity === "none") {
+    controlPlane.integrity = "hash-pinned";
+  }
   return {
     ...config,
-    controlPlane: {
-      ...config.controlPlane,
-      integrity: config.controlPlane.integrity === "none" ? protectedIntegrity : config.controlPlane.integrity
-    }
+    controlPlane
   };
 }
 function asV3Layer(raw) {
@@ -2808,11 +2815,18 @@ async function notifyDeny(config, event) {
   const payload = JSON.stringify(event);
   if (config.webhookUrl) {
     try {
-      await fetch(config.webhookUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: payload
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5e3);
+      try {
+        await fetch(config.webhookUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
     } catch {
     }
   }
@@ -3191,6 +3205,7 @@ async function processApprovalPrompt(ctx, deps, prompt) {
   const recorded = await recordApproval({
     approvalId,
     config: ctx.config,
+    requireSignedToken: false,
     store: {
       loadPending: () => deps.loadApprovals(ctx, "pending-approvals.json"),
       loadApproved: () => deps.loadApprovals(ctx, "approved-approvals.json"),

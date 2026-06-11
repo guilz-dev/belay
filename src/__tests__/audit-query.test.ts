@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
+import { auditProject } from '../audit.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach } from 'vitest'
+import { initProject } from '../installer.js'
+
+const tempDirs: string[] = []
 
 describe('audit query', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
   const records = [
     {
       timestamp: '2026-06-01T10:00:00.000Z',
@@ -113,5 +125,50 @@ describe('audit query', () => {
     ])
     expect(attempts.length).toBeGreaterThan(0)
     expect(attempts[0]?.signal).toBe('wrapper_pattern')
+  })
+
+  it('summarize applies time filters via auditProject', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-summarize-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    await mkdir(path.dirname(auditPath), { recursive: true })
+    await writeFile(
+      auditPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-01-01T10:00:00.000Z',
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          reason: 'external_effect',
+          fingerprint: 'old',
+          summary: 'git push',
+          wouldBlock: true,
+        }),
+        JSON.stringify({
+          timestamp: '2026-06-01T10:00:00.000Z',
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          reason: 'external_effect',
+          fingerprint: 'new',
+          summary: 'curl https://example.com',
+          wouldBlock: true,
+        }),
+      ].join('\n'),
+      'utf8',
+    )
+
+    const report = await auditProject({
+      targetDir: repoRoot,
+      subcommand: 'summarize',
+      since: '2026-06-01T00:00:00.000Z',
+    })
+
+    expect(report.subcommand).toBe('summarize')
+    expect(report.roundTrips).toHaveLength(1)
+    expect(report.roundTrips?.[0]?.summary).toBe('curl https://example.com')
   })
 })
