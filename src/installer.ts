@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
+import { dogfoodProject } from './dogfood.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
 import {
   renderAuditHook,
@@ -181,11 +182,14 @@ async function installBase(repoRoot: string, withSkill: boolean): Promise<void> 
 
 export async function initProject(
   options: InitOptions = {},
-): Promise<{ repoRoot: string; withSkill: boolean }> {
+): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const withSkill = options.withSkill === true
   await installBase(repoRoot, withSkill)
-  return { repoRoot, withSkill }
+  if (options.dogfood === true) {
+    await dogfoodProject({ targetDir: repoRoot })
+  }
+  return { repoRoot, withSkill, dogfood: options.dogfood === true }
 }
 
 export async function upgradeProject(options: UpgradeOptions = {}): Promise<{ repoRoot: string }> {

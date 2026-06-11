@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import { doctorProject, formatDoctorReport } from './doctor.js';
+import { dogfoodProject, formatDogfoodResult } from './dogfood.js';
 import { explainCommand, formatExplainReport } from './explain.js';
 import { initProject, upgradeProject } from './installer.js';
 import { formatMetricsReport, metricsProject } from './metrics.js';
@@ -13,6 +14,22 @@ function parseArgs(argv) {
         const token = rest[index];
         if (token === '--with-skill') {
             options.withSkill = true;
+            continue;
+        }
+        if (token === '--dogfood') {
+            options.dogfood = true;
+            continue;
+        }
+        if (token === '--enforce') {
+            options.enforce = true;
+            continue;
+        }
+        if (token === '--force') {
+            options.force = true;
+            continue;
+        }
+        if (token === '--no-spike') {
+            options.noSpike = true;
             continue;
         }
         if (token === '--json') {
@@ -91,8 +108,9 @@ function printHelp() {
     process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--with-skill]
+  agent-belay init [--target <dir>] [--with-skill] [--dogfood]
   agent-belay upgrade [--target <dir>] [--with-skill]
+  agent-belay dogfood [--target <dir>] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
@@ -111,8 +129,24 @@ async function main() {
             const result = await initProject({
                 targetDir: options.targetDir,
                 withSkill: options.withSkill,
+                dogfood: options.dogfood,
             });
-            process.stdout.write(`Initialized agent-belay in ${result.repoRoot}${result.withSkill ? ' (skill extras enabled)' : ''}.\n`);
+            const extras = [
+                result.withSkill ? 'skill extras enabled' : null,
+                result.dogfood ? 'dogfood mode enabled' : null,
+            ].filter(Boolean);
+            process.stdout.write(`Initialized agent-belay in ${result.repoRoot}${extras.length > 0 ? ` (${extras.join(', ')})` : ''}.\n`);
+            return;
+        }
+        if (command === 'dogfood') {
+            const result = await dogfoodProject({
+                targetDir: options.targetDir,
+                enforce: options.enforce,
+                force: options.force,
+                spikeOnPrompt: options.noSpike ? false : undefined,
+            });
+            process.stdout.write(formatDogfoodResult(result));
+            process.exitCode = result.ok ? 0 : 1;
             return;
         }
         if (command === 'upgrade') {

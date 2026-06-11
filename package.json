@@ -1,6 +1,6 @@
 {
   "name": "agent-belay",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",

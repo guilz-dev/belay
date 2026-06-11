@@ -8,6 +8,7 @@
 | **v0.2** | Testable core, stronger classifier, config v2, ops CLI | Shipped — see [v0.2-plan.md](./v0.2-plan.md) |
 | **v0.3** | Config v3, fail-closed shell, control plane, redaction | Shipped — see [SPEC-v0.3.md](./SPEC-v0.3.md) |
 | **v0.3.1** | OQ1 dogfood metrics, OQ3 hook spike, orphan cleanup, substitution hardening | Shipped |
+| **v0.3.2** | `dogfood` CLI, status/doctor OQ3 visibility, `init --dogfood` | Shipped |
 
 ## v0.3 (0.3.0)
 
