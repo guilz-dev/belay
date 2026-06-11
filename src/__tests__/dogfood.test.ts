@@ -11,6 +11,45 @@ import { statusProject } from '../status.js'
 
 const tempDirs: string[] = []
 
+function auditAllowLine(): string {
+  return `${JSON.stringify({
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    reason: 'read_only',
+    wouldBlock: false,
+    mode: 'audit',
+  })}\n`
+}
+
+async function seedDogfoodEnforceReady(repoRoot: string, controlPlaneDir: string): Promise<void> {
+  await mkdir(controlPlaneDir, { recursive: true })
+  await writeFile(
+    path.join(controlPlaneDir, 'oq3-spike-last.json'),
+    `${JSON.stringify({
+      ok: true,
+      recordedAt: '2026-06-10T00:00:00.000Z',
+      controlPlaneDir,
+    })}\n`,
+  )
+  await writeFile(
+    path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'),
+    auditAllowLine().repeat(20),
+  )
+  await writeFile(
+    path.join(repoRoot, '.cursor', 'belay.config.json'),
+    `${JSON.stringify(
+      mergeConfig({
+        mode: 'audit',
+        policy: { unknownLocalEffect: 'deny' },
+        controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
+      }),
+      null,
+      2,
+    )}\n`,
+  )
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
@@ -35,21 +74,12 @@ describe('dogfood command', () => {
     expect(config.controlPlane.spikeOnPrompt).toBe(true)
   })
 
-  it('promotes to enforce when metrics are ready', async () => {
+  it('promotes to enforce when metrics and OQ3 spike are ready', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-enforce-'))
     tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'cp')
     await initProject({ targetDir: repoRoot, dogfood: true })
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'),
-      `${JSON.stringify({
-        event: 'beforeShellExecution',
-        kind: 'shell',
-        verdict: 'allow',
-        reason: 'read_only',
-        wouldBlock: false,
-        mode: 'audit',
-      })}\n`,
-    )
+    await seedDogfoodEnforceReady(repoRoot, controlPlaneDir)
 
     const result = await dogfoodProject({ targetDir: repoRoot, enforce: true })
     expect(result.ok).toBe(true)
@@ -60,6 +90,33 @@ describe('dogfood command', () => {
     )
     expect(config.mode).toBe('enforce')
     expect(config.controlPlane.spikeOnPrompt).toBe(false)
+  })
+
+  it('refuses enforce when OQ3 spike is missing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-oq3-block-'))
+    tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'cp')
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'),
+      auditAllowLine().repeat(20),
+    )
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          mode: 'audit',
+          policy: { unknownLocalEffect: 'deny' },
+          controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const result = await dogfoodProject({ targetDir: repoRoot, enforce: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('OQ3 spike not recorded')
   })
 
   it('refuses enforce until metrics are ready unless forced', async () => {

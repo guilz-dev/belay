@@ -107,7 +107,7 @@ When `controlPlane.enabled` is `true`, approval state lives under the resolved c
 2. Run normal agent work; gate events record `wouldBlock: true` without creating pending approvals.
 3. Run `agent-belay metrics` to review would-block rate and top reasons.
 4. Tune with `overrides.allow` and `agent-belay explain`.
-5. Run `agent-belay dogfood --enforce` when metrics report ready (or `--force` to override).
+5. Run `agent-belay dogfood --enforce` when metrics and OQ3 spike report ready (or `--force` to override).
 
 Closure checklist: [v0.3-remaining.md](./v0.3-remaining.md).
 

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { loadConfigFile, writeConfigFile } from './config-io.js';
 import { mergeConfig } from './core/config.js';
 import { metricsProject } from './metrics.js';
-import { isDogfoodConfig, loadOperationalInsights } from './operational-insights.js';
+import { isDogfoodConfig, loadOperationalInsights, readOq3SpikeStatus, } from './operational-insights.js';
 export async function dogfoodProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json');
@@ -58,6 +58,35 @@ async function promoteDogfoodToEnforce(repoRoot, configPath, force) {
             ].join(' '),
         };
     }
+    if (!force && existing.controlPlane.spikeOnPrompt) {
+        const spike = await readOq3SpikeStatus(existing);
+        if (!spike) {
+            return {
+                ok: false,
+                repoRoot,
+                configPath,
+                mode: existing.mode,
+                unknownLocalEffect: existing.policy.unknownLocalEffect,
+                spikeOnPrompt: true,
+                message: 'OQ3 spike not recorded. Submit a chat prompt in Cursor to run the control-plane spike, or pass --force to override.',
+            };
+        }
+        if (!spike.ok) {
+            return {
+                ok: false,
+                repoRoot,
+                configPath,
+                mode: existing.mode,
+                unknownLocalEffect: existing.policy.unknownLocalEffect,
+                spikeOnPrompt: true,
+                message: [
+                    `OQ3 spike failed at ${spike.path}.`,
+                    spike.error ?? 'Control-plane filesystem may be blocked from hook context.',
+                    'Resolve the issue or pass --force to override.',
+                ].join(' '),
+            };
+        }
+    }
     const updated = mergeConfig({
         ...existing,
         mode: 'enforce',
@@ -81,32 +110,5 @@ async function promoteDogfoodToEnforce(repoRoot, configPath, force) {
 }
 export function formatDogfoodResult(result) {
     return `${result.message}\n`;
-}
-export async function formatOperationalInsights(insights) {
-    const lines = [
-        `Dogfood: ${insights.dogfood.active ? 'active' : 'inactive'} (mode=${insights.dogfood.mode}, unknownLocalEffect=${insights.dogfood.unknownLocalEffect})`,
-        `OQ3 spikeOnPrompt: ${insights.dogfood.spikeOnPrompt ? 'enabled' : 'disabled'}`,
-        `Metrics: ${insights.dogfood.gateEvents} gate events, ${insights.dogfood.wouldBlockCount} would-block (${(insights.dogfood.wouldBlockRate * 100).toFixed(1)}%)`,
-        `Ready for enforce: ${insights.dogfood.readyForEnforce ? 'yes' : 'not yet'}`,
-    ];
-    if (insights.oq3Spike) {
-        lines.push(`OQ3 spike: ${insights.oq3Spike.ok ? 'ok' : 'failed'} at ${insights.oq3Spike.path}${insights.oq3Spike.recordedAt ? ` (${insights.oq3Spike.recordedAt})` : ''}`);
-        if (insights.oq3Spike.error) {
-            lines.push(`OQ3 error: ${insights.oq3Spike.error}`);
-        }
-    }
-    else if (insights.dogfood.spikeOnPrompt) {
-        lines.push('OQ3 spike: no oq3-spike-last.json yet — submit a chat prompt in Cursor.');
-    }
-    else {
-        lines.push('OQ3 spike: not configured (enable spikeOnPrompt or agent-belay dogfood).');
-    }
-    if (insights.dogfood.notes.length > 0) {
-        lines.push('', 'Dogfood notes:');
-        for (const note of insights.dogfood.notes) {
-            lines.push(`- ${note}`);
-        }
-    }
-    return `${lines.join('\n')}\n`;
 }
 export { isDogfoodConfig, loadOperationalInsights };

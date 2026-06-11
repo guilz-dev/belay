@@ -1,4 +1,6 @@
 const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate']);
+/** Minimum gate events before recommending enforce with zero would-block rate. */
+export const MIN_GATE_EVENTS_FOR_ENFORCE = 20;
 export function parseAuditNdjson(raw) {
     const records = [];
     for (const line of raw.split('\n')) {
@@ -75,8 +77,13 @@ export function computeAuditMetrics(records, options = {}) {
             notes.push('No gate events yet — run normal agent work, then re-check metrics.');
         }
         else if (wouldBlockRate === 0) {
-            readyForEnforce = true;
-            notes.push('No would-block events recorded — safe to try mode: "enforce".');
+            if (gateEvents >= MIN_GATE_EVENTS_FOR_ENFORCE) {
+                readyForEnforce = true;
+                notes.push('No would-block events recorded — safe to try mode: "enforce".');
+            }
+            else {
+                notes.push(`Only ${gateEvents} gate event(s) recorded — collect at least ${MIN_GATE_EVENTS_FOR_ENFORCE} before enforce.`);
+            }
         }
         else {
             notes.push(`${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic). Review top summaries and add overrides.allow where appropriate.`);

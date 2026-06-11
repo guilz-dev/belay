@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+### Fixed
+
+- `dogfood --enforce` requires a passing OQ3 spike when `spikeOnPrompt` is enabled (`--force` to override)
+- `metrics` requires at least 20 gate events before recommending enforce with zero would-block rate
+
 ## 0.3.2
 
 ### Added

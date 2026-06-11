@@ -1,3 +1,5 @@
+/** Minimum gate events before recommending enforce with zero would-block rate. */
+export declare const MIN_GATE_EVENTS_FOR_ENFORCE = 20;
 export interface AuditMetricsReport {
     auditLogPath: string;
     totalLines: number;
