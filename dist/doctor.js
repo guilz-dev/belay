@@ -4,11 +4,13 @@ import path from 'node:path';
 import { getAdapter } from './adapters/registry.js';
 import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
 import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredConfig, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from './config-io.js';
-import { defaultControlPlaneDir } from './core/config.js';
+import { configuredControlPlaneDir, defaultControlPlaneDir } from './core/config.js';
+import { verifyControlPlaneIsolation } from './core/control-plane-isolation.js';
 import { verifyIntegrityManifest } from './core/integrity.js';
 import { egressStatus } from './egress-service.js';
 import { resolveNodeBinary } from './node-resolution.js';
 import { loadOperationalInsights } from './operational-insights.js';
+import { sandboxStatus } from './sandbox-service.js';
 import { PACKAGE_VERSION } from './version.js';
 async function readRuntimeVersion(corePath) {
     try {
@@ -226,6 +228,28 @@ export async function doctorProject(options = {}) {
             notes.push(`Transactional (partial L2): enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.`);
             if (!existsSync(path.join(repoRoot, '.git'))) {
                 warnings.push('Transactional execution is enabled but this directory is not a git repository. Transactional L2 will be skipped until git worktree is available.');
+            }
+        }
+        if (loadedConfig.sandbox.enabled) {
+            const sandbox = await sandboxStatus({ targetDir: repoRoot });
+            notes.push(`Sandbox capability broker: enabled (runtime=${loadedConfig.sandbox.runtime}, fs-scope entries=${sandbox.fsScopeAllowlistCount}, L1-full=${sandbox.l1FullActive}).`);
+            if (loadedConfig.sandbox.runtime === 'none') {
+                warnings.push('sandbox.enabled is true but sandbox.runtime is none.');
+            }
+            for (const issue of sandbox.issues) {
+                warnings.push(issue);
+            }
+        }
+        if (loadedConfig.controlPlane.isolation.mode !== 'none') {
+            const isolation = verifyControlPlaneIsolation(configuredControlPlaneDir(loadedConfig), loadedConfig.controlPlane.isolation);
+            notes.push(`Control-plane isolation: ${loadedConfig.controlPlane.isolation.mode} (ok=${isolation.ok}).`);
+            if (!isolation.ok) {
+                for (const issue of isolation.issues) {
+                    warnings.push(`Control-plane isolation: ${issue}`);
+                }
+            }
+            if (!loadedConfig.approvalSigning.required) {
+                warnings.push('controlPlane.isolation is enabled but approvalSigning.required is false. L1-full adversarial claims require signed approvals.');
             }
         }
         if (loadedConfig.egress.enabled) {

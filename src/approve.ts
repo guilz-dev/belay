@@ -8,15 +8,21 @@ import {
   saveApprovalState,
 } from './config-io.js'
 import { recordApproval } from './core/approval-service.js'
+import type { CapabilityApprovalScope } from './core/capability/types.js'
+import { recordCapabilityApproval } from './core/capability-approval.js'
 import type { EgressApprovalScope } from './core/egress/types.js'
 import { recordEgressApproval } from './core/egress-approval.js'
 import { createEgressApprovalStore } from './egress-service.js'
+import { createCapabilityApprovalStore } from './sandbox-service.js'
+
+export type ApproveScope = EgressApprovalScope | CapabilityApprovalScope
 
 export interface ApproveOptions {
   targetDir?: string
   approvalId: string
   token?: string
-  scope?: EgressApprovalScope
+  scope?: ApproveScope
+  scopePath?: string
 }
 
 export async function approvePending(
@@ -31,10 +37,23 @@ export async function approvePending(
     const result = await recordEgressApproval({
       approvalId: options.approvalId,
       config,
-      scope: options.scope ?? 'once',
+      scope: (options.scope === 'domain' ? 'domain' : 'once') as EgressApprovalScope,
       token: options.token,
       requireSignedToken: config.approvalSigning.required,
       store: createEgressApprovalStore(repoRoot, config),
+    })
+    return { ok: result.ok, message: result.message }
+  }
+
+  if (options.scope === 'path') {
+    const result = await recordCapabilityApproval({
+      approvalId: options.approvalId,
+      config,
+      scope: 'path',
+      scopePath: options.scopePath,
+      token: options.token,
+      requireSignedToken: config.approvalSigning.required,
+      store: createCapabilityApprovalStore(repoRoot, config),
     })
     return { ok: result.ok, message: result.message }
   }

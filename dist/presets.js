@@ -9,6 +9,7 @@ export const CONFIG_PRESETS = {
             modelAssist: { enabled: false },
             transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
         },
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
     },
     standard: {
         mode: 'enforce',
@@ -22,6 +23,7 @@ export const CONFIG_PRESETS = {
             modelAssist: { enabled: false },
             transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
         },
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
     },
 };
 export function applyConfigPreset(preset, extra = {}) {

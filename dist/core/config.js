@@ -44,17 +44,28 @@ export const DEFAULT_REDACTION_V3 = {
     maskKeyValueSecrets: true,
     maskHighEntropyStrings: false,
 };
+export const DEFAULT_CONTROL_PLANE_ISOLATION_V3 = {
+    mode: 'none',
+    verifyAgentWritable: true,
+};
 export const LEGACY_CONTROL_PLANE_V3 = {
     enabled: false,
     configDir: null,
     integrity: 'none',
     spikeOnPrompt: false,
+    isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 };
 export const DEFAULT_CONTROL_PLANE_V3 = {
     enabled: true,
     configDir: null,
     integrity: 'hash-pinned',
     spikeOnPrompt: false,
+    isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
+};
+export const DEFAULT_SANDBOX_V3 = {
+    enabled: false,
+    runtime: 'none',
+    denyNetworkByDefault: true,
 };
 export const DEFAULT_NOTIFICATIONS_V3 = {};
 export const DEFAULT_APPROVAL_SIGNING_V3 = {
@@ -114,6 +125,7 @@ export const DEFAULT_CONFIG_V3 = {
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     egress: { ...DEFAULT_EGRESS_V3 },
+    sandbox: { ...DEFAULT_SANDBOX_V3 },
     audit: { ...DEFAULT_CONFIG_V2.audit },
 };
 function uniqueStrings(values) {
@@ -152,6 +164,7 @@ export function migrateV2ToV3(v2, rawOverrides) {
         notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
         approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
         egress: { ...DEFAULT_EGRESS_V3 },
+        sandbox: { ...DEFAULT_SANDBOX_V3 },
         audit: v2.audit,
     });
 }
@@ -208,6 +221,10 @@ function mergeV3FromRaw(base, raw) {
             ...base.egress,
             ...(raw.egress ?? {}),
         },
+        sandbox: {
+            ...base.sandbox,
+            ...(raw.sandbox ?? {}),
+        },
     });
 }
 function normalizeV3Raw(raw) {
@@ -236,10 +253,12 @@ function normalizeV3Raw(raw) {
             ...(raw.redaction ?? {}),
         },
         controlPlane: {
-            enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
-            configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
-            integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
-            spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
+            ...LEGACY_CONTROL_PLANE_V3,
+            ...(raw.controlPlane ?? {}),
+            isolation: {
+                ...LEGACY_CONTROL_PLANE_V3.isolation,
+                ...(raw.controlPlane?.isolation ?? {}),
+            },
         },
         notifications: {
             ...DEFAULT_NOTIFICATIONS_V3,
@@ -251,6 +270,10 @@ function normalizeV3Raw(raw) {
         egress: {
             ...DEFAULT_EGRESS_V3,
             ...(raw.egress ?? {}),
+        },
+        sandbox: {
+            ...DEFAULT_SANDBOX_V3,
+            ...(raw.sandbox ?? {}),
         },
         audit: {
             ...DEFAULT_CONFIG_V3.audit,
@@ -441,6 +464,16 @@ export function normalizeConfig(config) {
                     ? 'none'
                     : DEFAULT_CONTROL_PLANE_V3.integrity,
             spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
+            isolation: {
+                mode: v3.controlPlane?.isolation?.mode === 'read-only-mount' ||
+                    v3.controlPlane?.isolation?.mode === 'separate-user'
+                    ? v3.controlPlane.isolation.mode
+                    : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
+                expectedOwnerUid: typeof v3.controlPlane?.isolation?.expectedOwnerUid === 'number'
+                    ? v3.controlPlane.isolation.expectedOwnerUid
+                    : undefined,
+                verifyAgentWritable: v3.controlPlane?.isolation?.verifyAgentWritable !== false,
+            },
         },
         notifications: {
             webhookUrl: typeof v3.notifications?.webhookUrl === 'string' && v3.notifications.webhookUrl.trim()
@@ -462,6 +495,16 @@ export function normalizeConfig(config) {
                 ? v3.egress.listenPort
                 : DEFAULT_EGRESS_V3.listenPort,
             demoteL3External: v3.egress?.demoteL3External !== false,
+        },
+        sandbox: {
+            enabled: v3.sandbox?.enabled === true,
+            runtime: v3.sandbox?.runtime === 'cursor-sandbox' ||
+                v3.sandbox?.runtime === 'container' ||
+                v3.sandbox?.runtime === 'seatbelt' ||
+                v3.sandbox?.runtime === 'landlock'
+                ? v3.sandbox.runtime
+                : DEFAULT_SANDBOX_V3.runtime,
+            denyNetworkByDefault: v3.sandbox?.denyNetworkByDefault !== false,
         },
         audit: {
             logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -520,6 +563,10 @@ export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
         egress: {
             ...defaults.egress,
             ...migrated.egress,
+        },
+        sandbox: {
+            ...defaults.sandbox,
+            ...migrated.sandbox,
         },
         audit: {
             ...defaults.audit,

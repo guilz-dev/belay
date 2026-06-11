@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { recordApproval } from '../../core/approval-service.js';
 import { issueApprovalToken } from '../../core/approval-token.js';
+import { fsScopeAllowlistPath, isSandboxBrokerEnabled, loadFsScopeAllowlistSync, shouldSkipBrokerApprovedOnce, } from '../../core/capability/index.js';
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
@@ -79,10 +80,16 @@ export async function resolveGateConfig(ctx, deps) {
     }).config;
 }
 export function runtimeClassifierOptions(ctx, config) {
+    const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
     const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
+    const brokerFsScope = isSandboxBrokerEnabled(config);
     return {
         ...classifierOptionsFromConfig(config),
-        demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, ctx.layout.repoLocalStateDir(ctx.repoRoot)),
+        demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
+        brokerFsScope,
+        fsScopeAllowlist: brokerFsScope
+            ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
+            : undefined,
         protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
     };
 }
@@ -262,7 +269,9 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
             agent_message: agentMessage,
         });
     }
-    const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason)
+    const brokerActive = isSandboxBrokerEnabled(ctx.config);
+    const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ||
+        shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
         ? null
         : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
     if (approved) {

@@ -13,6 +13,7 @@ export const CONFIG_PRESETS: Record<ConfigPresetName, Partial<BelayConfigV3>> = 
       modelAssist: { enabled: false },
       transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
     },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
   },
   standard: {
     mode: 'enforce',
@@ -26,6 +27,7 @@ export const CONFIG_PRESETS: Record<ConfigPresetName, Partial<BelayConfigV3>> = 
       modelAssist: { enabled: false },
       transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
     },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
   },
 }
 

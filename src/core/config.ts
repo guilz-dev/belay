@@ -92,12 +92,29 @@ export interface BelayRedactionConfig {
   maskHighEntropyStrings: boolean
 }
 
+export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user'
+
+export interface BelayControlPlaneIsolationConfig {
+  mode: ControlPlaneIsolationMode
+  expectedOwnerUid?: number
+  verifyAgentWritable: boolean
+}
+
 export interface BelayControlPlaneConfig {
   enabled: boolean
   configDir: string | null
   integrity: ControlPlaneIntegrity
   /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
   spikeOnPrompt?: boolean
+  isolation: BelayControlPlaneIsolationConfig
+}
+
+export type SandboxRuntime = 'none' | 'cursor-sandbox' | 'container' | 'seatbelt' | 'landlock'
+
+export interface BelaySandboxConfig {
+  enabled: boolean
+  runtime: SandboxRuntime
+  denyNetworkByDefault: boolean
 }
 
 export interface BelayClassifierConfig {
@@ -138,6 +155,7 @@ export interface BelayConfigV3 {
   notifications: BelayNotificationsConfig
   approvalSigning: BelayApprovalSigningConfig
   egress: BelayEgressConfig
+  sandbox: BelaySandboxConfig
   audit: BelayConfigV2['audit']
 }
 
@@ -195,11 +213,17 @@ export const DEFAULT_REDACTION_V3: BelayRedactionConfig = {
   maskHighEntropyStrings: false,
 }
 
+export const DEFAULT_CONTROL_PLANE_ISOLATION_V3: BelayControlPlaneIsolationConfig = {
+  mode: 'none',
+  verifyAgentWritable: true,
+}
+
 export const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   enabled: false,
   configDir: null,
   integrity: 'none',
   spikeOnPrompt: false,
+  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 }
 
 export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
@@ -207,6 +231,13 @@ export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   configDir: null,
   integrity: 'hash-pinned',
   spikeOnPrompt: false,
+  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
+}
+
+export const DEFAULT_SANDBOX_V3: BelaySandboxConfig = {
+  enabled: false,
+  runtime: 'none',
+  denyNetworkByDefault: true,
 }
 
 export const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig = {}
@@ -273,6 +304,7 @@ export const DEFAULT_CONFIG_V3: BelayConfigV3 = {
   notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
   approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
   egress: { ...DEFAULT_EGRESS_V3 },
+  sandbox: { ...DEFAULT_SANDBOX_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit },
 }
 
@@ -321,6 +353,7 @@ export function migrateV2ToV3(
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     egress: { ...DEFAULT_EGRESS_V3 },
+    sandbox: { ...DEFAULT_SANDBOX_V3 },
     audit: v2.audit,
   })
 }
@@ -351,6 +384,7 @@ type RawConfigInput = Partial<{
   notifications: Partial<BelayNotificationsConfig>
   approvalSigning: Partial<BelayApprovalSigningConfig>
   egress: Partial<BelayEgressConfig>
+  sandbox: Partial<BelaySandboxConfig>
   audit: Partial<BelayConfigV2['audit']>
 }>
 
@@ -404,6 +438,10 @@ function mergeV3FromRaw(base: BelayConfigV3, raw: RawConfigInput): BelayConfigV3
       ...base.egress,
       ...(raw.egress ?? {}),
     },
+    sandbox: {
+      ...base.sandbox,
+      ...(raw.sandbox ?? {}),
+    },
   })
 }
 
@@ -433,10 +471,12 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
       ...(raw.redaction ?? {}),
     },
     controlPlane: {
-      enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
-      configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
-      integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
+      ...LEGACY_CONTROL_PLANE_V3,
+      ...(raw.controlPlane ?? {}),
+      isolation: {
+        ...LEGACY_CONTROL_PLANE_V3.isolation,
+        ...(raw.controlPlane?.isolation ?? {}),
+      },
     },
     notifications: {
       ...DEFAULT_NOTIFICATIONS_V3,
@@ -448,6 +488,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
     egress: {
       ...DEFAULT_EGRESS_V3,
       ...(raw.egress ?? {}),
+    },
+    sandbox: {
+      ...DEFAULT_SANDBOX_V3,
+      ...(raw.sandbox ?? {}),
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -667,6 +711,18 @@ export function normalizeConfig(
             ? 'none'
             : DEFAULT_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
+      isolation: {
+        mode:
+          v3.controlPlane?.isolation?.mode === 'read-only-mount' ||
+          v3.controlPlane?.isolation?.mode === 'separate-user'
+            ? v3.controlPlane.isolation.mode
+            : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
+        expectedOwnerUid:
+          typeof v3.controlPlane?.isolation?.expectedOwnerUid === 'number'
+            ? v3.controlPlane.isolation.expectedOwnerUid
+            : undefined,
+        verifyAgentWritable: v3.controlPlane?.isolation?.verifyAgentWritable !== false,
+      },
     },
     notifications: {
       webhookUrl:
@@ -693,6 +749,17 @@ export function normalizeConfig(
           ? v3.egress.listenPort
           : DEFAULT_EGRESS_V3.listenPort,
       demoteL3External: v3.egress?.demoteL3External !== false,
+    },
+    sandbox: {
+      enabled: v3.sandbox?.enabled === true,
+      runtime:
+        v3.sandbox?.runtime === 'cursor-sandbox' ||
+        v3.sandbox?.runtime === 'container' ||
+        v3.sandbox?.runtime === 'seatbelt' ||
+        v3.sandbox?.runtime === 'landlock'
+          ? v3.sandbox.runtime
+          : DEFAULT_SANDBOX_V3.runtime,
+      denyNetworkByDefault: v3.sandbox?.denyNetworkByDefault !== false,
     },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -756,6 +823,10 @@ export function mergeConfig(
     egress: {
       ...defaults.egress,
       ...migrated.egress,
+    },
+    sandbox: {
+      ...defaults.sandbox,
+      ...migrated.sandbox,
     },
     audit: {
       ...defaults.audit,

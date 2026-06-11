@@ -73,12 +73,25 @@ export interface BelayRedactionConfig {
     maskKeyValueSecrets: boolean;
     maskHighEntropyStrings: boolean;
 }
+export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user';
+export interface BelayControlPlaneIsolationConfig {
+    mode: ControlPlaneIsolationMode;
+    expectedOwnerUid?: number;
+    verifyAgentWritable: boolean;
+}
 export interface BelayControlPlaneConfig {
     enabled: boolean;
     configDir: string | null;
     integrity: ControlPlaneIntegrity;
     /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
     spikeOnPrompt?: boolean;
+    isolation: BelayControlPlaneIsolationConfig;
+}
+export type SandboxRuntime = 'none' | 'cursor-sandbox' | 'container' | 'seatbelt' | 'landlock';
+export interface BelaySandboxConfig {
+    enabled: boolean;
+    runtime: SandboxRuntime;
+    denyNetworkByDefault: boolean;
 }
 export interface BelayClassifierConfig {
     strictChains: boolean;
@@ -114,6 +127,7 @@ export interface BelayConfigV3 {
     notifications: BelayNotificationsConfig;
     approvalSigning: BelayApprovalSigningConfig;
     egress: BelayEgressConfig;
+    sandbox: BelaySandboxConfig;
     audit: BelayConfigV2['audit'];
 }
 export type BelayConfig = BelayConfigV3;
@@ -126,8 +140,10 @@ export declare const LEGACY_POLICY_V3: BelayPolicyConfig;
 export declare const DEFAULT_POLICY_V3: BelayPolicyConfig;
 export declare const DEFAULT_OVERRIDES_V3: BelayOverridesConfig;
 export declare const DEFAULT_REDACTION_V3: BelayRedactionConfig;
+export declare const DEFAULT_CONTROL_PLANE_ISOLATION_V3: BelayControlPlaneIsolationConfig;
 export declare const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig;
 export declare const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig;
+export declare const DEFAULT_SANDBOX_V3: BelaySandboxConfig;
 export declare const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig;
 export declare const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig;
 export declare const DEFAULT_EGRESS_V3: BelayEgressConfig;

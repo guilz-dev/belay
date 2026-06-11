@@ -101,7 +101,12 @@ describe('config migration', () => {
         unknownLocalEffect: 'deny',
         unparseableShell: 'deny',
       },
-      controlPlane: { enabled: true, configDir: '  /tmp/belay  ', integrity: 'none' },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        enabled: true,
+        configDir: '  /tmp/belay  ',
+        integrity: 'none',
+      },
     })
 
     expect(normalized.policy.unknownLocalEffect).toBe('deny')
@@ -134,6 +139,26 @@ describe('config migration', () => {
     expect(enabled.policy.transactional.gates.shell).toBe(false)
   })
 
+  it('normalizes sandbox and control-plane isolation defaults', () => {
+    const normalized = normalizeConfig({ ...DEFAULT_CONFIG_V3 })
+    expect(normalized.sandbox.enabled).toBe(false)
+    expect(normalized.sandbox.runtime).toBe('none')
+    expect(normalized.controlPlane.isolation.mode).toBe('none')
+
+    const enabled = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      sandbox: { enabled: true, runtime: 'container', denyNetworkByDefault: false },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        isolation: { mode: 'separate-user', expectedOwnerUid: 1000, verifyAgentWritable: true },
+      },
+    })
+    expect(enabled.sandbox.enabled).toBe(true)
+    expect(enabled.sandbox.runtime).toBe('container')
+    expect(enabled.controlPlane.isolation.mode).toBe('separate-user')
+    expect(enabled.controlPlane.isolation.expectedOwnerUid).toBe(1000)
+  })
+
   it('resets invalid transactional confidence bands', () => {
     const normalized = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
@@ -160,7 +185,12 @@ describe('config migration', () => {
   it('resolveControlPlaneDir prefers explicit configDir', () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
-      controlPlane: { enabled: true, configDir: '/explicit/belay', integrity: 'none' },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        enabled: true,
+        configDir: '/explicit/belay',
+        integrity: 'none',
+      },
     })
     expect(resolveControlPlaneDir(config)).toBe('/explicit/belay')
   })

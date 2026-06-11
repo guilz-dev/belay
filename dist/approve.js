@@ -1,8 +1,10 @@
 import path from 'node:path';
 import { approvedApprovalsPath, loadApprovalState, loadConfigFile, pendingApprovalsPath, saveApprovalState, } from './config-io.js';
 import { recordApproval } from './core/approval-service.js';
+import { recordCapabilityApproval } from './core/capability-approval.js';
 import { recordEgressApproval } from './core/egress-approval.js';
 import { createEgressApprovalStore } from './egress-service.js';
+import { createCapabilityApprovalStore } from './sandbox-service.js';
 export async function approvePending(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const config = await loadConfigFile(repoRoot);
@@ -12,10 +14,22 @@ export async function approvePending(options) {
         const result = await recordEgressApproval({
             approvalId: options.approvalId,
             config,
-            scope: options.scope ?? 'once',
+            scope: (options.scope === 'domain' ? 'domain' : 'once'),
             token: options.token,
             requireSignedToken: config.approvalSigning.required,
             store: createEgressApprovalStore(repoRoot, config),
+        });
+        return { ok: result.ok, message: result.message };
+    }
+    if (options.scope === 'path') {
+        const result = await recordCapabilityApproval({
+            approvalId: options.approvalId,
+            config,
+            scope: 'path',
+            scopePath: options.scopePath,
+            token: options.token,
+            requireSignedToken: config.approvalSigning.required,
+            store: createCapabilityApprovalStore(repoRoot, config),
         });
         return { ok: result.ok, message: result.message };
     }

@@ -48,6 +48,7 @@ function migrateV2ToV3(v2, rawOverrides) {
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     egress: { ...DEFAULT_EGRESS_V3 },
+    sandbox: { ...DEFAULT_SANDBOX_V3 },
     audit: v2.audit
   });
 }
@@ -87,6 +88,10 @@ function mergeV3FromRaw(base, raw) {
     egress: {
       ...base.egress,
       ...raw.egress ?? {}
+    },
+    sandbox: {
+      ...base.sandbox,
+      ...raw.sandbox ?? {}
     }
   });
 }
@@ -116,10 +121,12 @@ function normalizeV3Raw(raw) {
       ...raw.redaction ?? {}
     },
     controlPlane: {
-      enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
-      configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
-      integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt
+      ...LEGACY_CONTROL_PLANE_V3,
+      ...raw.controlPlane ?? {},
+      isolation: {
+        ...LEGACY_CONTROL_PLANE_V3.isolation,
+        ...raw.controlPlane?.isolation ?? {}
+      }
     },
     notifications: {
       ...DEFAULT_NOTIFICATIONS_V3,
@@ -131,6 +138,10 @@ function normalizeV3Raw(raw) {
     egress: {
       ...DEFAULT_EGRESS_V3,
       ...raw.egress ?? {}
+    },
+    sandbox: {
+      ...DEFAULT_SANDBOX_V3,
+      ...raw.sandbox ?? {}
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -274,7 +285,12 @@ function normalizeConfig(config) {
       enabled: v3.controlPlane?.enabled === true ? true : v3.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
       configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null,
       integrity: v3.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v3.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true
+      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
+      isolation: {
+        mode: v3.controlPlane?.isolation?.mode === "read-only-mount" || v3.controlPlane?.isolation?.mode === "separate-user" ? v3.controlPlane.isolation.mode : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
+        expectedOwnerUid: typeof v3.controlPlane?.isolation?.expectedOwnerUid === "number" ? v3.controlPlane.isolation.expectedOwnerUid : void 0,
+        verifyAgentWritable: v3.controlPlane?.isolation?.verifyAgentWritable !== false
+      }
     },
     notifications: {
       webhookUrl: typeof v3.notifications?.webhookUrl === "string" && v3.notifications.webhookUrl.trim() ? v3.notifications.webhookUrl.trim() : void 0,
@@ -290,6 +306,11 @@ function normalizeConfig(config) {
       ),
       listenPort: typeof v3.egress?.listenPort === "number" && v3.egress.listenPort > 0 ? v3.egress.listenPort : DEFAULT_EGRESS_V3.listenPort,
       demoteL3External: v3.egress?.demoteL3External !== false
+    },
+    sandbox: {
+      enabled: v3.sandbox?.enabled === true,
+      runtime: v3.sandbox?.runtime === "cursor-sandbox" || v3.sandbox?.runtime === "container" || v3.sandbox?.runtime === "seatbelt" || v3.sandbox?.runtime === "landlock" ? v3.sandbox.runtime : DEFAULT_SANDBOX_V3.runtime,
+      denyNetworkByDefault: v3.sandbox?.denyNetworkByDefault !== false
     },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
@@ -347,6 +368,10 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
       ...defaults.egress,
       ...migrated.egress
     },
+    sandbox: {
+      ...defaults.sandbox,
+      ...migrated.sandbox
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit
@@ -402,7 +427,7 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
-var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
+var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
 var init_config = __esm({
   "src/core/config.ts"() {
     "use strict";
@@ -449,17 +474,28 @@ var init_config = __esm({
       maskKeyValueSecrets: true,
       maskHighEntropyStrings: false
     };
+    DEFAULT_CONTROL_PLANE_ISOLATION_V3 = {
+      mode: "none",
+      verifyAgentWritable: true
+    };
     LEGACY_CONTROL_PLANE_V3 = {
       enabled: false,
       configDir: null,
       integrity: "none",
-      spikeOnPrompt: false
+      spikeOnPrompt: false,
+      isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
     };
     DEFAULT_CONTROL_PLANE_V3 = {
       enabled: true,
       configDir: null,
       integrity: "hash-pinned",
-      spikeOnPrompt: false
+      spikeOnPrompt: false,
+      isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
+    };
+    DEFAULT_SANDBOX_V3 = {
+      enabled: false,
+      runtime: "none",
+      denyNetworkByDefault: true
     };
     DEFAULT_NOTIFICATIONS_V3 = {};
     DEFAULT_APPROVAL_SIGNING_V3 = {
@@ -511,6 +547,7 @@ var init_config = __esm({
       notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
       approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
       egress: { ...DEFAULT_EGRESS_V3 },
+      sandbox: { ...DEFAULT_SANDBOX_V3 },
       audit: { ...DEFAULT_CONFIG_V2.audit }
     };
   }
@@ -636,7 +673,8 @@ var init_presets = __esm({
           confidenceThresholds: { allow: 0.9, flag: 0.8 },
           modelAssist: { enabled: false },
           transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
-        }
+        },
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
       },
       standard: {
         mode: "enforce"
@@ -649,18 +687,19 @@ var init_presets = __esm({
           confidenceThresholds: { allow: 0.88, flag: 0.72 },
           modelAssist: { enabled: false },
           transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
-        }
+        },
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
       }
     };
   }
 });
 
 // src/core/config-layers.ts
-import path4 from "node:path";
+import path6 from "node:path";
 function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const base = xdg || path4.join(homedir(), ".config");
-  return path4.join(base, "agent-belay", "team.config.json");
+  const base = xdg || path6.join(homedir(), ".config");
+  return path6.join(base, "agent-belay", "team.config.json");
 }
 function applyProtectedLayer(config, builtin) {
   const controlPlane = { ...config.controlPlane };
@@ -798,9 +837,9 @@ init_claude();
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync4 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path12 from "node:path";
+import path13 from "node:path";
 
 // src/core/approval-service.ts
 init_approval();
@@ -907,6 +946,256 @@ async function recordApproval(params) {
   };
 }
 
+// src/core/capability/allowlist.ts
+import { existsSync as existsSync2, readFileSync } from "node:fs";
+init_config();
+import path5 from "node:path";
+
+// src/core/path-utils.ts
+import { realpathSync } from "node:fs";
+import path4 from "node:path";
+function resolveRealpath(targetPath) {
+  try {
+    return realpathSync.native(targetPath);
+  } catch {
+    return path4.resolve(targetPath);
+  }
+}
+function pathWithinRoot(root, targetPath) {
+  const resolvedRoot = resolveRealpath(root);
+  const resolvedTarget = resolveRealpath(targetPath);
+  const relativePath = path4.relative(resolvedRoot, resolvedTarget);
+  if (relativePath === "") {
+    return true;
+  }
+  return !relativePath.startsWith("..") && !path4.isAbsolute(relativePath);
+}
+function relativeWithinRepo(repoRoot, targetPath) {
+  const resolvedRoot = resolveRealpath(repoRoot);
+  const resolvedTarget = resolveRealpath(targetPath);
+  const relativePath = path4.relative(resolvedRoot, resolvedTarget);
+  if (relativePath === "") {
+    return ".";
+  }
+  if (relativePath.startsWith("..")) {
+    return null;
+  }
+  return relativePath;
+}
+function normalizeToken(token, repoRoot) {
+  if (!path4.isAbsolute(token)) {
+    return token;
+  }
+  const relativePath = relativeWithinRepo(repoRoot, token);
+  return relativePath ?? token;
+}
+function resolveMutationTarget(token, cwd) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return null;
+  }
+  if (token === "2>" || token === "1>" || token === "&>" || token === "1>>" || token === "2>>") {
+    return null;
+  }
+  if (path4.isAbsolute(token)) {
+    return resolveRealpath(token);
+  }
+  if (token.startsWith("./") || token.startsWith("../")) {
+    return resolveRealpath(path4.resolve(cwd, token));
+  }
+  if (!token.includes("/") && !token.includes("\\")) {
+    return resolveRealpath(path4.resolve(cwd, token));
+  }
+  return resolveRealpath(path4.resolve(cwd, token));
+}
+function looksLikePathToken(token) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return false;
+  }
+  if (path4.isAbsolute(token)) {
+    return true;
+  }
+  if (token.startsWith("./") || token.startsWith("../")) {
+    return true;
+  }
+  return token.includes("/") || token.includes("\\");
+}
+function hasOutsideRepoPath(tokens, cwd, repoRoot) {
+  return tokens.some((token) => {
+    if (!looksLikePathToken(token)) {
+      return false;
+    }
+    const resolved = resolveMutationTarget(token, cwd);
+    if (!resolved) {
+      return false;
+    }
+    return relativeWithinRepo(repoRoot, resolved) === null;
+  });
+}
+
+// src/core/capability/allowlist.ts
+function fsScopeAllowlistPath(config, repoLocalStateDir) {
+  return path5.join(belayStateDir(config, repoLocalStateDir), "fs-scope-allowlist.json");
+}
+function loadFsScopeAllowlistSync(filePath) {
+  if (!existsSync2(filePath)) {
+    return { version: 1, paths: [] };
+  }
+  const raw = JSON.parse(readFileSync(filePath, "utf8"));
+  return {
+    version: 1,
+    paths: Array.isArray(raw.paths) ? raw.paths : []
+  };
+}
+function normalizeAllowlistPath(targetPath) {
+  return path5.resolve(targetPath);
+}
+function isPathAllowlisted(absolutePath, allowlist) {
+  const resolved = normalizeAllowlistPath(absolutePath);
+  return allowlist.paths.some((entry) => {
+    const scope = normalizeAllowlistPath(entry.path);
+    return resolved === scope || pathWithinRoot(scope, resolved);
+  });
+}
+function allPathsAllowlisted(absolutePaths, allowlist) {
+  return absolutePaths.length > 0 && absolutePaths.every((entry) => isPathAllowlisted(entry, allowlist));
+}
+
+// src/core/capability/broker.ts
+function isSandboxBrokerEnabled(config) {
+  return config.sandbox.enabled;
+}
+
+// src/core/shell-tokenizer.ts
+var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
+function tokenizeShell(input) {
+  const tokens = [];
+  let buffer = "";
+  let quote = null;
+  let escaping = false;
+  const flush = () => {
+    if (buffer.length > 0) {
+      tokens.push(buffer);
+      buffer = "";
+    }
+  };
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1] ?? "";
+    if (escaping) {
+      buffer += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        buffer += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "&" && next === "&") {
+      flush();
+      tokens.push("&&");
+      index += 1;
+      continue;
+    }
+    if (char === "|" && next === "|") {
+      flush();
+      tokens.push("||");
+      index += 1;
+      continue;
+    }
+    if (char === ">" && next === ">") {
+      flush();
+      tokens.push(">>");
+      index += 1;
+      continue;
+    }
+    if (char === "|" || char === ";" || char === ">" || char === "<") {
+      flush();
+      tokens.push(char);
+      continue;
+    }
+    if (char === "\n" || char === "\r") {
+      flush();
+      tokens.push(";");
+      continue;
+    }
+    if (/\s/.test(char)) {
+      flush();
+      continue;
+    }
+    buffer += char;
+  }
+  flush();
+  return tokens;
+}
+function normalizeShellCommand(command, repoRoot, normalizeToken2) {
+  const tokens = tokenizeShell(command);
+  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
+    tokens.shift();
+  }
+  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
+  return normalized.join(" ").trim();
+}
+function commandKey(tokens) {
+  const filtered = tokens.filter((token) => token !== "sudo");
+  const first = filtered[0] ?? "";
+  const second = filtered[1] ?? "";
+  if ((first === "git" || first === "npm" || first === "pnpm" || first === "docker" || first === "terraform" || first === "fly" || first === "firebase") && second) {
+    return `${first} ${second}`;
+  }
+  return first;
+}
+function extractRedirectTargets(tokens) {
+  const targets = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === ">" || token === ">>" || token === "<") {
+      const next = tokens[index + 1];
+      if (next) {
+        targets.push(next);
+      }
+    }
+  }
+  return targets;
+}
+
+// src/core/capability/paths.ts
+function collectOutsideRepoPaths(command, cwd, repoRoot) {
+  const tokens = tokenizeShell(command);
+  const redirects = extractRedirectTargets(tokens);
+  const paths = /* @__PURE__ */ new Set();
+  for (const token of tokens.slice(1)) {
+    const resolved = resolveMutationTarget(token, cwd);
+    if (resolved && relativeWithinRepo(repoRoot, resolved) === null) {
+      paths.add(resolved);
+    }
+  }
+  for (const redirect of redirects) {
+    const resolved = resolveMutationTarget(redirect, cwd);
+    if (resolved && relativeWithinRepo(repoRoot, resolved) === null) {
+      paths.add(resolved);
+    }
+  }
+  return [...paths];
+}
+
+// src/core/capability/reasons.ts
+var FS_SCOPE_REASONS = /* @__PURE__ */ new Set(["outside_repo_mutation", "outside_repo_redirect"]);
+function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
+  return brokerActive && FS_SCOPE_REASONS.has(reason);
+}
+
 // src/adapters/shared/gate-runtime.ts
 init_config_layers();
 
@@ -938,87 +1227,6 @@ function subagentFingerprint(kind, scrubbed, repoRoot) {
 }
 function toolFingerprint(toolName, scrubbed, repoRoot) {
   return hashValue(`tool:${toolName}:${canonicalStringify(scrubbed)}:${repoRoot}`);
-}
-
-// src/core/path-utils.ts
-import { realpathSync } from "node:fs";
-import path5 from "node:path";
-function resolveRealpath(targetPath) {
-  try {
-    return realpathSync.native(targetPath);
-  } catch {
-    return path5.resolve(targetPath);
-  }
-}
-function pathWithinRoot(root, targetPath) {
-  const resolvedRoot = resolveRealpath(root);
-  const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
-  if (relativePath === "") {
-    return true;
-  }
-  return !relativePath.startsWith("..") && !path5.isAbsolute(relativePath);
-}
-function relativeWithinRepo(repoRoot, targetPath) {
-  const resolvedRoot = resolveRealpath(repoRoot);
-  const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
-  if (relativePath === "") {
-    return ".";
-  }
-  if (relativePath.startsWith("..")) {
-    return null;
-  }
-  return relativePath;
-}
-function normalizeToken(token, repoRoot) {
-  if (!path5.isAbsolute(token)) {
-    return token;
-  }
-  const relativePath = relativeWithinRepo(repoRoot, token);
-  return relativePath ?? token;
-}
-function resolveMutationTarget(token, cwd) {
-  if (!token || token === "--" || token.startsWith("-")) {
-    return null;
-  }
-  if (token === "2>" || token === "1>" || token === "&>" || token === "1>>" || token === "2>>") {
-    return null;
-  }
-  if (path5.isAbsolute(token)) {
-    return resolveRealpath(token);
-  }
-  if (token.startsWith("./") || token.startsWith("../")) {
-    return resolveRealpath(path5.resolve(cwd, token));
-  }
-  if (!token.includes("/") && !token.includes("\\")) {
-    return resolveRealpath(path5.resolve(cwd, token));
-  }
-  return resolveRealpath(path5.resolve(cwd, token));
-}
-function looksLikePathToken(token) {
-  if (!token || token === "--" || token.startsWith("-")) {
-    return false;
-  }
-  if (path5.isAbsolute(token)) {
-    return true;
-  }
-  if (token.startsWith("./") || token.startsWith("../")) {
-    return true;
-  }
-  return token.includes("/") || token.includes("\\");
-}
-function hasOutsideRepoPath(tokens, cwd, repoRoot) {
-  return tokens.some((token) => {
-    if (!looksLikePathToken(token)) {
-      return false;
-    }
-    const resolved = resolveMutationTarget(token, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return relativeWithinRepo(repoRoot, resolved) === null;
-  });
 }
 
 // src/core/judgment.ts
@@ -1219,111 +1427,6 @@ var EXTERNAL_COMMAND_KEYS = [
 var READ_ONLY_KEYS = new Set(READ_ONLY_COMMAND_KEYS);
 var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
 var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
-
-// src/core/shell-tokenizer.ts
-var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
-function tokenizeShell(input) {
-  const tokens = [];
-  let buffer = "";
-  let quote = null;
-  let escaping = false;
-  const flush = () => {
-    if (buffer.length > 0) {
-      tokens.push(buffer);
-      buffer = "";
-    }
-  };
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    const next = input[index + 1] ?? "";
-    if (escaping) {
-      buffer += char;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        buffer += char;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === "&" && next === "&") {
-      flush();
-      tokens.push("&&");
-      index += 1;
-      continue;
-    }
-    if (char === "|" && next === "|") {
-      flush();
-      tokens.push("||");
-      index += 1;
-      continue;
-    }
-    if (char === ">" && next === ">") {
-      flush();
-      tokens.push(">>");
-      index += 1;
-      continue;
-    }
-    if (char === "|" || char === ";" || char === ">" || char === "<") {
-      flush();
-      tokens.push(char);
-      continue;
-    }
-    if (char === "\n" || char === "\r") {
-      flush();
-      tokens.push(";");
-      continue;
-    }
-    if (/\s/.test(char)) {
-      flush();
-      continue;
-    }
-    buffer += char;
-  }
-  flush();
-  return tokens;
-}
-function normalizeShellCommand(command, repoRoot, normalizeToken2) {
-  const tokens = tokenizeShell(command);
-  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
-    tokens.shift();
-  }
-  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
-  return normalized.join(" ").trim();
-}
-function commandKey(tokens) {
-  const filtered = tokens.filter((token) => token !== "sudo");
-  const first = filtered[0] ?? "";
-  const second = filtered[1] ?? "";
-  if ((first === "git" || first === "npm" || first === "pnpm" || first === "docker" || first === "terraform" || first === "fly" || first === "firebase") && second) {
-    return `${first} ${second}`;
-  }
-  return first;
-}
-function extractRedirectTargets(tokens) {
-  const targets = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === ">" || token === ">>" || token === "<") {
-      const next = tokens[index + 1];
-      if (next) {
-        targets.push(next);
-      }
-    }
-  }
-  return targets;
-}
 
 // src/core/shell-unparseable.ts
 function detectUnparseableShell(command) {
@@ -1813,6 +1916,14 @@ function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
         signals: [...resultAssessment.signals, "l3_external_hint", "egress_boundary_expected"]
       };
     }
+    if (ctx.brokerFsScope && verdict === "deny_pending_approval" && (rule.id === "outside_repo_mutation" || rule.id === "outside_repo_redirect") && ctx.outsideRepoPaths && ctx.fsScopeAllowlist && allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)) {
+      verdict = "allow_flagged";
+      reason = "capability_fs_hint";
+      resultAssessment = {
+        ...resultAssessment,
+        signals: [...resultAssessment.signals, "capability_fs_hint", "sandbox_boundary_expected"]
+      };
+    }
     return {
       verdict,
       reason,
@@ -2156,11 +2267,15 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     options,
     separator: segment.separator
   });
+  const outsideRepoPaths = attributes.hitsOutsideRepo ? collectOutsideRepoPaths(normalizedCommand, cwd, repoRoot) : [];
   const policyResult = evaluatePolicyRules(attributes, {
     unknownLocalEffect: options.unknownLocalEffect ?? "allow_flagged",
     unparseableShell: options.unparseableShell ?? "allow_flagged",
     confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
-    demoteL3External: options.demoteL3External === true
+    demoteL3External: options.demoteL3External === true,
+    brokerFsScope: options.brokerFsScope === true,
+    fsScopeAllowlist: options.fsScopeAllowlist,
+    outsideRepoPaths
   });
   return policyResultToClassifyResult(attributes, policyResult);
 }
@@ -2443,7 +2558,7 @@ function classifySubagent(payload, repoRoot, options = {}) {
 }
 
 // src/core/classify-tool.ts
-import path6 from "node:path";
+import path7 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -2611,7 +2726,7 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path6.isAbsolute(filePath) ? filePath : path6.resolve(cwd, filePath);
+    const resolvedPath = path7.isAbsolute(filePath) ? filePath : path7.resolve(cwd, filePath);
     const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
     if (hitsProtectedRoot) {
       signals.push("control_plane_path");
@@ -2986,15 +3101,15 @@ init_config();
 
 // src/core/control-plane-spike.ts
 init_config();
-import { existsSync as existsSync2 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import path7 from "node:path";
+import path8 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path7.join(
+  const outputPath = path8.join(
     controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
     "oq3-spike-last.json"
   );
-  await mkdir2(path7.dirname(outputPath), { recursive: true });
+  await mkdir2(path8.dirname(outputPath), { recursive: true });
   await writeFile2(
     outputPath,
     `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -3005,7 +3120,7 @@ async function persistControlPlaneSpikeResult(result, env = process.env, homedir
 }
 async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
   const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path7.join(controlPlaneDir, "oq3-spike.json");
+  const testFile = path8.join(controlPlaneDir, "oq3-spike.json");
   const payload = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     cwd,
@@ -3030,7 +3145,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
     await rm(testFile, { force: true });
     return {
       ...base,
-      ok: parsed.cwd === cwd && existsSync2(controlPlaneDir),
+      ok: parsed.cwd === cwd && existsSync3(controlPlaneDir),
       wrote: true,
       readBack: readBack.trim()
     };
@@ -3043,9 +3158,9 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
 }
 
 // src/core/transactional/diff-evaluator.ts
-import path8 from "node:path";
+import path9 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = path8.resolve(ctx.repoRoot, change.relativePath);
+  const absolutePath = path9.resolve(ctx.repoRoot, change.relativePath);
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -3175,7 +3290,7 @@ var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir as mkdir3, rm as rm2 } from "node:fs/promises";
-import path9 from "node:path";
+import path10 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repoRoot, ...args], {
@@ -3208,7 +3323,7 @@ async function isGitWorktreeAvailable(repoRoot) {
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
-  const worktreePath = path9.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  const worktreePath = path10.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
   await mkdir3(stateDir, { recursive: true });
   await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
   return {
@@ -3227,15 +3342,15 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
   };
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
-  const resolvedCwd = path9.resolve(cwd);
-  const relative = path9.relative(path9.resolve(repoRoot), resolvedCwd);
-  if (relative.startsWith("..") || path9.isAbsolute(relative)) {
+  const resolvedCwd = path10.resolve(cwd);
+  const relative = path10.relative(path10.resolve(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path10.isAbsolute(relative)) {
     return worktreePath;
   }
   if (relative === "") {
     return worktreePath;
   }
-  return path9.join(worktreePath, relative);
+  return path10.join(worktreePath, relative);
 }
 function runShellCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
@@ -3303,13 +3418,13 @@ async function collectWorktreeChanges(worktreePath) {
 }
 async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
   for (const change of changes) {
-    const target = path9.join(repoRoot, change.relativePath);
+    const target = path10.join(repoRoot, change.relativePath);
     if (change.kind === "deleted") {
       await rm2(target, { force: true });
       continue;
     }
-    const source = path9.join(worktreePath, change.relativePath);
-    await mkdir3(path9.dirname(target), { recursive: true });
+    const source = path10.join(worktreePath, change.relativePath);
+    await mkdir3(path10.dirname(target), { recursive: true });
     await copyFile(source, target);
   }
 }
@@ -3432,8 +3547,8 @@ async function notifyDeny(config, event) {
 }
 
 // src/egress-service.ts
-import { existsSync as existsSync3, readFileSync } from "node:fs";
-import path10 from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import path11 from "node:path";
 init_config_io();
 init_config();
 
@@ -3449,18 +3564,18 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
     belayStateDir(config, repoLocalStateDir),
     configuredControlPlaneDir(config)
   ]);
-  const resolvedRepoRoot = path10.resolve(repoRoot);
+  const resolvedRepoRoot = path11.resolve(repoRoot);
   for (const stateDir of stateDirs) {
-    const statusPath = path10.join(stateDir, "egress-proxy.json");
-    if (!existsSync3(statusPath)) {
+    const statusPath = path11.join(stateDir, "egress-proxy.json");
+    if (!existsSync4(statusPath)) {
       continue;
     }
     try {
-      const raw = JSON.parse(readFileSync(statusPath, "utf8"));
+      const raw = JSON.parse(readFileSync2(statusPath, "utf8"));
       if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
         continue;
       }
-      if (raw.repoRoot && path10.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+      if (raw.repoRoot && path11.resolve(raw.repoRoot) !== resolvedRepoRoot) {
         continue;
       }
       return true;
@@ -3479,7 +3594,7 @@ function isProcessAlive(pid) {
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path11 from "node:path";
+import path12 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -3491,7 +3606,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path11.resolve(entry));
+  return roots.map((entry) => path12.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -3513,8 +3628,8 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path12.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir4(path12.dirname(auditPath), { recursive: true });
+      const auditPath = path13.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir4(path13.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
@@ -3539,7 +3654,7 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir4(path12.dirname(filePath), { recursive: true });
+      await mkdir4(path13.dirname(filePath), { recursive: true });
       await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
@@ -3549,7 +3664,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync4(teamPath)) {
+  if (existsSync5(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -3561,14 +3676,14 @@ async function resolveGateConfig(ctx, deps) {
   }).config;
 }
 function runtimeClassifierOptions(ctx, config) {
+  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
+  const brokerFsScope = isSandboxBrokerEnabled(config);
   return {
     ...classifierOptionsFromConfig(config),
-    demoteL3External: isEgressProxyActiveForRepo(
-      config,
-      ctx.repoRoot,
-      ctx.layout.repoLocalStateDir(ctx.repoRoot)
-    ),
+    demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
+    brokerFsScope,
+    fsScopeAllowlist: brokerFsScope ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir)) : void 0,
     protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir)
   };
 }
@@ -3679,7 +3794,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       command: params.command,
       cwd: params.cwd,
       repoRoot: ctx.repoRoot,
-      stateDir: path12.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
+      stateDir: path13.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
       timeoutMs: transactional.timeoutMs,
       predicted,
       diffContext: {
@@ -3744,7 +3859,8 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
       agent_message: agentMessage
     });
   }
-  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
+  const brokerActive = isSandboxBrokerEnabled(ctx.config);
+  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) || shouldSkipBrokerApprovedOnce(brokerActive, result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
   if (approved) {
     await deps.appendAudit(ctx, {
       ...gateBase,
@@ -3936,19 +4052,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync5 } from "node:fs";
-import path13 from "node:path";
+import { existsSync as existsSync6 } from "node:fs";
+import path14 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path13.resolve(startPath);
+  let current = path14.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync5(path13.join(current, marker))) {
+      if (existsSync6(path14.join(current, marker))) {
         return current;
       }
     }
-    const parent = path13.dirname(current);
+    const parent = path14.dirname(current);
     if (parent === current) {
-      return path13.resolve(startPath);
+      return path14.resolve(startPath);
     }
     current = parent;
   }

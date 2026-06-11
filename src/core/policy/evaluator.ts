@@ -1,3 +1,4 @@
+import { allPathsAllowlisted } from '../capability/allowlist.js'
 import { shellFingerprint } from '../fingerprint.js'
 import { computeAssessmentFromAttributes, verdictFromConfidence } from '../judgment.js'
 import { matchesPolicyRule } from '../shell-analysis.js'
@@ -77,6 +78,22 @@ export function evaluatePolicyRules(
       resultAssessment = {
         ...resultAssessment,
         signals: [...resultAssessment.signals, 'l3_external_hint', 'egress_boundary_expected'],
+      }
+    }
+
+    if (
+      ctx.brokerFsScope &&
+      verdict === 'deny_pending_approval' &&
+      (rule.id === 'outside_repo_mutation' || rule.id === 'outside_repo_redirect') &&
+      ctx.outsideRepoPaths &&
+      ctx.fsScopeAllowlist &&
+      allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)
+    ) {
+      verdict = 'allow_flagged'
+      reason = 'capability_fs_hint'
+      resultAssessment = {
+        ...resultAssessment,
+        signals: [...resultAssessment.signals, 'capability_fs_hint', 'sandbox_boundary_expected'],
       }
     }
 
