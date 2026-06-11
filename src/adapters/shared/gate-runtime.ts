@@ -9,7 +9,8 @@ import {
   unnormalizedGateVerdict,
 } from '../../core/gate-contract.js'
 import {
-  classifyGatedAction,
+  classifyGatedActionAsync,
+  extractAgentAssessment,
   GateNormalizationError,
   gateEnabledForAction,
   normalizeGatedAction,
@@ -212,6 +213,7 @@ export async function evaluateGatedAction(
       command: params.command,
       payload: params.payload,
       toolName: params.toolName,
+      agentAssessment: extractAgentAssessment(params.payload),
     })
   } catch {
     const verdict = unnormalizedGateVerdict({
@@ -253,7 +255,11 @@ export async function evaluateGatedAction(
     })
   }
 
-  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config))
+  const result = await classifyGatedActionAsync(
+    action,
+    ctx.config,
+    runtimeClassifierOptions(ctx, ctx.config),
+  )
   return gateDecisionToVerdict(ctx, deps, params.kind, result)
 }
 

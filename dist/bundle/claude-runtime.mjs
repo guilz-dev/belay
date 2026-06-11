@@ -49,13 +49,25 @@ import path2 from "node:path";
 
 // src/core/config.ts
 import path from "node:path";
+var DEFAULT_CONFIDENCE_THRESHOLDS = {
+  allow: 0.88,
+  flag: 0.72
+};
+var DEFAULT_MODEL_ASSIST = {
+  enabled: false,
+  timeoutMs: 3e3
+};
 var LEGACY_POLICY_V3 = {
   unknownLocalEffect: "allow_flagged",
-  unparseableShell: "allow_flagged"
+  unparseableShell: "allow_flagged",
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST }
 };
 var DEFAULT_POLICY_V3 = {
   unknownLocalEffect: "deny",
-  unparseableShell: "deny"
+  unparseableShell: "deny",
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST }
 };
 var DEFAULT_OVERRIDES_V3 = {
   allow: [],
@@ -193,8 +205,8 @@ function normalizeV3Raw(raw) {
       ...raw.classifier ?? {}
     },
     policy: {
-      unknownLocalEffect: raw.policy?.unknownLocalEffect ?? LEGACY_POLICY_V3.unknownLocalEffect,
-      unparseableShell: raw.policy?.unparseableShell ?? LEGACY_POLICY_V3.unparseableShell
+      ...LEGACY_POLICY_V3,
+      ...raw.policy ?? {}
     },
     overrides: {
       ...DEFAULT_CONFIG_V3.overrides,
@@ -308,7 +320,16 @@ function normalizeConfig(config) {
     },
     policy: {
       unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : v3.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
-      unparseableShell: v3.policy?.unparseableShell === "deny" ? "deny" : v3.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell
+      unparseableShell: v3.policy?.unparseableShell === "deny" ? "deny" : v3.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
+      confidenceThresholds: {
+        allow: typeof v3.policy?.confidenceThresholds?.allow === "number" ? v3.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+        flag: typeof v3.policy?.confidenceThresholds?.flag === "number" ? v3.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
+      },
+      modelAssist: {
+        enabled: v3.policy?.modelAssist?.enabled === true,
+        model: v3.policy?.modelAssist?.model,
+        timeoutMs: typeof v3.policy?.modelAssist?.timeoutMs === "number" ? v3.policy.modelAssist.timeoutMs : DEFAULT_MODEL_ASSIST.timeoutMs
+      }
     },
     overrides: {
       allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
@@ -388,6 +409,7 @@ function classifierOptionsFromConfig(config) {
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
     unparseableShell: config.policy.unparseableShell,
+    confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config)
   };
@@ -465,15 +487,6 @@ var claudeLayout = {
 import { randomUUID } from "node:crypto";
 import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
 import path7 from "node:path";
-
-// src/core/custom-command-match.ts
-function matchesCustomCommand(normalizedCommand, key, pattern) {
-  const trimmed = pattern.trim();
-  if (!trimmed) {
-    return false;
-  }
-  return normalizedCommand === trimmed || key === trimmed;
-}
 
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
@@ -568,132 +581,204 @@ function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   });
 }
 
-// src/core/shell-substitution.ts
-var MAX_SUBSTITUTION_DEPTH = 8;
-function findCommandSubstitutions(command) {
-  const results = [];
-  let index = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (inSingle || inDouble) {
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (char === "`") {
-      const end = findClosingBacktick(command, index + 1);
-      if (end === -1) {
-        break;
-      }
-      const inner = command.slice(index + 1, end).trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = end + 1;
-      continue;
-    }
-    if (char === "$" && command[index + 1] === "(") {
-      const closed = extractBalancedParenContent(command, index + 2);
-      if (!closed) {
-        index += 1;
-        continue;
-      }
-      const inner = closed.content.trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = closed.endIndex;
-      continue;
-    }
-    index += 1;
-  }
-  return results;
+// src/core/judgment.ts
+var SCOPE_BLAST_RADIUS = {
+  none: "none",
+  file: "single file",
+  dir: "directory tree",
+  repo: "this repository",
+  outside: "outside the repository",
+  external: "external system"
+};
+function blastRadiusLabel(scope) {
+  return SCOPE_BLAST_RADIUS[scope];
 }
-function findClosingBacktick(command, start) {
-  let index = start;
-  while (index < command.length) {
-    if (command[index] === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (command[index] === "`") {
-      return index;
-    }
-    index += 1;
+function computeAssessmentFromAttributes(attributes) {
+  const signals = [...attributes.signals];
+  if (attributes.isExternalKey || attributes.targetScope === "external") {
+    return {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: blastRadiusLabel(attributes.targetScope),
+      confidence: calibrateConfidence(attributes, 0.92),
+      signals: [...signals, "external_command", attributes.commandKey]
+    };
   }
-  return -1;
-}
-function extractBalancedParenContent(command, start) {
-  let depth = 1;
-  let index = start;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length && depth > 0) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && !inDouble) {
-      if (char === "(") {
-        depth += 1;
-      } else if (char === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          return {
-            content: command.slice(start, index),
-            endIndex: index + 1
-          };
-        }
-      }
-    }
-    index += 1;
+  if (attributes.hitsProtectedArtifact) {
+    return {
+      reversibility: "irreversible",
+      external: false,
+      blastRadius: "agent-belay control plane",
+      confidence: calibrateConfidence(attributes, 0.97),
+      signals
+    };
   }
-  return null;
+  if (attributes.hitsOutsideRepo || attributes.redirectKind === "outside") {
+    return {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "outside the repository",
+      confidence: calibrateConfidence(attributes, 0.9),
+      signals
+    };
+  }
+  if (attributes.isDynamicEval || attributes.hasPipeToShell) {
+    return {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "dynamic shell evaluation",
+      confidence: calibrateConfidence(attributes, 0.93),
+      signals
+    };
+  }
+  if (attributes.isReadOnlyKey && attributes.redirectKind === "none") {
+    return {
+      reversibility: "reversible",
+      external: false,
+      blastRadius: blastRadiusLabel("repo"),
+      confidence: calibrateConfidence(attributes, 0.95),
+      signals: [...signals, "read_only_command"]
+    };
+  }
+  if (attributes.isFlaggedKey || attributes.redirectKind === "truncate" || attributes.redirectKind === "append") {
+    const reversibility = attributes.flags.includes("-rf") || attributes.flags.includes("-fr") ? "irreversible" : attributes.redirectKind === "append" ? "recoverable_with_cost" : "recoverable_with_cost";
+    return {
+      reversibility,
+      external: false,
+      blastRadius: blastRadiusLabel(attributes.targetScope),
+      confidence: calibrateConfidence(attributes, 0.72),
+      signals: [...signals, "local_mutation"]
+    };
+  }
+  return {
+    reversibility: "recoverable_with_cost",
+    external: false,
+    blastRadius: blastRadiusLabel(attributes.targetScope),
+    confidence: calibrateConfidence(attributes, 0.61),
+    signals: [...signals, "unknown_local_effect"]
+  };
 }
+function calibrateConfidence(attributes, base) {
+  let confidence = base;
+  if (attributes.signals.length >= 2) {
+    confidence = Math.min(0.99, confidence + 0.02);
+  }
+  if (attributes.isCustomAllow && !attributes.isCustomExternal) {
+    confidence = Math.max(confidence, 0.99);
+  }
+  if (attributes.isUnparseable) {
+    confidence = Math.max(confidence, 0.9);
+  }
+  if (attributes.commandKey === "node" || attributes.commandKey === "sed") {
+    confidence = Math.min(confidence, 0.64);
+  }
+  return Math.round(confidence * 1e3) / 1e3;
+}
+function verdictFromConfidence(assessment, thresholds, unknownLocalEffect) {
+  if (assessment.external || assessment.reversibility === "irreversible") {
+    if (assessment.confidence >= thresholds.allow && !assessment.external) {
+      return "allow_flagged";
+    }
+    return "deny_pending_approval";
+  }
+  if (assessment.confidence >= thresholds.allow) {
+    return "allow";
+  }
+  if (assessment.confidence >= thresholds.flag) {
+    return "allow_flagged";
+  }
+  if (unknownLocalEffect === "deny") {
+    return "deny_pending_approval";
+  }
+  return "allow_flagged";
+}
+function mergeAgentAssessment(independent, agent) {
+  if (!agent) {
+    return { assessment: independent, mismatch: false };
+  }
+  const mismatch = agent.external === false && independent.external === true || agent.reversibility === "reversible" && independent.reversibility === "irreversible";
+  const confidence = mismatch ? Math.min(independent.confidence, 0.55) : Math.min(0.99, independent.confidence + 0.05);
+  return {
+    assessment: {
+      ...independent,
+      confidence,
+      signals: mismatch ? [...independent.signals, "agent_assessment_mismatch"] : [...independent.signals, "agent_assessment_agreement"]
+    },
+    mismatch
+  };
+}
+
+// src/core/custom-command-match.ts
+function matchesCustomCommand(normalizedCommand, key, pattern) {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return normalizedCommand === trimmed || key === trimmed;
+}
+
+// src/core/policy/command-keys.ts
+var READ_ONLY_COMMAND_KEYS = [
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+];
+var FLAGGED_COMMAND_KEYS = [
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+];
+var EXTERNAL_COMMAND_KEYS = [
+  "aws",
+  "curl",
+  "docker push",
+  "docker run",
+  "firebase deploy",
+  "fly deploy",
+  "gh",
+  "git push",
+  "gcloud",
+  "heroku",
+  "kubectl",
+  "netlify",
+  "npm publish",
+  "pnpm publish",
+  "rsync",
+  "scp",
+  "ssh",
+  "supabase",
+  "terraform apply",
+  "vercel",
+  "wget"
+];
+var READ_ONLY_KEYS = new Set(READ_ONLY_COMMAND_KEYS);
+var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
+var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
 
 // src/core/shell-tokenizer.ts
 var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
@@ -895,68 +980,543 @@ function hasUnbalancedDollarParen(command) {
   return depth > 0;
 }
 
-// src/core/classify-shell.ts
-var READ_ONLY_COMMANDS = /* @__PURE__ */ new Set([
-  "cat",
-  "cd",
-  "echo",
-  "git diff",
-  "git log",
-  "git rev-parse",
-  "git show",
-  "git status",
-  "head",
-  "ls",
-  "pwd",
-  "rg",
-  "sort",
-  "tail",
-  "wc",
-  "which"
-]);
-var FLAGGED_COMMANDS = /* @__PURE__ */ new Set([
-  "chmod",
-  "cp",
-  "git add",
-  "git clean",
-  "git commit",
-  "git mv",
-  "git reset",
-  "mkdir",
-  "mv",
-  "rm",
-  "tee",
-  "touch",
-  "truncate"
-]);
-var EXTERNAL_COMMANDS = /* @__PURE__ */ new Set([
-  "aws",
-  "curl",
-  "docker push",
-  "docker run",
-  "firebase deploy",
-  "fly deploy",
-  "gh",
-  "git push",
-  "gcloud",
-  "heroku",
-  "kubectl",
-  "netlify",
-  "npm publish",
-  "pnpm publish",
-  "rsync",
-  "scp",
-  "ssh",
-  "supabase",
-  "terraform apply",
-  "vercel",
-  "wget"
-]);
+// src/core/shell-analysis.ts
+var DYNAMIC_KEYS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
-var DYNAMIC_SHELL_COMMANDS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
-var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
+var FIND_DANGEROUS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
+var FORCE_FLAGS = /* @__PURE__ */ new Set(["--force", "-f"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
-var FIND_DANGEROUS_FLAGS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
+function protectedRoots(options) {
+  return [
+    ...options.protectedArtifactRoots ?? [],
+    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
+  ];
+}
+function hitsProtected(paths, cwd, roots) {
+  if (roots.length === 0) {
+    return false;
+  }
+  return paths.some((target) => {
+    const resolved = resolveMutationTarget(target, cwd);
+    if (!resolved) {
+      return false;
+    }
+    return roots.some((root) => pathWithinRoot(root, resolved));
+  });
+}
+function redirectKind(redirects, cwd, repoRoot, roots) {
+  if (redirects.length === 0) {
+    return "none";
+  }
+  if (hitsProtected(redirects, cwd, roots)) {
+    return "protected";
+  }
+  const hasOutside = redirects.some((target) => {
+    const resolved = resolveMutationTarget(target, cwd);
+    return resolved !== null && relativeWithinRepo(repoRoot, resolved) === null;
+  });
+  if (hasOutside) {
+    return "outside";
+  }
+  const tokens = redirects.join(" ");
+  if (tokens.includes(">>")) {
+    return "append";
+  }
+  if (redirects.length > 0) {
+    return "truncate";
+  }
+  return "none";
+}
+function inferTargetScope(segmentTokens, cwd, repoRoot, key) {
+  if (EXTERNAL_KEYS.has(key) || key === "curl" || key === "wget") {
+    return "external";
+  }
+  const paths = segmentTokens.slice(1);
+  if (hasOutsideRepoPath(paths, cwd, repoRoot)) {
+    return "outside";
+  }
+  if (key === "find" || key === "chmod" || key === "rm") {
+    const hasRecursive = segmentTokens.some((token) => token === "-R" || token === "-r");
+    if (hasRecursive) {
+      return "dir";
+    }
+  }
+  if (FLAGGED_KEYS.has(key)) {
+    return "file";
+  }
+  if (READ_ONLY_KEYS.has(key)) {
+    return "repo";
+  }
+  return "repo";
+}
+function findDangerousFlags(tokens) {
+  return tokens.some(
+    (token) => FIND_DANGEROUS.has(token) || token.startsWith("-exec") || token.startsWith("-ok")
+  );
+}
+function isExternalKey(key, normalizedCommand, options) {
+  if (EXTERNAL_KEYS.has(key)) {
+    return true;
+  }
+  if (key === "git push" && segmentHasForce(normalizedCommand)) {
+    return true;
+  }
+  return (options.customExternalCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+}
+function segmentHasForce(command) {
+  const tokens = tokenizeShell(command);
+  return tokens.some((token) => FORCE_FLAGS.has(token));
+}
+function analyzeShellSegment(params) {
+  const { segmentTokens, cwd, repoRoot, normalizedCommand, cwdRelative, options, separator } = params;
+  const key = commandKey(segmentTokens);
+  const flags = segmentTokens.filter((token) => token.startsWith("-"));
+  const redirects = extractRedirectTargets(segmentTokens);
+  const roots = protectedRoots(options);
+  const redirect = redirectKind(redirects, cwd, repoRoot, roots);
+  const signals = [];
+  const isUnparseable = detectUnparseableShell(normalizedCommand);
+  const isDynamicEval = DYNAMIC_KEYS.has(key) || key === "." && segmentTokens.length > 1;
+  let hasPipeToShell = segmentTokens.includes("|") && segmentTokens.some((token) => SHELL_INTERPRETERS.has(token));
+  if (separator === "|" && SHELL_INTERPRETERS.has(key)) {
+    hasPipeToShell = true;
+  }
+  const hitsProtectedArtifact = hitsProtected(redirects, cwd, roots) || hitsProtected(segmentTokens.slice(1), cwd, roots);
+  const hitsOutsideRepo = hasOutsideRepoPath(segmentTokens.slice(1), cwd, repoRoot) || redirect === "outside";
+  const hasCredentialHeader = segmentTokens.some(
+    (token) => token === "-H" || token === "--header" || /authorization/i.test(token)
+  );
+  const findDangerous = key === "find" && findDangerousFlags(segmentTokens);
+  const isCustomAllow = (options.customAllowCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+  const isCustomExternal = (options.customExternalCommands ?? []).some(
+    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
+  );
+  if (isUnparseable) {
+    signals.push("unparseable_shell");
+  }
+  if (isDynamicEval) {
+    signals.push("dynamic_shell_evaluation");
+  }
+  if (hasPipeToShell) {
+    signals.push("pipe_to_shell");
+  }
+  if (hitsProtectedArtifact) {
+    signals.push("control_plane_path");
+  }
+  if (hitsOutsideRepo) {
+    signals.push("outside_repo_mutation");
+  }
+  if (hasCredentialHeader) {
+    signals.push("credential_header");
+  }
+  if (findDangerous) {
+    signals.push("find_dangerous_action");
+  }
+  if (key === "rm" && flags.some((flag) => flag === "-rf" || flag === "-fr")) {
+    signals.push("rm_recursive_force");
+  }
+  if (key === "git push" && segmentHasForce(normalizedCommand)) {
+    signals.push("git_push_force");
+  }
+  if (key === "docker run" && flags.includes("--privileged")) {
+    signals.push("docker_privileged");
+  }
+  if (key === "sed" && flags.some((flag) => flag === "-i" || flag === "--in-place")) {
+    signals.push("sed_in_place");
+  }
+  if ((key === "npm run" || key === "pnpm run") && segmentTokens[2]) {
+    const scriptName = segmentTokens[2].toLowerCase();
+    if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
+      signals.push("external_script_name", scriptName);
+    }
+  }
+  return {
+    commandKey: key,
+    normalizedCommand,
+    cwdRelative,
+    flags,
+    targetScope: inferTargetScope(segmentTokens, cwd, repoRoot, key),
+    redirectKind: redirect,
+    signals,
+    isUnparseable,
+    isDynamicEval,
+    hasPipeToShell,
+    hitsProtectedArtifact,
+    hitsOutsideRepo,
+    isCustomAllow,
+    isCustomExternal,
+    isReadOnlyKey: READ_ONLY_KEYS.has(key) && redirect === "none",
+    isFlaggedKey: FLAGGED_KEYS.has(key),
+    isExternalKey: isExternalKey(key, normalizedCommand, options),
+    hasCredentialHeader,
+    findDangerous
+  };
+}
+function matchesPolicyRule(match, attributes) {
+  if (match.signal && !attributes.signals.includes(match.signal)) {
+    return false;
+  }
+  if (match.commandKey) {
+    const keys = Array.isArray(match.commandKey) ? match.commandKey : [match.commandKey];
+    if (!keys.includes(attributes.commandKey)) {
+      return false;
+    }
+  }
+  if (match.targetScope) {
+    const scopes = Array.isArray(match.targetScope) ? match.targetScope : [match.targetScope];
+    if (!scopes.includes(attributes.targetScope)) {
+      return false;
+    }
+  }
+  if (match.redirectKind) {
+    const kinds = Array.isArray(match.redirectKind) ? match.redirectKind : [match.redirectKind];
+    if (!kinds.includes(attributes.redirectKind)) {
+      return false;
+    }
+  }
+  if (match.flag) {
+    const flags = Array.isArray(match.flag) ? match.flag : [match.flag];
+    if (!flags.some((flag) => attributes.flags.includes(flag))) {
+      return false;
+    }
+  }
+  if (match.customAllow === true && !attributes.isCustomAllow) {
+    return false;
+  }
+  if (match.customExternal === true && !attributes.isCustomExternal) {
+    return false;
+  }
+  if (match.unparseable === true && !attributes.isUnparseable) {
+    return false;
+  }
+  if (match.protectedArtifact === true && !attributes.hitsProtectedArtifact) {
+    return false;
+  }
+  if (match.outsideRepo === true && !attributes.hitsOutsideRepo) {
+    return false;
+  }
+  return true;
+}
+
+// src/core/policy/default-rules.ts
+var DEFAULT_POLICY_RULES = [
+  {
+    id: "unparseable_shell",
+    priority: 1e3,
+    nonOverridable: true,
+    match: { unparseable: true },
+    action: "threshold",
+    reason: "unparseable_shell"
+  },
+  {
+    id: "protected_artifact",
+    priority: 950,
+    nonOverridable: true,
+    match: { protectedArtifact: true },
+    action: "escalate",
+    reason: "control_plane_mutation"
+  },
+  {
+    id: "outside_repo_redirect",
+    priority: 940,
+    nonOverridable: true,
+    match: { redirectKind: "outside" },
+    action: "escalate",
+    reason: "outside_repo_redirect"
+  },
+  {
+    id: "outside_repo_mutation",
+    priority: 938,
+    nonOverridable: true,
+    match: { outsideRepo: true },
+    action: "escalate",
+    reason: "outside_repo_mutation"
+  },
+  {
+    id: "dynamic_shell",
+    priority: 930,
+    nonOverridable: true,
+    match: { signal: "dynamic_shell_evaluation" },
+    action: "escalate",
+    reason: "dynamic_shell_evaluation"
+  },
+  {
+    id: "pipe_to_shell",
+    priority: 920,
+    nonOverridable: true,
+    match: { signal: "pipe_to_shell" },
+    action: "escalate",
+    reason: "pipe_to_shell"
+  },
+  {
+    id: "find_dangerous",
+    priority: 900,
+    nonOverridable: true,
+    match: { signal: "find_dangerous_action" },
+    action: "escalate",
+    reason: "find_dangerous_action"
+  },
+  {
+    id: "custom_external",
+    priority: 850,
+    match: { customExternal: true },
+    action: "escalate",
+    reason: "custom_external"
+  },
+  {
+    id: "external_effect",
+    priority: 800,
+    nonOverridable: true,
+    match: { targetScope: "external" },
+    action: "escalate",
+    reason: "external_effect"
+  },
+  {
+    id: "external_script",
+    priority: 790,
+    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
+    action: "escalate",
+    reason: "external_script"
+  },
+  {
+    id: "custom_allow",
+    priority: 600,
+    match: { customAllow: true },
+    action: "allow",
+    reason: "custom_allow"
+  },
+  {
+    id: "read_only",
+    priority: 500,
+    match: {
+      commandKey: [...READ_ONLY_COMMAND_KEYS],
+      redirectKind: "none"
+    },
+    action: "allow",
+    reason: "read_only"
+  },
+  {
+    id: "local_mutation",
+    priority: 400,
+    match: {
+      commandKey: [...FLAGGED_COMMAND_KEYS]
+    },
+    action: "flag",
+    reason: "local_mutation"
+  },
+  {
+    id: "unknown_local",
+    priority: 100,
+    match: {},
+    action: "threshold",
+    reason: "unknown_local_effect"
+  }
+];
+
+// src/core/policy/evaluator.ts
+function actionToVerdict(action, ctx) {
+  if (action === "allow") {
+    return "allow";
+  }
+  if (action === "flag") {
+    return "allow_flagged";
+  }
+  if (action === "deny" || action === "escalate") {
+    return "deny_pending_approval";
+  }
+  if (action === "threshold") {
+    if (ctx.attributes.isUnparseable) {
+      return ctx.unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged";
+    }
+    return verdictFromConfidence(ctx.assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect);
+  }
+  return "allow_flagged";
+}
+function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
+  const assessment = computeAssessmentFromAttributes(attributes);
+  const fullCtx = { ...ctx, attributes, assessment };
+  const sorted = [...rules].sort((left, right) => right.priority - left.priority);
+  if (attributes.isCustomAllow && attributes.isCustomExternal) {
+    return {
+      verdict: "allow",
+      reason: "custom_allow",
+      assessment: {
+        ...assessment,
+        confidence: 0.99,
+        signals: [...assessment.signals, "custom_allow_command"]
+      },
+      matchedRuleId: "custom_allow_over_external"
+    };
+  }
+  for (const rule of sorted) {
+    if (!matchesPolicyRule(rule.match, attributes)) {
+      continue;
+    }
+    if (rule.id === "custom_allow" && attributes.isCustomExternal && !rule.nonOverridable) {
+      continue;
+    }
+    if (rule.id === "custom_external" && attributes.isCustomAllow && attributes.isCustomExternal) {
+      continue;
+    }
+    const verdict = actionToVerdict(rule.action, fullCtx);
+    return {
+      verdict,
+      reason: rule.reason,
+      assessment: rule.assessment ? { ...assessment, ...rule.assessment } : assessment,
+      matchedRuleId: rule.id
+    };
+  }
+  return {
+    verdict: verdictFromConfidence(assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect),
+    reason: "unknown_local_effect",
+    assessment,
+    matchedRuleId: "fallback"
+  };
+}
+function policyResultToClassifyResult(attributes, result) {
+  return {
+    verdict: result.verdict,
+    reason: result.reason,
+    normalizedCommand: attributes.normalizedCommand,
+    fingerprint: shellFingerprint(attributes.cwdRelative, attributes.normalizedCommand),
+    assessment: result.assessment
+  };
+}
+
+// src/core/shell-substitution.ts
+var MAX_SUBSTITUTION_DEPTH = 8;
+function findCommandSubstitutions(command) {
+  const results = [];
+  let index = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (char === "`") {
+      const end = findClosingBacktick(command, index + 1);
+      if (end === -1) {
+        break;
+      }
+      const inner = command.slice(index + 1, end).trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      const closed = extractBalancedParenContent(command, index + 2);
+      if (!closed) {
+        index += 1;
+        continue;
+      }
+      const inner = closed.content.trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = closed.endIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return results;
+}
+function findClosingBacktick(command, start) {
+  let index = start;
+  while (index < command.length) {
+    if (command[index] === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (command[index] === "`") {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+function extractBalancedParenContent(command, start) {
+  let depth = 1;
+  let index = start;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length && depth > 0) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          return {
+            content: command.slice(start, index),
+            endIndex: index + 1
+          };
+        }
+      }
+    }
+    index += 1;
+  }
+  return null;
+}
+
+// src/core/classify-shell.ts
+var SHELL_INTERPRETERS2 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var VERDICT_RANK = {
   allow: 0,
   allow_flagged: 1,
@@ -1002,46 +1562,6 @@ function splitSegmentsWithSeparators(tokens) {
   }
   flush();
   return segments;
-}
-function isExternalKey(key, normalizedCommand, options) {
-  return EXTERNAL_COMMANDS.has(key) || (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-}
-function matchesCustomAllow(normalizedCommand, key, options) {
-  return (options.customAllowCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-}
-function matchesCustomExternal(normalizedCommand, key, options) {
-  return (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-}
-function protectedRoots(options) {
-  const roots = [...options.protectedArtifactRoots ?? []];
-  if (options.controlPlaneDir) {
-    roots.push(options.controlPlaneDir);
-  }
-  return roots;
-}
-function targetsProtectedArtifact(paths, cwd, options) {
-  const roots = protectedRoots(options);
-  if (roots.length === 0) {
-    return false;
-  }
-  return paths.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return roots.some((root) => pathWithinRoot(root, resolved));
-  });
-}
-function findHasDangerousFlags(tokens) {
-  return tokens.some(
-    (token) => FIND_DANGEROUS_FLAGS.has(token) || token.startsWith("-exec") || token.startsWith("-ok") || token === "-delete"
-  );
 }
 function unparseableShellResult(normalizedCommand, cwdRelative, options) {
   const assessment = {
@@ -1106,24 +1626,6 @@ function classifySubstitutionInners(params) {
   }
   return worst;
 }
-function unknownLocalEffectResult(params) {
-  const { normalizedCommand, cwdRelative, assessment, options } = params;
-  if (options.unknownLocalEffect === "deny") {
-    return denyResult({
-      reason: "unknown_local_effect",
-      normalizedCommand,
-      cwdRelative,
-      assessment
-    });
-  }
-  return {
-    verdict: "allow_flagged",
-    reason: "unknown_local_effect",
-    normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-    assessment
-  };
-}
 function extractInterpreterScript(tokens) {
   for (let index = 1; index < tokens.length; index += 1) {
     const flag = tokens[index];
@@ -1132,9 +1634,6 @@ function extractInterpreterScript(tokens) {
     }
   }
   return null;
-}
-function hasInPlaceSedFlag(tokens) {
-  return tokens.some((token) => token === "-i" || token === "--in-place");
 }
 function wrapInnerVerdict(params) {
   const { inner, normalizedCommand, cwdRelative, wrapReason, wrapSignal } = params;
@@ -1183,137 +1682,9 @@ function wrapInnerVerdict(params) {
 function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative, options, depth) {
   const segmentTokens = segment.tokens;
   const key = commandKey(segmentTokens);
-  const redirects = extractRedirectTargets(segmentTokens);
-  const signals = [];
-  if (matchesCustomAllow(normalizedCommand, key, options) && matchesCustomExternal(normalizedCommand, key, options)) {
-    return {
-      verdict: "allow",
-      reason: "custom_allow",
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "reversible",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.99,
-        signals: ["custom_allow_command"]
-      }
-    };
-  }
-  if (matchesCustomExternal(normalizedCommand, key, options)) {
-    return denyResult({
-      reason: "custom_external",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "custom external command",
-        confidence: 0.95,
-        signals: ["custom_external_command"]
-      }
-    });
-  }
-  if (DYNAMIC_SHELL_COMMANDS.has(key) || key === "." && segmentTokens.length > 1) {
-    signals.push("dynamic_shell_evaluation");
-    return denyResult({
-      reason: "dynamic_shell_evaluation",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "dynamic shell evaluation",
-        confidence: 0.93,
-        signals
-      }
-    });
-  }
-  if (targetsProtectedArtifact(redirects, cwd, options)) {
-    signals.push("control_plane_redirect");
-    return denyResult({
-      reason: "control_plane_mutation",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: false,
-        blastRadius: "agent-belay control plane",
-        confidence: 0.97,
-        signals
-      }
-    });
-  }
-  if (targetsProtectedArtifact(segmentTokens.slice(1), cwd, options)) {
-    signals.push("control_plane_path");
-    return denyResult({
-      reason: "control_plane_mutation",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: false,
-        blastRadius: "agent-belay control plane",
-        confidence: 0.97,
-        signals
-      }
-    });
-  }
-  const hasOutsideRedirect = redirects.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return relativeWithinRepo(repoRoot, resolved) === null;
-  });
-  if (hasOutsideRedirect) {
-    signals.push("outside_repo_redirect");
-    return denyResult({
-      reason: "outside_repo_redirect",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "outside the repository",
-        confidence: 0.92,
-        signals
-      }
-    });
-  }
-  if (FLAGGED_COMMANDS.has(key) && hasOutsideRepoPath(segmentTokens.slice(1), cwd, repoRoot)) {
-    signals.push("outside_repo_mutation");
-    return denyResult({
-      reason: "outside_repo_mutation",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "outside the repository",
-        confidence: 0.9,
-        signals
-      }
-    });
-  }
-  if (segment.separator === "|" && SHELL_INTERPRETERS.has(key)) {
-    signals.push("pipe_to_shell");
-    return denyResult({
-      reason: "pipe_to_shell",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "shell interpreter via pipe",
-        confidence: 0.94,
-        signals
-      }
-    });
-  }
   if (depth < 2) {
     const innerScript = extractInterpreterScript(segmentTokens);
-    if (innerScript && (SHELL_INTERPRETERS.has(key) || key === "node")) {
+    if (innerScript && (SHELL_INTERPRETERS2.has(key) || key === "node")) {
       const inner = classifyShell(innerScript, cwd, repoRoot, options, depth + 1);
       const wrapReason = key === "node" ? "node_eval" : "shell_interpreter_script";
       const wrapSignal = key === "node" ? "node_eval" : "shell_interpreter_script";
@@ -1326,152 +1697,21 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       });
     }
   }
-  if (key === "sed" && hasInPlaceSedFlag(segmentTokens)) {
-    signals.push("sed_in_place");
-    return {
-      verdict: "allow_flagged",
-      reason: "local_mutation",
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.74,
-        signals
-      }
-    };
-  }
-  if ((key === "npm run" || key === "pnpm run") && segmentTokens[2]) {
-    const scriptName = segmentTokens[2].toLowerCase();
-    if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
-      signals.push("external_script_name", scriptName);
-      return denyResult({
-        reason: "external_script",
-        normalizedCommand,
-        cwdRelative,
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: `npm script: ${scriptName}`,
-          confidence: 0.88,
-          signals
-        }
-      });
-    }
-  }
-  if (key === "curl" || key === "wget") {
-    const hasAuthHeader = segmentTokens.some(
-      (token) => token === "-H" || token === "--header" || /authorization/i.test(token)
-    );
-    if (hasAuthHeader) {
-      signals.push("credential_header");
-    }
-  }
-  if (key === "find" && findHasDangerousFlags(segmentTokens)) {
-    signals.push("find_dangerous_action");
-    return denyResult({
-      reason: "find_dangerous_action",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: false,
-        blastRadius: "find mutation",
-        confidence: 0.93,
-        signals
-      }
-    });
-  }
-  if (isExternalKey(key, normalizedCommand, options)) {
-    signals.push("external_command", key);
-    return denyResult({
-      reason: "external_effect",
-      normalizedCommand,
-      cwdRelative,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: key === "git push" ? "remote origin" : "external system",
-        confidence: 0.92,
-        signals
-      }
-    });
-  }
-  if (matchesCustomAllow(normalizedCommand, key, options)) {
-    return {
-      verdict: "allow",
-      reason: "custom_allow",
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "reversible",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.99,
-        signals: ["custom_allow_command"]
-      }
-    };
-  }
-  if (READ_ONLY_COMMANDS.has(key) || key === "find") {
-    return {
-      verdict: "allow",
-      reason: "read_only",
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "reversible",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.95,
-        signals: ["read_only_command"]
-      }
-    };
-  }
-  if (key === "node" || key === "sed") {
-    signals.push(key === "node" ? "node_execution" : "sed_execution");
-    return unknownLocalEffectResult({
-      normalizedCommand,
-      cwdRelative,
-      options,
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.64,
-        signals
-      }
-    });
-  }
-  if (FLAGGED_COMMANDS.has(key) || redirects.length > 0) {
-    signals.push("local_mutation");
-    return {
-      verdict: "allow_flagged",
-      reason: "local_mutation",
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.72,
-        signals
-      }
-    };
-  }
-  signals.push("unknown_local_effect");
-  return unknownLocalEffectResult({
+  const attributes = analyzeShellSegment({
+    segmentTokens,
+    cwd,
+    repoRoot,
     normalizedCommand,
     cwdRelative,
     options,
-    assessment: {
-      reversibility: "recoverable_with_cost",
-      external: false,
-      blastRadius: "this repository",
-      confidence: 0.61,
-      signals
-    }
+    separator: segment.separator
   });
+  const policyResult = evaluatePolicyRules(attributes, {
+    unknownLocalEffect: options.unknownLocalEffect ?? "allow_flagged",
+    unparseableShell: options.unparseableShell ?? "allow_flagged",
+    confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS
+  });
+  return policyResultToClassifyResult(attributes, policyResult);
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
@@ -2021,6 +2261,81 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   };
 }
 
+// src/core/model-assist.ts
+var DEFAULT_MODEL = "claude-sonnet-4-20250514";
+async function maybeAssistAssessment(input, config) {
+  if (!config.enabled) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  const apiKey = process.env[config.apiKeyEnv ?? "ANTHROPIC_API_KEY"];
+  if (!apiKey) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  if (input.heuristicAssessment.confidence >= 0.88 || input.heuristicAssessment.confidence < 0.55) {
+    return { assessment: input.heuristicAssessment, assisted: false };
+  }
+  try {
+    const assisted = await callAnthropicAssessment(input, apiKey, config);
+    return {
+      assessment: {
+        ...assisted,
+        signals: [...input.heuristicAssessment.signals, "model_assisted"]
+      },
+      assisted: true
+    };
+  } catch {
+    return {
+      assessment: {
+        ...input.heuristicAssessment,
+        confidence: Math.min(input.heuristicAssessment.confidence, 0.55),
+        signals: [...input.heuristicAssessment.signals, "model_assist_failed"]
+      },
+      assisted: false
+    };
+  }
+}
+async function callAnthropicAssessment(input, apiKey, config) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 3e3);
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: config.model ?? DEFAULT_MODEL,
+        max_tokens: 256,
+        messages: [
+          {
+            role: "user",
+            content: `Classify this shell command for safety. Return JSON only with keys reversibility (reversible|recoverable_with_cost|irreversible), external (boolean), blastRadius (string), confidence (0-1 number).
+Command: ${input.command}`
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`model assist HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const text = payload.content?.find((block) => block.type === "text")?.text ?? "";
+    const parsed = JSON.parse(text);
+    return {
+      reversibility: parsed.reversibility ?? input.heuristicAssessment.reversibility,
+      external: parsed.external ?? input.heuristicAssessment.external,
+      blastRadius: parsed.blastRadius ?? input.heuristicAssessment.blastRadius,
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.6,
+      signals: input.heuristicAssessment.signals
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // src/core/gate-engine.ts
 var GateNormalizationError = class extends Error {
   reason = "normalization_failed";
@@ -2029,6 +2344,38 @@ var GateNormalizationError = class extends Error {
     this.name = "GateNormalizationError";
   }
 };
+function parseAssessment(value) {
+  if (!value || typeof value !== "object") {
+    return void 0;
+  }
+  const record = value;
+  if ((record.reversibility === "reversible" || record.reversibility === "recoverable_with_cost" || record.reversibility === "irreversible") && typeof record.external === "boolean" && typeof record.blastRadius === "string" && typeof record.confidence === "number" && Array.isArray(record.signals) && record.signals.every((signal) => typeof signal === "string")) {
+    return {
+      reversibility: record.reversibility,
+      external: record.external,
+      blastRadius: record.blastRadius,
+      confidence: record.confidence,
+      signals: record.signals
+    };
+  }
+  return void 0;
+}
+function extractAgentAssessment(payload) {
+  if (!payload) {
+    return void 0;
+  }
+  for (const key of ["agentAssessment", "assessment"]) {
+    const parsed = parseAssessment(payload[key]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  const toolInput = payload.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    return extractAgentAssessment(toolInput);
+  }
+  return void 0;
+}
 function shellCommandFromPayload(payload) {
   const direct = payload.command;
   if (typeof direct === "string" && direct.trim()) {
@@ -2076,12 +2423,88 @@ function classifyGatedAction(action, config, extraOptions = {}) {
     if (!command) {
       throw new GateNormalizationError("Shell gated action requires a command.");
     }
-    return classifyShell(command, action.cwd, action.repoRoot, options);
+    const result = classifyShell(command, action.cwd, action.repoRoot, options);
+    if (!action.agentAssessment) {
+      return result;
+    }
+    const merged = mergeAgentAssessment(result.assessment, action.agentAssessment);
+    if (!merged.mismatch) {
+      return { ...result, assessment: merged.assessment };
+    }
+    return {
+      ...result,
+      verdict: "deny_pending_approval",
+      reason: "agent_assessment_mismatch",
+      assessment: merged.assessment
+    };
   }
   if (action.kind === "subagent") {
     return classifySubagent(action.payload ?? {}, action.repoRoot, options);
   }
   return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
+}
+function applyModelAssistToResult(result, assistedAssessment, options) {
+  if (result.reason !== "unknown_local_effect" && result.reason !== "unparseable_shell") {
+    return { ...result, assessment: assistedAssessment };
+  }
+  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
+  const unknownLocalEffect = options.unknownLocalEffect ?? "allow_flagged";
+  const unparseableShell = options.unparseableShell ?? "allow_flagged";
+  if (result.reason === "unparseable_shell") {
+    return {
+      ...result,
+      assessment: assistedAssessment,
+      verdict: unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged"
+    };
+  }
+  return {
+    ...result,
+    assessment: assistedAssessment,
+    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect)
+  };
+}
+async function classifyGatedActionAsync(action, config, extraOptions = {}) {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
+  const result = classifyGatedAction(action, config, extraOptions);
+  if (action.kind !== "shell" || !config.policy.modelAssist.enabled) {
+    return result;
+  }
+  const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
+  if (!command) {
+    return result;
+  }
+  const assisted = await maybeAssistAssessment(
+    {
+      command,
+      attributes: {
+        commandKey: "",
+        normalizedCommand: command,
+        cwdRelative: "",
+        flags: [],
+        targetScope: "repo",
+        redirectKind: "none",
+        signals: result.assessment.signals,
+        isUnparseable: result.reason === "unparseable_shell",
+        isDynamicEval: false,
+        hasPipeToShell: false,
+        hitsProtectedArtifact: false,
+        hitsOutsideRepo: false,
+        isCustomAllow: false,
+        isCustomExternal: false,
+        isReadOnlyKey: false,
+        isFlaggedKey: false,
+        isExternalKey: false,
+        hasCredentialHeader: false,
+        findDangerous: false
+      },
+      heuristicAssessment: result.assessment
+    },
+    config.policy.modelAssist
+  );
+  if (!assisted.assisted) {
+    return result;
+  }
+  return applyModelAssistToResult(result, assisted.assessment, options);
 }
 function gateEnabledForAction(config, action) {
   if (action.kind === "shell") {
@@ -2333,7 +2756,8 @@ async function evaluateGatedAction(ctx, deps, params) {
       cwd: params.cwd,
       command: params.command,
       payload: params.payload,
-      toolName: params.toolName
+      toolName: params.toolName,
+      agentAssessment: extractAgentAssessment(params.payload)
     });
   } catch {
     const verdict = unnormalizedGateVerdict({
@@ -2372,7 +2796,11 @@ async function evaluateGatedAction(ctx, deps, params) {
       wouldBlock: false
     });
   }
-  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
+  const result = await classifyGatedActionAsync(
+    action,
+    ctx.config,
+    runtimeClassifierOptions(ctx, ctx.config)
+  );
   return gateDecisionToVerdict(ctx, deps, params.kind, result);
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result) {

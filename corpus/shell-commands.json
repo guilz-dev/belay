@@ -1,0 +1,96 @@
+[
+  { "command": "git status", "verdict": "allow", "reason": "read_only" },
+  { "command": "rg plan src", "verdict": "allow", "reason": "read_only" },
+  { "command": "ls -la", "verdict": "allow", "reason": "read_only" },
+  { "command": "find . -name '*.ts'", "verdict": "allow", "reason": "read_only" },
+  { "command": "touch notes.txt", "verdict": "allow_flagged", "reason": "local_mutation" },
+  { "command": "mkdir tmp", "verdict": "allow_flagged", "reason": "local_mutation" },
+  {
+    "command": "git push origin main",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "curl https://example.com",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "wget https://example.com",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "docker run node:22 node -v",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "terraform apply -auto-approve",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "npm run deploy:prod",
+    "verdict": "deny_pending_approval",
+    "reason": "external_script"
+  },
+  {
+    "command": "git status && git push origin main",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  { "command": "echo hi | bash", "verdict": "deny_pending_approval", "reason": "pipe_to_shell" },
+  {
+    "command": "eval \"git push\"",
+    "verdict": "deny_pending_approval",
+    "reason": "dynamic_shell_evaluation"
+  },
+  {
+    "command": "echo $(git push origin main)",
+    "verdict": "deny_pending_approval",
+    "reason": "command_substitution"
+  },
+  {
+    "command": "find . -name '*.ts' -delete",
+    "verdict": "deny_pending_approval",
+    "reason": "find_dangerous_action"
+  },
+  {
+    "command": "ls\ncurl https://example.com",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "command": "rm -rf /tmp/build",
+    "verdict": "deny_pending_approval",
+    "reason": "outside_repo_mutation"
+  },
+  {
+    "command": "git push --force origin main",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  { "command": "chmod -R 755 scripts", "verdict": "allow_flagged", "reason": "local_mutation" },
+  {
+    "command": "sed -i 's/a/b/' notes.txt",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "command": "node --version",
+    "verdict": "deny_pending_approval",
+    "reason": "unknown_local_effect"
+  },
+  { "command": "make build", "verdict": "deny_pending_approval", "reason": "unknown_local_effect" },
+  {
+    "command": "bash -c \"git push origin main\"",
+    "verdict": "deny_pending_approval",
+    "reason": "shell_interpreter_script"
+  },
+  {
+    "command": "(curl https://example.com)",
+    "verdict": "deny_pending_approval",
+    "reason": "unparseable_shell"
+  }
+]

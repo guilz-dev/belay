@@ -2,8 +2,8 @@
 
 `agent-belay` is a practical Belay-style gate for agent runtimes.
 
-The current integration targets hook-capable agent environments, with the first
-adapter implemented for Cursor-style hooks.
+The current integration targets hook-capable agent environments. v0.4+ ships
+adapters for Cursor and Claude Code hooks.
 
 <p align="center">
   <img src="./agent-belay-logo.png" alt="agent-belay logo" width="480">
@@ -76,8 +76,9 @@ denylist.
 `agent-belay` is an **agent-skill-oriented hook heuristic for Belay-style gating**, not the
 full abstract Belay substrate model.
 
-- It is currently optimized for hook payloads that do not include an agent-side
-  `Assessment`.
+- It forms an independent judgment on every gated action. Optional agent-side
+  `Assessment` fields in the payload can reinforce confidence or surface mismatch
+  signals, but never replace Belay's own verdict.
 - It primarily denies **external or irreversible-looking effects**.
 - Local mutations are usually allowed as `allow_flagged`, not blocked.
 - Command-name and payload heuristics are part of the current implementation.
@@ -99,6 +100,8 @@ agent runtimes, not as a proof that a command is truly reversible.
 - `v0.1`: Cursor-style hook adapter with one-shot approval and audit
 - `v0.2`: testable core, stronger classifier, tool gates, config v2, ops CLI — see [docs/v0.2-plan.md](./docs/v0.2-plan.md)
 - `v0.3`: config v3, fail-closed shell mode, user control plane — see [docs/SPEC-v0.3.md](./docs/SPEC-v0.3.md), [docs/v0.3-remaining.md](./docs/v0.3-remaining.md), and [docs/ROADMAP.md](./docs/ROADMAP.md)
+- `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
+- `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
 
 ## Install
 
