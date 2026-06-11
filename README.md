@@ -35,11 +35,13 @@ pretending a static denylist solved the problem.
 ## How it works
 
 `agent-belay` hooks into specific agent runtime events and gates them before
-they take effect. In the current Cursor-style adapter, it gates two kinds of
-actions:
+they take effect. v0.4 ships two adapters:
 
-- **Shell execution** (`beforeShellExecution`)
-- **Subagent / Task launches** (`preToolUse` for `Task`, `subagentStart`)
+- **Cursor** — `.cursor/hooks.json` + hook scripts
+- **Claude Code** — `.claude/settings.json` hooks (`PreToolUse`, `UserPromptSubmit`)
+
+Both gate shell execution, subagent launches, and file mutations through the
+same core classifier and shared runtime.
 
 When one of these events fires, Belay runs its own lightweight classifier on the
 payload to estimate reversibility, external effects, blast radius, and
@@ -51,15 +53,16 @@ Based on that judgment, Belay assigns one of three verdicts:
 - `allow` — Safe enough to execute without intervention (e.g., read-only
   commands)
 - `allow_flagged` — Local mutation or unknown-but-local effect; allowed, but
-  recorded for audit
+  recorded for audit (fresh installs default to deny for unknown/unparseable shell;
+  use `agent-belay explain` and `overrides.allow` to tune)
 - `deny_pending_approval` — High-risk or ambiguous (external effects,
   irreversible-looking mutations, writes outside the repo); blocks execution and
   issues an approval ID
 
 When an action is denied, the user can approve the next matching action once by
 sending `/belay-approve <approval-id>`. Approvals are one-shot and expire after
-15 minutes by default. Every decision is written to `.cursor/belay/audit.ndjson`
-for later review.
+15 minutes by default. Every decision is written to the adapter-specific audit log (for example
+`.cursor/belay/audit.ndjson` or `.claude/belay/audit.ndjson`) for later review.
 
 If `mode` is set to `"audit"` in `.cursor/belay.config.json`, would-be denies
 are recorded (`wouldBlock: true` in the audit log) but execution is still
@@ -86,8 +89,8 @@ agent runtimes, not as a proof that a command is truly reversible.
 
 `agent-belay` is intended as an agent-facing package, not a Cursor-only product.
 
-- The current adapter is implemented for Cursor-style hooks.
-- Future adapters can target other agent runtimes without changing the package
+- Cursor and Claude Code adapters are included in v0.4.
+- Additional adapters can target other agent runtimes without changing the package
   name or core concepts.
 - The optional Skill artifact is only a UX layer; it is not the core runtime.
 
@@ -103,6 +106,7 @@ agent runtimes, not as a proof that a command is truly reversible.
 
 ```bash
 npx agent-belay init --with-skill
+npx agent-belay init --adapter claude
 ```
 
 This installs the runtime hooks and also writes helper artifacts for:

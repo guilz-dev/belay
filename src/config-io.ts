@@ -16,6 +16,13 @@ export function resolveAdapterName(config: BelayConfigV3): AdapterName {
   return config.adapter === 'claude' ? 'claude' : 'cursor'
 }
 
+export function detectAdapterName(repoRoot: string): AdapterName {
+  if (existsSync(configPathFor(repoRoot, 'claude'))) {
+    return 'claude'
+  }
+  return 'cursor'
+}
+
 export function configPathFor(repoRoot: string, adapter: AdapterName = 'cursor'): string {
   return getAdapterLayout(adapter).configPath(repoRoot)
 }

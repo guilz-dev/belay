@@ -50,8 +50,8 @@ export function normalizeGatedAction(params) {
         agentAssessment,
     };
 }
-export function classifyGatedAction(action, config) {
-    const options = classifierOptionsFromConfig(config);
+export function classifyGatedAction(action, config, extraOptions = {}) {
+    const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
     if (action.kind === 'shell') {
         const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
         if (!command) {

@@ -7,6 +7,12 @@ import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeC
 export function resolveAdapterName(config) {
     return config.adapter === 'claude' ? 'claude' : 'cursor';
 }
+export function detectAdapterName(repoRoot) {
+    if (existsSync(configPathFor(repoRoot, 'claude'))) {
+        return 'claude';
+    }
+    return 'cursor';
+}
 export function configPathFor(repoRoot, adapter = 'cursor') {
     return getAdapterLayout(adapter).configPath(repoRoot);
 }

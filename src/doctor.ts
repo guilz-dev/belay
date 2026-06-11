@@ -7,13 +7,14 @@ import { cleanupOrphanApprovalState } from './cleanup-orphans.js'
 import {
   approvedApprovalsPath,
   belayStateDir,
-  configPathFor,
+  detectAdapterName,
   loadConfigFile,
   pendingApprovalsPath,
   repoLocalStateDirFor,
   runtimeCorePath,
 } from './config-io.js'
 import { defaultControlPlaneDir } from './core/config.js'
+import { verifyIntegrityManifest } from './core/integrity.js'
 import { resolveNodeBinary } from './node-resolution.js'
 import { loadOperationalInsights } from './operational-insights.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from './types.js'
@@ -47,23 +48,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   const warnings: string[] = []
 
   let loadedConfig = null
-  let adapterName: AdapterName = options.adapter ?? 'cursor'
+  let adapterName: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
   const adapter = getAdapter(adapterName)
   const layout = adapter.layout
   let configPath = layout.configPath(repoRoot)
   let hooksPath = layout.hooksSettingsPath(repoRoot)
   let corePath = runtimeCorePath(repoRoot, adapterName)
-
-  if (
-    !existsSync(configPath) &&
-    adapterName === 'cursor' &&
-    existsSync(configPathFor(repoRoot, 'claude'))
-  ) {
-    adapterName = 'claude'
-    configPath = layout.configPath(repoRoot)
-    hooksPath = getAdapter('claude').layout.hooksSettingsPath(repoRoot)
-    corePath = runtimeCorePath(repoRoot, 'claude')
-  }
 
   if (!existsSync(configPath)) {
     issues.push(`Missing config: ${configPath}`)
@@ -122,6 +112,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         notes.push(
           'Integrity: hash-pinned (verify with agent-belay upgrade after runtime changes).',
         )
+        const integrity = await verifyIntegrityManifest(repoRoot, activeAdapter.layout)
+        if (!integrity.ok) {
+          issues.push(
+            `Integrity verification failed: ${integrity.mismatches.slice(0, 3).join(', ')}`,
+          )
+        }
       }
     } catch (error) {
       issues.push(error instanceof Error ? error.message : 'Failed to parse belay.config.json')

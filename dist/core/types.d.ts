@@ -34,6 +34,7 @@ export interface ClassifierOptions {
     unknownLocalEffect?: UnknownLocalEffectPolicy;
     unparseableShell?: UnparseableShellPolicy;
     controlPlaneDir?: string | null;
+    protectedArtifactRoots?: string[];
     scrubOptions?: ScrubOptions;
 }
 export interface ApprovalRecord {

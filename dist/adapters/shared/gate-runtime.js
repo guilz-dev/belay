@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
 import { classifyGatedAction, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
-import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, compactApprovals, createApprovalRecord, mergeConfig, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
+import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, createApprovalRecord, mergeConfig, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
+import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
     version: 1,
     approvals: [],
@@ -20,8 +21,7 @@ async function loadJsonFile(filePath, fallback) {
 export function createDefaultGateRuntimeDeps() {
     return {
         async readConfig(configPath) {
-            const loaded = await loadJsonFile(configPath, {});
-            return mergeConfig(loaded);
+            return loadJsonFile(configPath, {});
         },
         async appendAudit(ctx, event) {
             const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath);
@@ -54,6 +54,17 @@ export function createDefaultGateRuntimeDeps() {
             await mkdir(path.dirname(filePath), { recursive: true });
             await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8');
         },
+    };
+}
+export async function resolveGateConfig(ctx, deps) {
+    const loaded = await deps.readConfig(ctx.configPath);
+    return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot));
+}
+export function runtimeClassifierOptions(ctx, config) {
+    const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
+    return {
+        ...classifierOptionsFromConfig(config),
+        protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
     };
 }
 function gateAuditEventName(kind) {
@@ -151,7 +162,7 @@ export async function evaluateGatedAction(ctx, deps, params) {
             wouldBlock: false,
         });
     }
-    const result = classifyGatedAction(action, ctx.config);
+    const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
     return gateDecisionToVerdict(ctx, deps, params.kind, result);
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result) {

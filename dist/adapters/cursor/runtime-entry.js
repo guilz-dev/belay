@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { cursorLayout } from '../layouts/cursor.js';
-import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToCursorResponse, maybeRunControlPlaneSpike, processApprovalPrompt, } from '../shared/gate-runtime.js';
+import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToCursorResponse, maybeRunControlPlaneSpike, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
 import { findRepoRoot } from '../shared/repo-root.js';
 async function readStdinJson() {
     const chunks = [];
@@ -25,7 +25,7 @@ async function loadRuntimeContext(cwd) {
     const repoRoot = findRepoRoot(cwd, cursorLayout);
     const configPath = cursorLayout.configPath(repoRoot);
     const deps = createDefaultGateRuntimeDeps();
-    const config = await deps.readConfig(configPath);
+    const config = await resolveGateConfig({ layout: cursorLayout, repoRoot, configPath }, deps);
     return { layout: cursorLayout, repoRoot, config, configPath };
 }
 function isSubagentEvent(payload, eventName) {

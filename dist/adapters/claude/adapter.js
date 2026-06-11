@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath, } from '../../config-io.js';
+import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js';
 import { EMPTY_APPROVALS } from '../../defaults.js';
 import { doctorProject } from '../../doctor.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js';
@@ -68,6 +69,9 @@ async function writeRuntimeArtifacts(repoRoot) {
     await write(path.join(hooksDir, 'belay-runner'), buildRunnerScript(process.execPath), true);
     await write(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath));
 }
+async function writeClaudeIntegrityManifest(repoRoot) {
+    await writeIntegrityManifest(repoRoot, claudeLayout, runtimeIntegrityFiles(claudeLayout, repoRoot));
+}
 async function installClaudeBase(repoRoot) {
     const settingsPath = claudeLayout.hooksSettingsPath(repoRoot);
     const belayDir = claudeLayout.repoLocalStateDir(repoRoot);
@@ -89,6 +93,7 @@ async function installClaudeBase(repoRoot) {
     }
     await mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+    await writeClaudeIntegrityManifest(repoRoot);
 }
 export const claudeAdapter = {
     name: 'claude',
@@ -103,6 +108,7 @@ export const claudeAdapter = {
         const settingsPath = claudeLayout.hooksSettingsPath(repoRoot);
         const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath));
         await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+        await writeClaudeIntegrityManifest(repoRoot);
         return { repoRoot };
     },
     async doctor(options = {}) {

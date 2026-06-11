@@ -14,13 +14,13 @@ import {
   normalizeShellCommand,
   tokenizeShell,
 } from './shell-tokenizer.js'
+import { detectUnparseableShell } from './shell-unparseable.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
 
 const READ_ONLY_COMMANDS = new Set([
   'cat',
   'cd',
   'echo',
-  'find',
   'git diff',
   'git log',
   'git rev-parse',
@@ -83,6 +83,8 @@ const DYNAMIC_SHELL_COMMANDS = new Set(['eval', 'source', 'exec'])
 const INTERPRETER_SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval'])
 
 const EXTERNAL_SCRIPT_TERMS = ['deploy', 'publish', 'release', 'ship', 'prod']
+
+const FIND_DANGEROUS_FLAGS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
 
 const VERDICT_RANK: Record<string, number> = {
   allow: 0,
@@ -179,12 +181,21 @@ function matchesCustomExternal(
   )
 }
 
-function targetsControlPlane(
+function protectedRoots(options: ClassifierOptions): string[] {
+  const roots = [...(options.protectedArtifactRoots ?? [])]
+  if (options.controlPlaneDir) {
+    roots.push(options.controlPlaneDir)
+  }
+  return roots
+}
+
+function targetsProtectedArtifact(
   paths: string[],
   cwd: string,
-  controlPlaneDir: string | null | undefined,
+  options: ClassifierOptions,
 ): boolean {
-  if (!controlPlaneDir) {
+  const roots = protectedRoots(options)
+  if (roots.length === 0) {
     return false
   }
   return paths.some((target) => {
@@ -192,8 +203,47 @@ function targetsControlPlane(
     if (!resolved) {
       return false
     }
-    return pathWithinRoot(controlPlaneDir, resolved)
+    return roots.some((root) => pathWithinRoot(root, resolved))
   })
+}
+
+function findHasDangerousFlags(tokens: string[]): boolean {
+  return tokens.some(
+    (token) =>
+      FIND_DANGEROUS_FLAGS.has(token) ||
+      token.startsWith('-exec') ||
+      token.startsWith('-ok') ||
+      token === '-delete',
+  )
+}
+
+function unparseableShellResult(
+  normalizedCommand: string,
+  cwdRelative: string,
+  options: ClassifierOptions,
+): ClassifyResult {
+  const assessment: Assessment = {
+    reversibility: 'irreversible',
+    external: false,
+    blastRadius: 'unparseable shell construct',
+    confidence: 0.9,
+    signals: ['unparseable_shell'],
+  }
+  if (options.unparseableShell === 'deny') {
+    return denyResult({
+      reason: 'unparseable_shell',
+      normalizedCommand,
+      cwdRelative,
+      assessment,
+    })
+  }
+  return {
+    verdict: 'allow_flagged',
+    reason: 'unparseable_shell',
+    normalizedCommand,
+    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    assessment,
+  }
 }
 
 function classifySubstitutionInners(params: {
@@ -350,7 +400,10 @@ function classifySegment(
   const redirects = extractRedirectTargets(segmentTokens)
   const signals: string[] = []
 
-  if (matchesCustomAllow(normalizedCommand, key, options)) {
+  if (
+    matchesCustomAllow(normalizedCommand, key, options) &&
+    matchesCustomExternal(normalizedCommand, key, options)
+  ) {
     return {
       verdict: 'allow',
       reason: 'custom_allow',
@@ -397,7 +450,7 @@ function classifySegment(
     })
   }
 
-  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(redirects, cwd, options)) {
     signals.push('control_plane_redirect')
     return denyResult({
       reason: 'control_plane_mutation',
@@ -413,7 +466,7 @@ function classifySegment(
     })
   }
 
-  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(segmentTokens.slice(1), cwd, options)) {
     signals.push('control_plane_path')
     return denyResult({
       reason: 'control_plane_mutation',
@@ -542,20 +595,23 @@ function classifySegment(
     )
     if (hasAuthHeader) {
       signals.push('credential_header')
-      return {
-        verdict: 'allow_flagged',
-        reason: 'credential_header',
-        normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-        assessment: {
-          reversibility: 'recoverable_with_cost',
-          external: true,
-          blastRadius: 'external request with credentials',
-          confidence: 0.75,
-          signals,
-        },
-      }
     }
+  }
+
+  if (key === 'find' && findHasDangerousFlags(segmentTokens)) {
+    signals.push('find_dangerous_action')
+    return denyResult({
+      reason: 'find_dangerous_action',
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: 'irreversible',
+        external: false,
+        blastRadius: 'find mutation',
+        confidence: 0.93,
+        signals,
+      },
+    })
   }
 
   if (isExternalKey(key, normalizedCommand, options)) {
@@ -574,7 +630,23 @@ function classifySegment(
     })
   }
 
-  if (READ_ONLY_COMMANDS.has(key)) {
+  if (matchesCustomAllow(normalizedCommand, key, options)) {
+    return {
+      verdict: 'allow',
+      reason: 'custom_allow',
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'this repository',
+        confidence: 0.99,
+        signals: ['custom_allow_command'],
+      },
+    }
+  }
+
+  if (READ_ONLY_COMMANDS.has(key) || key === 'find') {
     return {
       verdict: 'allow',
       reason: 'read_only',
@@ -645,6 +717,13 @@ export function classifyShell(
   options: ClassifierOptions = {},
   depth = 0,
 ): ClassifyResult {
+  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken)
+  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd
+
+  if (depth === 0 && detectUnparseableShell(command)) {
+    return unparseableShellResult(normalizedCommand, cwdRelative, options)
+  }
+
   const substitutionResult = classifySubstitutionInners({
     command,
     cwd,
@@ -655,8 +734,6 @@ export function classifyShell(
 
   const tokens = tokenizeShell(command)
   const segments = splitSegmentsWithSeparators(tokens)
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken)
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd
 
   let effective: ClassifyResult = {
     verdict: 'allow',

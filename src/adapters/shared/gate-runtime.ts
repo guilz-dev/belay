@@ -22,6 +22,7 @@ import {
   buildRetryInstruction,
   type ClassifyResult,
   canonicalStringify,
+  classifierOptionsFromConfig,
   compactApprovals,
   createApprovalRecord,
   mergeConfig,
@@ -32,6 +33,7 @@ import {
   scrubOptionsFromConfig,
   scrubValue,
 } from '../../core/index.js'
+import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
 const EMPTY_APPROVALS: ApprovalStateFile = {
@@ -47,7 +49,7 @@ export interface GateRuntimeContext {
 }
 
 export interface GateRuntimeDeps {
-  readConfig: (configPath: string) => Promise<BelayConfigV3>
+  readConfig: (configPath: string) => Promise<unknown>
   appendAudit: (ctx: GateRuntimeContext, event: Record<string, unknown>) => Promise<void>
   loadApprovals: (
     ctx: GateRuntimeContext,
@@ -68,8 +70,7 @@ async function loadJsonFile<T>(filePath: string, fallback: T): Promise<T> {
 export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
   return {
     async readConfig(configPath) {
-      const loaded = await loadJsonFile(configPath, {})
-      return mergeConfig(loaded)
+      return loadJsonFile<Record<string, unknown>>(configPath, {})
     },
     async appendAudit(ctx, event) {
       const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
@@ -106,6 +107,22 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       await mkdir(path.dirname(filePath), { recursive: true })
       await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
     },
+  }
+}
+
+export async function resolveGateConfig(
+  ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>,
+  deps: GateRuntimeDeps,
+): Promise<BelayConfigV3> {
+  const loaded = await deps.readConfig(ctx.configPath)
+  return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot) as BelayConfigV3)
+}
+
+export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
+  const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
+  return {
+    ...classifierOptionsFromConfig(config),
+    protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
   }
 }
 
@@ -236,7 +253,7 @@ export async function evaluateGatedAction(
     })
   }
 
-  const result = classifyGatedAction(action, ctx.config)
+  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config))
   return gateDecisionToVerdict(ctx, deps, params.kind, result)
 }
 

@@ -3,6 +3,47 @@
 // src/adapters/claude/runtime-entry.ts
 import process2 from "node:process";
 
+// src/core/gate-contract.ts
+var GATE_CONTRACT_VERSION = 1;
+function classifyResultToGateVerdict(params) {
+  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: result.verdict,
+    reason: result.reason,
+    fingerprint: result.fingerprint,
+    assessment: result.assessment,
+    normalizedCommand: result.normalizedCommand,
+    summary: result.summary,
+    permission,
+    wouldBlock,
+    mode,
+    approvalId,
+    user_message,
+    agent_message
+  };
+}
+function unnormalizedGateVerdict(params) {
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: "deny_pending_approval",
+    reason: params.reason,
+    fingerprint: "unnormalized",
+    assessment: {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "unknown",
+      confidence: 0,
+      signals: ["normalization_failed"]
+    },
+    permission: "deny",
+    wouldBlock: true,
+    mode: params.mode,
+    user_message: params.user_message,
+    agent_message: params.agent_message
+  };
+}
+
 // src/adapters/layouts/claude.ts
 import path2 from "node:path";
 
@@ -422,49 +463,8 @@ var claudeLayout = {
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path5 from "node:path";
-
-// src/core/gate-contract.ts
-var GATE_CONTRACT_VERSION = 1;
-function classifyResultToGateVerdict(params) {
-  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: result.verdict,
-    reason: result.reason,
-    fingerprint: result.fingerprint,
-    assessment: result.assessment,
-    normalizedCommand: result.normalizedCommand,
-    summary: result.summary,
-    permission,
-    wouldBlock,
-    mode,
-    approvalId,
-    user_message,
-    agent_message
-  };
-}
-function unnormalizedGateVerdict(params) {
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: "deny_pending_approval",
-    reason: params.reason,
-    fingerprint: "unnormalized",
-    assessment: {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "unknown",
-      confidence: 0,
-      signals: ["normalization_failed"]
-    },
-    permission: "deny",
-    wouldBlock: true,
-    mode: params.mode,
-    user_message: params.user_message,
-    agent_message: params.agent_message
-  };
-}
+import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import path7 from "node:path";
 
 // src/core/custom-command-match.ts
 function matchesCustomCommand(normalizedCommand, key, pattern) {
@@ -755,6 +755,11 @@ function tokenizeShell(input) {
       tokens.push(char);
       continue;
     }
+    if (char === "\n" || char === "\r") {
+      flush();
+      tokens.push(";");
+      continue;
+    }
     if (/\s/.test(char)) {
       flush();
       continue;
@@ -795,12 +800,106 @@ function extractRedirectTargets(tokens) {
   return targets;
 }
 
+// src/core/shell-unparseable.ts
+function detectUnparseableShell(command) {
+  if (hasProcessSubstitution(command)) {
+    return true;
+  }
+  if (hasSubshell(command)) {
+    return true;
+  }
+  if (hasBraceGroup(command)) {
+    return true;
+  }
+  if (hasUnclosedQuote(command)) {
+    return true;
+  }
+  if (hasUnbalancedDollarParen(command)) {
+    return true;
+  }
+  return false;
+}
+function hasProcessSubstitution(command) {
+  return /<\s*\(/.test(command);
+}
+function hasSubshell(command) {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("(")) {
+    return true;
+  }
+  return /(?:^|[;&|]\s*)\(/.test(trimmed);
+}
+function hasBraceGroup(command) {
+  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
+  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
+}
+function hasUnclosedQuote(command) {
+  let quote = null;
+  let escaping = false;
+  for (const char of command) {
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    }
+  }
+  return quote !== null;
+}
+function hasUnbalancedDollarParen(command) {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+    }
+  }
+  return depth > 0;
+}
+
 // src/core/classify-shell.ts
 var READ_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "cat",
   "cd",
   "echo",
-  "find",
   "git diff",
   "git log",
   "git rev-parse",
@@ -857,6 +956,7 @@ var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "
 var DYNAMIC_SHELL_COMMANDS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
+var FIND_DANGEROUS_FLAGS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
 var VERDICT_RANK = {
   allow: 0,
   allow_flagged: 1,
@@ -918,8 +1018,16 @@ function matchesCustomExternal(normalizedCommand, key, options) {
     (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
   );
 }
-function targetsControlPlane(paths, cwd, controlPlaneDir) {
-  if (!controlPlaneDir) {
+function protectedRoots(options) {
+  const roots = [...options.protectedArtifactRoots ?? []];
+  if (options.controlPlaneDir) {
+    roots.push(options.controlPlaneDir);
+  }
+  return roots;
+}
+function targetsProtectedArtifact(paths, cwd, options) {
+  const roots = protectedRoots(options);
+  if (roots.length === 0) {
     return false;
   }
   return paths.some((target) => {
@@ -927,8 +1035,37 @@ function targetsControlPlane(paths, cwd, controlPlaneDir) {
     if (!resolved) {
       return false;
     }
-    return pathWithinRoot(controlPlaneDir, resolved);
+    return roots.some((root) => pathWithinRoot(root, resolved));
   });
+}
+function findHasDangerousFlags(tokens) {
+  return tokens.some(
+    (token) => FIND_DANGEROUS_FLAGS.has(token) || token.startsWith("-exec") || token.startsWith("-ok") || token === "-delete"
+  );
+}
+function unparseableShellResult(normalizedCommand, cwdRelative, options) {
+  const assessment = {
+    reversibility: "irreversible",
+    external: false,
+    blastRadius: "unparseable shell construct",
+    confidence: 0.9,
+    signals: ["unparseable_shell"]
+  };
+  if (options.unparseableShell === "deny") {
+    return denyResult({
+      reason: "unparseable_shell",
+      normalizedCommand,
+      cwdRelative,
+      assessment
+    });
+  }
+  return {
+    verdict: "allow_flagged",
+    reason: "unparseable_shell",
+    normalizedCommand,
+    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    assessment
+  };
 }
 function classifySubstitutionInners(params) {
   const { command, cwd, repoRoot, options, depth } = params;
@@ -1048,7 +1185,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   const key = commandKey(segmentTokens);
   const redirects = extractRedirectTargets(segmentTokens);
   const signals = [];
-  if (matchesCustomAllow(normalizedCommand, key, options)) {
+  if (matchesCustomAllow(normalizedCommand, key, options) && matchesCustomExternal(normalizedCommand, key, options)) {
     return {
       verdict: "allow",
       reason: "custom_allow",
@@ -1092,7 +1229,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(redirects, cwd, options)) {
     signals.push("control_plane_redirect");
     return denyResult({
       reason: "control_plane_mutation",
@@ -1107,7 +1244,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(segmentTokens.slice(1), cwd, options)) {
     signals.push("control_plane_path");
     return denyResult({
       reason: "control_plane_mutation",
@@ -1229,20 +1366,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     );
     if (hasAuthHeader) {
       signals.push("credential_header");
-      return {
-        verdict: "allow_flagged",
-        reason: "credential_header",
-        normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-        assessment: {
-          reversibility: "recoverable_with_cost",
-          external: true,
-          blastRadius: "external request with credentials",
-          confidence: 0.75,
-          signals
-        }
-      };
     }
+  }
+  if (key === "find" && findHasDangerousFlags(segmentTokens)) {
+    signals.push("find_dangerous_action");
+    return denyResult({
+      reason: "find_dangerous_action",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "find mutation",
+        confidence: 0.93,
+        signals
+      }
+    });
   }
   if (isExternalKey(key, normalizedCommand, options)) {
     signals.push("external_command", key);
@@ -1259,7 +1398,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (READ_ONLY_COMMANDS.has(key)) {
+  if (matchesCustomAllow(normalizedCommand, key, options)) {
+    return {
+      verdict: "allow",
+      reason: "custom_allow",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "reversible",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.99,
+        signals: ["custom_allow_command"]
+      }
+    };
+  }
+  if (READ_ONLY_COMMANDS.has(key) || key === "find") {
     return {
       verdict: "allow",
       reason: "read_only",
@@ -1320,6 +1474,11 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   });
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
+  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
+  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+  if (depth === 0 && detectUnparseableShell(command)) {
+    return unparseableShellResult(normalizedCommand, cwdRelative, options);
+  }
   const substitutionResult = classifySubstitutionInners({
     command,
     cwd,
@@ -1329,8 +1488,6 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   });
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
   let effective = {
     verdict: "allow",
     reason: "read_only",
@@ -1672,9 +1829,32 @@ function extractShellCommand(payload) {
 function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   const toolName = String(payload.tool_name ?? "");
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
+  const protectedRoots2 = [
+    ...options.protectedArtifactRoots ?? [],
+    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
+  ];
   if (toolName === "Shell") {
     const command = extractShellCommand(payload);
     if (!command) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "tool_shell_missing_command",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "tool shell",
+            confidence: 0.85,
+            signals: ["missing_command"]
+          }
+        };
+      }
       return {
         verdict: "allow_flagged",
         reason: "tool_shell_missing_command",
@@ -1702,6 +1882,25 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
     const filePath = extractFilePath(payload);
     if (!filePath) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "file_mutation_missing_path",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "file mutation",
+            confidence: 0.85,
+            signals: ["missing_path"]
+          }
+        };
+      }
       return {
         verdict: "allow_flagged",
         reason: "file_mutation_missing_path",
@@ -1722,7 +1921,8 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
     }
     const signals = [];
     const resolvedPath = path4.isAbsolute(filePath) ? filePath : path4.resolve(cwd, filePath);
-    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+    const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
+    if (hitsProtectedRoot) {
       signals.push("control_plane_path");
       return {
         verdict: "deny_pending_approval",
@@ -1869,8 +2069,8 @@ function normalizeGatedAction(params) {
     agentAssessment
   };
 }
-function classifyGatedAction(action, config) {
-  const options = classifierOptionsFromConfig(config);
+function classifyGatedAction(action, config, extraOptions = {}) {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
   if (action.kind === "shell") {
     const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
     if (!command) {
@@ -1943,6 +2143,79 @@ function createApprovalRecord(params) {
   };
 }
 
+// src/core/control-plane-spike.ts
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path5 from "node:path";
+async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
+  const outputPath = path5.join(
+    controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
+    "oq3-spike-last.json"
+  );
+  await mkdir(path5.dirname(outputPath), { recursive: true });
+  await writeFile(
+    outputPath,
+    `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
+`,
+    "utf8"
+  );
+  return outputPath;
+}
+async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
+  const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
+  const testFile = path5.join(controlPlaneDir, "oq3-spike.json");
+  const payload = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    cwd,
+    pid: process.pid
+  };
+  const base = {
+    ok: false,
+    controlPlaneDir,
+    testFile,
+    home: homedir(),
+    xdgConfigHome: env.XDG_CONFIG_HOME?.trim() || null,
+    cwd,
+    wrote: false,
+    readBack: null
+  };
+  try {
+    await mkdir(controlPlaneDir, { recursive: true });
+    await writeFile(testFile, `${JSON.stringify(payload)}
+`, "utf8");
+    const readBack = await readFile(testFile, "utf8");
+    const parsed = JSON.parse(readBack.trim());
+    await rm(testFile, { force: true });
+    return {
+      ...base,
+      ok: parsed.cwd === cwd && existsSync(controlPlaneDir),
+      wrote: true,
+      readBack: readBack.trim()
+    };
+  } catch (error) {
+    return {
+      ...base,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+// src/adapters/layouts/protected-paths.ts
+import path6 from "node:path";
+function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
+  const roots = [
+    layout.configPath(repoRoot),
+    layout.hooksSettingsPath(repoRoot),
+    layout.hooksDir(repoRoot),
+    layout.repoLocalStateDir(repoRoot),
+    layout.runtimeDir(repoRoot)
+  ];
+  if (controlPlaneDir) {
+    roots.push(controlPlaneDir);
+  }
+  return roots.map((entry) => path6.resolve(entry));
+}
+
 // src/adapters/shared/gate-runtime.ts
 var EMPTY_APPROVALS = {
   version: 1,
@@ -1950,7 +2223,7 @@ var EMPTY_APPROVALS = {
 };
 async function loadJsonFile(filePath, fallback) {
   try {
-    const raw = await readFile(filePath, "utf8");
+    const raw = await readFile2(filePath, "utf8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -1959,18 +2232,17 @@ async function loadJsonFile(filePath, fallback) {
 function createDefaultGateRuntimeDeps() {
   return {
     async readConfig(configPath) {
-      const loaded = await loadJsonFile(configPath, {});
-      return mergeConfig(loaded);
+      return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path5.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir(path5.dirname(auditPath), { recursive: true });
+      const auditPath = path7.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir2(path7.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
       }
       const scrubbed = scrubValue(record, scrubOptionsFromConfig(ctx.config));
-      await writeFile(auditPath, `${JSON.stringify(scrubbed)}
+      await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
 `, {
         encoding: "utf8",
         flag: "a"
@@ -1989,10 +2261,21 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir(path5.dirname(filePath), { recursive: true });
-      await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
+      await mkdir2(path7.dirname(filePath), { recursive: true });
+      await writeFile2(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
+  };
+}
+async function resolveGateConfig(ctx, deps) {
+  const loaded = await deps.readConfig(ctx.configPath);
+  return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot));
+}
+function runtimeClassifierOptions(ctx, config) {
+  const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
+  return {
+    ...classifierOptionsFromConfig(config),
+    protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir)
   };
 }
 function gateAuditEventName(kind) {
@@ -2089,7 +2372,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       wouldBlock: false
     });
   }
-  const result = classifyGatedAction(action, ctx.config);
+  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
   return gateDecisionToVerdict(ctx, deps, params.kind, result);
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result) {
@@ -2213,6 +2496,36 @@ async function processApprovalPrompt(ctx, deps, prompt) {
     user_message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`
   };
 }
+var controlPlaneSpikeRanFor = /* @__PURE__ */ new Set();
+async function maybeRunControlPlaneSpike(ctx, deps, envEnabled) {
+  if (!envEnabled && !ctx.config.controlPlane.spikeOnPrompt) {
+    return;
+  }
+  const spikeKey = `${ctx.repoRoot}:${ctx.configPath}`;
+  if (controlPlaneSpikeRanFor.has(spikeKey)) {
+    return;
+  }
+  controlPlaneSpikeRanFor.add(spikeKey);
+  const controlPlaneDir = ctx.config.controlPlane.configDir ?? resolveControlPlaneDir(ctx.config);
+  const homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const spike = await runControlPlaneSpike(process.env, process.cwd(), homedir, controlPlaneDir);
+  const spikePath = await persistControlPlaneSpikeResult(
+    spike,
+    process.env,
+    homedir,
+    controlPlaneDir
+  );
+  await deps.appendAudit(ctx, {
+    event: "controlPlaneSpike",
+    kind: "diagnostic",
+    verdict: spike.ok ? "allow" : "deny_pending_approval",
+    reason: spike.ok ? "control_plane_writable" : "control_plane_blocked",
+    summary: spike.error ?? spikePath,
+    mode: ctx.config.mode,
+    wouldBlock: !spike.ok,
+    permission: "allow"
+  });
+}
 function gateVerdictToClaudePreToolUseResponse(verdict) {
   if (verdict.permission === "allow") {
     return {};
@@ -2248,19 +2561,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync } from "node:fs";
-import path6 from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import path8 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path6.resolve(startPath);
+  let current = path8.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync(path6.join(current, marker))) {
+      if (existsSync2(path8.join(current, marker))) {
         return current;
       }
     }
-    const parent = path6.dirname(current);
+    const parent = path8.dirname(current);
     if (parent === current) {
-      return path6.resolve(startPath);
+      return path8.resolve(startPath);
     }
     current = parent;
   }
@@ -2290,7 +2603,7 @@ async function loadRuntimeContext(cwd) {
   const repoRoot = findRepoRoot(cwd, claudeLayout);
   const configPath = claudeLayout.configPath(repoRoot);
   const deps = createDefaultGateRuntimeDeps();
-  const config = await deps.readConfig(configPath);
+  const config = await resolveGateConfig({ layout: claudeLayout, repoRoot, configPath }, deps);
   return { layout: claudeLayout, repoRoot, config, configPath };
 }
 function mapClaudeToolName(toolName) {
@@ -2346,6 +2659,7 @@ async function runBeforeSubmitPromptHook() {
     const prompt = String(payload.prompt ?? process2.env.CLAUDE_USER_PROMPT ?? "");
     const ctx = await loadRuntimeContext(process2.cwd());
     const deps = createDefaultGateRuntimeDeps();
+    await maybeRunControlPlaneSpike(ctx, deps, process2.env.BELAY_OQ3_SPIKE === "1");
     const result = await processApprovalPrompt(ctx, deps, prompt);
     jsonResponse(gateVerdictToClaudeUserPromptResponse(result));
   } catch {
@@ -2393,7 +2707,13 @@ async function runToolGateHook(_eventName) {
     const toolName = String(payload.tool_name ?? "");
     const mappedKind = mapClaudeToolName(toolName);
     if (!mappedKind) {
-      jsonResponse({});
+      const verdict2 = unnormalizedGateVerdict({
+        reason: "unmapped_tool",
+        mode: ctx.config.mode,
+        user_message: "agent-belay does not recognize this tool action. Run agent-belay doctor, then retry.",
+        agent_message: "Belay denied this action because the tool could not be normalized."
+      });
+      jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict2));
       return;
     }
     const normalizedPayload = normalizeClaudeToolPayload(toolName, payload);

@@ -8,6 +8,7 @@ import {
   gateVerdictToCursorResponse,
   maybeRunControlPlaneSpike,
   processApprovalPrompt,
+  resolveGateConfig,
 } from '../shared/gate-runtime.js'
 import { findRepoRoot } from '../shared/repo-root.js'
 
@@ -35,7 +36,7 @@ async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
   const repoRoot = findRepoRoot(cwd, cursorLayout)
   const configPath = cursorLayout.configPath(repoRoot)
   const deps = createDefaultGateRuntimeDeps()
-  const config = await deps.readConfig(configPath)
+  const config = await resolveGateConfig({ layout: cursorLayout, repoRoot, configPath }, deps)
   return { layout: cursorLayout, repoRoot, config, configPath }
 }
 

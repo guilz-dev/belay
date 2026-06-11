@@ -2,6 +2,7 @@ import { type AdapterName } from './adapters/layouts/index.js';
 import { type BelayConfigV3, belayStateDir } from './core/config.js';
 import type { ApprovalStateFile } from './core/types.js';
 export declare function resolveAdapterName(config: BelayConfigV3): AdapterName;
+export declare function detectAdapterName(repoRoot: string): AdapterName;
 export declare function configPathFor(repoRoot: string, adapter?: AdapterName): string;
 export declare function repoLocalStateDirFor(repoRoot: string, config: BelayConfigV3): string;
 export declare function runtimeCorePath(repoRoot: string, adapter?: AdapterName): string;

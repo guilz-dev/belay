@@ -1,5 +1,6 @@
 import process from 'node:process'
 
+import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
 import { claudeLayout } from '../layouts/claude.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
 import {
@@ -8,7 +9,9 @@ import {
   evaluateGatedAction,
   gateVerdictToClaudePreToolUseResponse,
   gateVerdictToClaudeUserPromptResponse,
+  maybeRunControlPlaneSpike,
   processApprovalPrompt,
+  resolveGateConfig,
 } from '../shared/gate-runtime.js'
 import { findRepoRoot } from '../shared/repo-root.js'
 
@@ -36,7 +39,7 @@ async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
   const repoRoot = findRepoRoot(cwd, claudeLayout)
   const configPath = claudeLayout.configPath(repoRoot)
   const deps = createDefaultGateRuntimeDeps()
-  const config = await deps.readConfig(configPath)
+  const config = await resolveGateConfig({ layout: claudeLayout, repoRoot, configPath }, deps)
   return { layout: claudeLayout, repoRoot, config, configPath }
 }
 
@@ -110,6 +113,7 @@ export async function runBeforeSubmitPromptHook() {
     const prompt = String(payload.prompt ?? process.env.CLAUDE_USER_PROMPT ?? '')
     const ctx = await loadRuntimeContext(process.cwd())
     const deps = createDefaultGateRuntimeDeps()
+    await maybeRunControlPlaneSpike(ctx, deps, process.env.BELAY_OQ3_SPIKE === '1')
     const result = await processApprovalPrompt(ctx, deps, prompt)
     jsonResponse(gateVerdictToClaudeUserPromptResponse(result))
   } catch {
@@ -164,7 +168,14 @@ export async function runToolGateHook(_eventName: string) {
     const toolName = String(payload.tool_name ?? '')
     const mappedKind = mapClaudeToolName(toolName)
     if (!mappedKind) {
-      jsonResponse({})
+      const verdict = unnormalizedGateVerdict({
+        reason: 'unmapped_tool',
+        mode: ctx.config.mode,
+        user_message:
+          'agent-belay does not recognize this tool action. Run agent-belay doctor, then retry.',
+        agent_message: 'Belay denied this action because the tool could not be normalized.',
+      })
+      jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
       return
     }
     const normalizedPayload = normalizeClaudeToolPayload(toolName, payload)

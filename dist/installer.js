@@ -3,7 +3,8 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { cursorLayout } from './adapters/layouts/cursor.js';
 import { getAdapter } from './adapters/registry.js';
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js';
+import { approvedApprovalsPath, detectAdapterName, mergeAndWriteConfig, pendingApprovalsPath, } from './config-io.js';
+import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { dogfoodProject } from './dogfood.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js';
@@ -108,6 +109,9 @@ async function writeCursorRuntimeArtifacts(repoRoot) {
     await writeTextFile(path.join(hooksDir, 'belay-runner'), buildRunnerScript(process.execPath), true);
     await writeTextFile(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath));
 }
+async function writeCursorIntegrityManifest(repoRoot) {
+    await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, repoRoot));
+}
 async function writeSkillArtifacts(repoRoot) {
     const cursorDir = path.join(repoRoot, '.cursor');
     const skillsDir = path.join(cursorDir, 'skills', 'belay');
@@ -138,6 +142,7 @@ export async function initCursorProject(options = {}) {
         await writeSkillArtifacts(repoRoot);
     }
     await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    await writeCursorIntegrityManifest(repoRoot);
     return { repoRoot, withSkill };
 }
 export async function upgradeCursorProject(options = {}) {
@@ -151,14 +156,24 @@ export async function upgradeCursorProject(options = {}) {
     if (options.withSkill) {
         await writeSkillArtifacts(repoRoot);
     }
+    await writeCursorIntegrityManifest(repoRoot);
     return { repoRoot };
 }
-function resolveAdapterName(options) {
-    return options.adapter === 'claude' ? 'claude' : 'cursor';
+function resolveAdapterName(options, repoRoot) {
+    if (options.adapter === 'claude') {
+        return 'claude';
+    }
+    if (options.adapter === 'cursor') {
+        return 'cursor';
+    }
+    if (repoRoot) {
+        return detectAdapterName(repoRoot);
+    }
+    return 'cursor';
 }
 export async function initProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const adapterName = resolveAdapterName(options);
+    const adapterName = resolveAdapterName(options, repoRoot);
     const adapter = getAdapter(adapterName);
     const result = await adapter.install(repoRoot, options);
     if (options.dogfood === true) {
@@ -173,7 +188,7 @@ export async function initProject(options = {}) {
 }
 export async function upgradeProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const adapterName = resolveAdapterName(options);
+    const adapterName = resolveAdapterName(options, repoRoot);
     await getAdapter(adapterName).upgrade(repoRoot, options);
     return { repoRoot, adapter: adapterName };
 }

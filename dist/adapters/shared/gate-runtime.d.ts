@@ -10,7 +10,7 @@ export interface GateRuntimeContext {
     configPath: string;
 }
 export interface GateRuntimeDeps {
-    readConfig: (configPath: string) => Promise<BelayConfigV3>;
+    readConfig: (configPath: string) => Promise<unknown>;
     appendAudit: (ctx: GateRuntimeContext, event: Record<string, unknown>) => Promise<void>;
     loadApprovals: (ctx: GateRuntimeContext, fileName: 'pending-approvals.json' | 'approved-approvals.json') => Promise<{
         filePath: string;
@@ -19,6 +19,18 @@ export interface GateRuntimeDeps {
     writeApprovals: (filePath: string, state: ApprovalStateFile) => Promise<void>;
 }
 export declare function createDefaultGateRuntimeDeps(): GateRuntimeDeps;
+export declare function resolveGateConfig(ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>, deps: GateRuntimeDeps): Promise<BelayConfigV3>;
+export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3): {
+    protectedArtifactRoots: string[];
+    strictChains?: boolean;
+    customExternalCommands?: string[];
+    customAllowCommands?: string[];
+    sensitivePaths?: string[];
+    unknownLocalEffect?: import("../../types.js").UnknownLocalEffectPolicy;
+    unparseableShell?: import("../../core/types.js").UnparseableShellPolicy;
+    controlPlaneDir?: string | null;
+    scrubOptions?: import("../../core/types.js").ScrubOptions;
+};
 export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateRuntimeDeps, params: {
     kind: GatedActionKind;
     cwd: string;

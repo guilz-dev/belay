@@ -20,30 +20,32 @@ Include:
 matching mistakes, or bypasses in hook integration should be treated as
 security-relevant reports.
 
-## Threat model (v0.3)
+## Threat model (v0.4)
 
 ### Assets
 
 - Repository source and secrets (`.env`, credentials paths)
 - Operator approval state (`pending-approvals.json`, `approved-approvals.json`)
 - User-level control plane at `~/.config/agent-belay/` when enabled
-- Audit logs under `.cursor/belay/`
+- Audit logs under `.cursor/belay/` or `.claude/belay/`
+- Repo-local belay artifacts (config, hooks, runtime bundles) for either adapter
 
 ### Trust boundaries
 
 | Boundary | Trust assumption |
 |----------|------------------|
 | Hook runtime (Node) | Runs with the IDE user's OS permissions |
-| Repo-local `.cursor/belay.config.json` | Writable by repo collaborators; not a secret store |
-| Control plane (`~/.config/agent-belay/`) | User-level; must not be writable via gated file tools when control plane is enabled |
+| Repo-local belay config (`.cursor/` or `.claude/`) | Writable by repo collaborators; protected from agent tool mutation by default |
+| Control plane (`~/.config/agent-belay/` or `%APPDATA%/agent-belay`) | User-level; must not be writable via gated shell/file tools |
 | Agent shell / tools | Untrusted; classified heuristically |
 
-### Mitigations in v0.3
+### Mitigations in v0.4
 
-- **Fail-closed shell mode** — `policy.unknownLocalEffect: "deny"` blocks unrecognized local commands (default remains `allow_flagged` until dogfood).
-- **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; `allow` wins over `external`.
-- **Chain hardening** — denies `eval`/`source`, command substitution wrappers (including nested/multi `$(...)`), pipe-to-shell, outside-repo redirects, and control-plane path mutations via shell or file tools.
-- **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and control-plane files.
+- **Fail-closed defaults (fresh install)** — `policy.unknownLocalEffect` and `policy.unparseableShell` default to `"deny"`; control plane defaults to enabled.
+- **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; overrides cannot bypass repo-local belay artifacts or the control plane.
+- **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, command substitution wrappers, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools.
+- **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
+- **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `agent-belay upgrade` records runtime hashes; `doctor` verifies them.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
 ### Known limitations
@@ -51,7 +53,8 @@ security-relevant reports.
 - Classification is heuristic, not proof of safety.
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
-- Command substitution parsing does not cover `${...}` brace expansion; complex quoting edge cases may still evade detection.
+- Command substitution parsing does not cover `${...}` parameter expansion; complex quoting edge cases may still evade detection.
+- Hash-pinned integrity detects tampering only for files listed in the install manifest; manual edits require `agent-belay upgrade` to refresh hashes.
 - Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/agent-belay/` are not deleted automatically.
 - Cursor sandbox behavior for hooks writing outside the workspace should be validated on target hosts (see `docs/spikes/oq3-control-plane.md`).
 

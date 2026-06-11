@@ -5,7 +5,7 @@ import type { BelayConfigV3 } from './config.js'
 import { classifierOptionsFromConfig } from './config.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
-import type { ClassifyResult } from './types.js'
+import type { ClassifierOptions, ClassifyResult } from './types.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -71,8 +71,12 @@ export function normalizeGatedAction(params: {
   }
 }
 
-export function classifyGatedAction(action: GatedAction, config: BelayConfigV3): ClassifyResult {
-  const options = classifierOptionsFromConfig(config)
+export function classifyGatedAction(
+  action: GatedAction,
+  config: BelayConfigV3,
+  extraOptions: ClassifierOptions = {},
+): ClassifyResult {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
 
   if (action.kind === 'shell') {
     const command = action.command ?? shellCommandFromPayload(action.payload ?? {})

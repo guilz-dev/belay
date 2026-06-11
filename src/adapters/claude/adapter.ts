@@ -7,6 +7,7 @@ import {
   mergeAndWriteConfig,
   pendingApprovalsPath,
 } from '../../config-io.js'
+import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js'
 import { EMPTY_APPROVALS } from '../../defaults.js'
 import { doctorProject } from '../../doctor.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js'
@@ -100,6 +101,14 @@ async function writeRuntimeArtifacts(repoRoot: string): Promise<void> {
   await write(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath))
 }
 
+async function writeClaudeIntegrityManifest(repoRoot: string): Promise<void> {
+  await writeIntegrityManifest(
+    repoRoot,
+    claudeLayout,
+    runtimeIntegrityFiles(claudeLayout, repoRoot),
+  )
+}
+
 async function installClaudeBase(repoRoot: string): Promise<void> {
   const settingsPath = claudeLayout.hooksSettingsPath(repoRoot)
   const belayDir = claudeLayout.repoLocalStateDir(repoRoot)
@@ -126,6 +135,7 @@ async function installClaudeBase(repoRoot: string): Promise<void> {
 
   await mkdir(path.dirname(settingsPath), { recursive: true })
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+  await writeClaudeIntegrityManifest(repoRoot)
 }
 
 export const claudeAdapter: BelayAdapter = {
@@ -143,6 +153,7 @@ export const claudeAdapter: BelayAdapter = {
     const settingsPath = claudeLayout.hooksSettingsPath(repoRoot)
     const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath))
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await writeClaudeIntegrityManifest(repoRoot)
     return { repoRoot }
   },
 

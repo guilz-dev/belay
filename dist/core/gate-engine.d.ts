@@ -1,6 +1,6 @@
 import type { BelayConfigV3 } from './config.js';
 import type { GatedAction, GatedActionKind } from './gate-contract.js';
-import type { ClassifyResult } from './types.js';
+import type { ClassifierOptions, ClassifyResult } from './types.js';
 export declare class GateNormalizationError extends Error {
     readonly reason = "normalization_failed";
     constructor(message: string);
@@ -14,5 +14,5 @@ export declare function normalizeGatedAction(params: {
     toolName?: string;
     agentAssessment?: GatedAction['agentAssessment'];
 }): GatedAction;
-export declare function classifyGatedAction(action: GatedAction, config: BelayConfigV3): ClassifyResult;
+export declare function classifyGatedAction(action: GatedAction, config: BelayConfigV3, extraOptions?: ClassifierOptions): ClassifyResult;
 export declare function gateEnabledForAction(config: BelayConfigV3, action: GatedAction): boolean;
