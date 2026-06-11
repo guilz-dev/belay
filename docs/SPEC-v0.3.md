@@ -101,11 +101,15 @@ When `controlPlane.enabled` is `true`, approval state lives under the resolved c
 
 ### OQ1 dogfood workflow (v0.3.1+)
 
-1. Set `mode: "audit"` and `policy.unknownLocalEffect: "deny"`.
+**Quick start (v0.3.2):** `agent-belay dogfood` or `agent-belay init --dogfood`.
+
+1. Set `mode: "audit"` and `policy.unknownLocalEffect: "deny"` (done by `dogfood` command).
 2. Run normal agent work; gate events record `wouldBlock: true` without creating pending approvals.
 3. Run `agent-belay metrics` to review would-block rate and top reasons.
 4. Tune with `overrides.allow` and `agent-belay explain`.
-5. Switch to `mode: "enforce"` when metrics report ready.
+5. Run `agent-belay dogfood --enforce` when metrics report ready (or `--force` to override).
+
+Closure checklist: [v0.3-remaining.md](./v0.3-remaining.md).
 
 ## Migration matrix
 
@@ -129,8 +133,8 @@ When `controlPlane.enabled` is `true`, approval state lives under the resolved c
 | T1 | Shell classifier unit tests | done |
 | T3 | Control plane e2e | done |
 | T4 | Override precedence tests | done |
-| OQ1 | `unknown_local_effect` deny default | dogfood tooling shipped (`metrics` CLI); default unchanged |
-| OQ3 | Hook can access `~/.config/agent-belay/` | hook spike via `spikeOnPrompt`; validate in real Cursor workspace |
+| OQ1 | `unknown_local_effect` deny default | `dogfood` / `metrics` CLI shipped; default unchanged until v0.4 |
+| OQ3 | Hook can access `~/.config/agent-belay/` | `spikeOnPrompt` + status/doctor; manual Cursor validation per v0.3-remaining.md |
 
 ## Non-goals (v0.3)
 

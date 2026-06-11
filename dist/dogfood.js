@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { loadConfigFile, writeConfigFile } from './config-io.js';
 import { mergeConfig } from './core/config.js';
-import { isDogfoodConfig, loadOperationalInsights } from './operational-insights.js';
 import { metricsProject } from './metrics.js';
+import { isDogfoodConfig, loadOperationalInsights } from './operational-insights.js';
 export async function dogfoodProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json');

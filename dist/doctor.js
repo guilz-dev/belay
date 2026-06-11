@@ -4,10 +4,10 @@ import path from 'node:path';
 import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
 import { approvedApprovalsPath, belayStateDir, loadConfigFile, pendingApprovalsPath, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
-import { loadOperationalInsights } from './operational-insights.js';
 import { getManagedHookEntries } from './defaults.js';
 import { loadHooksFile } from './installer.js';
 import { resolveNodeBinary } from './node-resolution.js';
+import { loadOperationalInsights } from './operational-insights.js';
 import { PACKAGE_VERSION } from './version.js';
 async function readRuntimeVersion(corePath) {
     try {

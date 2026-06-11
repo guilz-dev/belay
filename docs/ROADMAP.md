@@ -8,7 +8,7 @@
 | **v0.2** | Testable core, stronger classifier, config v2, ops CLI | Shipped — see [v0.2-plan.md](./v0.2-plan.md) |
 | **v0.3** | Config v3, fail-closed shell, control plane, redaction | Shipped — see [SPEC-v0.3.md](./SPEC-v0.3.md) |
 | **v0.3.1** | OQ1 dogfood metrics, OQ3 hook spike, orphan cleanup, substitution hardening | Shipped |
-| **v0.3.2** | `dogfood` CLI, status/doctor OQ3 visibility, `init --dogfood` | Shipped |
+| **v0.3.2** | `dogfood` CLI, status/doctor OQ3 visibility, `init --dogfood`, closure checklist | Shipped |
 
 ## v0.3 (0.3.0)
 
@@ -37,6 +37,13 @@ Recommended implementation order (dependency-driven):
 - **OQ3 validation** — `controlPlane.spikeOnPrompt` writes `oq3-spike-last.json` from `beforeSubmitPrompt`
 - **Orphan cleanup** — `doctor --fix`, reverse migration on disable
 - **Shell** — nested/multi command substitution parsing
+
+## v0.3.2 (shipped)
+
+- **`agent-belay dogfood`** — one-command OQ1 + OQ3 setup; `--enforce` promotes when metrics ready
+- **`init --dogfood`** — new projects start in dogfood mode
+- **status / doctor** — dogfood readiness and OQ3 spike visibility
+- **Closure checklist** — [v0.3-remaining.md](./v0.3-remaining.md) (tag + operational validation)
 
 ## v0.4+ (planned)
 

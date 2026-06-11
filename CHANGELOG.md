@@ -7,6 +7,7 @@
 - `agent-belay dogfood` enables OQ1 audit + fail-closed policy (optional `--enforce`, `--force`, `--no-spike`)
 - `agent-belay init --dogfood` initializes with dogfood config
 - `status` and `doctor` show dogfood readiness and OQ3 spike results (`oq3-spike-last.json`)
+- `docs/v0.3-remaining.md` — v0.3 line closure checklist (ship + operational validation)
 
 ## 0.3.1
 
