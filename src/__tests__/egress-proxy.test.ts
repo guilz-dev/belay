@@ -190,9 +190,11 @@ describe('egress proxy integration', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-egress-http-'))
     tempDirs.push(dir)
     let seenPath: string | null = null
+    let seenHost: string | null = null
     const upstream = await new Promise<{ port: number; close: () => void }>((resolve) => {
       const server = http.createServer((req, res) => {
         seenPath = req.url ?? null
+        seenHost = req.headers.host ?? null
         res.writeHead(200)
         res.end('ok')
       })
@@ -241,6 +243,7 @@ describe('egress proxy integration', () => {
       const response = await proxyRequest(port, `http://127.0.0.1:${upstream.port}/hello?x=1`)
       expect(response.status).toBe(200)
       expect(seenPath).toBe('/hello?x=1')
+      expect(seenHost).toBe(`127.0.0.1:${upstream.port}`)
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
       upstream.close()

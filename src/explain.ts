@@ -94,6 +94,8 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
     policy: config.policy,
     overrides: config.overrides,
     egress: config.egress,
+    egressProxyRunning: egress.running && !egress.foreignProxy && !egress.repoRootMismatch,
+    egressL3DemotionActive: classifierOptions.demoteL3External === true,
     result: classified.result,
   }
 }
@@ -106,7 +108,7 @@ export function formatExplainReport(report: ExplainReport): string {
     `Input: ${report.command}`,
     `CWD: ${report.cwd}`,
     `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
-    `Egress (L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (demoteL3External when proxy running=${report.egress.demoteL3External})`,
+    `Egress (partial L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (proxy running=${report.egressProxyRunning}, L3 demotion active=${report.egressL3DemotionActive})`,
     report.egress.enabled
       ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
       : 'Egress proxy: not configured',

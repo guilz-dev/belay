@@ -140,6 +140,8 @@ export interface ExplainReport {
   policy: BelayPolicyConfig
   overrides: BelayOverridesConfig
   egress: BelayEgressConfig
+  egressProxyRunning: boolean
+  egressL3DemotionActive: boolean
   result: ClassifyResult
 }
 

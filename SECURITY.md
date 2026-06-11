@@ -48,18 +48,25 @@ security-relevant reports.
 - **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `agent-belay upgrade` records runtime hashes; `doctor` verifies them.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
-### Egress chokepoint (v0.7, opt-in)
+### Egress chokepoint (v0.7, opt-in) — partial L1
 
-When `egress.enabled` is true and the local proxy is running with agent processes
-configured to use `HTTP_PROXY` / `HTTPS_PROXY`:
+v0.7 egress is **not a complete L1 boundary**. It is a **proxy-respecting-client,
+partial L1**: enforcement applies only when (1) the local egress proxy is running,
+(2) agent/tool processes honor `HTTP_PROXY` / `HTTPS_PROXY`, and (3) traffic uses
+HTTP(S) through that proxy. **Full egress containment (OS firewall / capability
+broker) is v0.9+**, not v0.7.
 
-- **L1 boundary** — outbound HTTP(S) is observed at connect time; unknown hosts are
-  blocked pending approval or domain allowlist entry.
-- **L3 demotion** — shell `external_effect` / `custom_external` rules become early
-  warnings (`l3_external_hint`) when `demoteL3External` is true; they do not replace
-  the proxy boundary.
-- **Not covered** — DNS exfiltration, raw sockets, or processes that bypass proxy
-  environment variables (covert channels; full L1 enforcement is v0.9+).
+When those conditions hold:
+
+- **Observed chokepoint** — outbound HTTP(S) is evaluated at connect time; unknown
+  hosts are blocked pending approval or domain allowlist entry.
+- **L3 demotion (gated)** — shell `external_effect` / `custom_external` rules become
+  early warnings (`l3_external_hint`) **only while the egress proxy is running for
+  that repository**. If `egress.enabled` is true but the proxy is not running, L3
+  external rules stay at `deny_pending_approval` (fail-closed).
+- **Not covered** — tools that ignore proxy environment variables, raw sockets,
+  custom DNS, and other covert channels (documented in the v0.7 plan; adversarial
+  full L1 is v0.9+).
 - **Single proxy per control plane** — one running egress daemon binds to one
   `repoRoot` and listen port (default `17831`). Starting egress for a second
   repository requires stopping the existing proxy first. `egress env` refuses

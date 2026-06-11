@@ -224,7 +224,7 @@ export async function doctorProject(options = {}) {
         }
         if (loadedConfig.egress.enabled) {
             const egress = await egressStatus({ targetDir: repoRoot });
-            notes.push(`Egress (L1): enabled — demoteL3External=${loadedConfig.egress.demoteL3External}, proxy ${egress.host}:${egress.port}.`);
+            notes.push(`Egress (partial L1): enabled — L3 demotion active only while proxy runs (demoteL3External=${loadedConfig.egress.demoteL3External}), listen ${egress.host}:${egress.port}.`);
             if (!egress.running) {
                 warnings.push('Egress is enabled in config but the local proxy is not running. Run agent-belay egress start.');
             }

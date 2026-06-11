@@ -10,7 +10,6 @@ const cwd = path.join(repoRoot, 'src')
 describe('L3 external demotion with egress enabled', () => {
   it('flags external commands instead of denying when demoteL3External is set', () => {
     const result = classifyShell('git push origin main', cwd, repoRoot, {
-      egressEnabled: true,
       demoteL3External: true,
     })
     expect(result.verdict).toBe('allow_flagged')
@@ -20,7 +19,6 @@ describe('L3 external demotion with egress enabled', () => {
 
   it('still denies external commands when demoteL3External is false', () => {
     const result = classifyShell('git push origin main', cwd, repoRoot, {
-      egressEnabled: true,
       demoteL3External: false,
     })
     expect(result.verdict).toBe('deny_pending_approval')
@@ -32,14 +30,13 @@ describe('L3 external demotion with egress enabled', () => {
       'python -c "import urllib.request; urllib.request.urlopen(\'https://example.com\')"',
       cwd,
       repoRoot,
-      { egressEnabled: true, demoteL3External: true },
+      { demoteL3External: true },
     )
     expect(result.verdict).not.toBe('deny_pending_approval')
   })
 
   it('demotes npm run deploy scripts to hints', () => {
     const result = classifyShell('npm run deploy:prod', cwd, repoRoot, {
-      egressEnabled: true,
       demoteL3External: true,
     })
     expect(result.verdict).toBe('allow_flagged')
