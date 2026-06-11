@@ -1,5 +1,9 @@
 # agent-belay SPEC v0.3
 
+> Full requirements and acceptance criteria:
+> [SPEC-v0.3-requirements.md](./SPEC-v0.3-requirements.md).
+> Open gaps: [v0.3-remaining.md](./v0.3-remaining.md).
+
 ## Summary
 
 v0.3 hardens Belay for production use: fail-closed shell classification, a user-level control plane, richer audit redaction, and the schema foundation for additional runtime adapters.

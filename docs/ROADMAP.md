@@ -1,5 +1,8 @@
 # agent-belay Roadmap
 
+> Strategic context (north star, threat model narrative):
+> [ROADMAP-strategic.md](./ROADMAP-strategic.md).
+
 ## Released
 
 | Version | Focus | Status |
@@ -51,6 +54,11 @@ Recommended implementation order (dependency-driven):
 - Second runtime adapter behind `BelayAdapter`
 - Agent-side `Assessment` ingestion
 - Optional policy bundles / team presets
+
+Per-milestone plans: [v0.3 remaining](./v0.3-remaining.md),
+[v0.4](./v0.4-plan.md), [v0.5](./v0.5-plan.md), [v0.6](./v0.6-plan.md),
+[v0.7–v1.0](./v0.7-v1.0-plan.md) (layered enforcement, per
+[ADR-001](./ADR-001-layered-enforcement.md)).
 
 ## Principles
 
