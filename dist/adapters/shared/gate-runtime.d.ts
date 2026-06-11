@@ -29,6 +29,7 @@ export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config
     unknownLocalEffect?: import("../../types.js").UnknownLocalEffectPolicy;
     unparseableShell?: import("../../core/types.js").UnparseableShellPolicy;
     controlPlaneDir?: string | null;
+    confidenceThresholds?: import("../../core/types.js").ConfidenceThresholds;
     scrubOptions?: import("../../core/types.js").ScrubOptions;
 };
 export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateRuntimeDeps, params: {

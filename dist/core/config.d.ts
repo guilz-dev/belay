@@ -36,9 +36,20 @@ export interface BelayConfigV2 {
         includeAssessment: boolean;
     };
 }
+export interface BelayConfidenceThresholds {
+    allow: number;
+    flag: number;
+}
+export interface BelayModelAssistConfig {
+    enabled: boolean;
+    model?: string;
+    timeoutMs?: number;
+}
 export interface BelayPolicyConfig {
     unknownLocalEffect: UnknownLocalEffectPolicy;
     unparseableShell: UnparseableShellPolicy;
+    confidenceThresholds: BelayConfidenceThresholds;
+    modelAssist: BelayModelAssistConfig;
 }
 export interface BelayOverridesConfig {
     allow: string[];
@@ -78,8 +89,10 @@ export interface BelayConfigV3 {
 }
 export type BelayConfig = BelayConfigV3;
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+export declare const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds;
+export declare const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig;
 export declare const LEGACY_POLICY_V3: BelayPolicyConfig;
-/** Fresh v0.4 install defaults (fail-closed). */
+/** Fresh v0.4+ install defaults (fail-closed). */
 export declare const DEFAULT_POLICY_V3: BelayPolicyConfig;
 export declare const DEFAULT_OVERRIDES_V3: BelayOverridesConfig;
 export declare const DEFAULT_REDACTION_V3: BelayRedactionConfig;

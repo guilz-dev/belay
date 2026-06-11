@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "v0.5 corpus baseline — do not regress below these metrics",
+  "metrics": {
+    "accuracy": 0.96,
+    "precision": {
+      "allow": 1.0,
+      "allow_flagged": 0.85,
+      "deny_pending_approval": 0.95
+    },
+    "recall": {
+      "allow": 0.95,
+      "allow_flagged": 0.9,
+      "deny_pending_approval": 0.95
+    },
+    "falsePositiveRate": 0.05
+  }
+}

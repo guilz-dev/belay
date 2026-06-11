@@ -1,6 +1,6 @@
 {
   "name": "agent-belay",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",
@@ -52,7 +52,8 @@
     "build": "tsc -p tsconfig.build.json && node scripts/build-runtime.mjs",
     "lint": "biome check src package.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts docs",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm build && vitest run"
+    "test": "pnpm build && vitest run",
+    "corpus": "pnpm build && node scripts/corpus.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",

@@ -49,9 +49,22 @@ export interface BelayConfigV2 {
   }
 }
 
+export interface BelayConfidenceThresholds {
+  allow: number
+  flag: number
+}
+
+export interface BelayModelAssistConfig {
+  enabled: boolean
+  model?: string
+  timeoutMs?: number
+}
+
 export interface BelayPolicyConfig {
   unknownLocalEffect: UnknownLocalEffectPolicy
   unparseableShell: UnparseableShellPolicy
+  confidenceThresholds: BelayConfidenceThresholds
+  modelAssist: BelayModelAssistConfig
 }
 
 export interface BelayOverridesConfig {
@@ -98,15 +111,29 @@ export interface BelayConfigV3 {
 export type BelayConfig = BelayConfigV3
 
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+export const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds = {
+  allow: 0.88,
+  flag: 0.72,
+}
+
+export const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig = {
+  enabled: false,
+  timeoutMs: 3000,
+}
+
 export const LEGACY_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'allow_flagged',
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST },
 }
 
-/** Fresh v0.4 install defaults (fail-closed). */
+/** Fresh v0.4+ install defaults (fail-closed). */
 export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'deny',
   unparseableShell: 'deny',
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST },
 }
 
 export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
@@ -303,8 +330,8 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
       ...(raw.classifier ?? {}),
     },
     policy: {
-      unknownLocalEffect: raw.policy?.unknownLocalEffect ?? LEGACY_POLICY_V3.unknownLocalEffect,
-      unparseableShell: raw.policy?.unparseableShell ?? LEGACY_POLICY_V3.unparseableShell,
+      ...LEGACY_POLICY_V3,
+      ...(raw.policy ?? {}),
     },
     overrides: {
       ...DEFAULT_CONFIG_V3.overrides,
@@ -458,6 +485,24 @@ export function normalizeConfig(
           : v3.policy?.unparseableShell === 'allow_flagged'
             ? 'allow_flagged'
             : DEFAULT_POLICY_V3.unparseableShell,
+      confidenceThresholds: {
+        allow:
+          typeof v3.policy?.confidenceThresholds?.allow === 'number'
+            ? v3.policy.confidenceThresholds.allow
+            : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+        flag:
+          typeof v3.policy?.confidenceThresholds?.flag === 'number'
+            ? v3.policy.confidenceThresholds.flag
+            : DEFAULT_CONFIDENCE_THRESHOLDS.flag,
+      },
+      modelAssist: {
+        enabled: v3.policy?.modelAssist?.enabled === true,
+        model: v3.policy?.modelAssist?.model,
+        timeoutMs:
+          typeof v3.policy?.modelAssist?.timeoutMs === 'number'
+            ? v3.policy.modelAssist.timeoutMs
+            : DEFAULT_MODEL_ASSIST.timeoutMs,
+      },
     },
     overrides: {
       allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
@@ -559,6 +604,7 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
     unparseableShell: config.policy.unparseableShell,
+    confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config),
   }

@@ -35,6 +35,11 @@ export interface ScrubOptions {
   maskHighEntropyStrings?: boolean
 }
 
+export interface ConfidenceThresholds {
+  allow: number
+  flag: number
+}
+
 export interface ClassifierOptions {
   strictChains?: boolean
   customExternalCommands?: string[]
@@ -44,6 +49,7 @@ export interface ClassifierOptions {
   unparseableShell?: UnparseableShellPolicy
   controlPlaneDir?: string | null
   protectedArtifactRoots?: string[]
+  confidenceThresholds?: ConfidenceThresholds
   scrubOptions?: ScrubOptions
 }
 

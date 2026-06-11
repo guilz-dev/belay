@@ -5,6 +5,7 @@ import type { BelayConfigV3 } from './config.js'
 import { classifierOptionsFromConfig } from './config.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
+import { mergeAgentAssessment } from './judgment.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 
 export class GateNormalizationError extends Error {
@@ -83,7 +84,20 @@ export function classifyGatedAction(
     if (!command) {
       throw new GateNormalizationError('Shell gated action requires a command.')
     }
-    return classifyShell(command, action.cwd, action.repoRoot, options)
+    const result = classifyShell(command, action.cwd, action.repoRoot, options)
+    if (!action.agentAssessment) {
+      return result
+    }
+    const merged = mergeAgentAssessment(result.assessment, action.agentAssessment)
+    if (!merged.mismatch) {
+      return { ...result, assessment: merged.assessment }
+    }
+    return {
+      ...result,
+      verdict: 'deny_pending_approval',
+      reason: 'agent_assessment_mismatch',
+      assessment: merged.assessment,
+    }
   }
 
   if (action.kind === 'subagent') {

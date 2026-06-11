@@ -99,6 +99,8 @@ agent runtimes, not as a proof that a command is truly reversible.
 - `v0.1`: Cursor-style hook adapter with one-shot approval and audit
 - `v0.2`: testable core, stronger classifier, tool gates, config v2, ops CLI — see [docs/v0.2-plan.md](./docs/v0.2-plan.md)
 - `v0.3`: config v3, fail-closed shell mode, user control plane — see [docs/SPEC-v0.3.md](./docs/SPEC-v0.3.md), [docs/v0.3-remaining.md](./docs/v0.3-remaining.md), and [docs/ROADMAP.md](./docs/ROADMAP.md)
+- `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
+- `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
 
 ## Install
 
