@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
 import {
   approvedApprovalsFile,
@@ -11,31 +12,38 @@ import {
   pendingApprovalsFile,
 } from './core/config.js'
 import type { ApprovalStateFile } from './core/types.js'
-import { DEFAULT_CONFIG } from './defaults.js'
-
-export function configPathFor(repoRoot: string): string {
-  return path.join(repoRoot, '.cursor', 'belay.config.json')
+export function resolveAdapterName(config: BelayConfigV3): AdapterName {
+  return config.adapter === 'claude' ? 'claude' : 'cursor'
 }
 
-export { belayStateDir }
+export function configPathFor(repoRoot: string, adapter: AdapterName = 'cursor'): string {
+  return getAdapterLayout(adapter).configPath(repoRoot)
+}
+
+export function repoLocalStateDirFor(repoRoot: string, config: BelayConfigV3): string {
+  return getAdapterLayout(resolveAdapterName(config)).repoLocalStateDir(repoRoot)
+}
+
+export function runtimeCorePath(repoRoot: string, adapter: AdapterName = 'cursor'): string {
+  const layout = getAdapterLayout(adapter)
+  return path.join(layout.runtimeDir(repoRoot), 'core.mjs')
+}
 
 export function pendingApprovalsPath(repoRoot: string, config: BelayConfigV3): string {
-  return pendingApprovalsFile(config, repoRoot)
+  return pendingApprovalsFile(config, repoLocalStateDirFor(repoRoot, config))
 }
 
 export function approvedApprovalsPath(repoRoot: string, config: BelayConfigV3): string {
-  return approvedApprovalsFile(config, repoRoot)
+  return approvedApprovalsFile(config, repoLocalStateDirFor(repoRoot, config))
 }
 
-export function runtimeCorePath(repoRoot: string): string {
-  return path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs')
-}
+export { belayStateDir }
 
 export async function ensureBelayStateDir(
   config: BelayConfigV3,
   repoRoot: string,
 ): Promise<string> {
-  const stateDir = belayStateDir(config, repoRoot)
+  const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
   await mkdir(stateDir, { recursive: true })
   return stateDir
 }
@@ -46,8 +54,8 @@ function approvalFilesExist(dir: string): boolean {
   return APPROVAL_STATE_FILES.some((fileName) => existsSync(path.join(dir, fileName)))
 }
 
-async function repoLocalApprovalsEmpty(repoRoot: string): Promise<boolean> {
-  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
+async function repoLocalApprovalsEmpty(repoRoot: string, config: BelayConfigV3): Promise<boolean> {
+  const repoLocalDir = repoLocalStateDirFor(repoRoot, config)
   if (!approvalFilesExist(repoLocalDir)) {
     return true
   }
@@ -103,8 +111,8 @@ export async function migrateRepoLocalApprovalsToControlPlane(
   if (!config.controlPlane.enabled) {
     return
   }
-  const repoLocalDir = path.join(repoRoot, '.cursor', 'belay')
-  const targetDir = belayStateDir(config, repoRoot)
+  const repoLocalDir = repoLocalStateDirFor(repoRoot, config)
+  const targetDir = belayStateDir(config, repoLocalDir)
   await migrateApprovalFilesBetween(repoLocalDir, targetDir)
 }
 
@@ -116,37 +124,52 @@ export async function migrateControlPlaneApprovalsToRepoLocal(
   if (config.controlPlane.enabled) {
     return
   }
-  const targetDir = path.join(repoRoot, '.cursor', 'belay')
+  const targetDir = repoLocalStateDirFor(repoRoot, config)
   await migrateApprovalFilesBetween(sourceDir, targetDir)
 }
 
-export async function loadConfigFile(repoRoot: string): Promise<BelayConfigV3> {
-  const configPath = configPathFor(repoRoot)
+export async function loadConfigFile(
+  repoRoot: string,
+  adapter: AdapterName = 'cursor',
+): Promise<BelayConfigV3> {
+  const configPath = configPathFor(repoRoot, adapter)
   if (!existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG }
+    const layout = getAdapterLayout(adapter)
+    return mergeConfig({}, layout.defaultConfig(repoRoot) as BelayConfigV3)
   }
   const raw = await readFile(configPath, 'utf8')
-  return mergeConfig(JSON.parse(raw))
+  const layout = getAdapterLayout(adapter)
+  return mergeConfig(JSON.parse(raw), layout.defaultConfig(repoRoot) as BelayConfigV3)
 }
 
-export async function writeConfigFile(repoRoot: string, config: BelayConfigV3): Promise<void> {
-  await writeFile(configPathFor(repoRoot), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+export async function writeConfigFile(
+  repoRoot: string,
+  config: BelayConfigV3,
+  adapter: AdapterName = resolveAdapterName(config),
+): Promise<void> {
+  const configPath = configPathFor(repoRoot, adapter)
+  await mkdir(path.dirname(configPath), { recursive: true })
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
 }
 
-export async function mergeAndWriteConfig(repoRoot: string): Promise<BelayConfigV3> {
-  const configPath = configPathFor(repoRoot)
+export async function mergeAndWriteConfig(
+  repoRoot: string,
+  adapter: AdapterName = 'cursor',
+): Promise<BelayConfigV3> {
+  const layout = getAdapterLayout(adapter)
+  const configPath = layout.configPath(repoRoot)
   let existing: unknown = {}
   if (existsSync(configPath)) {
     existing = JSON.parse(await readFile(configPath, 'utf8'))
   }
-  const merged = mergeConfig(existing)
-  await writeConfigFile(repoRoot, merged)
+  const merged = mergeConfig(existing, layout.defaultConfig(repoRoot) as BelayConfigV3)
+  await writeConfigFile(repoRoot, merged, adapter)
   await ensureBelayStateDir(merged, repoRoot)
   if (merged.controlPlane.enabled) {
     await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged)
   } else {
     const sourceDir = configuredControlPlaneDir(merged)
-    if (approvalFilesExist(sourceDir) && (await repoLocalApprovalsEmpty(repoRoot))) {
+    if (approvalFilesExist(sourceDir) && (await repoLocalApprovalsEmpty(repoRoot, merged))) {
       await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged, sourceDir)
     }
   }

@@ -1,4 +1,4 @@
-import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js';
+import type { ClassifierOptions, ControlPlaneIntegrity, ScrubOptions, UnknownLocalEffectPolicy, UnparseableShellPolicy } from './types.js';
 export type BelayMode = 'enforce' | 'audit';
 export type { UnknownLocalEffectPolicy };
 export interface BelayConfigV1 {
@@ -38,6 +38,7 @@ export interface BelayConfigV2 {
 }
 export interface BelayPolicyConfig {
     unknownLocalEffect: UnknownLocalEffectPolicy;
+    unparseableShell: UnparseableShellPolicy;
 }
 export interface BelayOverridesConfig {
     allow: string[];
@@ -53,6 +54,7 @@ export interface BelayRedactionConfig {
 export interface BelayControlPlaneConfig {
     enabled: boolean;
     configDir: string | null;
+    integrity: ControlPlaneIntegrity;
     /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
     spikeOnPrompt?: boolean;
 }
@@ -62,6 +64,7 @@ export interface BelayClassifierConfig {
 }
 export interface BelayConfigV3 {
     version: 3;
+    adapter?: 'cursor' | 'claude';
     mode: BelayMode;
     approvalTtlMinutes: number;
     tokenPrefix: string;
@@ -74,9 +77,13 @@ export interface BelayConfigV3 {
     audit: BelayConfigV2['audit'];
 }
 export type BelayConfig = BelayConfigV3;
+/** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+export declare const LEGACY_POLICY_V3: BelayPolicyConfig;
+/** Fresh v0.4 install defaults (fail-closed). */
 export declare const DEFAULT_POLICY_V3: BelayPolicyConfig;
 export declare const DEFAULT_OVERRIDES_V3: BelayOverridesConfig;
 export declare const DEFAULT_REDACTION_V3: BelayRedactionConfig;
+export declare const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig;
 export declare const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig;
 export declare const DEFAULT_CONFIG_V2: BelayConfigV2;
 export declare const DEFAULT_CONFIG_V3: BelayConfigV3;
@@ -93,6 +100,7 @@ export declare function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2;
 /** @deprecated Use normalizeConfig for v3 configs. */
 export declare function normalizeConfig(config: BelayConfigV3): BelayConfigV3;
 export declare function normalizeConfig(config: BelayConfigV2): BelayConfigV2;
+export declare function isFreshConfigInput(loaded: unknown): boolean;
 export declare function mergeConfig(existing: unknown, defaults?: BelayConfigV3): BelayConfigV3;
 export declare function scrubOptionsFromConfig(config: BelayConfigV3): ScrubOptions;
 export declare function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOptions;
@@ -100,6 +108,6 @@ export declare function defaultControlPlaneDir(env?: NodeJS.ProcessEnv, homedir?
 export declare function resolveControlPlaneDir(config: BelayConfigV3): string;
 /** Control-plane directory regardless of enabled flag (for orphan migration). */
 export declare function configuredControlPlaneDir(config: BelayConfigV3): string;
-export declare function belayStateDir(config: BelayConfigV3, repoRoot: string): string;
-export declare function pendingApprovalsFile(config: BelayConfigV3, repoRoot: string): string;
-export declare function approvedApprovalsFile(config: BelayConfigV3, repoRoot: string): string;
+export declare function belayStateDir(config: BelayConfigV3, repoLocalStateDir: string): string;
+export declare function pendingApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string;
+export declare function approvedApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string;

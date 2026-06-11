@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 
-import { migrateControlPlaneApprovalsToRepoLocal } from './config-io.js'
+import { migrateControlPlaneApprovalsToRepoLocal, repoLocalStateDirFor } from './config-io.js'
 import {
   type BelayConfigV3,
   configuredControlPlaneDir,
@@ -15,8 +15,8 @@ export interface CleanupOrphanResult {
   actions: string[]
 }
 
-function repoLocalApprovalDir(repoRoot: string): string {
-  return path.join(repoRoot, '.cursor', 'belay')
+function repoLocalApprovalDir(repoRoot: string, config: BelayConfigV3): string {
+  return repoLocalStateDirFor(repoRoot, config)
 }
 
 function hasApprovalFiles(dir: string): boolean {
@@ -41,7 +41,7 @@ export async function cleanupOrphanApprovalState(
 ): Promise<CleanupOrphanResult> {
   const actions: string[] = []
   const dryRun = options.dryRun === true
-  const repoLocalDir = repoLocalApprovalDir(repoRoot)
+  const repoLocalDir = repoLocalApprovalDir(repoRoot, config)
   const stamp = new Date().toISOString().replaceAll(':', '-')
 
   if (config.controlPlane.enabled) {

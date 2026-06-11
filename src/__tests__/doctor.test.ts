@@ -37,12 +37,21 @@ describe('doctorProject', () => {
 
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
     const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
+      `${JSON.stringify({ version: 1, approvals: [{ approvalId: 'belay_stale', kind: 'shell', fingerprint: 'x', repoRoot, reason: 'test', summary: 'x', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() }] }, null, 2)}\n`,
+    )
     await writeFile(
       configPath,
       `${JSON.stringify({
         ...config,
         version: 3,
-        controlPlane: { enabled: true, configDir: path.join(repoRoot, 'cp') },
+        controlPlane: {
+          enabled: true,
+          configDir: path.join(repoRoot, 'cp'),
+          integrity: 'hash-pinned',
+        },
       })}\n`,
     )
 

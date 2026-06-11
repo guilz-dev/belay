@@ -17,6 +17,8 @@ export interface ClassifyResult {
     summary?: string;
 }
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny';
+export type UnparseableShellPolicy = 'allow_flagged' | 'deny';
+export type ControlPlaneIntegrity = 'hash-pinned' | 'none';
 export interface ScrubOptions {
     maskApprovalIds?: boolean;
     maskBearerTokens?: boolean;
@@ -30,6 +32,7 @@ export interface ClassifierOptions {
     customAllowCommands?: string[];
     sensitivePaths?: string[];
     unknownLocalEffect?: UnknownLocalEffectPolicy;
+    unparseableShell?: UnparseableShellPolicy;
     controlPlaneDir?: string | null;
     scrubOptions?: ScrubOptions;
 }

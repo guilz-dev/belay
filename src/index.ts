@@ -1,4 +1,6 @@
+export { claudeAdapter } from './adapters/claude/adapter.js'
 export { cursorAdapter } from './adapters/cursor/adapter.js'
+export { getAdapter, listAdapters } from './adapters/registry.js'
 export type { BelayAdapter } from './adapters/types.js'
 export {
   classifyShell,

@@ -1,24 +1,31 @@
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { getAdapterLayout } from './adapters/layouts/index.js';
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js';
 import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
-import { DEFAULT_CONFIG } from './defaults.js';
-export function configPathFor(repoRoot) {
-    return path.join(repoRoot, '.cursor', 'belay.config.json');
+export function resolveAdapterName(config) {
+    return config.adapter === 'claude' ? 'claude' : 'cursor';
 }
-export { belayStateDir };
+export function configPathFor(repoRoot, adapter = 'cursor') {
+    return getAdapterLayout(adapter).configPath(repoRoot);
+}
+export function repoLocalStateDirFor(repoRoot, config) {
+    return getAdapterLayout(resolveAdapterName(config)).repoLocalStateDir(repoRoot);
+}
+export function runtimeCorePath(repoRoot, adapter = 'cursor') {
+    const layout = getAdapterLayout(adapter);
+    return path.join(layout.runtimeDir(repoRoot), 'core.mjs');
+}
 export function pendingApprovalsPath(repoRoot, config) {
-    return pendingApprovalsFile(config, repoRoot);
+    return pendingApprovalsFile(config, repoLocalStateDirFor(repoRoot, config));
 }
 export function approvedApprovalsPath(repoRoot, config) {
-    return approvedApprovalsFile(config, repoRoot);
+    return approvedApprovalsFile(config, repoLocalStateDirFor(repoRoot, config));
 }
-export function runtimeCorePath(repoRoot) {
-    return path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs');
-}
+export { belayStateDir };
 export async function ensureBelayStateDir(config, repoRoot) {
-    const stateDir = belayStateDir(config, repoRoot);
+    const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config));
     await mkdir(stateDir, { recursive: true });
     return stateDir;
 }
@@ -26,8 +33,8 @@ const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json
 function approvalFilesExist(dir) {
     return APPROVAL_STATE_FILES.some((fileName) => existsSync(path.join(dir, fileName)));
 }
-async function repoLocalApprovalsEmpty(repoRoot) {
-    const repoLocalDir = path.join(repoRoot, '.cursor', 'belay');
+async function repoLocalApprovalsEmpty(repoRoot, config) {
+    const repoLocalDir = repoLocalStateDirFor(repoRoot, config);
     if (!approvalFilesExist(repoLocalDir)) {
         return true;
     }
@@ -76,43 +83,48 @@ export async function migrateRepoLocalApprovalsToControlPlane(repoRoot, config) 
     if (!config.controlPlane.enabled) {
         return;
     }
-    const repoLocalDir = path.join(repoRoot, '.cursor', 'belay');
-    const targetDir = belayStateDir(config, repoRoot);
+    const repoLocalDir = repoLocalStateDirFor(repoRoot, config);
+    const targetDir = belayStateDir(config, repoLocalDir);
     await migrateApprovalFilesBetween(repoLocalDir, targetDir);
 }
 export async function migrateControlPlaneApprovalsToRepoLocal(repoRoot, config, sourceDir = configuredControlPlaneDir(config)) {
     if (config.controlPlane.enabled) {
         return;
     }
-    const targetDir = path.join(repoRoot, '.cursor', 'belay');
+    const targetDir = repoLocalStateDirFor(repoRoot, config);
     await migrateApprovalFilesBetween(sourceDir, targetDir);
 }
-export async function loadConfigFile(repoRoot) {
-    const configPath = configPathFor(repoRoot);
+export async function loadConfigFile(repoRoot, adapter = 'cursor') {
+    const configPath = configPathFor(repoRoot, adapter);
     if (!existsSync(configPath)) {
-        return { ...DEFAULT_CONFIG };
+        const layout = getAdapterLayout(adapter);
+        return mergeConfig({}, layout.defaultConfig(repoRoot));
     }
     const raw = await readFile(configPath, 'utf8');
-    return mergeConfig(JSON.parse(raw));
+    const layout = getAdapterLayout(adapter);
+    return mergeConfig(JSON.parse(raw), layout.defaultConfig(repoRoot));
 }
-export async function writeConfigFile(repoRoot, config) {
-    await writeFile(configPathFor(repoRoot), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+export async function writeConfigFile(repoRoot, config, adapter = resolveAdapterName(config)) {
+    const configPath = configPathFor(repoRoot, adapter);
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }
-export async function mergeAndWriteConfig(repoRoot) {
-    const configPath = configPathFor(repoRoot);
+export async function mergeAndWriteConfig(repoRoot, adapter = 'cursor') {
+    const layout = getAdapterLayout(adapter);
+    const configPath = layout.configPath(repoRoot);
     let existing = {};
     if (existsSync(configPath)) {
         existing = JSON.parse(await readFile(configPath, 'utf8'));
     }
-    const merged = mergeConfig(existing);
-    await writeConfigFile(repoRoot, merged);
+    const merged = mergeConfig(existing, layout.defaultConfig(repoRoot));
+    await writeConfigFile(repoRoot, merged, adapter);
     await ensureBelayStateDir(merged, repoRoot);
     if (merged.controlPlane.enabled) {
         await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged);
     }
     else {
         const sourceDir = configuredControlPlaneDir(merged);
-        if (approvalFilesExist(sourceDir) && (await repoLocalApprovalsEmpty(repoRoot))) {
+        if (approvalFilesExist(sourceDir) && (await repoLocalApprovalsEmpty(repoRoot, merged))) {
             await migrateControlPlaneApprovalsToRepoLocal(repoRoot, merged, sourceDir);
         }
     }

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
+  isFreshConfigInput,
+  LEGACY_POLICY_V3,
   mapLegacyClassifierToOverrides,
   mergeConfig,
   migrateConfig,
@@ -29,7 +31,7 @@ describe('config migration', () => {
     expect(migrated.gates.fileMutation).toBe(true)
     expect(migrated.gates.toolShell).toBe(true)
     expect(migrated.classifier.sensitivePaths).toContain('.env')
-    expect(migrated.policy.unknownLocalEffect).toBe('allow_flagged')
+    expect(migrated.policy.unknownLocalEffect).toBe(LEGACY_POLICY_V3.unknownLocalEffect)
     expect(migrated.overrides.allow).toEqual([])
     expect(migrated.redaction.maskBearerTokens).toBe(true)
     expect(migrated.controlPlane.enabled).toBe(false)
@@ -88,14 +90,14 @@ describe('config migration', () => {
 
     expect(merged.overrides.allow).toEqual(['pnpm release:staging'])
     expect(merged.gates.shell).toBe(DEFAULT_CONFIG_V3.gates.shell)
-    expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
+    expect(merged.policy.unknownLocalEffect).toBe(LEGACY_POLICY_V3.unknownLocalEffect)
   })
 
   it('normalizes v3 policy and control plane fields', () => {
     const normalized = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
-      policy: { unknownLocalEffect: 'deny' },
-      controlPlane: { enabled: true, configDir: '  /tmp/belay  ' },
+      policy: { unknownLocalEffect: 'deny', unparseableShell: 'deny' },
+      controlPlane: { enabled: true, configDir: '  /tmp/belay  ', integrity: 'none' },
     })
 
     expect(normalized.policy.unknownLocalEffect).toBe('deny')
@@ -113,9 +115,27 @@ describe('config migration', () => {
   it('resolveControlPlaneDir prefers explicit configDir', () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
-      controlPlane: { enabled: true, configDir: '/explicit/belay' },
+      controlPlane: { enabled: true, configDir: '/explicit/belay', integrity: 'none' },
     })
     expect(resolveControlPlaneDir(config)).toBe('/explicit/belay')
+  })
+
+  it('uses fail-closed defaults for fresh installs', () => {
+    expect(isFreshConfigInput({})).toBe(true)
+    const merged = mergeConfig({})
+    expect(merged.policy.unknownLocalEffect).toBe('deny')
+    expect(merged.policy.unparseableShell).toBe('deny')
+    expect(merged.controlPlane.enabled).toBe(true)
+    expect(merged.controlPlane.integrity).toBe('hash-pinned')
+  })
+
+  it('preserves explicit allow_flagged on migrated v3 configs', () => {
+    const merged = mergeConfig({
+      version: 3,
+      policy: { unknownLocalEffect: 'allow_flagged', unparseableShell: 'allow_flagged' },
+    })
+    expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
+    expect(merged.policy.unparseableShell).toBe('allow_flagged')
   })
 })
 

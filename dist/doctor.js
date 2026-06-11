@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { getAdapter } from './adapters/registry.js';
 import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
-import { approvedApprovalsPath, belayStateDir, loadConfigFile, pendingApprovalsPath, runtimeCorePath, } from './config-io.js';
+import { approvedApprovalsPath, belayStateDir, configPathFor, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
-import { getManagedHookEntries } from './defaults.js';
-import { loadHooksFile } from './installer.js';
 import { resolveNodeBinary } from './node-resolution.js';
 import { loadOperationalInsights } from './operational-insights.js';
 import { PACKAGE_VERSION } from './version.js';
@@ -23,34 +22,57 @@ async function readRuntimeVersion(corePath) {
         return {};
     }
 }
+function resolveDoctorAdapter(options, configAdapter) {
+    if (options.adapter) {
+        return options.adapter;
+    }
+    return configAdapter === 'claude' ? 'claude' : 'cursor';
+}
 export async function doctorProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const cursorDir = path.join(repoRoot, '.cursor');
-    const configPath = path.join(cursorDir, 'belay.config.json');
-    const hooksPath = path.join(cursorDir, 'hooks.json');
-    const corePath = runtimeCorePath(repoRoot);
     const issues = [];
     const notes = [];
     const warnings = [];
     let loadedConfig = null;
+    let adapterName = options.adapter ?? 'cursor';
+    const adapter = getAdapter(adapterName);
+    const layout = adapter.layout;
+    let configPath = layout.configPath(repoRoot);
+    let hooksPath = layout.hooksSettingsPath(repoRoot);
+    let corePath = runtimeCorePath(repoRoot, adapterName);
+    if (!existsSync(configPath) &&
+        adapterName === 'cursor' &&
+        existsSync(configPathFor(repoRoot, 'claude'))) {
+        adapterName = 'claude';
+        configPath = layout.configPath(repoRoot);
+        hooksPath = getAdapter('claude').layout.hooksSettingsPath(repoRoot);
+        corePath = runtimeCorePath(repoRoot, 'claude');
+    }
     if (!existsSync(configPath)) {
         issues.push(`Missing config: ${configPath}`);
     }
     else {
         try {
             const rawConfig = JSON.parse(await readFile(configPath, 'utf8'));
+            adapterName = resolveDoctorAdapter(options, rawConfig.adapter);
+            const activeAdapter = getAdapter(adapterName);
+            configPath = activeAdapter.layout.configPath(repoRoot);
+            hooksPath = activeAdapter.layout.hooksSettingsPath(repoRoot);
+            corePath = runtimeCorePath(repoRoot, adapterName);
             if (rawConfig.version === undefined) {
                 warnings.push('Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.');
             }
-            loadedConfig = await loadConfigFile(repoRoot);
+            loadedConfig = await loadConfigFile(repoRoot, adapterName);
             if (loadedConfig.version !== 3) {
                 warnings.push(`Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`);
             }
+            notes.push(`Adapter: ${adapterName}`);
             notes.push(`Config mode: ${loadedConfig.mode}`);
+            const repoLocalDir = repoLocalStateDirFor(repoRoot, loadedConfig);
             if (loadedConfig.controlPlane.enabled) {
-                notes.push(`Control plane: ${belayStateDir(loadedConfig, repoRoot)}`);
-                const repoLocalPending = path.join(cursorDir, 'belay', 'pending-approvals.json');
-                const repoLocalApproved = path.join(cursorDir, 'belay', 'approved-approvals.json');
+                notes.push(`Control plane: ${belayStateDir(loadedConfig, repoLocalDir)}`);
+                const repoLocalPending = path.join(repoLocalDir, 'pending-approvals.json');
+                const repoLocalApproved = path.join(repoLocalDir, 'approved-approvals.json');
                 if (existsSync(repoLocalPending) || existsSync(repoLocalApproved)) {
                     warnings.push('Repo-local approval files remain while control plane is enabled. Run agent-belay doctor --fix to archive them.');
                 }
@@ -68,29 +90,34 @@ export async function doctorProject(options = {}) {
                     }
                 }
             }
+            if (loadedConfig.controlPlane.integrity === 'hash-pinned') {
+                notes.push('Integrity: hash-pinned (verify with agent-belay upgrade after runtime changes).');
+            }
         }
         catch (error) {
             issues.push(error instanceof Error ? error.message : 'Failed to parse belay.config.json');
         }
     }
-    const stateDir = loadedConfig
-        ? belayStateDir(loadedConfig, repoRoot)
-        : path.join(cursorDir, 'belay');
+    const activeLayout = getAdapter(adapterName).layout;
+    const repoLocalDir = loadedConfig
+        ? repoLocalStateDirFor(repoRoot, loadedConfig)
+        : activeLayout.repoLocalStateDir(repoRoot);
+    const hooksDir = activeLayout.hooksDir(repoRoot);
     const requiredPaths = [
-        path.join(cursorDir, 'hooks', 'belay-runner'),
-        path.join(cursorDir, 'hooks', 'belay-runner.cmd'),
-        path.join(cursorDir, 'hooks', 'belay-before-submit.mjs'),
-        path.join(cursorDir, 'hooks', 'belay-shell-gate.mjs'),
-        path.join(cursorDir, 'hooks', 'belay-tool-gate.mjs'),
-        path.join(cursorDir, 'hooks', 'belay-audit.mjs'),
+        path.join(hooksDir, 'belay-runner'),
+        path.join(hooksDir, 'belay-runner.cmd'),
+        path.join(hooksDir, 'belay-before-submit.mjs'),
+        path.join(hooksDir, 'belay-shell-gate.mjs'),
+        path.join(hooksDir, 'belay-tool-gate.mjs'),
+        path.join(hooksDir, 'belay-audit.mjs'),
         corePath,
         loadedConfig
             ? pendingApprovalsPath(repoRoot, loadedConfig)
-            : path.join(stateDir, 'pending-approvals.json'),
+            : path.join(repoLocalDir, 'pending-approvals.json'),
         loadedConfig
             ? approvedApprovalsPath(repoRoot, loadedConfig)
-            : path.join(stateDir, 'approved-approvals.json'),
-        path.join(repoRoot, loadedConfig?.audit.logPath ?? '.cursor/belay/audit.ndjson'),
+            : path.join(repoLocalDir, 'approved-approvals.json'),
+        path.join(repoRoot, loadedConfig?.audit.logPath ?? activeLayout.defaultAuditLogPath(repoRoot)),
     ];
     for (const requiredPath of requiredPaths) {
         if (!existsSync(requiredPath)) {
@@ -99,21 +126,41 @@ export async function doctorProject(options = {}) {
     }
     let hooksOk = true;
     try {
-        const hooksFile = await loadHooksFile(hooksPath);
-        const managedEntries = getManagedHookEntries(process.platform);
-        for (const { event, definition } of managedEntries) {
-            const entries = hooksFile.hooks[event] ?? [];
-            const present = entries.some((entry) => entry.command === definition.command && entry.matcher === definition.matcher);
-            if (!present) {
-                hooksOk = false;
-                const matcherSuffix = definition.matcher ? ` (matcher: ${definition.matcher})` : '';
-                issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`);
+        const managedEntries = getAdapter(adapterName).hookEvents();
+        if (adapterName === 'cursor') {
+            const { loadHooksFile } = await import('./installer.js');
+            const hooksFile = await loadHooksFile(hooksPath);
+            for (const { event, definition } of managedEntries) {
+                const entries = hooksFile.hooks[event] ?? [];
+                const present = entries.some((entry) => entry.command === definition.command && entry.matcher === definition.matcher);
+                if (!present) {
+                    hooksOk = false;
+                    const matcherSuffix = definition.matcher ? ` (matcher: ${definition.matcher})` : '';
+                    issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`);
+                }
+            }
+        }
+        else {
+            const settings = JSON.parse(await readFile(hooksPath, 'utf8'));
+            for (const { definition } of managedEntries) {
+                const eventHooks = settings.hooks?.PreToolUse ?? [];
+                const present = eventHooks.some((entry) => {
+                    if (!entry || typeof entry !== 'object') {
+                        return false;
+                    }
+                    const hooks = entry.hooks;
+                    return hooks?.some((hook) => hook.command === definition.command);
+                });
+                if (!present && definition.matcher) {
+                    hooksOk = false;
+                    issues.push(`Missing Claude managed hook command: ${definition.command}`);
+                }
             }
         }
     }
     catch (error) {
         hooksOk = false;
-        issues.push(error instanceof Error ? error.message : 'Failed to parse hooks.json');
+        issues.push(error instanceof Error ? error.message : 'Failed to parse hook settings');
     }
     const nodeResolution = resolveNodeBinary();
     if (!nodeResolution.ok) {
@@ -168,7 +215,7 @@ export async function doctorProject(options = {}) {
                 warnings.push(`OQ3 spike failed at ${oq3Spike.path}${oq3Spike.error ? `: ${oq3Spike.error}` : ''}.`);
             }
             else {
-                warnings.push('OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt in Cursor.');
+                warnings.push('OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt.');
             }
         }
     }

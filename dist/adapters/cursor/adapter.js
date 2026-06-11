@@ -1,17 +1,19 @@
 import path from 'node:path';
 import { getManagedHookEntries } from '../../defaults.js';
 import { doctorProject } from '../../doctor.js';
-import { initProject, upgradeProject } from '../../installer.js';
+import { initCursorProject, upgradeCursorProject } from '../../installer.js';
+import { cursorLayout } from '../layouts/cursor.js';
 export const cursorAdapter = {
     name: 'cursor',
+    layout: cursorLayout,
     async install(repoRoot, options = {}) {
-        return initProject({ ...options, targetDir: repoRoot });
+        return initCursorProject({ ...options, targetDir: repoRoot });
     },
     async upgrade(repoRoot, options = {}) {
-        return upgradeProject({ ...options, targetDir: repoRoot });
+        return upgradeCursorProject({ ...options, targetDir: repoRoot });
     },
     async doctor(options = {}) {
-        return doctorProject(options);
+        return doctorProject({ ...options, adapter: 'cursor' });
     },
     hookEvents() {
         return getManagedHookEntries(process.platform);
@@ -20,8 +22,8 @@ export const cursorAdapter = {
 export function cursorPaths(repoRoot) {
     const resolved = path.resolve(repoRoot);
     return {
-        config: path.join(resolved, '.cursor', 'belay.config.json'),
-        hooks: path.join(resolved, '.cursor', 'hooks.json'),
-        runtime: path.join(resolved, '.cursor', 'belay', 'runtime', 'core.mjs'),
+        config: cursorLayout.configPath(resolved),
+        hooks: cursorLayout.hooksSettingsPath(resolved),
+        runtime: path.join(cursorLayout.runtimeDir(resolved), 'core.mjs'),
     };
 }

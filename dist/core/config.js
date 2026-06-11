@@ -1,6 +1,13 @@
 import path from 'node:path';
-export const DEFAULT_POLICY_V3 = {
+/** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+export const LEGACY_POLICY_V3 = {
     unknownLocalEffect: 'allow_flagged',
+    unparseableShell: 'allow_flagged',
+};
+/** Fresh v0.4 install defaults (fail-closed). */
+export const DEFAULT_POLICY_V3 = {
+    unknownLocalEffect: 'deny',
+    unparseableShell: 'deny',
 };
 export const DEFAULT_OVERRIDES_V3 = {
     allow: [],
@@ -13,9 +20,16 @@ export const DEFAULT_REDACTION_V3 = {
     maskKeyValueSecrets: true,
     maskHighEntropyStrings: false,
 };
-export const DEFAULT_CONTROL_PLANE_V3 = {
+export const LEGACY_CONTROL_PLANE_V3 = {
     enabled: false,
     configDir: null,
+    integrity: 'none',
+    spikeOnPrompt: false,
+};
+export const DEFAULT_CONTROL_PLANE_V3 = {
+    enabled: true,
+    configDir: null,
+    integrity: 'hash-pinned',
     spikeOnPrompt: false,
 };
 export const DEFAULT_CONFIG_V2 = {
@@ -36,7 +50,7 @@ export const DEFAULT_CONFIG_V2 = {
         sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
     },
     audit: {
-        logPath: '.cursor/belay/audit.ndjson',
+        logPath: 'belay/audit.ndjson',
         includeAssessment: true,
     },
 };
@@ -82,13 +96,13 @@ export function migrateV2ToV3(v2, rawOverrides) {
             strictChains: v2.classifier.strictChains,
             sensitivePaths: v2.classifier.sensitivePaths,
         },
-        policy: { ...DEFAULT_POLICY_V3 },
+        policy: { ...LEGACY_POLICY_V3 },
         overrides: {
             allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
             external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external),
         },
         redaction: { ...DEFAULT_REDACTION_V3 },
-        controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+        controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
         audit: v2.audit,
     });
 }
@@ -149,8 +163,8 @@ function normalizeV3Raw(raw) {
             ...(raw.classifier ?? {}),
         },
         policy: {
-            ...DEFAULT_CONFIG_V3.policy,
-            ...(raw.policy ?? {}),
+            unknownLocalEffect: raw.policy?.unknownLocalEffect ?? LEGACY_POLICY_V3.unknownLocalEffect,
+            unparseableShell: raw.policy?.unparseableShell ?? LEGACY_POLICY_V3.unparseableShell,
         },
         overrides: {
             ...DEFAULT_CONFIG_V3.overrides,
@@ -161,8 +175,10 @@ function normalizeV3Raw(raw) {
             ...(raw.redaction ?? {}),
         },
         controlPlane: {
-            ...DEFAULT_CONFIG_V3.controlPlane,
-            ...(raw.controlPlane ?? {}),
+            enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
+            configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
+            integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
+            spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
         },
         audit: {
             ...DEFAULT_CONFIG_V3.audit,
@@ -273,7 +289,16 @@ export function normalizeConfig(config) {
                 : DEFAULT_CONFIG_V3.classifier.sensitivePaths,
         },
         policy: {
-            unknownLocalEffect: v3.policy?.unknownLocalEffect === 'deny' ? 'deny' : DEFAULT_POLICY_V3.unknownLocalEffect,
+            unknownLocalEffect: v3.policy?.unknownLocalEffect === 'deny'
+                ? 'deny'
+                : v3.policy?.unknownLocalEffect === 'allow_flagged'
+                    ? 'allow_flagged'
+                    : DEFAULT_POLICY_V3.unknownLocalEffect,
+            unparseableShell: v3.policy?.unparseableShell === 'deny'
+                ? 'deny'
+                : v3.policy?.unparseableShell === 'allow_flagged'
+                    ? 'allow_flagged'
+                    : DEFAULT_POLICY_V3.unparseableShell,
         },
         overrides: {
             allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
@@ -287,10 +312,19 @@ export function normalizeConfig(config) {
             maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true,
         },
         controlPlane: {
-            enabled: v3.controlPlane?.enabled === true,
+            enabled: v3.controlPlane?.enabled === true
+                ? true
+                : v3.controlPlane?.enabled === false
+                    ? false
+                    : DEFAULT_CONTROL_PLANE_V3.enabled,
             configDir: typeof v3.controlPlane?.configDir === 'string' && v3.controlPlane.configDir.trim()
                 ? v3.controlPlane.configDir.trim()
                 : null,
+            integrity: v3.controlPlane?.integrity === 'hash-pinned'
+                ? 'hash-pinned'
+                : v3.controlPlane?.integrity === 'none'
+                    ? 'none'
+                    : DEFAULT_CONTROL_PLANE_V3.integrity,
             spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
         },
         audit: {
@@ -299,8 +333,19 @@ export function normalizeConfig(config) {
         },
     };
 }
+export function isFreshConfigInput(loaded) {
+    if (loaded === null || loaded === undefined) {
+        return true;
+    }
+    if (typeof loaded !== 'object') {
+        return true;
+    }
+    return Object.keys(loaded).length === 0;
+}
 export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
-    const migrated = migrateConfig(existing);
+    const migrated = isFreshConfigInput(existing)
+        ? normalizeConfig({ ...defaults, version: 3 })
+        : migrateConfig(existing);
     return normalizeConfig({
         ...defaults,
         ...migrated,
@@ -344,11 +389,18 @@ export function classifierOptionsFromConfig(config) {
         customAllowCommands: config.overrides.allow,
         sensitivePaths: config.classifier.sensitivePaths,
         unknownLocalEffect: config.policy.unknownLocalEffect,
+        unparseableShell: config.policy.unparseableShell,
         controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
         scrubOptions: scrubOptionsFromConfig(config),
     };
 }
-export function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? '') {
+export function defaultControlPlaneDir(env = process.env, homedir = () => env.HOME ?? env.USERPROFILE ?? '') {
+    if (process.platform === 'win32') {
+        const appData = env.APPDATA?.trim();
+        if (appData) {
+            return path.join(appData, 'agent-belay');
+        }
+    }
     const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
     const base = xdgConfigHome || path.join(homedir(), '.config');
     return path.join(base, 'agent-belay');
@@ -363,15 +415,15 @@ export function resolveControlPlaneDir(config) {
 export function configuredControlPlaneDir(config) {
     return resolveControlPlaneDir(config);
 }
-export function belayStateDir(config, repoRoot) {
+export function belayStateDir(config, repoLocalStateDir) {
     if (config.controlPlane.enabled) {
         return resolveControlPlaneDir(config);
     }
-    return path.join(repoRoot, '.cursor', 'belay');
+    return repoLocalStateDir;
 }
-export function pendingApprovalsFile(config, repoRoot) {
-    return path.join(belayStateDir(config, repoRoot), 'pending-approvals.json');
+export function pendingApprovalsFile(config, repoLocalStateDir) {
+    return path.join(belayStateDir(config, repoLocalStateDir), 'pending-approvals.json');
 }
-export function approvedApprovalsFile(config, repoRoot) {
-    return path.join(belayStateDir(config, repoRoot), 'approved-approvals.json');
+export function approvedApprovalsFile(config, repoLocalStateDir) {
+    return path.join(belayStateDir(config, repoLocalStateDir), 'approved-approvals.json');
 }

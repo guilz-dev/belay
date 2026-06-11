@@ -34,8 +34,8 @@ const eventName = process.argv[2] ?? 'postToolUse'
 await runAuditHook(eventName)
 `;
 }
-async function readRuntimeBundle() {
-    const bundlePath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'bundle', 'cursor-runtime.mjs');
+async function readRuntimeBundle(adapter = 'cursor') {
+    const bundlePath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'bundle', `${adapter}-runtime.mjs`);
     try {
         return await readFile(bundlePath, 'utf8');
     }
@@ -43,8 +43,8 @@ async function readRuntimeBundle() {
         throw new Error('Runtime bundle missing. Run pnpm build before agent-belay init or upgrade.');
     }
 }
-export async function renderRuntimeCore() {
-    const bundle = await readRuntimeBundle();
+export async function renderRuntimeCore(adapter = 'cursor') {
+    const bundle = await readRuntimeBundle(adapter);
     const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(`${PACKAGE_VERSION}@${new Date().toISOString()}`)};\n`;
     const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`;
     const withoutStamp = bundle

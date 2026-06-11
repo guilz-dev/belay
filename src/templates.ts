@@ -43,13 +43,13 @@ await runAuditHook(eventName)
 `
 }
 
-async function readRuntimeBundle(): Promise<string> {
+async function readRuntimeBundle(adapter: 'cursor' | 'claude' = 'cursor'): Promise<string> {
   const bundlePath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     '..',
     'dist',
     'bundle',
-    'cursor-runtime.mjs',
+    `${adapter}-runtime.mjs`,
   )
   try {
     return await readFile(bundlePath, 'utf8')
@@ -58,8 +58,8 @@ async function readRuntimeBundle(): Promise<string> {
   }
 }
 
-export async function renderRuntimeCore(): Promise<string> {
-  const bundle = await readRuntimeBundle()
+export async function renderRuntimeCore(adapter: 'cursor' | 'claude' = 'cursor'): Promise<string> {
+  const bundle = await readRuntimeBundle(adapter)
   const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(`${PACKAGE_VERSION}@${new Date().toISOString()}`)};\n`
   const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`
   const withoutStamp = bundle

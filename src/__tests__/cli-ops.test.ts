@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { explainCommand } from '../explain.js'
 import { initProject, upgradeProject } from '../installer.js'
 import { revokeApproval } from '../revoke.js'
@@ -67,7 +67,7 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(3)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
-    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.3\.3@/)
+    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.4\.0@/)
     expect(coreAfter).toContain('classifyShell')
   })
 
@@ -75,7 +75,8 @@ describe('v0.2 operational commands', () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
 
-    const pendingPath = path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json')
+    const config = await loadConfigFile(repoRoot)
+    const pendingPath = pendingApprovalsPath(repoRoot, config)
     await writeFile(
       pendingPath,
       `${JSON.stringify(

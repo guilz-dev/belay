@@ -27,6 +27,8 @@ export {
   DEFAULT_CONFIG_V2,
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
+  isFreshConfigInput,
+  LEGACY_POLICY_V3,
   mapLegacyClassifierToOverrides,
   mergeConfig,
   migrateConfig,
@@ -48,6 +50,24 @@ export {
   subagentFingerprint,
   toolFingerprint,
 } from './fingerprint.js'
+export type {
+  GatedAction,
+  GatedActionKind,
+  GatePermissionResponse,
+  GateVerdict,
+} from './gate-contract.js'
+export {
+  classifyResultToGateVerdict,
+  GATE_CONTRACT_VERSION,
+  isGatedAction,
+  unnormalizedGateVerdict,
+} from './gate-contract.js'
+export {
+  classifyGatedAction,
+  GateNormalizationError,
+  gateEnabledForAction,
+  normalizeGatedAction,
+} from './gate-engine.js'
 export { matchesSensitivePath } from './glob.js'
 export {
   hasOutsideRepoPath,

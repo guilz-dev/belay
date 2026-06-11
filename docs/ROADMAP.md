@@ -12,6 +12,8 @@
 | **v0.3** | Config v3, fail-closed shell, control plane, redaction | Shipped — see [SPEC-v0.3.md](./SPEC-v0.3.md) |
 | **v0.3.1** | OQ1 dogfood metrics, OQ3 hook spike, orphan cleanup, substitution hardening | Shipped |
 | **v0.3.2** | `dogfood` CLI, status/doctor OQ3 visibility, `init --dogfood`, closure checklist | Shipped |
+| **v0.3.3** | OQ3 + minimum-sample gates on `dogfood --enforce` | Shipped |
+| **v0.4** | Portable adapters, gate contract, Claude Code adapter, fail-closed defaults | Shipped — see [v0.4-plan.md](./v0.4-plan.md) |
 
 ## v0.3 (0.3.0)
 
