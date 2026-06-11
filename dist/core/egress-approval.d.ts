@@ -22,6 +22,7 @@ export declare function ensurePendingEgressApproval(params: {
 }): Promise<{
     approvalId: string;
     approval: ApprovalRecord;
+    created: boolean;
 }>;
 export declare function consumeApprovedEgress(params: {
     repoRoot: string;

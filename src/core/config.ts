@@ -197,6 +197,17 @@ export const DEFAULT_EGRESS_V3: BelayEgressConfig = {
   demoteL3External: true,
 }
 
+const LOOPBACK_EGRESS_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
+
+export function normalizeEgressListenHost(host: string): string {
+  const trimmed = host.trim()
+  const lowered = trimmed.toLowerCase()
+  if (LOOPBACK_EGRESS_HOSTS.has(lowered)) {
+    return lowered === 'localhost' ? '127.0.0.1' : trimmed
+  }
+  return DEFAULT_EGRESS_V3.listenHost
+}
+
 export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   version: 2,
   mode: 'enforce',
@@ -615,10 +626,11 @@ export function normalizeConfig(
     },
     egress: {
       enabled: v3.egress?.enabled === true,
-      listenHost:
+      listenHost: normalizeEgressListenHost(
         typeof v3.egress?.listenHost === 'string' && v3.egress.listenHost.trim()
           ? v3.egress.listenHost.trim()
           : DEFAULT_EGRESS_V3.listenHost,
+      ),
       listenPort:
         typeof v3.egress?.listenPort === 'number' && v3.egress.listenPort > 0
           ? v3.egress.listenPort

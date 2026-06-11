@@ -27,7 +27,7 @@ export async function ensurePendingEgressApproval(params: {
   repoRoot: string
   policyResult: EgressPolicyResult
   store: EgressApprovalStore
-}): Promise<{ approvalId: string; approval: ApprovalRecord }> {
+}): Promise<{ approvalId: string; approval: ApprovalRecord; created: boolean }> {
   const { config, repoRoot, policyResult, store } = params
   const pending = await store.loadPending()
   pending.state = compactApprovals(pending.state)
@@ -40,7 +40,7 @@ export async function ensurePendingEgressApproval(params: {
   )
   if (existing) {
     await store.writePending(pending.filePath, pending.state)
-    return { approvalId: existing.approvalId, approval: existing }
+    return { approvalId: existing.approvalId, approval: existing, created: false }
   }
 
   const approvalId = `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`
@@ -55,7 +55,27 @@ export async function ensurePendingEgressApproval(params: {
   })
   pending.state.approvals.push(approval)
   await store.writePending(pending.filePath, pending.state)
-  return { approvalId, approval }
+  return { approvalId, approval, created: true }
+}
+
+const consumeLocks = new Map<string, Promise<void>>()
+
+async function withConsumeLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = consumeLocks.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  consumeLocks.set(key, previous.then(() => gate))
+  await previous
+  try {
+    return await fn()
+  } finally {
+    release()
+    if (consumeLocks.get(key) === gate) {
+      consumeLocks.delete(key)
+    }
+  }
 }
 
 export async function consumeApprovedEgress(params: {
@@ -63,21 +83,24 @@ export async function consumeApprovedEgress(params: {
   fingerprint: string
   store: EgressApprovalStore
 }): Promise<ApprovalRecord | null> {
-  const approved = await params.store.loadApproved()
-  approved.state = compactApprovals(approved.state)
-  const index = approved.state.approvals.findIndex(
-    (approval) =>
-      approval.kind === 'egress' &&
-      approval.fingerprint === params.fingerprint &&
-      approval.repoRoot === params.repoRoot,
-  )
-  if (index === -1) {
+  const lockKey = `${params.repoRoot}:${params.fingerprint}`
+  return withConsumeLock(lockKey, async () => {
+    const approved = await params.store.loadApproved()
+    approved.state = compactApprovals(approved.state)
+    const index = approved.state.approvals.findIndex(
+      (approval) =>
+        approval.kind === 'egress' &&
+        approval.fingerprint === params.fingerprint &&
+        approval.repoRoot === params.repoRoot,
+    )
+    if (index === -1) {
+      await params.store.writeApproved(approved.filePath, approved.state)
+      return null
+    }
+    const [approval] = approved.state.approvals.splice(index, 1)
     await params.store.writeApproved(approved.filePath, approved.state)
-    return null
-  }
-  const [approval] = approved.state.approvals.splice(index, 1)
-  await params.store.writeApproved(approved.filePath, approved.state)
-  return approval
+    return approval
+  })
 }
 
 export async function notifyEgressDeny(params: {
@@ -130,6 +153,13 @@ export async function recordEgressApproval(params: {
   const pending = await params.store.loadPending()
   const match = pending.state.approvals.find((approval) => approval.approvalId === params.approvalId)
   const host = match ? parseHostFromSummary(match.summary) : null
+
+  if (params.scope === 'domain' && match && !host) {
+    return {
+      ok: false,
+      message: `Cannot add domain to egress allowlist: could not parse host from summary "${match.summary}".`,
+    }
+  }
 
   const result = await recordApproval({
     approvalId: params.approvalId,

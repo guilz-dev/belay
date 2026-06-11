@@ -61,6 +61,15 @@ var DEFAULT_EGRESS_V3 = {
   listenPort: 17831,
   demoteL3External: true
 };
+var LOOPBACK_EGRESS_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
+function normalizeEgressListenHost(host) {
+  const trimmed = host.trim();
+  const lowered = trimmed.toLowerCase();
+  if (LOOPBACK_EGRESS_HOSTS.has(lowered)) {
+    return lowered === "localhost" ? "127.0.0.1" : trimmed;
+  }
+  return DEFAULT_EGRESS_V3.listenHost;
+}
 var DEFAULT_CONFIG_V2 = {
   version: 2,
   mode: "enforce",
@@ -355,7 +364,9 @@ function normalizeConfig(config) {
     },
     egress: {
       enabled: v3.egress?.enabled === true,
-      listenHost: typeof v3.egress?.listenHost === "string" && v3.egress.listenHost.trim() ? v3.egress.listenHost.trim() : DEFAULT_EGRESS_V3.listenHost,
+      listenHost: normalizeEgressListenHost(
+        typeof v3.egress?.listenHost === "string" && v3.egress.listenHost.trim() ? v3.egress.listenHost.trim() : DEFAULT_EGRESS_V3.listenHost
+      ),
       listenPort: typeof v3.egress?.listenPort === "number" && v3.egress.listenPort > 0 ? v3.egress.listenPort : DEFAULT_EGRESS_V3.listenPort,
       demoteL3External: v3.egress?.demoteL3External !== false
     },

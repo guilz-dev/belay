@@ -26,7 +26,8 @@ export function parseConnectTarget(url) {
     }
     const bracketMatch = url.match(/^\[([^\]]+)\]:(\d+)$/);
     if (bracketMatch?.[1]) {
-        return { host: bracketMatch[1], port: Number(bracketMatch[2]) };
+        const port = parseConnectPort(bracketMatch[2]);
+        return port ? { host: bracketMatch[1], port } : null;
     }
     const colonIndex = url.lastIndexOf(':');
     if (colonIndex === -1) {
@@ -37,7 +38,15 @@ export function parseConnectTarget(url) {
     if (!host) {
         return null;
     }
-    return { host, port: portValue ? Number(portValue) : 443 };
+    const port = portValue ? parseConnectPort(portValue) : 443;
+    return port ? { host, port } : null;
+}
+function parseConnectPort(value) {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return null;
+    }
+    return port;
 }
 async function evaluateRequest(ctx, request) {
     const allowlist = await loadEgressAllowlist(ctx.store.allowlistPath);
@@ -106,18 +115,20 @@ async function denyEgressRequest(ctx, request, allowlist, result) {
             allowlist,
             approved,
         });
-    const { approvalId, approval } = await ensurePendingEgressApproval({
+    const { approvalId, approval, created } = await ensurePendingEgressApproval({
         config: ctx.config,
         repoRoot: ctx.repoRoot,
         policyResult,
         store: ctx.store,
     });
-    await notifyEgressDeny({
-        config: ctx.config,
-        repoRoot: ctx.repoRoot,
-        policyResult,
-        approval,
-    });
+    if (created) {
+        await notifyEgressDeny({
+            config: ctx.config,
+            repoRoot: ctx.repoRoot,
+            policyResult,
+            approval,
+        });
+    }
     await ctx.onAudit?.({
         event: 'egressConnect',
         kind: 'egress',

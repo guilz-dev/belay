@@ -119,6 +119,7 @@ export declare const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig;
 export declare const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig;
 export declare const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig;
 export declare const DEFAULT_EGRESS_V3: BelayEgressConfig;
+export declare function normalizeEgressListenHost(host: string): string;
 export declare const DEFAULT_CONFIG_V2: BelayConfigV2;
 export declare const DEFAULT_CONFIG_V3: BelayConfigV3;
 export declare function mapLegacyClassifierToOverrides(classifier: {

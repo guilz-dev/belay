@@ -13,6 +13,8 @@ export interface EgressStatusReport {
     startedAt: string | null;
     boundRepoRoot: string | null;
     repoRootMismatch: boolean;
+    foreignProxy: boolean;
+    portOccupied: boolean;
     proxyEnv: Record<string, string>;
 }
 export declare function egressStatus(options?: EgressServiceOptions): Promise<EgressStatusReport>;

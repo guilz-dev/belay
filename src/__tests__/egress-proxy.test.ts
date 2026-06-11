@@ -242,5 +242,6 @@ describe('parseConnectTarget', () => {
     expect(parseConnectTarget('example.com:443')).toEqual({ host: 'example.com', port: 443 })
     expect(parseConnectTarget('example.com')).toEqual({ host: 'example.com', port: 443 })
     expect(parseConnectTarget('[::1]:8443')).toEqual({ host: '::1', port: 8443 })
+    expect(parseConnectTarget('example.com:bad')).toBeNull()
   })
 })

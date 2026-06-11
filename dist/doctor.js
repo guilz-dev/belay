@@ -230,7 +230,10 @@ export async function doctorProject(options = {}) {
             }
             else {
                 notes.push(`Egress proxy running (pid ${egress.pid}).`);
-                if (egress.repoRootMismatch) {
+                if (egress.foreignProxy) {
+                    warnings.push(`Egress listen port ${egress.host}:${egress.port} is occupied by another proxy${egress.boundRepoRoot ? ` for ${egress.boundRepoRoot}` : ''}. Do not use agent-belay egress env for this repository.`);
+                }
+                else if (egress.repoRootMismatch) {
                     warnings.push(`Egress proxy is bound to ${egress.boundRepoRoot} but this repo is ${repoRoot}. Stop and restart egress for this repository.`);
                 }
             }

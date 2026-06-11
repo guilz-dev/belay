@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
+import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -12,6 +13,7 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from './config-io.js'
+import { configuredControlPlaneDir } from './core/config.js'
 import { egressAllowlistPath } from './core/egress/allowlist.js'
 import { formatProxyEnv, recommendedProxyEnv } from './core/egress/env.js'
 import type { ApprovalStateFile } from './core/types.js'
@@ -30,6 +32,8 @@ export interface EgressStatusReport {
   startedAt: string | null
   boundRepoRoot: string | null
   repoRootMismatch: boolean
+  foreignProxy: boolean
+  portOccupied: boolean
   proxyEnv: Record<string, string>
 }
 
@@ -75,11 +79,56 @@ async function readStatusFile(
   }
 }
 
+async function isPortOpen(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port })
+    const finish = (open: boolean) => {
+      socket.destroy()
+      resolve(open)
+    }
+    socket.setTimeout(300)
+    socket.on('connect', () => finish(true))
+    socket.on('timeout', () => finish(false))
+    socket.on('error', () => finish(false))
+  })
+}
+
+async function resolveLiveEgressStatus(
+  repoRoot: string,
+  config: Awaited<ReturnType<typeof loadConfigFile>>,
+): Promise<{
+  status: Awaited<ReturnType<typeof readStatusFile>>
+  host: string
+  port: number
+  portOccupied: boolean
+}> {
+  const { statusPath } = egressStatePaths(repoRoot, config)
+  const statusCandidates = [statusPath]
+  const controlPlaneStatus = path.join(configuredControlPlaneDir(config), 'egress-proxy.json')
+  if (!statusCandidates.includes(controlPlaneStatus)) {
+    statusCandidates.push(controlPlaneStatus)
+  }
+
+  let status: Awaited<ReturnType<typeof readStatusFile>> = null
+  for (const candidate of statusCandidates) {
+    const candidateStatus = await readStatusFile(candidate)
+    if (candidateStatus && isProcessAlive(candidateStatus.pid)) {
+      status = candidateStatus
+      break
+    }
+  }
+
+  const host = status?.host ?? config.egress.listenHost
+  const port = status?.port ?? config.egress.listenPort
+  const portOccupied = await isPortOpen(host, port)
+  return { status, host, port, portOccupied }
+}
+
 async function waitForEgressRunning(repoRoot: string, timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const status = await egressStatus({ targetDir: repoRoot })
-    if (status.running) {
+    if (status.running && !status.foreignProxy) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -99,21 +148,27 @@ function isProcessAlive(pid: number): boolean {
 export async function egressStatus(options: EgressServiceOptions = {}): Promise<EgressStatusReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const { statusPath } = egressStatePaths(repoRoot, config)
-  const status = await readStatusFile(statusPath)
-  const running = status ? isProcessAlive(status.pid) : false
-  const boundRepoRoot = running ? (status?.repoRoot ?? null) : null
+  const { status, host, port, portOccupied } = await resolveLiveEgressStatus(repoRoot, config)
+  const ownedRunning = Boolean(status)
+  const running = ownedRunning || portOccupied
+  const boundRepoRoot = status?.repoRoot ?? null
+  const foreignProxy = portOccupied && !ownedRunning
+  const repoRootMismatch = Boolean(
+    (boundRepoRoot && boundRepoRoot !== repoRoot) || foreignProxy,
+  )
 
   return {
     repoRoot,
     enabled: config.egress.enabled,
     running,
-    host: status?.host ?? config.egress.listenHost,
-    port: status?.port ?? config.egress.listenPort,
-    pid: running ? (status?.pid ?? null) : null,
-    startedAt: running ? (status?.startedAt ?? null) : null,
-    boundRepoRoot,
-    repoRootMismatch: Boolean(boundRepoRoot && boundRepoRoot !== repoRoot),
+    host,
+    port,
+    pid: ownedRunning ? (status?.pid ?? null) : null,
+    startedAt: ownedRunning ? (status?.startedAt ?? null) : null,
+    boundRepoRoot: foreignProxy ? boundRepoRoot : boundRepoRoot,
+    repoRootMismatch,
+    foreignProxy,
+    portOccupied,
     proxyEnv: recommendedProxyEnv(config.egress),
   }
 }
@@ -132,6 +187,12 @@ export async function startEgressProxy(
   }
 
   const current = await egressStatus({ targetDir: repoRoot })
+  if (current.foreignProxy) {
+    return {
+      ok: false,
+      message: `Port ${current.host}:${current.port} is already in use by another egress proxy${current.boundRepoRoot ? ` for ${current.boundRepoRoot}` : ''}. Stop it before starting for ${repoRoot}.`,
+    }
+  }
   if (current.running) {
     if (current.repoRootMismatch) {
       return {
@@ -160,7 +221,7 @@ export async function startEgressProxy(
 
   const started = await waitForEgressRunning(repoRoot)
   const after = await egressStatus({ targetDir: repoRoot })
-  if (!started || !after.running) {
+  if (!started || !after.running || after.foreignProxy) {
     return {
       ok: false,
       message: 'Failed to start egress proxy. Check that the listen port is free.',
@@ -216,6 +277,29 @@ export async function egressEnv(
     }
   }
 
+  const status = await egressStatus({ targetDir: repoRoot })
+  if (status.foreignProxy) {
+    return {
+      ok: false,
+      message: `Port ${status.host}:${status.port} is in use by another egress proxy${status.boundRepoRoot ? ` for ${status.boundRepoRoot}` : ''}. Do not export proxy env for ${repoRoot} until it is stopped.`,
+      env: {},
+    }
+  }
+  if (status.repoRootMismatch) {
+    return {
+      ok: false,
+      message: `Egress proxy is bound to ${status.boundRepoRoot}, not ${repoRoot}. Stop and restart egress for this repository.`,
+      env: {},
+    }
+  }
+  if (!status.running) {
+    return {
+      ok: false,
+      message: 'Egress proxy is not running. Run agent-belay egress start first.',
+      env: {},
+    }
+  }
+
   const env = recommendedProxyEnv(config.egress)
   return {
     ok: true,
@@ -239,6 +323,9 @@ export function formatEgressStatusReport(report: EgressStatusReport): string {
   }
   if (report.boundRepoRoot) {
     lines.push(`Bound repo: ${report.boundRepoRoot}`)
+  }
+  if (report.foreignProxy) {
+    lines.push('Warning: listen port is occupied by a proxy not owned by this repository state.')
   }
   if (report.repoRootMismatch) {
     lines.push(`Warning: proxy is bound to a different repository than ${report.repoRoot}.`)
