@@ -1010,7 +1010,7 @@ function isPathAllowlisted(absolutePath, allowlist) {
   const resolved = normalizeAllowlistPath(absolutePath);
   return allowlist.paths.some((entry) => {
     const scope = normalizeAllowlistPath(entry.path);
-    return resolved === scope || pathWithinRoot(scope, resolved) || pathWithinRoot(resolved, scope);
+    return resolved === scope || pathWithinRoot(scope, resolved);
   });
 }
 function allPathsAllowlisted(absolutePaths, allowlist) {
@@ -1020,6 +1020,12 @@ function allPathsAllowlisted(absolutePaths, allowlist) {
 // src/core/capability/broker.ts
 function isSandboxBrokerEnabled(config) {
   return config.sandbox.enabled;
+}
+
+// src/core/capability/reasons.ts
+var FS_SCOPE_REASONS = /* @__PURE__ */ new Set(["outside_repo_mutation", "outside_repo_redirect"]);
+function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
+  return brokerActive && FS_SCOPE_REASONS.has(reason);
 }
 
 // src/core/shell-tokenizer.ts
@@ -3851,7 +3857,8 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
       agent_message: agentMessage
     });
   }
-  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
+  const brokerActive = isSandboxBrokerEnabled(ctx.config);
+  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) || shouldSkipBrokerApprovedOnce(brokerActive, result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
   if (approved) {
     await deps.appendAudit(ctx, {
       ...gateBase,

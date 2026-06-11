@@ -2,6 +2,12 @@
 
 ## 0.9.0
 
+### Fixed
+
+- `l1FullActive` now requires `sandbox.runtime` ≠ `none`, not only `sandbox.enabled`
+- FS-scope allowlist no longer treats a child path entry as approval for its parent directory
+- One-shot shell approvals no longer bypass outside-repo rules while the sandbox broker is active
+
 ### Added
 
 - **Sandbox capability broker (L1-full path, opt-in)** — `sandbox.enabled` integrates with external sandbox runtimes; belay brokers fs-outside capability via `fs-scope-allowlist.json`

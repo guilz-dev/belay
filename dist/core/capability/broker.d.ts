@@ -1,5 +1,6 @@
 import type { BelayConfigV3 } from '../config.js';
 export declare function isSandboxBrokerEnabled(config: BelayConfigV3): boolean;
+export declare function hasSandboxRuntime(config: BelayConfigV3): boolean;
 export interface L1FullStatus {
     active: boolean;
     sandbox: boolean;

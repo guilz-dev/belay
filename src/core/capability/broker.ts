@@ -4,6 +4,10 @@ export function isSandboxBrokerEnabled(config: BelayConfigV3): boolean {
   return config.sandbox.enabled
 }
 
+export function hasSandboxRuntime(config: BelayConfigV3): boolean {
+  return config.sandbox.enabled && config.sandbox.runtime !== 'none'
+}
+
 export interface L1FullStatus {
   active: boolean
   sandbox: boolean
@@ -17,7 +21,7 @@ export function evaluateL1FullStatus(params: {
   config: BelayConfigV3
   egressProxyRunning: boolean
 }): L1FullStatus {
-  const sandbox = params.config.sandbox.enabled
+  const sandbox = hasSandboxRuntime(params.config)
   const egress = params.config.egress.enabled
   const controlPlaneIsolation = params.config.controlPlane.isolation.mode !== 'none'
   const approvalSigningRequired = params.config.approvalSigning.required

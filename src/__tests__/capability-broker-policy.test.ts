@@ -55,6 +55,21 @@ describe('capability broker policy', () => {
     expect(allPathsAllowlisted(['/tmp/shared/nested/file.txt'], allowlist)).toBe(true)
   })
 
+  it('does not treat a child allowlist entry as approval for the parent directory', () => {
+    const allowlist = {
+      version: 1 as const,
+      paths: [
+        {
+          path: '/tmp/shared/nested/file.txt',
+          approvedAt: '2026-01-01T00:00:00.000Z',
+          approvalId: 'belay_test',
+        },
+      ],
+    }
+    expect(isPathAllowlisted('/tmp/shared', allowlist)).toBe(false)
+    expect(isPathAllowlisted('/tmp/shared/nested/file.txt', allowlist)).toBe(true)
+  })
+
   it('requires all L1-full prerequisites', () => {
     const active = evaluateL1FullStatus({
       config: {
@@ -85,5 +100,21 @@ describe('capability broker policy', () => {
       egressProxyRunning: true,
     })
     expect(inactive.active).toBe(false)
+
+    const runtimeNone = evaluateL1FullStatus({
+      config: {
+        ...DEFAULT_CONFIG_V3,
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'none' },
+        egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true },
+        approvalSigning: { required: true },
+        controlPlane: {
+          ...DEFAULT_CONFIG_V3.controlPlane,
+          isolation: { mode: 'separate-user', verifyAgentWritable: true },
+        },
+      },
+      egressProxyRunning: true,
+    })
+    expect(runtimeNone.active).toBe(false)
+    expect(runtimeNone.sandbox).toBe(false)
   })
 })

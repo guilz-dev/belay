@@ -107,7 +107,9 @@ sandboxes itself. A real sandbox runtime (container / seatbelt / landlock / Curs
 sandbox) must enforce deny-all; belay brokers capability widening:
 
 - **FS outside repo** — `sandbox.enabled` + fs-scope allowlist grown via
-  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths
+  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths.
+  One-shot shell approvals do not bypass outside-repo rules while the broker is active;
+  use `--scope path` to persist fs-scope allowances
 - **Egress** — continues to use the v0.7 egress proxy + domain allowlist
 - **Control-plane isolation** — `controlPlane.isolation` verifies that the agent process
   should not write approval state / signing keys; paired with `approvalSigning.required`

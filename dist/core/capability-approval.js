@@ -1,6 +1,6 @@
 import { recordApproval } from './approval-service.js';
 import { addPathToAllowlist, loadFsScopeAllowlist, normalizeAllowlistPath, saveFsScopeAllowlist, } from './capability/allowlist.js';
-const FS_SCOPE_REASONS = new Set(['outside_repo_mutation', 'outside_repo_redirect']);
+import { FS_SCOPE_REASONS } from './capability/reasons.js';
 export async function recordCapabilityApproval(params) {
     const pending = await params.store.loadPending();
     const match = pending.state.approvals.find((approval) => approval.approvalId === params.approvalId);

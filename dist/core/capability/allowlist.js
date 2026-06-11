@@ -37,7 +37,7 @@ export function isPathAllowlisted(absolutePath, allowlist) {
     const resolved = normalizeAllowlistPath(absolutePath);
     return allowlist.paths.some((entry) => {
         const scope = normalizeAllowlistPath(entry.path);
-        return resolved === scope || pathWithinRoot(scope, resolved) || pathWithinRoot(resolved, scope);
+        return resolved === scope || pathWithinRoot(scope, resolved);
     });
 }
 export function allPathsAllowlisted(absolutePaths, allowlist) {

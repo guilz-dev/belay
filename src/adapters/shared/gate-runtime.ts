@@ -8,6 +8,7 @@ import {
   fsScopeAllowlistPath,
   isSandboxBrokerEnabled,
   loadFsScopeAllowlistSync,
+  shouldSkipBrokerApprovedOnce,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
@@ -391,9 +392,12 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason)
-    ? null
-    : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
+  const brokerActive = isSandboxBrokerEnabled(ctx.config)
+  const approved =
+    TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ||
+    shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
+      ? null
+      : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
   if (approved) {
     await deps.appendAudit(ctx, {
       ...gateBase,

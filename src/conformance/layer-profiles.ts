@@ -71,5 +71,10 @@ export const LAYER_CONFORMANCE_SCENARIOS: Record<LayerProfileId, LayerConformanc
   'l1-full': [
     { command: 'git status', permission: 'allow' },
     { command: 'curl https://example.com', permission: 'deny' },
+    {
+      command: 'echo hi > ../outside.txt',
+      permission: 'deny',
+      reason: 'outside_repo_redirect',
+    },
   ],
 }

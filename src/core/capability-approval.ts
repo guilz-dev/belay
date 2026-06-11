@@ -5,6 +5,7 @@ import {
   normalizeAllowlistPath,
   saveFsScopeAllowlist,
 } from './capability/allowlist.js'
+import { FS_SCOPE_REASONS } from './capability/reasons.js'
 import type { CapabilityApprovalScope } from './capability/types.js'
 import type { BelayConfigV3 } from './config.js'
 import type { ApprovalStateFile } from './types.js'
@@ -16,8 +17,6 @@ export interface CapabilityApprovalStore {
   writeApproved: (filePath: string, state: ApprovalStateFile) => Promise<void>
   allowlistPath: string
 }
-
-const FS_SCOPE_REASONS = new Set(['outside_repo_mutation', 'outside_repo_redirect'])
 
 export async function recordCapabilityApproval(params: {
   approvalId: string
