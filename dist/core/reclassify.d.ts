@@ -1,5 +1,5 @@
-import type { BelayConfigV3 } from './config.js';
 import type { AuditRecord } from './audit-types.js';
+import type { BelayConfigV3 } from './config.js';
 import type { ClassifyResult } from './types.js';
 export interface ReclassifyDiff {
     timestamp?: string;

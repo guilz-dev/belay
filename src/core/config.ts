@@ -723,7 +723,6 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config),
     egressEnabled: config.egress.enabled,
-    demoteL3External: config.egress.enabled && config.egress.demoteL3External,
   }
 }
 

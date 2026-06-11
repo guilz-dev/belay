@@ -1,16 +1,14 @@
-import { describe, expect, it } from 'vitest'
-
-import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import { auditProject } from '../audit.js'
+import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach } from 'vitest'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []

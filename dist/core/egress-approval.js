@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { issueApprovalToken } from './approval-token.js';
 import { compactApprovals, createApprovalRecord } from './approval.js';
+import { issueApprovalToken } from './approval-token.js';
 import { configuredControlPlaneDir } from './config.js';
 import { addDomainToAllowlist, loadEgressAllowlist, saveEgressAllowlist, } from './egress/allowlist.js';
 import { parseHostFromSummary } from './egress/fingerprint.js';

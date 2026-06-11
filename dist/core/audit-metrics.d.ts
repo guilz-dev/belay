@@ -44,4 +44,4 @@ export declare function computeAuditMetrics(records: Record<string, unknown>[], 
     mode?: string;
     unknownLocalEffect?: string;
 }): AuditMetricsReport;
-export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord };
+export { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord };

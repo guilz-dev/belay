@@ -1,108 +1,11 @@
 // agent-belay claude runtime bundle
-
-// src/adapters/claude/runtime-entry.ts
-import process2 from "node:process";
-
-// src/core/gate-contract.ts
-var GATE_CONTRACT_VERSION = 1;
-function classifyResultToGateVerdict(params) {
-  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: result.verdict,
-    reason: result.reason,
-    fingerprint: result.fingerprint,
-    assessment: result.assessment,
-    normalizedCommand: result.normalizedCommand,
-    summary: result.summary,
-    permission,
-    wouldBlock,
-    mode,
-    approvalId,
-    user_message,
-    agent_message
-  };
-}
-function unnormalizedGateVerdict(params) {
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: "deny_pending_approval",
-    reason: params.reason,
-    fingerprint: "unnormalized",
-    assessment: {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "unknown",
-      confidence: 0,
-      signals: ["normalization_failed"]
-    },
-    permission: "deny",
-    wouldBlock: true,
-    mode: params.mode,
-    user_message: params.user_message,
-    agent_message: params.agent_message
-  };
-}
-
-// src/adapters/layouts/claude.ts
-import path2 from "node:path";
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 
 // src/core/config.ts
 import path from "node:path";
-var DEFAULT_CONFIDENCE_THRESHOLDS = {
-  allow: 0.88,
-  flag: 0.72
-};
-var DEFAULT_MODEL_ASSIST = {
-  enabled: false,
-  timeoutMs: 3e3
-};
-var LEGACY_POLICY_V3 = {
-  unknownLocalEffect: "allow_flagged",
-  unparseableShell: "allow_flagged",
-  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-  modelAssist: { ...DEFAULT_MODEL_ASSIST }
-};
-var DEFAULT_POLICY_V3 = {
-  unknownLocalEffect: "deny",
-  unparseableShell: "deny",
-  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-  modelAssist: { ...DEFAULT_MODEL_ASSIST }
-};
-var DEFAULT_OVERRIDES_V3 = {
-  allow: [],
-  external: []
-};
-var DEFAULT_REDACTION_V3 = {
-  maskApprovalIds: true,
-  maskBearerTokens: true,
-  maskAuthHeaders: true,
-  maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false
-};
-var LEGACY_CONTROL_PLANE_V3 = {
-  enabled: false,
-  configDir: null,
-  integrity: "none",
-  spikeOnPrompt: false
-};
-var DEFAULT_CONTROL_PLANE_V3 = {
-  enabled: true,
-  configDir: null,
-  integrity: "hash-pinned",
-  spikeOnPrompt: false
-};
-var DEFAULT_NOTIFICATIONS_V3 = {};
-var DEFAULT_APPROVAL_SIGNING_V3 = {
-  required: false
-};
-var DEFAULT_EGRESS_V3 = {
-  enabled: false,
-  listenHost: "127.0.0.1",
-  listenPort: 17831,
-  demoteL3External: true
-};
-var LOOPBACK_EGRESS_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
 function normalizeEgressListenHost(host) {
   const trimmed = host.trim();
   const lowered = trimmed.toLowerCase();
@@ -111,47 +14,6 @@ function normalizeEgressListenHost(host) {
   }
   return DEFAULT_EGRESS_V3.listenHost;
 }
-var DEFAULT_CONFIG_V2 = {
-  version: 2,
-  mode: "enforce",
-  approvalTtlMinutes: 15,
-  tokenPrefix: "/belay-approve",
-  gates: {
-    shell: true,
-    subagent: true,
-    fileMutation: true,
-    toolShell: true
-  },
-  classifier: {
-    strictChains: true,
-    customExternalCommands: [],
-    customAllowCommands: [],
-    sensitivePaths: [".env", ".env.*", "**/credentials/**"]
-  },
-  audit: {
-    logPath: "belay/audit.ndjson",
-    includeAssessment: true
-  }
-};
-var DEFAULT_CONFIG_V3 = {
-  version: 3,
-  mode: DEFAULT_CONFIG_V2.mode,
-  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
-  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
-  gates: { ...DEFAULT_CONFIG_V2.gates },
-  classifier: {
-    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
-    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
-  },
-  policy: { ...DEFAULT_POLICY_V3 },
-  overrides: { ...DEFAULT_OVERRIDES_V3 },
-  redaction: { ...DEFAULT_REDACTION_V3 },
-  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
-  notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
-  approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
-  egress: { ...DEFAULT_EGRESS_V3 },
-  audit: { ...DEFAULT_CONFIG_V2.audit }
-};
 function uniqueStrings(values) {
   return [...new Set(values)];
 }
@@ -487,8 +349,7 @@ function classifierOptionsFromConfig(config) {
     confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config),
-    egressEnabled: config.egress.enabled,
-    demoteL3External: config.egress.enabled && config.egress.demoteL3External
+    egressEnabled: config.egress.enabled
   };
 }
 function defaultControlPlaneDir(env = process.env, homedir = () => env.HOME ?? env.USERPROFILE ?? "") {
@@ -523,51 +384,502 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
+var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
+var init_config = __esm({
+  "src/core/config.ts"() {
+    "use strict";
+    DEFAULT_CONFIDENCE_THRESHOLDS = {
+      allow: 0.88,
+      flag: 0.72
+    };
+    DEFAULT_MODEL_ASSIST = {
+      enabled: false,
+      timeoutMs: 3e3
+    };
+    LEGACY_POLICY_V3 = {
+      unknownLocalEffect: "allow_flagged",
+      unparseableShell: "allow_flagged",
+      confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+      modelAssist: { ...DEFAULT_MODEL_ASSIST }
+    };
+    DEFAULT_POLICY_V3 = {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+      modelAssist: { ...DEFAULT_MODEL_ASSIST }
+    };
+    DEFAULT_OVERRIDES_V3 = {
+      allow: [],
+      external: []
+    };
+    DEFAULT_REDACTION_V3 = {
+      maskApprovalIds: true,
+      maskBearerTokens: true,
+      maskAuthHeaders: true,
+      maskKeyValueSecrets: true,
+      maskHighEntropyStrings: false
+    };
+    LEGACY_CONTROL_PLANE_V3 = {
+      enabled: false,
+      configDir: null,
+      integrity: "none",
+      spikeOnPrompt: false
+    };
+    DEFAULT_CONTROL_PLANE_V3 = {
+      enabled: true,
+      configDir: null,
+      integrity: "hash-pinned",
+      spikeOnPrompt: false
+    };
+    DEFAULT_NOTIFICATIONS_V3 = {};
+    DEFAULT_APPROVAL_SIGNING_V3 = {
+      required: false
+    };
+    DEFAULT_EGRESS_V3 = {
+      enabled: false,
+      listenHost: "127.0.0.1",
+      listenPort: 17831,
+      demoteL3External: true
+    };
+    LOOPBACK_EGRESS_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
+    DEFAULT_CONFIG_V2 = {
+      version: 2,
+      mode: "enforce",
+      approvalTtlMinutes: 15,
+      tokenPrefix: "/belay-approve",
+      gates: {
+        shell: true,
+        subagent: true,
+        fileMutation: true,
+        toolShell: true
+      },
+      classifier: {
+        strictChains: true,
+        customExternalCommands: [],
+        customAllowCommands: [],
+        sensitivePaths: [".env", ".env.*", "**/credentials/**"]
+      },
+      audit: {
+        logPath: "belay/audit.ndjson",
+        includeAssessment: true
+      }
+    };
+    DEFAULT_CONFIG_V3 = {
+      version: 3,
+      mode: DEFAULT_CONFIG_V2.mode,
+      approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
+      tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
+      gates: { ...DEFAULT_CONFIG_V2.gates },
+      classifier: {
+        strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
+        sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
+      },
+      policy: { ...DEFAULT_POLICY_V3 },
+      overrides: { ...DEFAULT_OVERRIDES_V3 },
+      redaction: { ...DEFAULT_REDACTION_V3 },
+      controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+      notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+      approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+      egress: { ...DEFAULT_EGRESS_V3 },
+      audit: { ...DEFAULT_CONFIG_V2.audit }
+    };
+  }
+});
 
 // src/adapters/layouts/claude.ts
+import path2 from "node:path";
 function runnerCommand(platform, hookName, ...args) {
   const base = platform === "win32" ? ".\\.claude\\hooks\\belay-runner.cmd" : "./.claude/hooks/belay-runner";
   return [base, hookName, ...args].join(" ");
 }
-var claudeLayout = {
-  name: "claude",
-  configPath(repoRoot) {
-    return path2.join(repoRoot, ".claude", "belay.config.json");
-  },
-  hooksSettingsPath(repoRoot) {
-    return path2.join(repoRoot, ".claude", "settings.json");
-  },
-  hooksDir(repoRoot) {
-    return path2.join(repoRoot, ".claude", "hooks");
-  },
-  runtimeDir(repoRoot) {
-    return path2.join(repoRoot, ".claude", "belay", "runtime");
-  },
-  repoLocalStateDir(repoRoot) {
-    return path2.join(repoRoot, ".claude", "belay");
-  },
-  defaultAuditLogPath(_repoRoot) {
-    return path2.join(".claude", "belay", "audit.ndjson");
-  },
-  repoRootMarkers: [".git", ".claude"],
-  runnerCommand,
-  defaultConfig(repoRoot) {
-    return {
-      ...DEFAULT_CONFIG_V3,
-      adapter: "claude",
-      audit: {
-        ...DEFAULT_CONFIG_V3.audit,
-        logPath: claudeLayout.defaultAuditLogPath(repoRoot)
+var claudeLayout;
+var init_claude = __esm({
+  "src/adapters/layouts/claude.ts"() {
+    "use strict";
+    init_config();
+    claudeLayout = {
+      name: "claude",
+      configPath(repoRoot) {
+        return path2.join(repoRoot, ".claude", "belay.config.json");
+      },
+      hooksSettingsPath(repoRoot) {
+        return path2.join(repoRoot, ".claude", "settings.json");
+      },
+      hooksDir(repoRoot) {
+        return path2.join(repoRoot, ".claude", "hooks");
+      },
+      runtimeDir(repoRoot) {
+        return path2.join(repoRoot, ".claude", "belay", "runtime");
+      },
+      repoLocalStateDir(repoRoot) {
+        return path2.join(repoRoot, ".claude", "belay");
+      },
+      defaultAuditLogPath(_repoRoot) {
+        return path2.join(".claude", "belay", "audit.ndjson");
+      },
+      repoRootMarkers: [".git", ".claude"],
+      runnerCommand,
+      defaultConfig(repoRoot) {
+        return {
+          ...DEFAULT_CONFIG_V3,
+          adapter: "claude",
+          audit: {
+            ...DEFAULT_CONFIG_V3.audit,
+            logPath: claudeLayout.defaultAuditLogPath(repoRoot)
+          }
+        };
       }
     };
   }
-};
+});
+
+// src/core/approval.ts
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function isExpired(approval) {
+  return Date.parse(approval.expiresAt) <= Date.now();
+}
+function compactApprovals(state) {
+  return {
+    version: 1,
+    approvals: state.approvals.filter((approval) => !isExpired(approval))
+  };
+}
+function escapeRegex(value) {
+  const specials = /* @__PURE__ */ new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
+  return [...value].map((char) => specials.has(char) ? `\\${char}` : char).join("");
+}
+function approvalCommandMatch(prompt, tokenPrefix) {
+  const escapedPrefix = escapeRegex(tokenPrefix);
+  const match = prompt.match(new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, "i"));
+  return match?.[1] ?? null;
+}
+function buildRetryInstruction(tokenPrefix, approvalId) {
+  return `To allow the next matching action once, send ${tokenPrefix} ${approvalId} and then retry the original action unchanged.`;
+}
+function createApprovalRecord(params) {
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 6e4).toISOString();
+  return {
+    approvalId: params.approvalId,
+    kind: params.kind,
+    fingerprint: params.fingerprint,
+    repoRoot: params.repoRoot,
+    reason: params.reason,
+    summary: params.summary,
+    createdAt,
+    expiresAt
+  };
+}
+var init_approval = __esm({
+  "src/core/approval.ts"() {
+    "use strict";
+  }
+});
+
+// src/presets.ts
+function applyConfigPreset(preset, extra = {}) {
+  const base = CONFIG_PRESETS[preset] ?? CONFIG_PRESETS.standard;
+  return {
+    version: 3,
+    ...base,
+    ...extra,
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...base.policy ?? {},
+      ...extra.policy
+    }
+  };
+}
+var CONFIG_PRESETS;
+var init_presets = __esm({
+  "src/presets.ts"() {
+    "use strict";
+    init_config();
+    CONFIG_PRESETS = {
+      strict: {
+        mode: "enforce",
+        policy: {
+          unknownLocalEffect: "deny",
+          unparseableShell: "deny",
+          confidenceThresholds: { allow: 0.9, flag: 0.8 },
+          modelAssist: { enabled: false }
+        }
+      },
+      standard: {
+        mode: "enforce"
+      },
+      "audit-first": {
+        mode: "audit",
+        policy: {
+          unknownLocalEffect: "deny",
+          unparseableShell: "deny",
+          confidenceThresholds: { allow: 0.88, flag: 0.72 },
+          modelAssist: { enabled: false }
+        }
+      }
+    };
+  }
+});
+
+// src/core/config-layers.ts
+import path4 from "node:path";
+function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  const base = xdg || path4.join(homedir(), ".config");
+  return path4.join(base, "agent-belay", "team.config.json");
+}
+function applyProtectedLayer(config, builtin) {
+  const controlPlane = { ...config.controlPlane };
+  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
+    controlPlane.enabled = true;
+  }
+  if (builtin.controlPlane.integrity === "hash-pinned" && controlPlane.integrity === "none") {
+    controlPlane.integrity = "hash-pinned";
+  }
+  return {
+    ...config,
+    controlPlane
+  };
+}
+function asV3Layer(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { version: 3 };
+  }
+  return { version: 3, ...raw };
+}
+function mergeConfigLayer(base, layer) {
+  const merged = mergeConfig(layer, base);
+  if (!layer.policy) {
+    return { ...merged, policy: base.policy };
+  }
+  return merged;
+}
+function resolveLayeredConfig(params) {
+  const provenance = [{ path: "(builtin)", source: "builtin" }];
+  let config = mergeConfig({}, params.adapterDefaults);
+  if (params.teamConfig) {
+    const teamFile = params.teamConfig;
+    const teamRaw = teamFile.preset ? applyConfigPreset(teamFile.preset, teamFile.config ?? {}) : teamFile.config ?? params.teamConfig;
+    config = mergeConfigLayer(config, asV3Layer(teamRaw));
+    provenance.push({
+      path: params.teamConfigPath ?? teamConfigPath(),
+      source: "team"
+    });
+  }
+  config = mergeConfigLayer(config, asV3Layer(params.repoConfig));
+  if (params.repoConfigPath) {
+    provenance.push({ path: params.repoConfigPath, source: "repo" });
+  }
+  const protectedConfig = applyProtectedLayer(config, DEFAULT_CONFIG_V3);
+  if (JSON.stringify(protectedConfig) !== JSON.stringify(config)) {
+    provenance.push({ path: "(protected-layer)", source: "protected" });
+    config = protectedConfig;
+  }
+  return { config, provenance };
+}
+var init_config_layers = __esm({
+  "src/core/config-layers.ts"() {
+    "use strict";
+    init_presets();
+    init_config();
+  }
+});
+
+// src/adapters/layouts/cursor.ts
+var init_cursor = __esm({
+  "src/adapters/layouts/cursor.ts"() {
+    "use strict";
+    init_config();
+  }
+});
+
+// src/adapters/layouts/index.ts
+var init_layouts = __esm({
+  "src/adapters/layouts/index.ts"() {
+    "use strict";
+    init_claude();
+    init_cursor();
+    init_claude();
+    init_cursor();
+  }
+});
+
+// src/config-io.ts
+var init_config_io = __esm({
+  "src/config-io.ts"() {
+    "use strict";
+    init_layouts();
+    init_approval();
+    init_config();
+    init_config_layers();
+  }
+});
+
+// src/adapters/claude/runtime-entry.ts
+import process2 from "node:process";
+
+// src/core/gate-contract.ts
+var GATE_CONTRACT_VERSION = 1;
+function classifyResultToGateVerdict(params) {
+  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: result.verdict,
+    reason: result.reason,
+    fingerprint: result.fingerprint,
+    assessment: result.assessment,
+    normalizedCommand: result.normalizedCommand,
+    summary: result.summary,
+    permission,
+    wouldBlock,
+    mode,
+    approvalId,
+    user_message,
+    agent_message
+  };
+}
+function unnormalizedGateVerdict(params) {
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: "deny_pending_approval",
+    reason: params.reason,
+    fingerprint: "unnormalized",
+    assessment: {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "unknown",
+      confidence: 0,
+      signals: ["normalization_failed"]
+    },
+    permission: "deny",
+    wouldBlock: true,
+    mode: params.mode,
+    user_message: params.user_message,
+    agent_message: params.agent_message
+  };
+}
+
+// src/adapters/claude/runtime-entry.ts
+init_claude();
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path9 from "node:path";
+import path10 from "node:path";
+
+// src/core/approval-service.ts
+init_approval();
+
+// src/core/approval-token.ts
+init_config();
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path3 from "node:path";
+function base64UrlEncode(value) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+function base64UrlDecode(value) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+function approvalSigningKeyPath(controlPlaneDir = defaultControlPlaneDir()) {
+  return path3.join(controlPlaneDir, "approval-signing.key");
+}
+async function loadOrCreateApprovalSigningKey(controlPlaneDir = defaultControlPlaneDir()) {
+  const keyPath = approvalSigningKeyPath(controlPlaneDir);
+  if (existsSync(keyPath)) {
+    return readFile(keyPath);
+  }
+  await mkdir(controlPlaneDir, { recursive: true });
+  const key = randomBytes(32);
+  await writeFile(keyPath, key, { mode: 384 });
+  return key;
+}
+function signPayload(payload, key) {
+  const body = base64UrlEncode(JSON.stringify(payload));
+  const signature = createHmac("sha256", key).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+async function issueApprovalToken(payload, controlPlaneDir = defaultControlPlaneDir()) {
+  const key = await loadOrCreateApprovalSigningKey(controlPlaneDir);
+  return signPayload(payload, key);
+}
+async function verifyApprovalToken(token, controlPlaneDir = defaultControlPlaneDir()) {
+  const [body, signature] = token.split(".");
+  if (!body || !signature) {
+    return null;
+  }
+  const keyPath = approvalSigningKeyPath(controlPlaneDir);
+  if (!existsSync(keyPath)) {
+    return null;
+  }
+  const key = await readFile(keyPath);
+  const expected = createHmac("sha256", key).update(body).digest("base64url");
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(base64UrlDecode(body));
+    if (Date.parse(payload.expiresAt) <= Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// src/core/approval-service.ts
+init_config();
+async function recordApproval(params) {
+  const { approvalId, config, store, token, requireSignedToken = false } = params;
+  const pending = await store.loadPending();
+  pending.state = compactApprovals(pending.state);
+  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
+  if (index === -1) {
+    await store.writePending(pending.filePath, pending.state);
+    return { ok: false, message: "Belay approval not found or expired." };
+  }
+  const [approval] = pending.state.approvals.slice(index, index + 1);
+  if (requireSignedToken) {
+    if (!token) {
+      return { ok: false, message: "Signed approval token required for out-of-band approval." };
+    }
+    const controlPlaneDir = configuredControlPlaneDir(config);
+    const verified = await verifyApprovalToken(token, controlPlaneDir);
+    if (!verified || verified.approvalId !== approvalId) {
+      return { ok: false, message: "Invalid or expired signed approval token." };
+    }
+    if (verified.fingerprint !== approval.fingerprint || verified.repoRoot !== approval.repoRoot) {
+      return { ok: false, message: "Signed approval token does not match the pending approval." };
+    }
+  }
+  pending.state.approvals.splice(index, 1);
+  await store.writePending(pending.filePath, pending.state);
+  const approved = await store.loadApproved();
+  approved.state = compactApprovals(approved.state);
+  approved.state.approvals.push({
+    ...approval,
+    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  await store.writeApproved(approved.filePath, approved.state);
+  return {
+    ok: true,
+    message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
+    approval
+  };
+}
+
+// src/adapters/shared/gate-runtime.ts
+init_config_layers();
+
+// src/core/classify-shell.ts
+init_config();
 
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
@@ -598,27 +910,27 @@ function toolFingerprint(toolName, scrubbed, repoRoot) {
 
 // src/core/path-utils.ts
 import { realpathSync } from "node:fs";
-import path3 from "node:path";
+import path5 from "node:path";
 function resolveRealpath(targetPath) {
   try {
     return realpathSync.native(targetPath);
   } catch {
-    return path3.resolve(targetPath);
+    return path5.resolve(targetPath);
   }
 }
 function pathWithinRoot(root, targetPath) {
   const resolvedRoot = resolveRealpath(root);
   const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path3.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return true;
   }
-  return !relativePath.startsWith("..") && !path3.isAbsolute(relativePath);
+  return !relativePath.startsWith("..") && !path5.isAbsolute(relativePath);
 }
 function relativeWithinRepo(repoRoot, targetPath) {
   const resolvedRoot = resolveRealpath(repoRoot);
   const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path3.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
   }
@@ -628,7 +940,7 @@ function relativeWithinRepo(repoRoot, targetPath) {
   return relativePath;
 }
 function normalizeToken(token, repoRoot) {
-  if (!path3.isAbsolute(token)) {
+  if (!path5.isAbsolute(token)) {
     return token;
   }
   const relativePath = relativeWithinRepo(repoRoot, token);
@@ -641,19 +953,34 @@ function resolveMutationTarget(token, cwd) {
   if (token === "2>" || token === "1>" || token === "&>" || token === "1>>" || token === "2>>") {
     return null;
   }
-  if (path3.isAbsolute(token)) {
+  if (path5.isAbsolute(token)) {
     return resolveRealpath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return resolveRealpath(path3.resolve(cwd, token));
+    return resolveRealpath(path5.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return resolveRealpath(path3.resolve(cwd, token));
+    return resolveRealpath(path5.resolve(cwd, token));
   }
-  return resolveRealpath(path3.resolve(cwd, token));
+  return resolveRealpath(path5.resolve(cwd, token));
+}
+function looksLikePathToken(token) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return false;
+  }
+  if (path5.isAbsolute(token)) {
+    return true;
+  }
+  if (token.startsWith("./") || token.startsWith("../")) {
+    return true;
+  }
+  return token.includes("/") || token.includes("\\");
 }
 function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   return tokens.some((token) => {
+    if (!looksLikePathToken(token)) {
+      return false;
+    }
     const resolved = resolveMutationTarget(token, cwd);
     if (!resolved) {
       return false;
@@ -2084,7 +2411,7 @@ function classifySubagent(payload, repoRoot, options = {}) {
 }
 
 // src/core/classify-tool.ts
-import path4 from "node:path";
+import path6 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -2252,7 +2579,7 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path4.isAbsolute(filePath) ? filePath : path4.resolve(cwd, filePath);
+    const resolvedPath = path6.isAbsolute(filePath) ? filePath : path6.resolve(cwd, filePath);
     const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
     if (hitsProtectedRoot) {
       signals.push("control_plane_path");
@@ -2352,6 +2679,9 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
     }
   };
 }
+
+// src/core/gate-engine.ts
+init_config();
 
 // src/core/model-assist.ts
 var DEFAULT_MODEL = "claude-sonnet-4-20250514";
@@ -2618,287 +2948,12 @@ function gateEnabledForAction(config, action) {
   return true;
 }
 
-// src/core/approval-token.ts
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path5 from "node:path";
-function base64UrlEncode(value) {
-  return Buffer.from(value, "utf8").toString("base64url");
-}
-function base64UrlDecode(value) {
-  return Buffer.from(value, "base64url").toString("utf8");
-}
-function approvalSigningKeyPath(controlPlaneDir = defaultControlPlaneDir()) {
-  return path5.join(controlPlaneDir, "approval-signing.key");
-}
-async function loadOrCreateApprovalSigningKey(controlPlaneDir = defaultControlPlaneDir()) {
-  const keyPath = approvalSigningKeyPath(controlPlaneDir);
-  if (existsSync(keyPath)) {
-    return readFile(keyPath);
-  }
-  await mkdir(controlPlaneDir, { recursive: true });
-  const key = randomBytes(32);
-  await writeFile(keyPath, key, { mode: 384 });
-  return key;
-}
-function signPayload(payload, key) {
-  const body = base64UrlEncode(JSON.stringify(payload));
-  const signature = createHmac("sha256", key).update(body).digest("base64url");
-  return `${body}.${signature}`;
-}
-async function issueApprovalToken(payload, controlPlaneDir = defaultControlPlaneDir()) {
-  const key = await loadOrCreateApprovalSigningKey(controlPlaneDir);
-  return signPayload(payload, key);
-}
-async function verifyApprovalToken(token, controlPlaneDir = defaultControlPlaneDir()) {
-  const [body, signature] = token.split(".");
-  if (!body || !signature) {
-    return null;
-  }
-  const keyPath = approvalSigningKeyPath(controlPlaneDir);
-  if (!existsSync(keyPath)) {
-    return null;
-  }
-  const key = await readFile(keyPath);
-  const expected = createHmac("sha256", key).update(body).digest("base64url");
-  const actualBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
-    return null;
-  }
-  try {
-    const payload = JSON.parse(base64UrlDecode(body));
-    if (Date.parse(payload.expiresAt) <= Date.now()) {
-      return null;
-    }
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-// src/core/approval.ts
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-function isExpired(approval) {
-  return Date.parse(approval.expiresAt) <= Date.now();
-}
-function compactApprovals(state) {
-  return {
-    version: 1,
-    approvals: state.approvals.filter((approval) => !isExpired(approval))
-  };
-}
-function escapeRegex(value) {
-  const specials = /* @__PURE__ */ new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
-  return [...value].map((char) => specials.has(char) ? `\\${char}` : char).join("");
-}
-function approvalCommandMatch(prompt, tokenPrefix) {
-  const escapedPrefix = escapeRegex(tokenPrefix);
-  const match = prompt.match(new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, "i"));
-  return match?.[1] ?? null;
-}
-function buildRetryInstruction(tokenPrefix, approvalId) {
-  return `To allow the next matching action once, send ${tokenPrefix} ${approvalId} and then retry the original action unchanged.`;
-}
-function createApprovalRecord(params) {
-  const createdAt = nowIso();
-  const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 6e4).toISOString();
-  return {
-    approvalId: params.approvalId,
-    kind: params.kind,
-    fingerprint: params.fingerprint,
-    repoRoot: params.repoRoot,
-    reason: params.reason,
-    summary: params.summary,
-    createdAt,
-    expiresAt
-  };
-}
-
-// src/core/approval-service.ts
-async function recordApproval(params) {
-  const { approvalId, config, store, token, requireSignedToken = false } = params;
-  const pending = await store.loadPending();
-  pending.state = compactApprovals(pending.state);
-  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
-  if (index === -1) {
-    await store.writePending(pending.filePath, pending.state);
-    return { ok: false, message: "Belay approval not found or expired." };
-  }
-  const [approval] = pending.state.approvals.slice(index, index + 1);
-  if (requireSignedToken) {
-    if (!token) {
-      return { ok: false, message: "Signed approval token required for out-of-band approval." };
-    }
-    const controlPlaneDir = configuredControlPlaneDir(config);
-    const verified = await verifyApprovalToken(token, controlPlaneDir);
-    if (!verified || verified.approvalId !== approvalId) {
-      return { ok: false, message: "Invalid or expired signed approval token." };
-    }
-    if (verified.fingerprint !== approval.fingerprint || verified.repoRoot !== approval.repoRoot) {
-      return { ok: false, message: "Signed approval token does not match the pending approval." };
-    }
-  }
-  pending.state.approvals.splice(index, 1);
-  await store.writePending(pending.filePath, pending.state);
-  const approved = await store.loadApproved();
-  approved.state = compactApprovals(approved.state);
-  approved.state.approvals.push({
-    ...approval,
-    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
-  });
-  await store.writeApproved(approved.filePath, approved.state);
-  return {
-    ok: true,
-    message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
-    approval
-  };
-}
-
-// src/core/config-layers.ts
-import path6 from "node:path";
-
-// src/presets.ts
-var CONFIG_PRESETS = {
-  strict: {
-    mode: "enforce",
-    policy: {
-      unknownLocalEffect: "deny",
-      unparseableShell: "deny",
-      confidenceThresholds: { allow: 0.9, flag: 0.8 },
-      modelAssist: { enabled: false }
-    }
-  },
-  standard: {
-    mode: "enforce"
-  },
-  "audit-first": {
-    mode: "audit",
-    policy: {
-      unknownLocalEffect: "deny",
-      unparseableShell: "deny",
-      confidenceThresholds: { allow: 0.88, flag: 0.72 },
-      modelAssist: { enabled: false }
-    }
-  }
-};
-function applyConfigPreset(preset, extra = {}) {
-  const base = CONFIG_PRESETS[preset] ?? CONFIG_PRESETS.standard;
-  return {
-    version: 3,
-    ...base,
-    ...extra,
-    policy: {
-      ...DEFAULT_CONFIG_V3.policy,
-      ...base.policy ?? {},
-      ...extra.policy
-    }
-  };
-}
-
-// src/core/config-layers.ts
-function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const base = xdg || path6.join(homedir(), ".config");
-  return path6.join(base, "agent-belay", "team.config.json");
-}
-function applyProtectedLayer(config, builtin) {
-  const controlPlane = { ...config.controlPlane };
-  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
-    controlPlane.enabled = true;
-  }
-  if (builtin.controlPlane.integrity === "hash-pinned" && controlPlane.integrity === "none") {
-    controlPlane.integrity = "hash-pinned";
-  }
-  return {
-    ...config,
-    controlPlane
-  };
-}
-function asV3Layer(raw) {
-  if (!raw || typeof raw !== "object") {
-    return { version: 3 };
-  }
-  return { version: 3, ...raw };
-}
-function mergeConfigLayer(base, layer) {
-  const merged = mergeConfig(layer, base);
-  if (!layer.policy) {
-    return { ...merged, policy: base.policy };
-  }
-  return merged;
-}
-function resolveLayeredConfig(params) {
-  const provenance = [
-    { path: "(builtin)", source: "builtin" }
-  ];
-  let config = mergeConfig({}, params.adapterDefaults);
-  if (params.teamConfig) {
-    const teamFile = params.teamConfig;
-    const teamRaw = teamFile.preset ? applyConfigPreset(teamFile.preset, teamFile.config ?? {}) : teamFile.config ?? params.teamConfig;
-    config = mergeConfigLayer(config, asV3Layer(teamRaw));
-    provenance.push({
-      path: params.teamConfigPath ?? teamConfigPath(),
-      source: "team"
-    });
-  }
-  config = mergeConfigLayer(config, asV3Layer(params.repoConfig));
-  if (params.repoConfigPath) {
-    provenance.push({ path: params.repoConfigPath, source: "repo" });
-  }
-  const protectedConfig = applyProtectedLayer(config, DEFAULT_CONFIG_V3);
-  if (JSON.stringify(protectedConfig) !== JSON.stringify(config)) {
-    provenance.push({ path: "(protected-layer)", source: "protected" });
-    config = protectedConfig;
-  }
-  return { config, provenance };
-}
-
-// src/core/notify.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
-async function notifyDeny(config, event) {
-  const payload = JSON.stringify(event);
-  if (config.webhookUrl) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5e3);
-      try {
-        await fetch(config.webhookUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: payload,
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
-    } catch {
-    }
-  }
-  if (config.commandHook) {
-    try {
-      await execFileAsync(config.commandHook, [], {
-        env: {
-          ...process.env,
-          BELAY_APPROVAL_ID: event.approvalId,
-          BELAY_REASON: event.reason,
-          BELAY_SUMMARY: event.summary,
-          BELAY_REPO_ROOT: event.repoRoot,
-          BELAY_FINGERPRINT: event.fingerprint,
-          BELAY_APPROVAL_TOKEN: event.approvalToken ?? ""
-        }
-      });
-    } catch {
-    }
-  }
-}
+// src/core/index.ts
+init_approval();
+init_config();
 
 // src/core/control-plane-spike.ts
+init_config();
 import { existsSync as existsSync2 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
 import path7 from "node:path";
@@ -2955,8 +3010,96 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
   }
 }
 
-// src/adapters/layouts/protected-paths.ts
+// src/core/notify.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+async function notifyDeny(config, event) {
+  const payload = JSON.stringify(event);
+  if (config.webhookUrl) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5e3);
+      try {
+        await fetch(config.webhookUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch {
+    }
+  }
+  if (config.commandHook) {
+    try {
+      await execFileAsync(config.commandHook, [], {
+        env: {
+          ...process.env,
+          BELAY_APPROVAL_ID: event.approvalId,
+          BELAY_REASON: event.reason,
+          BELAY_SUMMARY: event.summary,
+          BELAY_REPO_ROOT: event.repoRoot,
+          BELAY_FINGERPRINT: event.fingerprint,
+          BELAY_APPROVAL_TOKEN: event.approvalToken ?? ""
+        }
+      });
+    } catch {
+    }
+  }
+}
+
+// src/egress-service.ts
+import { existsSync as existsSync3, readFileSync } from "node:fs";
 import path8 from "node:path";
+init_config_io();
+init_config();
+
+// src/core/egress/allowlist.ts
+init_config();
+
+// src/egress-service.ts
+function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
+  if (!config.egress.enabled || !config.egress.demoteL3External) {
+    return false;
+  }
+  const stateDirs = /* @__PURE__ */ new Set([
+    belayStateDir(config, repoLocalStateDir),
+    configuredControlPlaneDir(config)
+  ]);
+  const resolvedRepoRoot = path8.resolve(repoRoot);
+  for (const stateDir of stateDirs) {
+    const statusPath = path8.join(stateDir, "egress-proxy.json");
+    if (!existsSync3(statusPath)) {
+      continue;
+    }
+    try {
+      const raw = JSON.parse(readFileSync(statusPath, "utf8"));
+      if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
+        continue;
+      }
+      if (raw.repoRoot && path8.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+        continue;
+      }
+      return true;
+    } catch {
+    }
+  }
+  return false;
+}
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/adapters/layouts/protected-paths.ts
+import path9 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -2968,7 +3111,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path8.resolve(entry));
+  return roots.map((entry) => path9.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -2990,8 +3133,8 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path9.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir3(path9.dirname(auditPath), { recursive: true });
+      const auditPath = path10.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir3(path10.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
@@ -3016,7 +3159,7 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir3(path9.dirname(filePath), { recursive: true });
+      await mkdir3(path10.dirname(filePath), { recursive: true });
       await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
@@ -3026,7 +3169,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync3(teamPath)) {
+  if (existsSync4(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -3041,6 +3184,11 @@ function runtimeClassifierOptions(ctx, config) {
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
   return {
     ...classifierOptionsFromConfig(config),
+    demoteL3External: isEgressProxyActiveForRepo(
+      config,
+      ctx.repoRoot,
+      ctx.layout.repoLocalStateDir(ctx.repoRoot)
+    ),
     protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir)
   };
 }
@@ -3347,19 +3495,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync4 } from "node:fs";
-import path10 from "node:path";
+import { existsSync as existsSync5 } from "node:fs";
+import path11 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path10.resolve(startPath);
+  let current = path11.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync4(path10.join(current, marker))) {
+      if (existsSync5(path11.join(current, marker))) {
         return current;
       }
     }
-    const parent = path10.dirname(current);
+    const parent = path11.dirname(current);
     if (parent === current) {
-      return path10.resolve(startPath);
+      return path11.resolve(startPath);
     }
     current = parent;
   }

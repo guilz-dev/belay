@@ -1,5 +1,5 @@
-import { egressFingerprint, egressSummary } from './fingerprint.js';
 import { isHostAllowlisted } from './allowlist.js';
+import { egressFingerprint, egressSummary } from './fingerprint.js';
 export function evaluateEgressConnect(params) {
     const { request, allowlist, approved } = params;
     const host = request.host.toLowerCase();

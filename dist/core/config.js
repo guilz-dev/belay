@@ -502,7 +502,6 @@ export function classifierOptionsFromConfig(config) {
         controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
         scrubOptions: scrubOptionsFromConfig(config),
         egressEnabled: config.egress.enabled,
-        demoteL3External: config.egress.enabled && config.egress.demoteL3External,
     };
 }
 export function defaultControlPlaneDir(env = process.env, homedir = () => env.HOME ?? env.USERPROFILE ?? '') {

@@ -1,7 +1,4 @@
-import {
-  FLAGGED_COMMAND_KEYS,
-  READ_ONLY_COMMAND_KEYS,
-} from './command-keys.js'
+import { FLAGGED_COMMAND_KEYS, READ_ONLY_COMMAND_KEYS } from './command-keys.js'
 import type { PolicyRule } from './types.js'
 
 /** Built-in policy rules — same language as operator custom rules. Higher priority wins. */

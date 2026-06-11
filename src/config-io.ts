@@ -4,11 +4,6 @@ import path from 'node:path'
 import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
 import {
-  type LayeredConfigResult,
-  resolveLayeredConfig,
-  teamConfigPath,
-} from './core/config-layers.js'
-import {
   approvedApprovalsFile,
   type BelayConfigV3,
   belayStateDir,
@@ -16,6 +11,11 @@ import {
   mergeConfig,
   pendingApprovalsFile,
 } from './core/config.js'
+import {
+  type LayeredConfigResult,
+  resolveLayeredConfig,
+  teamConfigPath,
+} from './core/config-layers.js'
 import type { ApprovalStateFile } from './core/types.js'
 
 export type { LayeredConfigResult }

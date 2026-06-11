@@ -4,7 +4,11 @@ import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { recordEgressApproval } from '../core/egress-approval.js'
 import type { ApprovalStateFile } from '../core/types.js'
 
-function memoryStore(pending: ApprovalStateFile, approved: ApprovalStateFile, allowlistPath: string) {
+function memoryStore(
+  pending: ApprovalStateFile,
+  approved: ApprovalStateFile,
+  allowlistPath: string,
+) {
   return {
     allowlistPath,
     async loadPending() {

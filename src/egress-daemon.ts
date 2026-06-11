@@ -8,9 +8,13 @@ import {
   repoLocalStateDirFor,
 } from './config-io.js'
 import { scrubOptionsFromConfig } from './core/config.js'
-import { createEgressApprovalStore, clearEgressDaemonState, writeEgressDaemonState } from './egress-service.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
 import { scrubValue } from './core/scrub.js'
+import {
+  clearEgressDaemonState,
+  createEgressApprovalStore,
+  writeEgressDaemonState,
+} from './egress-service.js'
 
 async function main(): Promise<void> {
   const repoRoot = process.env.BELAY_EGRESS_REPO_ROOT

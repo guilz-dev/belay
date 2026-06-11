@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,6 +81,34 @@ async function waitForEgressRunning(repoRoot, timeoutMs = 5000) {
             return true;
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+}
+export function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
+    if (!config.egress.enabled || !config.egress.demoteL3External) {
+        return false;
+    }
+    const stateDirs = new Set([
+        belayStateDir(config, repoLocalStateDir),
+        configuredControlPlaneDir(config),
+    ]);
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    for (const stateDir of stateDirs) {
+        const statusPath = path.join(stateDir, 'egress-proxy.json');
+        if (!existsSync(statusPath)) {
+            continue;
+        }
+        try {
+            const raw = JSON.parse(readFileSync(statusPath, 'utf8'));
+            if (typeof raw.pid !== 'number' || !isProcessAlive(raw.pid)) {
+                continue;
+            }
+            if (raw.repoRoot && path.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+                continue;
+            }
+            return true;
+        }
+        catch { }
     }
     return false;
 }
@@ -266,11 +294,17 @@ export function createEgressApprovalStore(repoRoot, config) {
         allowlistPath: egressAllowlistPath(config, repoLocalDir),
         async loadPending() {
             const filePath = pendingApprovalsPath(repoRoot, config);
-            return { filePath, state: await loadApprovalState(repoRoot, 'pending-approvals.json', config) };
+            return {
+                filePath,
+                state: await loadApprovalState(repoRoot, 'pending-approvals.json', config),
+            };
         },
         async loadApproved() {
             const filePath = approvedApprovalsPath(repoRoot, config);
-            return { filePath, state: await loadApprovalState(repoRoot, 'approved-approvals.json', config) };
+            return {
+                filePath,
+                state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
+            };
         },
         async writePending(_filePath, state) {
             const { saveApprovalState } = await import('./config-io.js');
@@ -286,7 +320,13 @@ export async function writeEgressDaemonState(params) {
     await mkdir(params.stateDir, { recursive: true });
     const startedAt = new Date().toISOString();
     await writeFile(path.join(params.stateDir, 'egress-proxy.pid'), `${params.pid}\n`, 'utf8');
-    await writeFile(path.join(params.stateDir, 'egress-proxy.json'), `${JSON.stringify({ pid: params.pid, host: params.host, port: params.port, startedAt, repoRoot: params.repoRoot }, null, 2)}\n`, 'utf8');
+    await writeFile(path.join(params.stateDir, 'egress-proxy.json'), `${JSON.stringify({
+        pid: params.pid,
+        host: params.host,
+        port: params.port,
+        startedAt,
+        repoRoot: params.repoRoot,
+    }, null, 2)}\n`, 'utf8');
 }
 export async function clearEgressDaemonState(stateDir) {
     await unlink(path.join(stateDir, 'egress-proxy.pid')).catch(() => undefined);

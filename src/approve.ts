@@ -8,8 +8,8 @@ import {
   saveApprovalState,
 } from './config-io.js'
 import { recordApproval } from './core/approval-service.js'
-import { recordEgressApproval } from './core/egress-approval.js'
 import type { EgressApprovalScope } from './core/egress/types.js'
+import { recordEgressApproval } from './core/egress-approval.js'
 import { createEgressApprovalStore } from './egress-service.js'
 
 export interface ApproveOptions {
@@ -47,11 +47,17 @@ export async function approvePending(
     store: {
       async loadPending() {
         const filePath = pendingApprovalsPath(repoRoot, config)
-        return { filePath, state: await loadApprovalState(repoRoot, 'pending-approvals.json', config) }
+        return {
+          filePath,
+          state: await loadApprovalState(repoRoot, 'pending-approvals.json', config),
+        }
       },
       async loadApproved() {
         const filePath = approvedApprovalsPath(repoRoot, config)
-        return { filePath, state: await loadApprovalState(repoRoot, 'approved-approvals.json', config) }
+        return {
+          filePath,
+          state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
+        }
       },
       async writePending(_filePath, state) {
         await saveApprovalState(repoRoot, 'pending-approvals.json', state, config)

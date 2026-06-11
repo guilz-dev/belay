@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { DEFAULT_CONFIG_V3, mergeConfig } from './config.js';
 import { applyConfigPreset } from '../presets.js';
+import { DEFAULT_CONFIG_V3, mergeConfig } from './config.js';
 export function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? '') {
     const xdg = process.env.XDG_CONFIG_HOME?.trim();
     const base = xdg || path.join(homedir(), '.config');
@@ -11,8 +11,7 @@ function applyProtectedLayer(config, builtin) {
     if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
         controlPlane.enabled = true;
     }
-    if (builtin.controlPlane.integrity === 'hash-pinned' &&
-        controlPlane.integrity === 'none') {
+    if (builtin.controlPlane.integrity === 'hash-pinned' && controlPlane.integrity === 'none') {
         controlPlane.integrity = 'hash-pinned';
     }
     return {
@@ -34,9 +33,7 @@ function mergeConfigLayer(base, layer) {
     return merged;
 }
 export function resolveLayeredConfig(params) {
-    const provenance = [
-        { path: '(builtin)', source: 'builtin' },
-    ];
+    const provenance = [{ path: '(builtin)', source: 'builtin' }];
     let config = mergeConfig({}, params.adapterDefaults);
     if (params.teamConfig) {
         const teamFile = params.teamConfig;

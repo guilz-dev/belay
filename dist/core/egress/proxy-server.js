@@ -149,7 +149,10 @@ function denyResponse(res, approvalId, summary) {
         message: `Belay blocked egress to ${summary}. Approval ID: ${approvalId}.`,
         approvalId,
     });
-    res.writeHead(403, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    res.writeHead(403, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+    });
     res.end(body);
 }
 function forwardHttp(req, res, target) {

@@ -1,5 +1,5 @@
-import { verifyApprovalToken } from './approval-token.js'
 import { compactApprovals } from './approval.js'
+import { verifyApprovalToken } from './approval-token.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
 import type { ApprovalStateFile } from './types.js'
@@ -40,10 +40,7 @@ export async function recordApproval(params: {
     if (!verified || verified.approvalId !== approvalId) {
       return { ok: false, message: 'Invalid or expired signed approval token.' }
     }
-    if (
-      verified.fingerprint !== approval.fingerprint ||
-      verified.repoRoot !== approval.repoRoot
-    ) {
+    if (verified.fingerprint !== approval.fingerprint || verified.repoRoot !== approval.repoRoot) {
       return { ok: false, message: 'Signed approval token does not match the pending approval.' }
     }
   }

@@ -1,9 +1,8 @@
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
-
-import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { classifyShell } from '../core/classify-shell.js'
+import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
@@ -57,13 +56,14 @@ describe('L3 external demotion with egress enabled', () => {
     expect(result.reason).toBe('external_effect')
   })
 
-  it('demotes via classifierOptionsFromConfig when egress is enabled', () => {
+  it('does not demote via classifierOptionsFromConfig until proxy is running', () => {
     const options = classifierOptionsFromConfig({
       ...DEFAULT_CONFIG_V3,
       egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, demoteL3External: true },
     })
+    expect(options.demoteL3External).toBeUndefined()
     const result = classifyShell('git push origin main', cwd, repoRoot, options)
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('l3_external_hint')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
   })
 })

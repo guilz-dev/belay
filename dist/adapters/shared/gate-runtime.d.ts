@@ -21,6 +21,7 @@ export interface GateRuntimeDeps {
 export declare function createDefaultGateRuntimeDeps(): GateRuntimeDeps;
 export declare function resolveGateConfig(ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>, deps: GateRuntimeDeps): Promise<BelayConfigV3>;
 export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3): {
+    demoteL3External: boolean;
     protectedArtifactRoots: string[];
     strictChains?: boolean;
     customExternalCommands?: string[];
@@ -32,7 +33,6 @@ export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config
     confidenceThresholds?: import("../../core/types.js").ConfidenceThresholds;
     scrubOptions?: import("../../core/types.js").ScrubOptions;
     egressEnabled?: boolean;
-    demoteL3External?: boolean;
 };
 export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateRuntimeDeps, params: {
     kind: GatedActionKind;

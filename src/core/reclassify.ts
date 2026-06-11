@@ -1,8 +1,8 @@
-import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js'
-import type { BelayConfigV3 } from './config.js'
-import { classifierOptionsFromConfig } from './config.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
+import type { BelayConfigV3 } from './config.js'
+import { classifierOptionsFromConfig } from './config.js'
+import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js'
 import type { ClassifyResult } from './types.js'
 
 export interface ReclassifyDiff {

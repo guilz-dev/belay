@@ -21,9 +21,7 @@ function base64UrlDecode(value: string): string {
   return Buffer.from(value, 'base64url').toString('utf8')
 }
 
-export function approvalSigningKeyPath(
-  controlPlaneDir: string = defaultControlPlaneDir(),
-): string {
+export function approvalSigningKeyPath(controlPlaneDir: string = defaultControlPlaneDir()): string {
   return path.join(controlPlaneDir, 'approval-signing.key')
 }
 

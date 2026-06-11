@@ -8,6 +8,7 @@ import {
   classifyToolUse,
 } from './core/index.js'
 import type { ClassifyResult } from './core/types.js'
+import { egressStatus } from './egress-service.js'
 import type { ExplainOptions, ExplainReport } from './types.js'
 
 function classifyExplainTarget(
@@ -73,7 +74,16 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot
   const config = await loadConfigFile(repoRoot)
-  const classifierOptions = classifierOptionsFromConfig(config)
+  const egress = await egressStatus({ targetDir: repoRoot })
+  const classifierOptions = {
+    ...classifierOptionsFromConfig(config),
+    demoteL3External:
+      config.egress.enabled &&
+      config.egress.demoteL3External &&
+      egress.running &&
+      !egress.repoRootMismatch &&
+      !egress.foreignProxy,
+  }
   const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions)
 
   return {
@@ -96,7 +106,7 @@ export function formatExplainReport(report: ExplainReport): string {
     `Input: ${report.command}`,
     `CWD: ${report.cwd}`,
     `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
-    `Egress (L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (demoteL3External=${report.egress.demoteL3External})`,
+    `Egress (L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (demoteL3External when proxy running=${report.egress.demoteL3External})`,
     report.egress.enabled
       ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
       : 'Egress proxy: not configured',

@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
 import { detectBypassAttempts, detectNoisyRules } from './core/audit-analysis.js';
-import { buildApprovalRoundTrips, filterAuditRecords, summarizeRoundTrips, } from './core/audit-query.js';
 import { parseAuditNdjson, toAuditRecord } from './core/audit-metrics.js';
+import { buildApprovalRoundTrips, filterAuditRecords, summarizeRoundTrips, } from './core/audit-query.js';
 import { mergeConfig } from './core/config.js';
 import { diffReclassification } from './core/reclassify.js';
 async function loadAuditRecords(repoRoot) {

@@ -1,19 +1,23 @@
-import http from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { loadEgressAllowlist } from '../core/egress/allowlist.js'
 import { createEgressProxy, parseConnectTarget } from '../core/egress/proxy-server.js'
 import { recordEgressApproval } from '../core/egress-approval.js'
-import { loadEgressAllowlist } from '../core/egress/allowlist.js'
 import type { ApprovalStateFile } from '../core/types.js'
 
 const tempDirs: string[] = []
 
-function memoryStore(pending: ApprovalStateFile, approved: ApprovalStateFile, allowlistPath: string) {
+function memoryStore(
+  pending: ApprovalStateFile,
+  approved: ApprovalStateFile,
+  allowlistPath: string,
+) {
   return {
     allowlistPath,
     async loadPending() {
@@ -31,7 +35,10 @@ function memoryStore(pending: ApprovalStateFile, approved: ApprovalStateFile, al
   }
 }
 
-async function proxyRequest(port: number, targetUrl: string): Promise<{ status: number; body: string }> {
+async function proxyRequest(
+  port: number,
+  targetUrl: string,
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -203,7 +210,11 @@ describe('egress proxy integration', () => {
 
     const repoRoot = dir
     const allowlistPath = path.join(dir, 'egress-allowlist.json')
-    const store = memoryStore({ version: 1, approvals: [] }, { version: 1, approvals: [] }, allowlistPath)
+    const store = memoryStore(
+      { version: 1, approvals: [] },
+      { version: 1, approvals: [] },
+      allowlistPath,
+    )
     const config = {
       ...DEFAULT_CONFIG_V3,
       egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, listenPort: 0 },

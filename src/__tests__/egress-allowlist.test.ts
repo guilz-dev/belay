@@ -25,11 +25,14 @@ describe('egress allowlist', () => {
 
     await saveEgressAllowlist(
       filePath,
-      addDomainToAllowlist({ version: 1, domains: [] }, {
-        host: 'API.Example.COM',
-        approvedAt: '2026-01-01T00:00:00.000Z',
-        approvalId: 'belay_domain',
-      }),
+      addDomainToAllowlist(
+        { version: 1, domains: [] },
+        {
+          host: 'API.Example.COM',
+          approvedAt: '2026-01-01T00:00:00.000Z',
+          approvalId: 'belay_domain',
+        },
+      ),
     )
 
     const loaded = await loadEgressAllowlist(filePath)

@@ -13,8 +13,9 @@ export function isGateRecord(record) {
     return typeof record.event === 'string' && GATE_EVENTS.has(record.event);
 }
 export function isApprovalRecorded(record) {
-    return (record.event === 'approval' ||
-        (record.event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded')) && record.reason === 'approval_recorded';
+    return ((record.event === 'approval' ||
+        (record.event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded')) &&
+        record.reason === 'approval_recorded');
 }
 export function inferWouldBlock(record) {
     if (typeof record.wouldBlock === 'boolean') {

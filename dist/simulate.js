@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
-import { mergeConfig } from './core/config.js';
 import { parseAuditNdjson, toAuditRecord } from './core/audit-metrics.js';
+import { mergeConfig } from './core/config.js';
 import { diffReclassification } from './core/reclassify.js';
 export async function simulateProject(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());

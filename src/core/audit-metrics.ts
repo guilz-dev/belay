@@ -203,4 +203,4 @@ export function computeAuditMetrics(
   }
 }
 
-export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord }
+export { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord }

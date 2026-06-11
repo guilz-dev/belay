@@ -1,6 +1,6 @@
-import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js';
-import { classifierOptionsFromConfig } from './config.js';
 import { GATE_EVENTS } from './audit-types.js';
+import { classifierOptionsFromConfig } from './config.js';
+import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js';
 function shellCommandFromSummary(summary) {
     const trimmed = summary.trim();
     return trimmed || null;

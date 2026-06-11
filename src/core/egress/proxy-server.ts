@@ -1,19 +1,19 @@
-import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import http from 'node:http'
 import net from 'node:net'
 import { URL } from 'node:url'
 
 import type { BelayConfigV3 } from '../config.js'
 import {
   consumeApprovedEgress,
+  type EgressApprovalStore,
   ensurePendingEgressApproval,
   notifyEgressDeny,
-  type EgressApprovalStore,
 } from '../egress-approval.js'
+import type { ApprovalStateFile } from '../types.js'
 import { loadEgressAllowlist } from './allowlist.js'
 import { evaluateEgressConnect } from './policy.js'
 import type { EgressConnectRequest } from './types.js'
-import type { ApprovalStateFile } from '../types.js'
 
 export interface EgressProxyContext {
   config: BelayConfigV3
@@ -75,7 +75,11 @@ function parseConnectPort(value: string): number | null {
 async function evaluateRequest(
   ctx: EgressProxyContext,
   request: EgressConnectRequest,
-): Promise<{ allowed: boolean; approvalId?: string; result: ReturnType<typeof evaluateEgressConnect> }> {
+): Promise<{
+  allowed: boolean
+  approvalId?: string
+  result: ReturnType<typeof evaluateEgressConnect>
+}> {
   const allowlist = await loadEgressAllowlist(ctx.store.allowlistPath)
   const approved = await ctx.loadApproved()
   const result = evaluateEgressConnect({ request, allowlist, approved })
@@ -144,7 +148,11 @@ async function denyEgressRequest(
   request: EgressConnectRequest,
   allowlist: Awaited<ReturnType<typeof loadEgressAllowlist>>,
   result?: ReturnType<typeof evaluateEgressConnect>,
-): Promise<{ allowed: false; approvalId?: string; result: ReturnType<typeof evaluateEgressConnect> }> {
+): Promise<{
+  allowed: false
+  approvalId?: string
+  result: ReturnType<typeof evaluateEgressConnect>
+}> {
   const approved = await ctx.loadApproved()
   const policyResult =
     result ??
@@ -186,17 +194,16 @@ async function denyEgressRequest(
   return { allowed: false, approvalId, result: policyResult }
 }
 
-function denyResponse(
-  res: ServerResponse,
-  approvalId: string,
-  summary: string,
-): void {
+function denyResponse(res: ServerResponse, approvalId: string, summary: string): void {
   const body = JSON.stringify({
     error: 'egress_blocked',
     message: `Belay blocked egress to ${summary}. Approval ID: ${approvalId}.`,
     approvalId,
   })
-  res.writeHead(403, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
+  res.writeHead(403, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body),
+  })
   res.end(body)
 }
 

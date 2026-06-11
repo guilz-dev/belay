@@ -54,8 +54,23 @@ export function resolveMutationTarget(token, cwd) {
     }
     return resolveRealpath(path.resolve(cwd, token));
 }
+function looksLikePathToken(token) {
+    if (!token || token === '--' || token.startsWith('-')) {
+        return false;
+    }
+    if (path.isAbsolute(token)) {
+        return true;
+    }
+    if (token.startsWith('./') || token.startsWith('../')) {
+        return true;
+    }
+    return token.includes('/') || token.includes('\\');
+}
 export function hasOutsideRepoPath(tokens, cwd, repoRoot) {
     return tokens.some((token) => {
+        if (!looksLikePathToken(token)) {
+            return false;
+        }
         const resolved = resolveMutationTarget(token, cwd);
         if (!resolved) {
             return false;

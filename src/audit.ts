@@ -4,14 +4,14 @@ import path from 'node:path'
 
 import { loadConfigFile } from './config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from './core/audit-analysis.js'
+import { parseAuditNdjson, toAuditRecord } from './core/audit-metrics.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from './core/audit-query.js'
-import { parseAuditNdjson, toAuditRecord } from './core/audit-metrics.js'
 import type { AuditFilter, AuditRecord } from './core/audit-types.js'
-import { mergeConfig, type BelayConfigV3 } from './core/config.js'
+import { type BelayConfigV3, mergeConfig } from './core/config.js'
 import { diffReclassification } from './core/reclassify.js'
 
 export type AuditSubcommand = 'query' | 'summarize' | 'replay'

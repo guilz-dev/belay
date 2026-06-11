@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { relativeWithinRepo } from '../core/path-utils.js'
+import { hasOutsideRepoPath, relativeWithinRepo } from '../core/path-utils.js'
 
 const tempDirs: string[] = []
 
@@ -36,5 +36,14 @@ describe('relativeWithinRepo', () => {
     await symlink(outsideFile, linkPath)
 
     expect(relativeWithinRepo(repoRoot, linkPath)).toBeNull()
+  })
+})
+
+describe('hasOutsideRepoPath', () => {
+  it('ignores bare subcommand tokens such as git status', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-git-status-'))
+    tempDirs.push(repoRoot)
+    expect(hasOutsideRepoPath(['status'], repoRoot, repoRoot)).toBe(false)
+    expect(hasOutsideRepoPath(['origin', 'main'], repoRoot, repoRoot)).toBe(false)
   })
 })

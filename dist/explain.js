@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
 import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from './core/index.js';
+import { egressStatus } from './egress-service.js';
 function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
     const kind = options.kind ?? 'shell';
     if (kind === 'shell') {
@@ -52,7 +53,15 @@ export async function explainCommand(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot;
     const config = await loadConfigFile(repoRoot);
-    const classifierOptions = classifierOptionsFromConfig(config);
+    const egress = await egressStatus({ targetDir: repoRoot });
+    const classifierOptions = {
+        ...classifierOptionsFromConfig(config),
+        demoteL3External: config.egress.enabled &&
+            config.egress.demoteL3External &&
+            egress.running &&
+            !egress.repoRootMismatch &&
+            !egress.foreignProxy,
+    };
     const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
     return {
         repoRoot,

@@ -6,8 +6,8 @@ import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
 import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredConfig, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
 import { verifyIntegrityManifest } from './core/integrity.js';
-import { resolveNodeBinary } from './node-resolution.js';
 import { egressStatus } from './egress-service.js';
+import { resolveNodeBinary } from './node-resolution.js';
 import { loadOperationalInsights } from './operational-insights.js';
 import { PACKAGE_VERSION } from './version.js';
 async function readRuntimeVersion(corePath) {

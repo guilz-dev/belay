@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
-
+import { normalizeEgressListenHost } from '../core/config.js'
 import { egressSummary, parseHostFromSummary } from '../core/egress/fingerprint.js'
 import { parseConnectTarget } from '../core/egress/proxy-server.js'
-import { normalizeEgressListenHost } from '../core/config.js'
 
 describe('egress fingerprint helpers', () => {
   it('formats and parses IPv6 host summaries', () => {

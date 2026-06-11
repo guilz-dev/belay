@@ -1,4 +1,5 @@
 import { loadConfigFile } from './config-io.js';
+import { type BelayConfigV3 } from './core/config.js';
 import type { ApprovalStateFile } from './core/types.js';
 export interface EgressServiceOptions {
     targetDir?: string;
@@ -17,6 +18,7 @@ export interface EgressStatusReport {
     portOccupied: boolean;
     proxyEnv: Record<string, string>;
 }
+export declare function isEgressProxyActiveForRepo(config: BelayConfigV3, repoRoot: string, repoLocalStateDir: string): boolean;
 export declare function egressStatus(options?: EgressServiceOptions): Promise<EgressStatusReport>;
 export declare function startEgressProxy(options?: EgressServiceOptions): Promise<{
     ok: boolean;

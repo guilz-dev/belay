@@ -3,15 +3,17 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
-import { DEFAULT_CONFIG_V3 } from '../core/config.js'
-import { issueApprovalToken } from '../core/approval-token.js'
 import { recordApproval } from '../core/approval-service.js'
+import { issueApprovalToken } from '../core/approval-token.js'
+import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import type { ApprovalStateFile } from '../core/types.js'
 
 const tempDirs: string[] = []
 
-function memoryStore(pending: ApprovalStateFile, approved: ApprovalStateFile = { version: 1, approvals: [] }) {
+function memoryStore(
+  pending: ApprovalStateFile,
+  approved: ApprovalStateFile = { version: 1, approvals: [] },
+) {
   return {
     async loadPending() {
       return { filePath: '/tmp/pending.json', state: pending }

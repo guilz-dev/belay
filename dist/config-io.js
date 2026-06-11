@@ -3,8 +3,8 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getAdapterLayout } from './adapters/layouts/index.js';
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js';
-import { resolveLayeredConfig, teamConfigPath, } from './core/config-layers.js';
 import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
+import { resolveLayeredConfig, teamConfigPath, } from './core/config-layers.js';
 export function resolveAdapterName(config) {
     return config.adapter === 'claude' ? 'claude' : 'cursor';
 }

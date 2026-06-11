@@ -1,10 +1,10 @@
+import { inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
 import type {
   ApprovalRoundTrip,
   AuditRecord,
   BypassAttempt,
   NoisyRuleCandidate,
 } from './audit-types.js'
-import { inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
 
 const WRAPPER_TERMS = ['bash -c', 'sh -c', 'eval ', 'source ', 'node -e', '| bash', '| sh']
 

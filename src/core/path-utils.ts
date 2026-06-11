@@ -59,8 +59,24 @@ export function resolveMutationTarget(token: string, cwd: string): string | null
   return resolveRealpath(path.resolve(cwd, token))
 }
 
+function looksLikePathToken(token: string): boolean {
+  if (!token || token === '--' || token.startsWith('-')) {
+    return false
+  }
+  if (path.isAbsolute(token)) {
+    return true
+  }
+  if (token.startsWith('./') || token.startsWith('../')) {
+    return true
+  }
+  return token.includes('/') || token.includes('\\')
+}
+
 export function hasOutsideRepoPath(tokens: string[], cwd: string, repoRoot: string): boolean {
   return tokens.some((token) => {
+    if (!looksLikePathToken(token)) {
+      return false
+    }
     const resolved = resolveMutationTarget(token, cwd)
     if (!resolved) {
       return false

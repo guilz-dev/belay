@@ -27,11 +27,17 @@ export async function approvePending(options) {
         store: {
             async loadPending() {
                 const filePath = pendingApprovalsPath(repoRoot, config);
-                return { filePath, state: await loadApprovalState(repoRoot, 'pending-approvals.json', config) };
+                return {
+                    filePath,
+                    state: await loadApprovalState(repoRoot, 'pending-approvals.json', config),
+                };
             },
             async loadApproved() {
                 const filePath = approvedApprovalsPath(repoRoot, config);
-                return { filePath, state: await loadApprovalState(repoRoot, 'approved-approvals.json', config) };
+                return {
+                    filePath,
+                    state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
+                };
             },
             async writePending(_filePath, state) {
                 await saveApprovalState(repoRoot, 'pending-approvals.json', state, config);

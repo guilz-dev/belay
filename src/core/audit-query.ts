@@ -19,9 +19,10 @@ export function isGateRecord(record: AuditRecord): boolean {
 
 export function isApprovalRecorded(record: AuditRecord): boolean {
   return (
-    record.event === 'approval' ||
-    (record.event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded')
-  ) && record.reason === 'approval_recorded'
+    (record.event === 'approval' ||
+      (record.event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded')) &&
+    record.reason === 'approval_recorded'
+  )
 }
 
 export function inferWouldBlock(record: AuditRecord): boolean {
@@ -31,7 +32,10 @@ export function inferWouldBlock(record: AuditRecord): boolean {
   return record.verdict === 'deny_pending_approval'
 }
 
-export function filterAuditRecords(records: AuditRecord[], filter: AuditFilter = {}): AuditRecord[] {
+export function filterAuditRecords(
+  records: AuditRecord[],
+  filter: AuditFilter = {},
+): AuditRecord[] {
   const sinceMs = parseTimestamp(filter.since)
   const untilMs = parseTimestamp(filter.until)
 

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { recordApproval } from '../../core/approval-service.js'
+import { issueApprovalToken } from '../../core/approval-token.js'
+import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
 import {
   classifyResultToGateVerdict,
@@ -16,10 +19,6 @@ import {
   gateEnabledForAction,
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
-import { recordApproval } from '../../core/approval-service.js'
-import { issueApprovalToken } from '../../core/approval-token.js'
-import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
-import { notifyDeny } from '../../core/notify.js'
 import {
   type ApprovalStateFile,
   approvalCommandMatch,
@@ -39,6 +38,8 @@ import {
   scrubOptionsFromConfig,
   scrubValue,
 } from '../../core/index.js'
+import { notifyDeny } from '../../core/notify.js'
+import { isEgressProxyActiveForRepo } from '../../egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -139,6 +140,11 @@ export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayC
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
   return {
     ...classifierOptionsFromConfig(config),
+    demoteL3External: isEgressProxyActiveForRepo(
+      config,
+      ctx.repoRoot,
+      ctx.layout.repoLocalStateDir(ctx.repoRoot),
+    ),
     protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
   }
 }

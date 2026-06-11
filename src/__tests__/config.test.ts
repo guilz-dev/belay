@@ -96,7 +96,11 @@ describe('config migration', () => {
   it('normalizes v3 policy and control plane fields', () => {
     const normalized = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
-      policy: { unknownLocalEffect: 'deny', unparseableShell: 'deny' },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        unknownLocalEffect: 'deny',
+        unparseableShell: 'deny',
+      },
       controlPlane: { enabled: true, configDir: '  /tmp/belay  ', integrity: 'none' },
     })
 

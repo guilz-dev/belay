@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
-
-import { issueApprovalToken } from './approval-token.js'
 import { compactApprovals, createApprovalRecord } from './approval.js'
+import { issueApprovalToken } from './approval-token.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
 import {
@@ -66,7 +65,10 @@ async function withConsumeLock<T>(key: string, fn: () => Promise<T>): Promise<T>
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
-  consumeLocks.set(key, previous.then(() => gate))
+  consumeLocks.set(
+    key,
+    previous.then(() => gate),
+  )
   await previous
   try {
     return await fn()
@@ -151,7 +153,9 @@ export async function recordEgressApproval(params: {
 }): Promise<{ ok: boolean; message: string }> {
   const { recordApproval } = await import('./approval-service.js')
   const pending = await params.store.loadPending()
-  const match = pending.state.approvals.find((approval) => approval.approvalId === params.approvalId)
+  const match = pending.state.approvals.find(
+    (approval) => approval.approvalId === params.approvalId,
+  )
   const host = match ? parseHostFromSummary(match.summary) : null
 
   if (params.scope === 'domain' && match && !host) {

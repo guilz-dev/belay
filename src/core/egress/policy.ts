@@ -1,6 +1,6 @@
 import type { ApprovalStateFile } from '../types.js'
-import { egressFingerprint, egressSummary } from './fingerprint.js'
 import { isHostAllowlisted } from './allowlist.js'
+import { egressFingerprint, egressSummary } from './fingerprint.js'
 import type { EgressAllowlistFile, EgressConnectRequest, EgressPolicyResult } from './types.js'
 
 export function evaluateEgressConnect(params: {

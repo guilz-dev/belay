@@ -16,9 +16,7 @@ export function egressSummary(host: string, port: number, method = 'CONNECT'): s
 
 export function parseHostFromSummary(summary: string): string | null {
   const trimmed = summary.trim()
-  const methodMatch = trimmed.match(
-    /^(CONNECT|GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS)\s+(.+)$/i,
-  )
+  const methodMatch = trimmed.match(/^(CONNECT|GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS)\s+(.+)$/i)
   if (!methodMatch?.[2]) {
     try {
       return new URL(trimmed).hostname.toLowerCase()

@@ -5,11 +5,7 @@ import {
   relativeWithinRepo,
   resolveMutationTarget,
 } from './path-utils.js'
-import {
-  EXTERNAL_KEYS,
-  FLAGGED_KEYS,
-  READ_ONLY_KEYS,
-} from './policy/command-keys.js'
+import { EXTERNAL_KEYS, FLAGGED_KEYS, READ_ONLY_KEYS } from './policy/command-keys.js'
 import type { PolicyMatch, ShellAttributes } from './policy/types.js'
 import { commandKey, extractRedirectTargets, tokenizeShell } from './shell-tokenizer.js'
 import { detectUnparseableShell } from './shell-unparseable.js'

@@ -132,4 +132,4 @@ export function computeAuditMetrics(records, options = {}) {
         },
     };
 }
-export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord };
+export { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord };

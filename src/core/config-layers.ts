@@ -1,8 +1,7 @@
 import path from 'node:path'
-
+import { applyConfigPreset, type ConfigPresetName } from '../presets.js'
 import type { BelayConfigV3 } from './config.js'
 import { DEFAULT_CONFIG_V3, mergeConfig } from './config.js'
-import { applyConfigPreset, type ConfigPresetName } from '../presets.js'
 
 export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'protected'
 
@@ -36,10 +35,7 @@ function applyProtectedLayer(config: BelayConfigV3, builtin: BelayConfigV3): Bel
     controlPlane.enabled = true
   }
 
-  if (
-    builtin.controlPlane.integrity === 'hash-pinned' &&
-    controlPlane.integrity === 'none'
-  ) {
+  if (builtin.controlPlane.integrity === 'hash-pinned' && controlPlane.integrity === 'none') {
     controlPlane.integrity = 'hash-pinned'
   }
 
@@ -71,9 +67,7 @@ export function resolveLayeredConfig(params: {
   teamConfigPath?: string
   repoConfigPath?: string
 }): LayeredConfigResult {
-  const provenance: ConfigProvenanceEntry[] = [
-    { path: '(builtin)', source: 'builtin' },
-  ]
+  const provenance: ConfigProvenanceEntry[] = [{ path: '(builtin)', source: 'builtin' }]
 
   let config = mergeConfig({}, params.adapterDefaults)
 
