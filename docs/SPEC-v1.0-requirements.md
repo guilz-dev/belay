@@ -1,6 +1,6 @@
 # agent-belay v1.0 — Stable Belay (requirements)
 
-Status: **Pending** (v1.0.0 PR open).
+Status: **Shipped** (v1.0.0).
 Predecessor: v0.9 (layer conformance, capability broker).
 Companion: [SPEC-v1.0.md](./SPEC-v1.0.md), [guarantee-table.md](./guarantee-table.md).
 
