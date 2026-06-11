@@ -42,8 +42,8 @@ describe('layer conformance matrix', () => {
               await writeEgressDaemonState({
                 stateDir,
                 pid: process.pid,
-                host: config.egress.host,
-                port: config.egress.port,
+                host: config.egress.listenHost,
+                port: config.egress.listenPort,
                 repoRoot,
               })
             }
