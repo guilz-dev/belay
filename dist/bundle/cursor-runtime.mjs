@@ -794,7 +794,7 @@ import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
 import path13 from "node:path";
 
@@ -904,23 +904,37 @@ async function recordApproval(params) {
 }
 
 // src/core/capability/allowlist.ts
-import { existsSync as existsSync2, readFileSync } from "node:fs";
+import { existsSync as existsSync3, readFileSync } from "node:fs";
 init_config();
 import path5 from "node:path";
 
 // src/core/path-utils.ts
-import { realpathSync } from "node:fs";
+import { existsSync as existsSync2, realpathSync } from "node:fs";
 import path4 from "node:path";
-function resolveRealpath(targetPath) {
-  try {
-    return realpathSync.native(targetPath);
-  } catch {
-    return path4.resolve(targetPath);
+function canonicalPath(targetPath) {
+  const resolved = path4.resolve(targetPath);
+  if (!resolved) {
+    return resolved;
   }
+  const parsed = path4.parse(resolved);
+  let current = parsed.root;
+  const relativeParts = path4.relative(parsed.root || ".", resolved).split(path4.sep).filter(Boolean);
+  for (let i = 0; i < relativeParts.length; i++) {
+    const candidate = current === "" ? relativeParts[i] : path4.join(current, relativeParts[i]);
+    if (!existsSync2(candidate)) {
+      return path4.join(candidate, ...relativeParts.slice(i + 1));
+    }
+    try {
+      current = realpathSync.native(candidate);
+    } catch {
+      return path4.join(candidate, ...relativeParts.slice(i + 1));
+    }
+  }
+  return current;
 }
 function pathWithinRoot(root, targetPath) {
-  const resolvedRoot = resolveRealpath(root);
-  const resolvedTarget = resolveRealpath(targetPath);
+  const resolvedRoot = canonicalPath(root);
+  const resolvedTarget = canonicalPath(targetPath);
   const relativePath = path4.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return true;
@@ -928,8 +942,8 @@ function pathWithinRoot(root, targetPath) {
   return !relativePath.startsWith("..") && !path4.isAbsolute(relativePath);
 }
 function relativeWithinRepo(repoRoot, targetPath) {
-  const resolvedRoot = resolveRealpath(repoRoot);
-  const resolvedTarget = resolveRealpath(targetPath);
+  const resolvedRoot = canonicalPath(repoRoot);
+  const resolvedTarget = canonicalPath(targetPath);
   const relativePath = path4.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
@@ -954,15 +968,15 @@ function resolveMutationTarget(token, cwd) {
     return null;
   }
   if (path4.isAbsolute(token)) {
-    return resolveRealpath(token);
+    return canonicalPath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return resolveRealpath(path4.resolve(cwd, token));
+    return canonicalPath(path4.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return resolveRealpath(path4.resolve(cwd, token));
+    return canonicalPath(path4.resolve(cwd, token));
   }
-  return resolveRealpath(path4.resolve(cwd, token));
+  return canonicalPath(path4.resolve(cwd, token));
 }
 function looksLikePathToken(token) {
   if (!token || token === "--" || token.startsWith("-")) {
@@ -994,7 +1008,7 @@ function fsScopeAllowlistPath(config, repoLocalStateDir) {
   return path5.join(belayStateDir(config, repoLocalStateDir), "fs-scope-allowlist.json");
 }
 function loadFsScopeAllowlistSync(filePath) {
-  if (!existsSync2(filePath)) {
+  if (!existsSync3(filePath)) {
     return { version: 1, paths: [] };
   }
   const raw = JSON.parse(readFileSync(filePath, "utf8"));
@@ -1004,7 +1018,7 @@ function loadFsScopeAllowlistSync(filePath) {
   };
 }
 function normalizeAllowlistPath(targetPath) {
-  return path5.resolve(targetPath);
+  return canonicalPath(targetPath);
 }
 function isPathAllowlisted(absolutePath, allowlist) {
   const resolved = normalizeAllowlistPath(absolutePath);
@@ -1018,8 +1032,11 @@ function allPathsAllowlisted(absolutePaths, allowlist) {
 }
 
 // src/core/capability/broker.ts
-function isSandboxBrokerEnabled(config) {
-  return config.sandbox.enabled;
+function hasSandboxRuntime(config) {
+  return config.sandbox.enabled && config.sandbox.runtime !== "none";
+}
+function isCapabilityBrokerDemotionActive(config) {
+  return hasSandboxRuntime(config);
 }
 
 // src/core/shell-tokenizer.ts
@@ -3099,7 +3116,7 @@ init_config();
 
 // src/core/control-plane-spike.ts
 init_config();
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
 import path8 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
@@ -3143,7 +3160,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
     await rm(testFile, { force: true });
     return {
       ...base,
-      ok: parsed.cwd === cwd && existsSync3(controlPlaneDir),
+      ok: parsed.cwd === cwd && existsSync4(controlPlaneDir),
       wrote: true,
       readBack: readBack.trim()
     };
@@ -3158,7 +3175,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
 // src/core/transactional/diff-evaluator.ts
 import path9 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = path9.resolve(ctx.repoRoot, change.relativePath);
+  const absolutePath = canonicalPath(path9.join(ctx.repoRoot, change.relativePath));
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -3279,9 +3296,11 @@ function isTransactionalEligible(config, kind, result) {
 // src/core/transactional/reasons.ts
 var TRANSACTIONAL_ALREADY_APPLIED = "transactional_already_applied";
 var TRANSACTIONAL_OBSERVED_RISK = "transactional_observed_risk";
+var TRANSACTIONAL_APPLY_FAILED = "transactional_apply_failed";
 var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
   TRANSACTIONAL_OBSERVED_RISK,
-  TRANSACTIONAL_ALREADY_APPLIED
+  TRANSACTIONAL_ALREADY_APPLIED,
+  TRANSACTIONAL_APPLY_FAILED
 ]);
 
 // src/core/transactional/git-worktree.ts
@@ -3318,6 +3337,14 @@ async function isGitWorktreeAvailable(repoRoot) {
     return true;
   } catch {
     return false;
+  }
+}
+async function isDirtyWorktree(repoRoot) {
+  try {
+    const status = await execGit(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
+    return status.trim().length > 0;
+  } catch {
+    return true;
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
@@ -3439,6 +3466,15 @@ async function runTransactionalExecution(params) {
       result: predicted
     };
   }
+  if (await isDirtyWorktree(repoRoot)) {
+    return {
+      ok: false,
+      skipped: true,
+      skipReason: "dirty_worktree",
+      predicted,
+      result: predicted
+    };
+  }
   let snapshot = null;
   try {
     snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir);
@@ -3470,7 +3506,31 @@ async function runTransactionalExecution(params) {
     const changes = await collectWorktreeChanges(snapshot.worktreePath);
     const observed = evaluateTransactionalDiff(changes, diffContext);
     if (observed.verdict === "allow") {
-      await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes);
+      try {
+        await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes);
+      } catch {
+        const result2 = {
+          ...predicted,
+          verdict: "deny_pending_approval",
+          reason: TRANSACTIONAL_APPLY_FAILED,
+          assessment: {
+            ...observed.assessment,
+            reversibility: "irreversible",
+            confidence: 1,
+            signals: [...observed.assessment.signals, "transactional_apply_failed"]
+          }
+        };
+        return {
+          ok: true,
+          predicted,
+          observed,
+          result: result2,
+          worktreePath: snapshot.worktreePath,
+          commandExitCode: shellResult.exitCode,
+          commandSignal: shellResult.signal,
+          timedOut: shellResult.timedOut
+        };
+      }
     }
     const result = {
       ...predicted,
@@ -3545,7 +3605,7 @@ async function notifyDeny(config, event) {
 }
 
 // src/egress-service.ts
-import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync2 } from "node:fs";
 import path11 from "node:path";
 init_config_io();
 init_config();
@@ -3565,7 +3625,7 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
   const resolvedRepoRoot = path11.resolve(repoRoot);
   for (const stateDir of stateDirs) {
     const statusPath = path11.join(stateDir, "egress-proxy.json");
-    if (!existsSync4(statusPath)) {
+    if (!existsSync5(statusPath)) {
       continue;
     }
     try {
@@ -3662,7 +3722,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync5(teamPath)) {
+  if (existsSync6(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -3676,7 +3736,7 @@ async function resolveGateConfig(ctx, deps) {
 function runtimeClassifierOptions(ctx, config) {
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
-  const brokerFsScope = isSandboxBrokerEnabled(config);
+  const brokerFsScope = isCapabilityBrokerDemotionActive(config);
   return {
     ...classifierOptionsFromConfig(config),
     demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
@@ -3857,7 +3917,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
       agent_message: agentMessage
     });
   }
-  const brokerActive = isSandboxBrokerEnabled(ctx.config);
+  const brokerActive = isCapabilityBrokerDemotionActive(ctx.config);
   const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) || shouldSkipBrokerApprovedOnce(brokerActive, result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
   if (approved) {
     await deps.appendAudit(ctx, {
@@ -4033,13 +4093,13 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import path14 from "node:path";
 function findRepoRoot(startPath, layout) {
   let current = path14.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync6(path14.join(current, marker))) {
+      if (existsSync7(path14.join(current, marker))) {
         return current;
       }
     }

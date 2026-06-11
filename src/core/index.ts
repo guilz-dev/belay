@@ -71,6 +71,7 @@ export {
 } from './gate-engine.js'
 export { matchesSensitivePath } from './glob.js'
 export {
+  canonicalPath,
   hasOutsideRepoPath,
   normalizeToken,
   pathWithinRoot,

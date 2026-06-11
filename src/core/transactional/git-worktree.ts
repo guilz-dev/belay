@@ -38,6 +38,15 @@ export async function isGitWorktreeAvailable(repoRoot: string): Promise<boolean>
   }
 }
 
+export async function isDirtyWorktree(repoRoot: string): Promise<boolean> {
+  try {
+    const status = await execGit(repoRoot, ['status', '--porcelain', '--untracked-files=no'])
+    return status.trim().length > 0
+  } catch {
+    return true
+  }
+}
+
 export async function createGitWorktreeSnapshot(
   repoRoot: string,
   stateDir: string,

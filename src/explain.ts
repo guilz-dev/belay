@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import { loadConfigFile } from './config-io.js'
-import { isSandboxBrokerEnabled } from './core/capability/broker.js'
+import { isCapabilityBrokerDemotionActive } from './core/capability/broker.js'
 import {
   classifierOptionsFromConfig,
   classifyShell,
@@ -87,7 +87,7 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
       egress.running &&
       !egress.repoRootMismatch &&
       !egress.foreignProxy,
-    brokerFsScope: isSandboxBrokerEnabled(config),
+    brokerFsScope: isCapabilityBrokerDemotionActive(config),
   }
   const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions)
 

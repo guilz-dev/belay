@@ -1,5 +1,6 @@
 import type { TransactionalFileChange, TransactionalSnapshot } from './types.js';
 export declare function isGitWorktreeAvailable(repoRoot: string): Promise<boolean>;
+export declare function isDirtyWorktree(repoRoot: string): Promise<boolean>;
 export declare function createGitWorktreeSnapshot(repoRoot: string, stateDir: string): Promise<TransactionalSnapshot>;
 export declare function resolveWorktreeCwd(repoRoot: string, worktreePath: string, cwd: string): string;
 export interface ShellRunResult {

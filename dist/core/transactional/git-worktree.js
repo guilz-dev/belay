@@ -30,6 +30,15 @@ export async function isGitWorktreeAvailable(repoRoot) {
         return false;
     }
 }
+export async function isDirtyWorktree(repoRoot) {
+    try {
+        const status = await execGit(repoRoot, ['status', '--porcelain', '--untracked-files=no']);
+        return status.trim().length > 0;
+    }
+    catch {
+        return true;
+    }
+}
 export async function createGitWorktreeSnapshot(repoRoot, stateDir) {
     const worktreePath = path.join(stateDir, `tx-${randomUUID().replaceAll('-', '')}`);
     await mkdir(stateDir, { recursive: true });

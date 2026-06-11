@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import type { BelayConfigV3 } from '../config.js'
 import { belayStateDir } from '../config.js'
-import { pathWithinRoot } from '../path-utils.js'
+import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import type { FsScopeAllowlistEntry, FsScopeAllowlistFile } from './types.js'
 
 export function fsScopeAllowlistPath(config: BelayConfigV3, repoLocalStateDir: string): string {
@@ -42,7 +42,7 @@ export async function saveFsScopeAllowlist(
 }
 
 export function normalizeAllowlistPath(targetPath: string): string {
-  return path.resolve(targetPath)
+  return canonicalPath(targetPath)
 }
 
 export function isPathAllowlisted(absolutePath: string, allowlist: FsScopeAllowlistFile): boolean {

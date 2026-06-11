@@ -2,7 +2,11 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 import { allPathsAllowlisted, isPathAllowlisted } from '../core/capability/allowlist.js'
-import { evaluateL1FullStatus, isSandboxBrokerEnabled } from '../core/capability/broker.js'
+import {
+  evaluateL1FullStatus,
+  isCapabilityBrokerDemotionActive,
+  isSandboxBrokerEnabled,
+} from '../core/capability/broker.js'
 import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 
@@ -18,6 +22,22 @@ describe('capability broker policy', () => {
       }),
     ).toBe(true)
     expect(isSandboxBrokerEnabled(DEFAULT_CONFIG_V3)).toBe(false)
+  })
+
+  it('does not demote outside-repo rules when sandbox.runtime is none', () => {
+    expect(
+      isCapabilityBrokerDemotionActive({
+        ...DEFAULT_CONFIG_V3,
+        sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'none' },
+      }),
+    ).toBe(false)
+
+    const result = classifyShell('echo hi > ../outside.txt', repoRoot, repoRoot, {
+      brokerFsScope: false,
+      unknownLocalEffect: 'deny',
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_redirect')
   })
 
   it('demotes outside-repo shell denies to capability hints when paths are allowlisted', () => {

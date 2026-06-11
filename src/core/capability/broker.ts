@@ -8,6 +8,11 @@ export function hasSandboxRuntime(config: BelayConfigV3): boolean {
   return config.sandbox.enabled && config.sandbox.runtime !== 'none'
 }
 
+/** FS-scope demotion requires a configured external sandbox runtime, not sandbox.enabled alone. */
+export function isCapabilityBrokerDemotionActive(config: BelayConfigV3): boolean {
+  return hasSandboxRuntime(config)
+}
+
 export interface L1FullStatus {
   active: boolean
   sandbox: boolean

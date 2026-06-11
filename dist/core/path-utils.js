@@ -1,16 +1,39 @@
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-function resolveRealpath(targetPath) {
-    try {
-        return realpathSync.native(targetPath);
+/**
+ * Resolve symlinks for the longest existing prefix of `targetPath`, then append
+ * any non-existent suffix without further resolution. Keeps path comparisons
+ * symmetric when one side is a not-yet-created file (e.g. transactional diff,
+ * fs-scope allowlist matching).
+ */
+export function canonicalPath(targetPath) {
+    const resolved = path.resolve(targetPath);
+    if (!resolved) {
+        return resolved;
     }
-    catch {
-        return path.resolve(targetPath);
+    const parsed = path.parse(resolved);
+    let current = parsed.root;
+    const relativeParts = path
+        .relative(parsed.root || '.', resolved)
+        .split(path.sep)
+        .filter(Boolean);
+    for (let i = 0; i < relativeParts.length; i++) {
+        const candidate = current === '' ? relativeParts[i] : path.join(current, relativeParts[i]);
+        if (!existsSync(candidate)) {
+            return path.join(candidate, ...relativeParts.slice(i + 1));
+        }
+        try {
+            current = realpathSync.native(candidate);
+        }
+        catch {
+            return path.join(candidate, ...relativeParts.slice(i + 1));
+        }
     }
+    return current;
 }
 export function pathWithinRoot(root, targetPath) {
-    const resolvedRoot = resolveRealpath(root);
-    const resolvedTarget = resolveRealpath(targetPath);
+    const resolvedRoot = canonicalPath(root);
+    const resolvedTarget = canonicalPath(targetPath);
     const relativePath = path.relative(resolvedRoot, resolvedTarget);
     if (relativePath === '') {
         return true;
@@ -18,8 +41,8 @@ export function pathWithinRoot(root, targetPath) {
     return !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
 }
 export function relativeWithinRepo(repoRoot, targetPath) {
-    const resolvedRoot = resolveRealpath(repoRoot);
-    const resolvedTarget = resolveRealpath(targetPath);
+    const resolvedRoot = canonicalPath(repoRoot);
+    const resolvedTarget = canonicalPath(targetPath);
     const relativePath = path.relative(resolvedRoot, resolvedTarget);
     if (relativePath === '') {
         return '.';
@@ -44,15 +67,15 @@ export function resolveMutationTarget(token, cwd) {
         return null;
     }
     if (path.isAbsolute(token)) {
-        return resolveRealpath(token);
+        return canonicalPath(token);
     }
     if (token.startsWith('./') || token.startsWith('../')) {
-        return resolveRealpath(path.resolve(cwd, token));
+        return canonicalPath(path.resolve(cwd, token));
     }
     if (!token.includes('/') && !token.includes('\\')) {
-        return resolveRealpath(path.resolve(cwd, token));
+        return canonicalPath(path.resolve(cwd, token));
     }
-    return resolveRealpath(path.resolve(cwd, token));
+    return canonicalPath(path.resolve(cwd, token));
 }
 function looksLikePathToken(token) {
     if (!token || token === '--' || token.startsWith('-')) {
