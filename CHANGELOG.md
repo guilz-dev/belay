@@ -2,6 +2,12 @@
 
 ## 0.8.0
 
+### Fixed
+
+- Transactional observed-safe path returns `permission: deny` with `transactional_already_applied` so agents do not execute the same shell command twice after effects are committed
+- One-shot approvals no longer bypass `transactional_observed_risk`
+- Non-zero exit codes and timeouts in the worktree skip apply and fall back to L3 prediction
+
 ### Added
 
 - **Transactional execution (L2, opt-in)** — `policy.transactional.enabled` runs low-confidence local shell mutations in an isolated git worktree, evaluates the observed file diff, commits safe changes, and escalates dangerous effects to L4

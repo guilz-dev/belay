@@ -386,26 +386,34 @@ export function normalizeConfig(config) {
                     ? v3.policy.modelAssist.timeoutMs
                     : DEFAULT_MODEL_ASSIST.timeoutMs,
             },
-            transactional: {
-                enabled: v3.policy?.transactional?.enabled === true,
-                minConfidence: typeof v3.policy?.transactional?.minConfidence === 'number'
+            transactional: (() => {
+                let minConfidence = typeof v3.policy?.transactional?.minConfidence === 'number'
                     ? v3.policy.transactional.minConfidence
-                    : DEFAULT_TRANSACTIONAL_V3.minConfidence,
-                maxConfidence: typeof v3.policy?.transactional?.maxConfidence === 'number'
+                    : DEFAULT_TRANSACTIONAL_V3.minConfidence;
+                let maxConfidence = typeof v3.policy?.transactional?.maxConfidence === 'number'
                     ? v3.policy.transactional.maxConfidence
-                    : DEFAULT_TRANSACTIONAL_V3.maxConfidence,
-                timeoutMs: typeof v3.policy?.transactional?.timeoutMs === 'number' &&
-                    v3.policy.transactional.timeoutMs > 0
-                    ? v3.policy.transactional.timeoutMs
-                    : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
-                maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === 'number' &&
-                    v3.policy.transactional.maxDeletionCount >= 0
-                    ? v3.policy.transactional.maxDeletionCount
-                    : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
-                gates: {
-                    shell: v3.policy?.transactional?.gates?.shell !== false,
-                },
-            },
+                    : DEFAULT_TRANSACTIONAL_V3.maxConfidence;
+                if (minConfidence >= maxConfidence) {
+                    minConfidence = DEFAULT_TRANSACTIONAL_V3.minConfidence;
+                    maxConfidence = DEFAULT_TRANSACTIONAL_V3.maxConfidence;
+                }
+                return {
+                    enabled: v3.policy?.transactional?.enabled === true,
+                    minConfidence,
+                    maxConfidence,
+                    timeoutMs: typeof v3.policy?.transactional?.timeoutMs === 'number' &&
+                        v3.policy.transactional.timeoutMs > 0
+                        ? v3.policy.transactional.timeoutMs
+                        : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
+                    maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === 'number' &&
+                        v3.policy.transactional.maxDeletionCount >= 0
+                        ? v3.policy.transactional.maxDeletionCount
+                        : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
+                    gates: {
+                        shell: v3.policy?.transactional?.gates?.shell !== false,
+                    },
+                };
+            })(),
         },
         overrides: {
             allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],

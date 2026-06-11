@@ -8,6 +8,7 @@ import {
   resolveWorktreeCwd,
   runShellCommand,
 } from './git-worktree.js'
+import { TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_OBSERVED_RISK } from './reasons.js'
 import type { TransactionalExecutionResult, TransactionalRunnerParams } from './types.js'
 
 export async function runTransactionalExecution(
@@ -30,6 +31,32 @@ export async function runTransactionalExecution(
     snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir)
     const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd)
     const shellResult = await runShellCommand(command, execCwd, timeoutMs)
+
+    if (shellResult.timedOut) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: 'transactional_timed_out',
+        predicted,
+        result: predicted,
+        commandExitCode: shellResult.exitCode,
+        commandSignal: shellResult.signal,
+        timedOut: true,
+      }
+    }
+
+    if (shellResult.exitCode !== 0 && shellResult.exitCode !== null) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: 'transactional_command_failed',
+        predicted,
+        result: predicted,
+        commandExitCode: shellResult.exitCode,
+        commandSignal: shellResult.signal,
+      }
+    }
+
     const changes = await collectWorktreeChanges(snapshot.worktreePath)
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
@@ -39,8 +66,9 @@ export async function runTransactionalExecution(
 
     const result: ClassifyResult = {
       ...predicted,
-      verdict: observed.verdict,
-      reason: observed.reason,
+      verdict: observed.verdict === 'allow' ? 'allow' : 'deny_pending_approval',
+      reason:
+        observed.verdict === 'allow' ? TRANSACTIONAL_ALREADY_APPLIED : TRANSACTIONAL_OBSERVED_RISK,
       assessment: observed.assessment,
     }
 

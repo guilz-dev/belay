@@ -135,7 +135,7 @@ export function formatExplainReport(report: ExplainReport): string {
     `  confidence: ${result.assessment.confidence}`,
     `  signals: ${result.assessment.signals.join(', ') || '(none)'}`,
     report.transactionalEligible
-      ? 'Observed assessment: would be measured in an isolated git worktree when this gate runs.'
+      ? 'Observed assessment: measured in an isolated git worktree at gate time. Observed-safe commands are applied once and the hook denies re-execution (transactional_already_applied).'
       : 'Observed assessment: not applicable (transactional path not eligible).',
   ]
   return `${lines.join('\n')}\n`

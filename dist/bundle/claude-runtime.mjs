@@ -240,16 +240,24 @@ function normalizeConfig(config) {
         model: v3.policy?.modelAssist?.model,
         timeoutMs: typeof v3.policy?.modelAssist?.timeoutMs === "number" ? v3.policy.modelAssist.timeoutMs : DEFAULT_MODEL_ASSIST.timeoutMs
       },
-      transactional: {
-        enabled: v3.policy?.transactional?.enabled === true,
-        minConfidence: typeof v3.policy?.transactional?.minConfidence === "number" ? v3.policy.transactional.minConfidence : DEFAULT_TRANSACTIONAL_V3.minConfidence,
-        maxConfidence: typeof v3.policy?.transactional?.maxConfidence === "number" ? v3.policy.transactional.maxConfidence : DEFAULT_TRANSACTIONAL_V3.maxConfidence,
-        timeoutMs: typeof v3.policy?.transactional?.timeoutMs === "number" && v3.policy.transactional.timeoutMs > 0 ? v3.policy.transactional.timeoutMs : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
-        maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === "number" && v3.policy.transactional.maxDeletionCount >= 0 ? v3.policy.transactional.maxDeletionCount : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
-        gates: {
-          shell: v3.policy?.transactional?.gates?.shell !== false
+      transactional: (() => {
+        let minConfidence = typeof v3.policy?.transactional?.minConfidence === "number" ? v3.policy.transactional.minConfidence : DEFAULT_TRANSACTIONAL_V3.minConfidence;
+        let maxConfidence = typeof v3.policy?.transactional?.maxConfidence === "number" ? v3.policy.transactional.maxConfidence : DEFAULT_TRANSACTIONAL_V3.maxConfidence;
+        if (minConfidence >= maxConfidence) {
+          minConfidence = DEFAULT_TRANSACTIONAL_V3.minConfidence;
+          maxConfidence = DEFAULT_TRANSACTIONAL_V3.maxConfidence;
         }
-      }
+        return {
+          enabled: v3.policy?.transactional?.enabled === true,
+          minConfidence,
+          maxConfidence,
+          timeoutMs: typeof v3.policy?.transactional?.timeoutMs === "number" && v3.policy.transactional.timeoutMs > 0 ? v3.policy.transactional.timeoutMs : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
+          maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === "number" && v3.policy.transactional.maxDeletionCount >= 0 ? v3.policy.transactional.maxDeletionCount : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
+          gates: {
+            shell: v3.policy?.transactional?.gates?.shell !== false
+          }
+        };
+      })()
     },
     overrides: {
       allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
@@ -3155,6 +3163,14 @@ function isTransactionalEligible(config, kind, result) {
   return result.verdict === "allow_flagged";
 }
 
+// src/core/transactional/reasons.ts
+var TRANSACTIONAL_ALREADY_APPLIED = "transactional_already_applied";
+var TRANSACTIONAL_OBSERVED_RISK = "transactional_observed_risk";
+var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
+  TRANSACTIONAL_OBSERVED_RISK,
+  TRANSACTIONAL_ALREADY_APPLIED
+]);
+
 // src/core/transactional/git-worktree.ts
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -3315,6 +3331,29 @@ async function runTransactionalExecution(params) {
     snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir);
     const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd);
     const shellResult = await runShellCommand(command, execCwd, timeoutMs);
+    if (shellResult.timedOut) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: "transactional_timed_out",
+        predicted,
+        result: predicted,
+        commandExitCode: shellResult.exitCode,
+        commandSignal: shellResult.signal,
+        timedOut: true
+      };
+    }
+    if (shellResult.exitCode !== 0 && shellResult.exitCode !== null) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: "transactional_command_failed",
+        predicted,
+        result: predicted,
+        commandExitCode: shellResult.exitCode,
+        commandSignal: shellResult.signal
+      };
+    }
     const changes = await collectWorktreeChanges(snapshot.worktreePath);
     const observed = evaluateTransactionalDiff(changes, diffContext);
     if (observed.verdict === "allow") {
@@ -3322,8 +3361,8 @@ async function runTransactionalExecution(params) {
     }
     const result = {
       ...predicted,
-      verdict: observed.verdict,
-      reason: observed.reason,
+      verdict: observed.verdict === "allow" ? "allow" : "deny_pending_approval",
+      reason: observed.verdict === "allow" ? TRANSACTIONAL_ALREADY_APPLIED : TRANSACTIONAL_OBSERVED_RISK,
       assessment: observed.assessment
     };
     return {
@@ -3686,7 +3725,26 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
     mode: ctx.config.mode,
     ...auditExtras.transactionalLayer
   };
-  const approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
+  if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {
+    const userMessage = "Belay executed this command safely in an isolated git worktree. Observed-safe file changes are already applied; do not retry the same command.";
+    const agentMessage = "Belay already applied the observed-safe effects of this shell command in isolation. Do not run it again.";
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: "allow",
+      reason: result.reason,
+      wouldBlock: false,
+      permission: "deny"
+    });
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: "deny",
+      wouldBlock: false,
+      user_message: userMessage,
+      agent_message: agentMessage
+    });
+  }
+  const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ? null : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
   if (approved) {
     await deps.appendAudit(ctx, {
       ...gateBase,

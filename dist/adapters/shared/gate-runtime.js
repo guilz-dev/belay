@@ -9,7 +9,7 @@ import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../cor
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
 import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 import { notifyDeny } from '../../core/notify.js';
-import { isTransactionalEligible, runTransactionalExecution, } from '../../core/transactional/index.js';
+import { isTransactionalEligible, runTransactionalExecution, TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_APPROVAL_BYPASS_REASONS, } from '../../core/transactional/index.js';
 import { isEgressProxyActiveForRepo } from '../../egress-service.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
@@ -243,7 +243,28 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
         mode: ctx.config.mode,
         ...auditExtras.transactionalLayer,
     };
-    const approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
+    if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {
+        const userMessage = 'Belay executed this command safely in an isolated git worktree. Observed-safe file changes are already applied; do not retry the same command.';
+        const agentMessage = 'Belay already applied the observed-safe effects of this shell command in isolation. Do not run it again.';
+        await deps.appendAudit(ctx, {
+            ...gateBase,
+            verdict: 'allow',
+            reason: result.reason,
+            wouldBlock: false,
+            permission: 'deny',
+        });
+        return classifyResultToGateVerdict({
+            result,
+            mode: ctx.config.mode,
+            permission: 'deny',
+            wouldBlock: false,
+            user_message: userMessage,
+            agent_message: agentMessage,
+        });
+    }
+    const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason)
+        ? null
+        : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
     if (approved) {
         await deps.appendAudit(ctx, {
             ...gateBase,

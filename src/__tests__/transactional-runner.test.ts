@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { runTransactionalExecution } from '../core/transactional/runner.js'
 
 const execFileAsync = promisify(execFile)
@@ -54,6 +55,7 @@ describe('transactional runner', () => {
     expect(result.ok).toBe(true)
     expect(result.observed?.verdict).toBe('allow')
     expect(result.result.verdict).toBe('allow')
+    expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
   })
 
@@ -83,5 +85,32 @@ describe('transactional runner', () => {
     expect(result.observed?.verdict).toBe('deny_pending_approval')
     expect(result.result.reason).toBe('transactional_observed_risk')
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toContain('# test')
+  })
+
+  it('falls back to prediction when the isolated command exits non-zero', async () => {
+    const repoRoot = await createGitRepo()
+    const predicted = classifyShell('false', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+
+    const result = await runTransactionalExecution({
+      command: 'false',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      timeoutMs: 10_000,
+      predicted,
+      diffContext: {
+        repoRoot,
+        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+        protectedRoots: [],
+        maxDeletionCount: 10,
+      },
+    })
+
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe('transactional_command_failed')
+    expect(result.result).toEqual(predicted)
   })
 })

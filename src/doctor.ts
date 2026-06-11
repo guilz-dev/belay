@@ -266,6 +266,17 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
     }
 
+    if (loadedConfig.policy.transactional.enabled) {
+      notes.push(
+        `Transactional (partial L2): enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.`,
+      )
+      if (!existsSync(path.join(repoRoot, '.git'))) {
+        warnings.push(
+          'Transactional execution is enabled but this directory is not a git repository. Transactional L2 will be skipped until git worktree is available.',
+        )
+      }
+    }
+
     if (loadedConfig.egress.enabled) {
       const egress = await egressStatus({ targetDir: repoRoot })
       notes.push(

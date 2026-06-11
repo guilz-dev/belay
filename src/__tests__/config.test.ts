@@ -134,6 +134,22 @@ describe('config migration', () => {
     expect(enabled.policy.transactional.gates.shell).toBe(false)
   })
 
+  it('resets invalid transactional confidence bands', () => {
+    const normalized = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          minConfidence: 0.9,
+          maxConfidence: 0.8,
+        },
+      },
+    })
+    expect(normalized.policy.transactional.minConfidence).toBe(0.72)
+    expect(normalized.policy.transactional.maxConfidence).toBe(0.88)
+  })
+
   it('resolves default control plane directory from XDG_CONFIG_HOME', () => {
     expect(defaultControlPlaneDir({ XDG_CONFIG_HOME: '/custom/config' }, () => '/home/user')).toBe(
       '/custom/config/agent-belay',

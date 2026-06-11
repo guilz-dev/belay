@@ -222,6 +222,12 @@ export async function doctorProject(options = {}) {
                 warnings.push('OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt.');
             }
         }
+        if (loadedConfig.policy.transactional.enabled) {
+            notes.push(`Transactional (partial L2): enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.`);
+            if (!existsSync(path.join(repoRoot, '.git'))) {
+                warnings.push('Transactional execution is enabled but this directory is not a git repository. Transactional L2 will be skipped until git worktree is available.');
+            }
+        }
         if (loadedConfig.egress.enabled) {
             const egress = await egressStatus({ targetDir: repoRoot });
             notes.push(`Egress (partial L1): enabled — L3 demotion active only while proxy runs (demoteL3External=${loadedConfig.egress.demoteL3External}), listen ${egress.host}:${egress.port}.`);

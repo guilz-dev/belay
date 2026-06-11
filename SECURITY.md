@@ -87,6 +87,13 @@ When those conditions hold:
 - **Observed effects** — the command runs in a detached worktree; file changes are
   categorized from the real diff; safe changes are applied to the working tree,
   dangerous changes are discarded and escalated to human approval.
+- **No double execution** — when observed-safe effects are applied, the shell hook
+  returns `permission: deny` with reason `transactional_already_applied` so the
+  agent runtime does not run the same command a second time.
+- **Approval bypass guard** — one-shot approvals do not override
+  `transactional_observed_risk`; human approval cannot bypass an observed-dangerous diff.
+- **Command failure** — non-zero exit codes or timeouts in the worktree skip apply and
+  fall back to the L3 prediction.
 - **L3 passthrough** — high-confidence `allow` and predicted `deny_pending_approval`
   bypass transactional execution (L3 remains the fast path / L4 escalation).
 - **Not covered** — effects outside the snapshot (processes, IPC, clocks), non-git
