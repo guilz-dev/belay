@@ -35,7 +35,7 @@ async function main() {
             await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, { encoding: 'utf8', flag: 'a' });
         },
     });
-    await writeEgressDaemonState({ stateDir, pid: process.pid, host, port });
+    await writeEgressDaemonState({ stateDir, pid: process.pid, host, port, repoRoot });
     const shutdown = async () => {
         server.close();
         await clearEgressDaemonState(stateDir);

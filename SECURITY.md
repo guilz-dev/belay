@@ -60,6 +60,9 @@ configured to use `HTTP_PROXY` / `HTTPS_PROXY`:
   the proxy boundary.
 - **Not covered** — DNS exfiltration, raw sockets, or processes that bypass proxy
   environment variables (covert channels; full L1 enforcement is v0.9+).
+- **Single proxy per control plane** — one running egress daemon binds to one
+  `repoRoot` and listen port (default `17831`). Starting egress for a second
+  repository requires stopping the existing proxy first.
 
 ### Known limitations
 

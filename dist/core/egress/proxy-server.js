@@ -1,7 +1,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import { URL } from 'node:url';
-import { ensurePendingEgressApproval } from '../egress-approval.js';
+import { consumeApprovedEgress, ensurePendingEgressApproval, notifyEgressDeny, } from '../egress-approval.js';
 import { loadEgressAllowlist } from './allowlist.js';
 import { evaluateEgressConnect } from './policy.js';
 function parseHttpTarget(req) {
@@ -13,14 +13,27 @@ function parseHttpTarget(req) {
         return {
             host: url.hostname,
             port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
+            url,
         };
     }
     catch {
         return null;
     }
 }
-function parseConnectTarget(url) {
-    const [host, portValue] = url.split(':');
+export function parseConnectTarget(url) {
+    if (!url) {
+        return null;
+    }
+    const bracketMatch = url.match(/^\[([^\]]+)\]:(\d+)$/);
+    if (bracketMatch?.[1]) {
+        return { host: bracketMatch[1], port: Number(bracketMatch[2]) };
+    }
+    const colonIndex = url.lastIndexOf(':');
+    if (colonIndex === -1) {
+        return { host: url, port: 443 };
+    }
+    const host = url.slice(0, colonIndex);
+    const portValue = url.slice(colonIndex + 1);
     if (!host) {
         return null;
     }
@@ -31,6 +44,45 @@ async function evaluateRequest(ctx, request) {
     const approved = await ctx.loadApproved();
     const result = evaluateEgressConnect({ request, allowlist, approved });
     if (result.decision === 'allow') {
+        if (result.reason === 'approved_once') {
+            const consumed = await consumeApprovedEgress({
+                repoRoot: ctx.repoRoot,
+                fingerprint: result.fingerprint,
+                store: ctx.store,
+            });
+            if (!consumed) {
+                const freshApproved = await ctx.loadApproved();
+                const retry = evaluateEgressConnect({ request, allowlist, approved: freshApproved });
+                if (retry.decision !== 'allow') {
+                    return denyEgressRequest(ctx, request, allowlist);
+                }
+                await ctx.onAudit?.({
+                    event: 'egressConnect',
+                    kind: 'egress',
+                    verdict: 'allow',
+                    reason: retry.reason,
+                    fingerprint: retry.fingerprint,
+                    summary: retry.summary,
+                    repoRoot: ctx.repoRoot,
+                    permission: 'allow',
+                    wouldBlock: false,
+                });
+                return { allowed: true, result: retry };
+            }
+            await ctx.onAudit?.({
+                event: 'egressConnect',
+                kind: 'egress',
+                verdict: 'allow',
+                reason: 'approved_once',
+                fingerprint: result.fingerprint,
+                summary: result.summary,
+                repoRoot: ctx.repoRoot,
+                approvalId: consumed.approvalId,
+                permission: 'allow',
+                wouldBlock: false,
+            });
+            return { allowed: true, result };
+        }
         await ctx.onAudit?.({
             event: 'egressConnect',
             kind: 'egress',
@@ -44,25 +96,41 @@ async function evaluateRequest(ctx, request) {
         });
         return { allowed: true, result };
     }
-    const { approvalId } = await ensurePendingEgressApproval({
+    return denyEgressRequest(ctx, request, allowlist, result);
+}
+async function denyEgressRequest(ctx, request, allowlist, result) {
+    const approved = await ctx.loadApproved();
+    const policyResult = result ??
+        evaluateEgressConnect({
+            request,
+            allowlist,
+            approved,
+        });
+    const { approvalId, approval } = await ensurePendingEgressApproval({
         config: ctx.config,
         repoRoot: ctx.repoRoot,
-        policyResult: result,
+        policyResult,
         store: ctx.store,
+    });
+    await notifyEgressDeny({
+        config: ctx.config,
+        repoRoot: ctx.repoRoot,
+        policyResult,
+        approval,
     });
     await ctx.onAudit?.({
         event: 'egressConnect',
         kind: 'egress',
         verdict: 'deny_pending_approval',
-        reason: result.reason,
-        fingerprint: result.fingerprint,
-        summary: result.summary,
+        reason: policyResult.reason,
+        fingerprint: policyResult.fingerprint,
+        summary: policyResult.summary,
         repoRoot: ctx.repoRoot,
         approvalId,
         permission: 'deny',
         wouldBlock: true,
     });
-    return { allowed: false, approvalId, result };
+    return { allowed: false, approvalId, result: policyResult };
 }
 function denyResponse(res, approvalId, summary) {
     const body = JSON.stringify({
@@ -74,12 +142,13 @@ function denyResponse(res, approvalId, summary) {
     res.end(body);
 }
 function forwardHttp(req, res, target) {
+    const upstreamPath = `${target.url.pathname}${target.url.search}`;
     const headers = { ...req.headers, host: `${target.host}:${target.port}` };
     const proxyReq = http.request({
         host: target.host,
         port: target.port,
         method: req.method,
-        path: req.url,
+        path: upstreamPath,
         headers,
     }, (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);

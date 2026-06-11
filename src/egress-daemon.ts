@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     },
   })
 
-  await writeEgressDaemonState({ stateDir, pid: process.pid, host, port })
+  await writeEgressDaemonState({ stateDir, pid: process.pid, host, port, repoRoot })
 
   const shutdown = async () => {
     server.close()

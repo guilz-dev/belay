@@ -230,6 +230,9 @@ export async function doctorProject(options = {}) {
             }
             else {
                 notes.push(`Egress proxy running (pid ${egress.pid}).`);
+                if (egress.repoRootMismatch) {
+                    warnings.push(`Egress proxy is bound to ${egress.boundRepoRoot} but this repo is ${repoRoot}. Stop and restart egress for this repository.`);
+                }
             }
         }
     }

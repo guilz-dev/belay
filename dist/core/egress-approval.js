@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { issueApprovalToken } from './approval-token.js';
 import { compactApprovals, createApprovalRecord } from './approval.js';
+import { configuredControlPlaneDir } from './config.js';
 import { addDomainToAllowlist, loadEgressAllowlist, saveEgressAllowlist, } from './egress/allowlist.js';
 import { parseHostFromSummary } from './egress/fingerprint.js';
+import { notifyDeny } from './notify.js';
 export async function ensurePendingEgressApproval(params) {
     const { config, repoRoot, policyResult, store } = params;
     const pending = await store.loadPending();
@@ -11,7 +14,7 @@ export async function ensurePendingEgressApproval(params) {
         approval.repoRoot === repoRoot);
     if (existing) {
         await store.writePending(pending.filePath, pending.state);
-        return { approvalId: existing.approvalId };
+        return { approvalId: existing.approvalId, approval: existing };
     }
     const approvalId = `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
     const approval = createApprovalRecord({
@@ -25,7 +28,49 @@ export async function ensurePendingEgressApproval(params) {
     });
     pending.state.approvals.push(approval);
     await store.writePending(pending.filePath, pending.state);
-    return { approvalId };
+    return { approvalId, approval };
+}
+export async function consumeApprovedEgress(params) {
+    const approved = await params.store.loadApproved();
+    approved.state = compactApprovals(approved.state);
+    const index = approved.state.approvals.findIndex((approval) => approval.kind === 'egress' &&
+        approval.fingerprint === params.fingerprint &&
+        approval.repoRoot === params.repoRoot);
+    if (index === -1) {
+        await params.store.writeApproved(approved.filePath, approved.state);
+        return null;
+    }
+    const [approval] = approved.state.approvals.splice(index, 1);
+    await params.store.writeApproved(approved.filePath, approved.state);
+    return approval;
+}
+export async function notifyEgressDeny(params) {
+    if (!params.config.notifications.webhookUrl && !params.config.notifications.commandHook) {
+        return;
+    }
+    let approvalToken;
+    if (params.config.approvalSigning.required) {
+        try {
+            approvalToken = await issueApprovalToken({
+                approvalId: params.approval.approvalId,
+                fingerprint: params.approval.fingerprint,
+                repoRoot: params.approval.repoRoot,
+                issuedAt: params.approval.createdAt,
+                expiresAt: params.approval.expiresAt,
+            }, configuredControlPlaneDir(params.config));
+        }
+        catch {
+            approvalToken = undefined;
+        }
+    }
+    await notifyDeny(params.config.notifications, {
+        approvalId: params.approval.approvalId,
+        reason: params.policyResult.reason,
+        summary: params.policyResult.summary,
+        repoRoot: params.repoRoot,
+        fingerprint: params.policyResult.fingerprint,
+        approvalToken,
+    });
 }
 export async function recordEgressApproval(params) {
     const { recordApproval } = await import('./approval-service.js');

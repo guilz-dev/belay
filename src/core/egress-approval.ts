@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 
+import { issueApprovalToken } from './approval-token.js'
 import { compactApprovals, createApprovalRecord } from './approval.js'
 import type { BelayConfigV3 } from './config.js'
+import { configuredControlPlaneDir } from './config.js'
 import {
   addDomainToAllowlist,
   loadEgressAllowlist,
@@ -9,7 +11,8 @@ import {
 } from './egress/allowlist.js'
 import { parseHostFromSummary } from './egress/fingerprint.js'
 import type { EgressApprovalScope, EgressPolicyResult } from './egress/types.js'
-import type { ApprovalStateFile } from './types.js'
+import { notifyDeny } from './notify.js'
+import type { ApprovalRecord, ApprovalStateFile } from './types.js'
 
 export interface EgressApprovalStore {
   loadPending: () => Promise<{ filePath: string; state: ApprovalStateFile }>
@@ -24,7 +27,7 @@ export async function ensurePendingEgressApproval(params: {
   repoRoot: string
   policyResult: EgressPolicyResult
   store: EgressApprovalStore
-}): Promise<{ approvalId: string }> {
+}): Promise<{ approvalId: string; approval: ApprovalRecord }> {
   const { config, repoRoot, policyResult, store } = params
   const pending = await store.loadPending()
   pending.state = compactApprovals(pending.state)
@@ -37,7 +40,7 @@ export async function ensurePendingEgressApproval(params: {
   )
   if (existing) {
     await store.writePending(pending.filePath, pending.state)
-    return { approvalId: existing.approvalId }
+    return { approvalId: existing.approvalId, approval: existing }
   }
 
   const approvalId = `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`
@@ -52,7 +55,67 @@ export async function ensurePendingEgressApproval(params: {
   })
   pending.state.approvals.push(approval)
   await store.writePending(pending.filePath, pending.state)
-  return { approvalId }
+  return { approvalId, approval }
+}
+
+export async function consumeApprovedEgress(params: {
+  repoRoot: string
+  fingerprint: string
+  store: EgressApprovalStore
+}): Promise<ApprovalRecord | null> {
+  const approved = await params.store.loadApproved()
+  approved.state = compactApprovals(approved.state)
+  const index = approved.state.approvals.findIndex(
+    (approval) =>
+      approval.kind === 'egress' &&
+      approval.fingerprint === params.fingerprint &&
+      approval.repoRoot === params.repoRoot,
+  )
+  if (index === -1) {
+    await params.store.writeApproved(approved.filePath, approved.state)
+    return null
+  }
+  const [approval] = approved.state.approvals.splice(index, 1)
+  await params.store.writeApproved(approved.filePath, approved.state)
+  return approval
+}
+
+export async function notifyEgressDeny(params: {
+  config: BelayConfigV3
+  repoRoot: string
+  policyResult: EgressPolicyResult
+  approval: ApprovalRecord
+}): Promise<void> {
+  if (!params.config.notifications.webhookUrl && !params.config.notifications.commandHook) {
+    return
+  }
+
+  let approvalToken: string | undefined
+  if (params.config.approvalSigning.required) {
+    try {
+      approvalToken = await issueApprovalToken(
+        {
+          approvalId: params.approval.approvalId,
+          fingerprint: params.approval.fingerprint,
+          repoRoot: params.approval.repoRoot,
+          issuedAt: params.approval.createdAt,
+          expiresAt: params.approval.expiresAt,
+        },
+        configuredControlPlaneDir(params.config),
+      )
+    } catch {
+      approvalToken = undefined
+    }
+  }
+
+  await notifyDeny(params.config.notifications, {
+    approvalId: params.approval.approvalId,
+    reason: params.policyResult.reason,
+    summary: params.policyResult.summary,
+    repoRoot: params.repoRoot,
+    fingerprint: params.policyResult.fingerprint,
+    approvalToken,
+  })
 }
 
 export async function recordEgressApproval(params: {

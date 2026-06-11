@@ -1,6 +1,6 @@
 import type { BelayConfigV3 } from './config.js';
 import type { EgressApprovalScope, EgressPolicyResult } from './egress/types.js';
-import type { ApprovalStateFile } from './types.js';
+import type { ApprovalRecord, ApprovalStateFile } from './types.js';
 export interface EgressApprovalStore {
     loadPending: () => Promise<{
         filePath: string;
@@ -21,7 +21,19 @@ export declare function ensurePendingEgressApproval(params: {
     store: EgressApprovalStore;
 }): Promise<{
     approvalId: string;
+    approval: ApprovalRecord;
 }>;
+export declare function consumeApprovedEgress(params: {
+    repoRoot: string;
+    fingerprint: string;
+    store: EgressApprovalStore;
+}): Promise<ApprovalRecord | null>;
+export declare function notifyEgressDeny(params: {
+    config: BelayConfigV3;
+    repoRoot: string;
+    policyResult: EgressPolicyResult;
+    approval: ApprovalRecord;
+}): Promise<void>;
 export declare function recordEgressApproval(params: {
     approvalId: string;
     config: BelayConfigV3;

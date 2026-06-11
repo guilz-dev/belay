@@ -31,11 +31,23 @@ async function readStatusFile(statusPath) {
             host: raw.host ?? '127.0.0.1',
             port: raw.port ?? 17831,
             startedAt: raw.startedAt ?? '',
+            repoRoot: typeof raw.repoRoot === 'string' ? raw.repoRoot : undefined,
         };
     }
     catch {
         return null;
     }
+}
+async function waitForEgressRunning(repoRoot, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const status = await egressStatus({ targetDir: repoRoot });
+        if (status.running) {
+            return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
 }
 function isProcessAlive(pid) {
     try {
@@ -52,6 +64,7 @@ export async function egressStatus(options = {}) {
     const { statusPath } = egressStatePaths(repoRoot, config);
     const status = await readStatusFile(statusPath);
     const running = status ? isProcessAlive(status.pid) : false;
+    const boundRepoRoot = running ? (status?.repoRoot ?? null) : null;
     return {
         repoRoot,
         enabled: config.egress.enabled,
@@ -60,6 +73,8 @@ export async function egressStatus(options = {}) {
         port: status?.port ?? config.egress.listenPort,
         pid: running ? (status?.pid ?? null) : null,
         startedAt: running ? (status?.startedAt ?? null) : null,
+        boundRepoRoot,
+        repoRootMismatch: Boolean(boundRepoRoot && boundRepoRoot !== repoRoot),
         proxyEnv: recommendedProxyEnv(config.egress),
     };
 }
@@ -74,9 +89,15 @@ export async function startEgressProxy(options = {}) {
     }
     const current = await egressStatus({ targetDir: repoRoot });
     if (current.running) {
+        if (current.repoRootMismatch) {
+            return {
+                ok: false,
+                message: `Egress proxy already running for ${current.boundRepoRoot} (pid ${current.pid}). Stop it before starting for ${repoRoot}.`,
+            };
+        }
         return {
             ok: true,
-            message: `Egress proxy already running (pid ${current.pid}) at ${current.host}:${current.port}.`,
+            message: `Egress proxy already running (pid ${current.pid}) at ${current.host}:${current.port} for ${current.boundRepoRoot ?? repoRoot}.`,
         };
     }
     const { stateDir } = egressStatePaths(repoRoot, config);
@@ -90,9 +111,9 @@ export async function startEgressProxy(options = {}) {
         },
     });
     child.unref();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const started = await waitForEgressRunning(repoRoot);
     const after = await egressStatus({ targetDir: repoRoot });
-    if (!after.running) {
+    if (!started || !after.running) {
         return {
             ok: false,
             message: 'Failed to start egress proxy. Check that the listen port is free.',
@@ -157,6 +178,12 @@ export function formatEgressStatusReport(report) {
     if (report.startedAt) {
         lines.push(`Started: ${report.startedAt}`);
     }
+    if (report.boundRepoRoot) {
+        lines.push(`Bound repo: ${report.boundRepoRoot}`);
+    }
+    if (report.repoRootMismatch) {
+        lines.push(`Warning: proxy is bound to a different repository than ${report.repoRoot}.`);
+    }
     lines.push('', 'Recommended proxy environment:');
     for (const [key, value] of Object.entries(report.proxyEnv)) {
         lines.push(`  ${key}=${value}`);
@@ -189,7 +216,7 @@ export async function writeEgressDaemonState(params) {
     await mkdir(params.stateDir, { recursive: true });
     const startedAt = new Date().toISOString();
     await writeFile(path.join(params.stateDir, 'egress-proxy.pid'), `${params.pid}\n`, 'utf8');
-    await writeFile(path.join(params.stateDir, 'egress-proxy.json'), `${JSON.stringify({ pid: params.pid, host: params.host, port: params.port, startedAt }, null, 2)}\n`, 'utf8');
+    await writeFile(path.join(params.stateDir, 'egress-proxy.json'), `${JSON.stringify({ pid: params.pid, host: params.host, port: params.port, startedAt, repoRoot: params.repoRoot }, null, 2)}\n`, 'utf8');
 }
 export async function clearEgressDaemonState(stateDir) {
     await unlink(path.join(stateDir, 'egress-proxy.pid')).catch(() => undefined);

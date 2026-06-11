@@ -255,7 +255,7 @@ function classifySegment(
     unknownLocalEffect: options.unknownLocalEffect ?? 'allow_flagged',
     unparseableShell: options.unparseableShell ?? 'allow_flagged',
     confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
-    demoteL3External: options.demoteL3External === true,
+    demoteL3External: options.egressEnabled === true && options.demoteL3External === true,
   })
   return policyResultToClassifyResult(attributes, policyResult)
 }

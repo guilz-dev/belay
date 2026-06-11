@@ -11,6 +11,8 @@ export interface EgressStatusReport {
     port: number;
     pid: number | null;
     startedAt: string | null;
+    boundRepoRoot: string | null;
+    repoRootMismatch: boolean;
     proxyEnv: Record<string, string>;
 }
 export declare function egressStatus(options?: EgressServiceOptions): Promise<EgressStatusReport>;
@@ -46,5 +48,6 @@ export declare function writeEgressDaemonState(params: {
     pid: number;
     host: string;
     port: number;
+    repoRoot: string;
 }): Promise<void>;
 export declare function clearEgressDaemonState(stateDir: string): Promise<void>;
