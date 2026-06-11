@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -7,7 +7,10 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
-import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
+import {
+  TRANSACTIONAL_ALREADY_APPLIED,
+  TRANSACTIONAL_APPLY_FAILED,
+} from '../core/transactional/reasons.js'
 import { runTransactionalExecution } from '../core/transactional/runner.js'
 
 const execFileAsync = promisify(execFile)
@@ -85,6 +88,62 @@ describe('transactional runner', () => {
     expect(result.observed?.verdict).toBe('deny_pending_approval')
     expect(result.result.reason).toBe('transactional_observed_risk')
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toContain('# test')
+  })
+
+  it('skips transactional execution when tracked files are modified', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    const predicted = classifyShell('touch safe.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+
+    const result = await runTransactionalExecution({
+      command: 'touch safe.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      timeoutMs: 10_000,
+      predicted,
+      diffContext: {
+        repoRoot,
+        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+        protectedRoots: [],
+        maxDeletionCount: 10,
+      },
+    })
+
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe('dirty_worktree')
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('denies when applying observed-safe changes fails', async () => {
+    const repoRoot = await createGitRepo()
+    await mkdir(path.join(repoRoot, 'safe.txt'))
+    const predicted = classifyShell('touch safe.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+
+    const result = await runTransactionalExecution({
+      command: 'touch safe.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      timeoutMs: 10_000,
+      predicted,
+      diffContext: {
+        repoRoot,
+        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+        protectedRoots: [],
+        maxDeletionCount: 10,
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.result.verdict).toBe('deny_pending_approval')
+    expect(result.result.reason).toBe(TRANSACTIONAL_APPLY_FAILED)
   })
 
   it('falls back to prediction when the isolated command exits non-zero', async () => {

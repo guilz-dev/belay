@@ -4,6 +4,10 @@ export function isSandboxBrokerEnabled(config) {
 export function hasSandboxRuntime(config) {
     return config.sandbox.enabled && config.sandbox.runtime !== 'none';
 }
+/** FS-scope demotion requires a configured external sandbox runtime, not sandbox.enabled alone. */
+export function isCapabilityBrokerDemotionActive(config) {
+    return hasSandboxRuntime(config);
+}
 export function evaluateL1FullStatus(params) {
     const sandbox = hasSandboxRuntime(params.config);
     const egress = params.config.egress.enabled;

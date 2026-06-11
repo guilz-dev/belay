@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { belayStateDir } from '../config.js';
-import { pathWithinRoot } from '../path-utils.js';
+import { canonicalPath, pathWithinRoot } from '../path-utils.js';
 export function fsScopeAllowlistPath(config, repoLocalStateDir) {
     return path.join(belayStateDir(config, repoLocalStateDir), 'fs-scope-allowlist.json');
 }
@@ -31,7 +31,7 @@ export async function saveFsScopeAllowlist(filePath, state) {
     await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 export function normalizeAllowlistPath(targetPath) {
-    return path.resolve(targetPath);
+    return canonicalPath(targetPath);
 }
 export function isPathAllowlisted(absolutePath, allowlist) {
     const resolved = normalizeAllowlistPath(absolutePath);

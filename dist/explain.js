@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
-import { isSandboxBrokerEnabled } from './core/capability/broker.js';
+import { isCapabilityBrokerDemotionActive } from './core/capability/broker.js';
 import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from './core/index.js';
 import { isTransactionalEligible } from './core/transactional/index.js';
 import { egressStatus } from './egress-service.js';
@@ -65,7 +65,7 @@ export async function explainCommand(options) {
             egress.running &&
             !egress.repoRootMismatch &&
             !egress.foreignProxy,
-        brokerFsScope: isSandboxBrokerEnabled(config),
+        brokerFsScope: isCapabilityBrokerDemotionActive(config),
     };
     const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
     const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);

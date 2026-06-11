@@ -10,7 +10,7 @@ export { canonicalStringify, hashValue, shellFingerprint, subagentFingerprint, t
 export { classifyResultToGateVerdict, GATE_CONTRACT_VERSION, isGatedAction, unnormalizedGateVerdict, } from './gate-contract.js';
 export { classifyGatedAction, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from './gate-engine.js';
 export { matchesSensitivePath } from './glob.js';
-export { hasOutsideRepoPath, normalizeToken, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
+export { canonicalPath, hasOutsideRepoPath, normalizeToken, pathWithinRoot, relativeWithinRepo, resolveMutationTarget, } from './path-utils.js';
 export { scrubString, scrubValue } from './scrub.js';
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js';

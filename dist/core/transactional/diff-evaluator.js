@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { matchesSensitivePath } from '../glob.js';
-import { pathWithinRoot } from '../path-utils.js';
+import { canonicalPath, pathWithinRoot } from '../path-utils.js';
 function categorizeChange(change, ctx) {
-    const absolutePath = path.resolve(ctx.repoRoot, change.relativePath);
+    const absolutePath = canonicalPath(path.join(ctx.repoRoot, change.relativePath));
     if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
         return 'repo_outside';
     }

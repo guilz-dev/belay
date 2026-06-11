@@ -106,8 +106,9 @@ v0.9 adds the **configuration path** toward full L1, but belay does **not** impl
 sandboxes itself. A real sandbox runtime (container / seatbelt / landlock / Cursor
 sandbox) must enforce deny-all; belay brokers capability widening:
 
-- **FS outside repo** — `sandbox.enabled` + fs-scope allowlist grown via
-  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths.
+- **FS outside repo** — `sandbox.enabled` with `runtime` ≠ `none` + fs-scope allowlist grown via
+  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths only when
+  a real sandbox runtime is configured.
   One-shot shell approvals do not bypass outside-repo rules while the broker is active;
   use `--scope path` to persist fs-scope allowances
 - **Egress** — continues to use the v0.7 egress proxy + domain allowlist

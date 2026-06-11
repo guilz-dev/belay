@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { canonicalPath } from '../core/path-utils.js'
 import type { ApprovalStateFile } from '../core/types.js'
 
 const tempDirs: string[] = []
@@ -91,14 +92,14 @@ describe('recordCapabilityApproval', () => {
     const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-'))
     tempDirs.push(stateDir)
     const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
-    const outsidePath = '/tmp/outside.txt'
+    const outsidePath = canonicalPath('/tmp/outside.txt')
 
     const result = await recordCapabilityApproval({
       approvalId: 'belay_outside',
       config: DEFAULT_CONFIG_V3,
       store: memoryStore(pending, approved, allowlistPath),
       scope: 'path',
-      scopePath: outsidePath,
+      scopePath: '/tmp/outside.txt',
     })
 
     expect(result.ok).toBe(true)

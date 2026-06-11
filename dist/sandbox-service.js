@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { loadConfigFile, repoLocalStateDirFor } from './config-io.js';
 import { fsScopeAllowlistPath, loadFsScopeAllowlist } from './core/capability/allowlist.js';
-import { evaluateL1FullStatus, isSandboxBrokerEnabled } from './core/capability/broker.js';
+import { evaluateL1FullStatus, isCapabilityBrokerDemotionActive } from './core/capability/broker.js';
 import { configuredControlPlaneDir } from './core/config.js';
 import { verifyControlPlaneIsolation } from './core/control-plane-isolation.js';
 import { egressStatus } from './egress-service.js';
@@ -35,7 +35,7 @@ export async function sandboxStatus(options = {}) {
         sandboxEnabled: config.sandbox.enabled,
         sandboxRuntime: config.sandbox.runtime,
         denyNetworkByDefault: config.sandbox.denyNetworkByDefault,
-        brokerActive: isSandboxBrokerEnabled(config),
+        brokerActive: isCapabilityBrokerDemotionActive(config),
         fsScopeAllowlistCount: allowlist.paths.length,
         controlPlaneIsolationMode: config.controlPlane.isolation.mode,
         controlPlaneIsolationOk: isolation.ok,

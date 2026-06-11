@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { recordApproval } from '../../core/approval-service.js';
 import { issueApprovalToken } from '../../core/approval-token.js';
-import { fsScopeAllowlistPath, isSandboxBrokerEnabled, loadFsScopeAllowlistSync, shouldSkipBrokerApprovedOnce, } from '../../core/capability/index.js';
+import { fsScopeAllowlistPath, isCapabilityBrokerDemotionActive, loadFsScopeAllowlistSync, shouldSkipBrokerApprovedOnce, } from '../../core/capability/index.js';
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
@@ -82,7 +82,7 @@ export async function resolveGateConfig(ctx, deps) {
 export function runtimeClassifierOptions(ctx, config) {
     const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
     const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
-    const brokerFsScope = isSandboxBrokerEnabled(config);
+    const brokerFsScope = isCapabilityBrokerDemotionActive(config);
     return {
         ...classifierOptionsFromConfig(config),
         demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
@@ -269,7 +269,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
             agent_message: agentMessage,
         });
     }
-    const brokerActive = isSandboxBrokerEnabled(ctx.config);
+    const brokerActive = isCapabilityBrokerDemotionActive(ctx.config);
     const approved = TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ||
         shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
         ? null

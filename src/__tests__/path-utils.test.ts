@@ -4,7 +4,12 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { hasOutsideRepoPath, relativeWithinRepo } from '../core/path-utils.js'
+import {
+  canonicalPath,
+  hasOutsideRepoPath,
+  pathWithinRoot,
+  relativeWithinRepo,
+} from '../core/path-utils.js'
 
 const tempDirs: string[] = []
 
@@ -36,6 +41,39 @@ describe('relativeWithinRepo', () => {
     await symlink(outsideFile, linkPath)
 
     expect(relativeWithinRepo(repoRoot, linkPath)).toBeNull()
+  })
+})
+
+describe('canonicalPath', () => {
+  it('keeps non-existent suffixes under a symlink-resolved repo root', async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'belay-canonical-'))
+    tempDirs.push(base)
+    const privateRoot = path.join(base, 'private')
+    const varLink = path.join(base, 'var')
+    await mkdir(privateRoot, { recursive: true })
+    await symlink(privateRoot, varLink)
+    const repoRoot = path.join(varLink, 'project')
+    await mkdir(repoRoot, { recursive: true })
+
+    const newFile = path.join(repoRoot, 'notes.txt')
+    expect(pathWithinRoot(repoRoot, newFile)).toBe(true)
+    expect(canonicalPath(newFile).startsWith(canonicalPath(repoRoot))).toBe(true)
+  })
+
+  it('matches allowlist targets collected from shell redirects', async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'belay-canonical-out-'))
+    tempDirs.push(base)
+    const privateRoot = path.join(base, 'private')
+    const varLink = path.join(base, 'var')
+    const outsidePath = path.join(varLink, 'outside.txt')
+    await mkdir(privateRoot, { recursive: true })
+    await symlink(privateRoot, varLink)
+    const repoRoot = path.join(varLink, 'project')
+    await mkdir(repoRoot, { recursive: true })
+
+    expect(canonicalPath(outsidePath)).toBe(
+      canonicalPath(path.resolve(repoRoot, '..', 'outside.txt')),
+    )
   })
 })
 

@@ -1,6 +1,6 @@
 import { evaluateTransactionalDiff } from './diff-evaluator.js';
-import { applyWorktreeChanges, collectWorktreeChanges, createGitWorktreeSnapshot, isGitWorktreeAvailable, resolveWorktreeCwd, runShellCommand, } from './git-worktree.js';
-import { TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_OBSERVED_RISK } from './reasons.js';
+import { applyWorktreeChanges, collectWorktreeChanges, createGitWorktreeSnapshot, isDirtyWorktree, isGitWorktreeAvailable, resolveWorktreeCwd, runShellCommand, } from './git-worktree.js';
+import { TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_APPLY_FAILED, TRANSACTIONAL_OBSERVED_RISK, } from './reasons.js';
 export async function runTransactionalExecution(params) {
     const { predicted, repoRoot, stateDir, command, cwd, timeoutMs, diffContext } = params;
     if (!(await isGitWorktreeAvailable(repoRoot))) {
@@ -8,6 +8,15 @@ export async function runTransactionalExecution(params) {
             ok: false,
             skipped: true,
             skipReason: 'git_worktree_unavailable',
+            predicted,
+            result: predicted,
+        };
+    }
+    if (await isDirtyWorktree(repoRoot)) {
+        return {
+            ok: false,
+            skipped: true,
+            skipReason: 'dirty_worktree',
             predicted,
             result: predicted,
         };
@@ -43,7 +52,32 @@ export async function runTransactionalExecution(params) {
         const changes = await collectWorktreeChanges(snapshot.worktreePath);
         const observed = evaluateTransactionalDiff(changes, diffContext);
         if (observed.verdict === 'allow') {
-            await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes);
+            try {
+                await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes);
+            }
+            catch {
+                const result = {
+                    ...predicted,
+                    verdict: 'deny_pending_approval',
+                    reason: TRANSACTIONAL_APPLY_FAILED,
+                    assessment: {
+                        ...observed.assessment,
+                        reversibility: 'irreversible',
+                        confidence: 1,
+                        signals: [...observed.assessment.signals, 'transactional_apply_failed'],
+                    },
+                };
+                return {
+                    ok: true,
+                    predicted,
+                    observed,
+                    result,
+                    worktreePath: snapshot.worktreePath,
+                    commandExitCode: shellResult.exitCode,
+                    commandSignal: shellResult.signal,
+                    timedOut: shellResult.timedOut,
+                };
+            }
         }
         const result = {
             ...predicted,

@@ -6,7 +6,7 @@ import { recordApproval } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
 import {
   fsScopeAllowlistPath,
-  isSandboxBrokerEnabled,
+  isCapabilityBrokerDemotionActive,
   loadFsScopeAllowlistSync,
   shouldSkipBrokerApprovedOnce,
 } from '../../core/capability/index.js'
@@ -152,7 +152,7 @@ export async function resolveGateConfig(
 export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
-  const brokerFsScope = isSandboxBrokerEnabled(config)
+  const brokerFsScope = isCapabilityBrokerDemotionActive(config)
   return {
     ...classifierOptionsFromConfig(config),
     demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
@@ -392,7 +392,7 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const brokerActive = isSandboxBrokerEnabled(ctx.config)
+  const brokerActive = isCapabilityBrokerDemotionActive(ctx.config)
   const approved =
     TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ||
     shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
