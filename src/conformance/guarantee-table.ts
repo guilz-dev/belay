@@ -68,6 +68,13 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'deny',
       reason: 'external_effect',
     },
+    {
+      id: 'l1p-demote-external-with-proxy',
+      command: 'curl https://example.com',
+      permission: 'allow',
+      reason: 'l3_external_hint',
+      requiresEgressProxy: true,
+    },
   ],
   'l1-l2-transactional': [
     {

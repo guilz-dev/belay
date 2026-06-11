@@ -49,8 +49,9 @@ See `src/adapters/layouts/types.ts`.
 **Version:** `GATE_CONTRACT_VERSION` (currently `1`).
 
 Hook scripts should normalize incoming payloads to `GatedAction` and call
-`evaluateGatedAction` from `gate-runtime.ts`. Response shape: `GateVerdict` with
-`permission: 'allow' | 'deny'`.
+`evaluateGatedAction` from `src/adapters/shared/gate-runtime.ts` (in-tree adapter
+runtime; **not** exported from the `agent-belay` npm package). Response shape:
+`GateVerdict` with `permission: 'allow' | 'deny'`.
 
 Exported from `agent-belay`:
 

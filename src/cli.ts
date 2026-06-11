@@ -281,6 +281,7 @@ function printHelp() {
 
 Usage:
   agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--with-skill] [--dogfood]
+    (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]

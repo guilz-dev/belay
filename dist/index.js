@@ -1,13 +1,13 @@
 export { claudeAdapter } from './adapters/claude/adapter.js';
 export { cursorAdapter } from './adapters/cursor/adapter.js';
 export { getAdapter, listAdapters } from './adapters/registry.js';
-export { classifyShell, classifySubagent, classifyToolUse, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, mergeConfig, migrateConfig, } from './core/index.js';
 export { GATE_CONTRACT_VERSION, } from './core/gate-contract.js';
-export { CONFIG_PRESETS, applyConfigPreset } from './presets.js';
+export { classifyShell, classifySubagent, classifyToolUse, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, mergeConfig, migrateConfig, } from './core/index.js';
 export { doctorProject, formatDoctorReport } from './doctor.js';
 export { explainCommand, formatExplainReport } from './explain.js';
 export { initProject, upgradeProject } from './installer.js';
 export { resolveNodeBinary } from './node-resolution.js';
+export { applyConfigPreset, CONFIG_PRESETS } from './presets.js';
 export { revokeApproval } from './revoke.js';
 export { formatStatusReport, statusProject } from './status.js';
 export { PACKAGE_VERSION } from './version.js';

@@ -44,6 +44,11 @@ preset:
 agent-belay init --preset l1-full-recommended
 ```
 
+`init --dogfood` runs **after** `--preset` and sets `mode: audit` (overriding a preset's
+`enforce` mode). Use `--preset` without `--dogfood` when you want production enforce
+settings immediately; combine them only when you intend an audit-first rollout on top of
+preset policy fields (sandbox, egress, signing, isolation).
+
 Preset contents (see `src/presets.ts`):
 
 - `sandbox.enabled` + `runtime: container`

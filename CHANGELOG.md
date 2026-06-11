@@ -15,19 +15,6 @@
 - [guarantee-table.md](docs/guarantee-table.md) promoted to v1.0 with tested-scenario column
 - Layer matrix scenarios expanded (`external_effect` reason on external deny cases)
 
-## Unreleased
-
-### Fixed
-
-- **Path canonicalization** — `canonicalPath()` resolves symlinks only for existing path prefixes so new-file transactional diffs and fs-scope allowlist matching stay symmetric on symlinked paths (e.g. macOS `/var` → `/private/var`)
-- **Capability broker demotion** — `capability_fs_hint` now requires `sandbox.runtime` ≠ `none`, not `sandbox.enabled` alone
-- **Transactional dirty worktree** — skip isolated execution when tracked files are modified (`dirty_worktree`; untracked files ignored)
-- **Transactional apply failure** — failed `copyFile` during apply returns `transactional_apply_failed` (deny) instead of falling through to host execution; partial applies roll back best-effort
-
-### Changed
-
-- CI runs tests on `macos-latest` in addition to Ubuntu
-
 ## 0.9.0
 
 ### Fixed
