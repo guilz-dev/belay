@@ -18,7 +18,11 @@ export function canonicalPath(targetPath) {
         .split(path.sep)
         .filter(Boolean);
     for (let i = 0; i < relativeParts.length; i++) {
-        const candidate = current === '' ? relativeParts[i] : path.join(current, relativeParts[i]);
+        const segment = relativeParts[i];
+        if (!segment) {
+            continue;
+        }
+        const candidate = current === '' ? segment : path.join(current, segment);
         if (!existsSync(candidate)) {
             return path.join(candidate, ...relativeParts.slice(i + 1));
         }

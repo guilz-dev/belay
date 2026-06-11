@@ -794,7 +794,7 @@ import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
 import path13 from "node:path";
 
@@ -920,7 +920,11 @@ function canonicalPath(targetPath) {
   let current = parsed.root;
   const relativeParts = path4.relative(parsed.root || ".", resolved).split(path4.sep).filter(Boolean);
   for (let i = 0; i < relativeParts.length; i++) {
-    const candidate = current === "" ? relativeParts[i] : path4.join(current, relativeParts[i]);
+    const segment = relativeParts[i];
+    if (!segment) {
+      continue;
+    }
+    const candidate = current === "" ? segment : path4.join(current, segment);
     if (!existsSync2(candidate)) {
       return path4.join(candidate, ...relativeParts.slice(i + 1));
     }
@@ -3306,7 +3310,9 @@ var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
 // src/core/transactional/git-worktree.ts
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir as mkdir3, rm as rm2 } from "node:fs/promises";
+import { existsSync as existsSync5 } from "node:fs";
+import { copyFile, mkdir as mkdir3, mkdtemp, rm as rm2 } from "node:fs/promises";
+import os from "node:os";
 import path10 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
@@ -3367,8 +3373,8 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
   };
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
-  const resolvedCwd = path10.resolve(cwd);
-  const relative = path10.relative(path10.resolve(repoRoot), resolvedCwd);
+  const resolvedCwd = canonicalPath(cwd);
+  const relative = path10.relative(canonicalPath(repoRoot), resolvedCwd);
   if (relative.startsWith("..") || path10.isAbsolute(relative)) {
     return worktreePath;
   }
@@ -3441,16 +3447,46 @@ async function collectWorktreeChanges(worktreePath) {
   }
   return changes;
 }
-async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-  for (const change of changes) {
-    const target = path10.join(repoRoot, change.relativePath);
-    if (change.kind === "deleted") {
-      await rm2(target, { force: true });
-      continue;
+async function rollbackAppliedChanges(actions) {
+  for (const action of [...actions].reverse()) {
+    try {
+      if (action.type === "restore") {
+        await mkdir3(path10.dirname(action.target), { recursive: true });
+        await copyFile(action.backupPath, action.target);
+      } else {
+        await rm2(action.target, { force: true });
+      }
+    } catch {
     }
-    const source = path10.join(worktreePath, change.relativePath);
-    await mkdir3(path10.dirname(target), { recursive: true });
-    await copyFile(source, target);
+  }
+}
+async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
+  const backupRoot = await mkdtemp(path10.join(os.tmpdir(), "belay-tx-rollback-"));
+  const rollbackActions = [];
+  try {
+    for (const change of changes) {
+      const target = path10.join(repoRoot, change.relativePath);
+      if (existsSync5(target)) {
+        const backupPath = path10.join(backupRoot, change.relativePath);
+        await mkdir3(path10.dirname(backupPath), { recursive: true });
+        await copyFile(target, backupPath);
+        rollbackActions.push({ type: "restore", target, backupPath });
+      } else if (change.kind !== "deleted") {
+        rollbackActions.push({ type: "remove", target });
+      }
+      if (change.kind === "deleted") {
+        await rm2(target, { force: true });
+        continue;
+      }
+      const source = path10.join(worktreePath, change.relativePath);
+      await mkdir3(path10.dirname(target), { recursive: true });
+      await copyFile(source, target);
+    }
+  } catch (error) {
+    await rollbackAppliedChanges(rollbackActions);
+    throw error;
+  } finally {
+    await rm2(backupRoot, { recursive: true, force: true });
   }
 }
 
@@ -3605,7 +3641,7 @@ async function notifyDeny(config, event) {
 }
 
 // src/egress-service.ts
-import { existsSync as existsSync5, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync2 } from "node:fs";
 import path11 from "node:path";
 init_config_io();
 init_config();
@@ -3625,7 +3661,7 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
   const resolvedRepoRoot = path11.resolve(repoRoot);
   for (const stateDir of stateDirs) {
     const statusPath = path11.join(stateDir, "egress-proxy.json");
-    if (!existsSync5(statusPath)) {
+    if (!existsSync6(statusPath)) {
       continue;
     }
     try {
@@ -3722,7 +3758,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync6(teamPath)) {
+  if (existsSync7(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -4093,13 +4129,13 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import path14 from "node:path";
 function findRepoRoot(startPath, layout) {
   let current = path14.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync7(path14.join(current, marker))) {
+      if (existsSync8(path14.join(current, marker))) {
         return current;
       }
     }

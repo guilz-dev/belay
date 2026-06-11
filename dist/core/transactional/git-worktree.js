@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { canonicalPath } from '../path-utils.js';
 function execGit(repoRoot, args) {
     return new Promise((resolve, reject) => {
         const child = spawn('git', ['-C', repoRoot, ...args], {
@@ -62,8 +65,8 @@ export async function createGitWorktreeSnapshot(repoRoot, stateDir) {
     };
 }
 export function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
-    const resolvedCwd = path.resolve(cwd);
-    const relative = path.relative(path.resolve(repoRoot), resolvedCwd);
+    const resolvedCwd = canonicalPath(cwd);
+    const relative = path.relative(canonicalPath(repoRoot), resolvedCwd);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
         return worktreePath;
     }
@@ -136,15 +139,51 @@ export async function collectWorktreeChanges(worktreePath) {
     }
     return changes;
 }
-export async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-    for (const change of changes) {
-        const target = path.join(repoRoot, change.relativePath);
-        if (change.kind === 'deleted') {
-            await rm(target, { force: true });
-            continue;
+async function rollbackAppliedChanges(actions) {
+    for (const action of [...actions].reverse()) {
+        try {
+            if (action.type === 'restore') {
+                await mkdir(path.dirname(action.target), { recursive: true });
+                await copyFile(action.backupPath, action.target);
+            }
+            else {
+                await rm(action.target, { force: true });
+            }
         }
-        const source = path.join(worktreePath, change.relativePath);
-        await mkdir(path.dirname(target), { recursive: true });
-        await copyFile(source, target);
+        catch {
+            // best effort
+        }
+    }
+}
+export async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
+    const backupRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-rollback-'));
+    const rollbackActions = [];
+    try {
+        for (const change of changes) {
+            const target = path.join(repoRoot, change.relativePath);
+            if (existsSync(target)) {
+                const backupPath = path.join(backupRoot, change.relativePath);
+                await mkdir(path.dirname(backupPath), { recursive: true });
+                await copyFile(target, backupPath);
+                rollbackActions.push({ type: 'restore', target, backupPath });
+            }
+            else if (change.kind !== 'deleted') {
+                rollbackActions.push({ type: 'remove', target });
+            }
+            if (change.kind === 'deleted') {
+                await rm(target, { force: true });
+                continue;
+            }
+            const source = path.join(worktreePath, change.relativePath);
+            await mkdir(path.dirname(target), { recursive: true });
+            await copyFile(source, target);
+        }
+    }
+    catch (error) {
+        await rollbackAppliedChanges(rollbackActions);
+        throw error;
+    }
+    finally {
+        await rm(backupRoot, { recursive: true, force: true });
     }
 }
