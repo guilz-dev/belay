@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
-import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, createApprovalRecord, mergeConfig, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
+import { recordApproval } from '../../core/approval-service.js';
+import { issueApprovalToken } from '../../core/approval-token.js';
+import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js';
+import { notifyDeny } from '../../core/notify.js';
+import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
     version: 1,
@@ -58,7 +63,18 @@ export function createDefaultGateRuntimeDeps() {
 }
 export async function resolveGateConfig(ctx, deps) {
     const loaded = await deps.readConfig(ctx.configPath);
-    return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot));
+    let teamConfig = null;
+    const teamPath = teamConfigPath();
+    if (existsSync(teamPath)) {
+        teamConfig = JSON.parse(await readFile(teamPath, 'utf8'));
+    }
+    return resolveLayeredConfig({
+        repoConfig: loaded,
+        adapterDefaults: ctx.layout.defaultConfig(ctx.repoRoot),
+        teamConfig,
+        teamConfigPath: teamPath,
+        repoConfigPath: ctx.configPath,
+    }).config;
 }
 export function runtimeClassifierOptions(ctx, config) {
     const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
@@ -224,6 +240,29 @@ async function gateDecisionToVerdict(ctx, deps, kind, result) {
         });
     }
     const approval = await ensurePendingApproval(ctx, deps, kind, result);
+    let approvalToken;
+    try {
+        approvalToken = await issueApprovalToken({
+            approvalId: approval.approvalId,
+            fingerprint: approval.fingerprint,
+            repoRoot: approval.repoRoot,
+            issuedAt: approval.createdAt,
+            expiresAt: approval.expiresAt,
+        }, configuredControlPlaneDir(ctx.config));
+    }
+    catch {
+        approvalToken = undefined;
+    }
+    if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
+        await notifyDeny(ctx.config.notifications, {
+            approvalId: approval.approvalId,
+            reason: result.reason,
+            summary: result.normalizedCommand ?? result.summary ?? '',
+            repoRoot: ctx.repoRoot,
+            fingerprint: result.fingerprint,
+            approvalToken,
+        });
+    }
     await deps.appendAudit(ctx, {
         ...gateBase,
         verdict: result.verdict,
@@ -247,44 +286,33 @@ export async function processApprovalPrompt(ctx, deps, prompt) {
     if (!approvalId) {
         return { continue: true };
     }
-    const pending = await deps.loadApprovals(ctx, 'pending-approvals.json');
-    pending.state = compactApprovals(pending.state);
-    const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId);
-    if (index === -1) {
-        await deps.writeApprovals(pending.filePath, pending.state);
-        await deps.appendAudit(ctx, {
-            event: 'approval',
-            kind: 'approval',
-            verdict: 'deny_pending_approval',
-            approvalId,
-            reason: 'approval_missing',
-            summary: prompt,
-        });
-        return {
-            continue: false,
-            user_message: 'Belay approval not found or expired.',
-        };
-    }
-    const [approval] = pending.state.approvals.splice(index, 1);
-    await deps.writeApprovals(pending.filePath, pending.state);
-    const approved = await deps.loadApprovals(ctx, 'approved-approvals.json');
-    approved.state = compactApprovals(approved.state);
-    approved.state.approvals.push({
-        ...approval,
-        approvedAt: new Date().toISOString(),
+    const recorded = await recordApproval({
+        approvalId,
+        config: ctx.config,
+        store: {
+            loadPending: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
+            loadApproved: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+            writePending: (filePath, state) => deps.writeApprovals(filePath, state),
+            writeApproved: (filePath, state) => deps.writeApprovals(filePath, state),
+        },
     });
-    await deps.writeApprovals(approved.filePath, approved.state);
     await deps.appendAudit(ctx, {
         event: 'approval',
         kind: 'approval',
-        verdict: 'allow',
+        verdict: recorded.ok ? 'allow' : 'deny_pending_approval',
         approvalId,
-        reason: 'approval_recorded',
+        reason: recorded.ok ? 'approval_recorded' : 'approval_missing',
         summary: prompt,
     });
+    if (!recorded.ok) {
+        return {
+            continue: false,
+            user_message: recorded.message,
+        };
+    }
     return {
         continue: false,
-        user_message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
+        user_message: recorded.message,
     };
 }
 const controlPlaneSpikeRanFor = new Set();

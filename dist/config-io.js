@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getAdapterLayout } from './adapters/layouts/index.js';
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js';
+import { resolveLayeredConfig, teamConfigPath, } from './core/config-layers.js';
 import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
 export function resolveAdapterName(config) {
     return config.adapter === 'claude' ? 'claude' : 'cursor';
@@ -100,15 +101,29 @@ export async function migrateControlPlaneApprovalsToRepoLocal(repoRoot, config, 
     const targetDir = repoLocalStateDirFor(repoRoot, config);
     await migrateApprovalFilesBetween(sourceDir, targetDir);
 }
-export async function loadConfigFile(repoRoot, adapter = 'cursor') {
-    const configPath = configPathFor(repoRoot, adapter);
-    if (!existsSync(configPath)) {
-        const layout = getAdapterLayout(adapter);
-        return mergeConfig({}, layout.defaultConfig(repoRoot));
-    }
-    const raw = await readFile(configPath, 'utf8');
+export async function loadLayeredConfig(repoRoot, adapter = detectAdapterName(repoRoot)) {
     const layout = getAdapterLayout(adapter);
-    return mergeConfig(JSON.parse(raw), layout.defaultConfig(repoRoot));
+    const configPath = configPathFor(repoRoot, adapter);
+    let repoConfig = {};
+    if (existsSync(configPath)) {
+        repoConfig = JSON.parse(await readFile(configPath, 'utf8'));
+    }
+    let teamConfig = null;
+    const teamPath = teamConfigPath();
+    if (existsSync(teamPath)) {
+        teamConfig = JSON.parse(await readFile(teamPath, 'utf8'));
+    }
+    return resolveLayeredConfig({
+        repoConfig,
+        adapterDefaults: layout.defaultConfig(repoRoot),
+        teamConfig,
+        teamConfigPath: teamPath,
+        repoConfigPath: existsSync(configPath) ? configPath : undefined,
+    });
+}
+export async function loadConfigFile(repoRoot, adapter = detectAdapterName(repoRoot)) {
+    const layered = await loadLayeredConfig(repoRoot, adapter);
+    return layered.config;
 }
 export async function writeConfigFile(repoRoot, config, adapter = resolveAdapterName(config)) {
     const configPath = configPathFor(repoRoot, adapter);

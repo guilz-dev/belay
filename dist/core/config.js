@@ -44,6 +44,10 @@ export const DEFAULT_CONTROL_PLANE_V3 = {
     integrity: 'hash-pinned',
     spikeOnPrompt: false,
 };
+export const DEFAULT_NOTIFICATIONS_V3 = {};
+export const DEFAULT_APPROVAL_SIGNING_V3 = {
+    required: false,
+};
 export const DEFAULT_CONFIG_V2 = {
     version: 2,
     mode: 'enforce',
@@ -80,6 +84,8 @@ export const DEFAULT_CONFIG_V3 = {
     overrides: { ...DEFAULT_OVERRIDES_V3 },
     redaction: { ...DEFAULT_REDACTION_V3 },
     controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+    notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+    approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     audit: { ...DEFAULT_CONFIG_V2.audit },
 };
 function uniqueStrings(values) {
@@ -115,6 +121,8 @@ export function migrateV2ToV3(v2, rawOverrides) {
         },
         redaction: { ...DEFAULT_REDACTION_V3 },
         controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
+        notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+        approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
         audit: v2.audit,
     });
 }
@@ -159,6 +167,14 @@ function mergeV3FromRaw(base, raw) {
             ...base.controlPlane,
             ...(raw.controlPlane ?? {}),
         },
+        notifications: {
+            ...base.notifications,
+            ...(raw.notifications ?? {}),
+        },
+        approvalSigning: {
+            ...base.approvalSigning,
+            ...(raw.approvalSigning ?? {}),
+        },
     });
 }
 function normalizeV3Raw(raw) {
@@ -191,6 +207,13 @@ function normalizeV3Raw(raw) {
             configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
             integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
             spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
+        },
+        notifications: {
+            ...DEFAULT_NOTIFICATIONS_V3,
+            ...(raw.notifications ?? {}),
+        },
+        approvalSigning: {
+            required: raw.approvalSigning?.required === true,
         },
         audit: {
             ...DEFAULT_CONFIG_V3.audit,
@@ -354,6 +377,17 @@ export function normalizeConfig(config) {
                     : DEFAULT_CONTROL_PLANE_V3.integrity,
             spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
         },
+        notifications: {
+            webhookUrl: typeof v3.notifications?.webhookUrl === 'string' && v3.notifications.webhookUrl.trim()
+                ? v3.notifications.webhookUrl.trim()
+                : undefined,
+            commandHook: typeof v3.notifications?.commandHook === 'string' && v3.notifications.commandHook.trim()
+                ? v3.notifications.commandHook.trim()
+                : undefined,
+        },
+        approvalSigning: {
+            required: v3.approvalSigning?.required === true,
+        },
         audit: {
             logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
             includeAssessment: v3.audit?.includeAssessment !== false,
@@ -399,6 +433,14 @@ export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
         controlPlane: {
             ...defaults.controlPlane,
             ...migrated.controlPlane,
+        },
+        notifications: {
+            ...defaults.notifications,
+            ...migrated.notifications,
+        },
+        approvalSigning: {
+            ...defaults.approvalSigning,
+            ...migrated.approvalSigning,
         },
         audit: {
             ...defaults.audit,

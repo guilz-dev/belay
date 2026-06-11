@@ -23,10 +23,17 @@ export async function metricsProject(options = {}) {
 export function formatMetricsReport(report) {
     const lines = [
         `agent-belay metrics for ${report.auditLogPath}`,
+        `Schema: v${report.schemaVersion}`,
         `Gate events: ${report.gateEvents}`,
         `Would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,
         `Approvals recorded during audit: ${report.approvalRecordedCount}`,
     ];
+    if (report.approvalLatency.count > 0) {
+        lines.push(`Approval latency: median ${report.approvalLatency.medianMs ?? 0}ms, p95 ${report.approvalLatency.p95Ms ?? 0}ms (${report.approvalLatency.count} samples)`);
+    }
+    if (report.bypassAttemptCount > 0) {
+        lines.push(`Bypass attempts detected: ${report.bypassAttemptCount}`);
+    }
     if (Object.keys(report.byReason).length > 0) {
         lines.push('', 'By reason:');
         for (const [reason, count] of Object.entries(report.byReason).sort((a, b) => b[1] - a[1])) {

@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { approvePending } from './approve.js';
+import { auditProject, formatAuditReport } from './audit.js';
 import { doctorProject, formatDoctorReport } from './doctor.js';
 import { dogfoodProject, formatDogfoodResult } from './dogfood.js';
 import { explainCommand, formatExplainReport } from './explain.js';
 import { initProject, upgradeProject } from './installer.js';
 import { formatMetricsReport, metricsProject } from './metrics.js';
 import { revokeApproval } from './revoke.js';
+import { formatSimulateReport, simulateProject } from './simulate.js';
 import { formatStatusReport, statusProject } from './status.js';
 function parseArgs(argv) {
     const [command, ...rest] = argv;
@@ -43,6 +46,68 @@ function parseArgs(argv) {
         }
         if (token === '--json') {
             options.json = true;
+            continue;
+        }
+        if (token === '--since') {
+            options.since = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--until') {
+            options.until = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--verdict') {
+            options.verdict = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--reason') {
+            options.reason = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--kind') {
+            options.kind = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--fingerprint') {
+            options.fingerprint = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--event') {
+            options.event = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--limit') {
+            const next = Number(rest[index + 1]);
+            if (!Number.isFinite(next)) {
+                throw new Error('--limit requires a number.');
+            }
+            options.limit = next;
+            index += 1;
+            continue;
+        }
+        if (token === '--config') {
+            const next = rest[index + 1];
+            if (!next) {
+                throw new Error('--config requires a path.');
+            }
+            options.configPath = next;
+            index += 1;
+            continue;
+        }
+        if (token === '--token') {
+            const next = rest[index + 1];
+            if (!next) {
+                throw new Error('--token requires a signed approval token.');
+            }
+            options.approvalToken = next;
+            index += 1;
             continue;
         }
         if (token === '--fix') {
@@ -105,7 +170,14 @@ function parseArgs(argv) {
             options.explainCommand = rest.slice(index + 1).join(' ');
             break;
         }
-        if (command === 'revoke' && !options.approvalId) {
+        if (command === 'audit' && !options.auditSubcommand) {
+            if (token === 'query' || token === 'summarize' || token === 'replay') {
+                options.auditSubcommand = token;
+                continue;
+            }
+            throw new Error('audit requires subcommand: query, summarize, or replay');
+        }
+        if ((command === 'revoke' || command === 'approve') && !options.approvalId) {
             options.approvalId = token;
             continue;
         }
@@ -122,8 +194,11 @@ Usage:
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
+  agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--config <path>]
+  agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
+  agent-belay approve <approval-id> [--token <signed-token>] [--target <dir>]
   agent-belay revoke <approval-id> [--target <dir>]
 `);
 }
@@ -186,6 +261,49 @@ async function main() {
             process.exitCode = report.ok ? 0 : 1;
             return;
         }
+        if (command === 'audit') {
+            if (!options.auditSubcommand) {
+                throw new Error('audit requires subcommand: query, summarize, or replay');
+            }
+            const report = await auditProject({
+                targetDir: options.targetDir,
+                subcommand: options.auditSubcommand,
+                json: options.json,
+                since: options.since,
+                until: options.until,
+                verdict: options.verdict,
+                reason: options.reason,
+                kind: options.kind,
+                fingerprint: options.fingerprint,
+                event: options.event,
+                limit: options.limit,
+                configPath: options.configPath,
+            });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatAuditReport(report));
+            }
+            return;
+        }
+        if (command === 'simulate') {
+            if (!options.configPath) {
+                throw new Error('simulate requires --config <path>.');
+            }
+            const report = await simulateProject({
+                targetDir: options.targetDir,
+                configPath: options.configPath,
+                json: options.json,
+            });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatSimulateReport(report));
+            }
+            return;
+        }
         if (command === 'metrics') {
             const report = await metricsProject({
                 targetDir: options.targetDir,
@@ -231,6 +349,19 @@ async function main() {
             else {
                 process.stdout.write(formatExplainReport(report));
             }
+            return;
+        }
+        if (command === 'approve') {
+            if (!options.approvalId) {
+                throw new Error('approve requires an approval ID.');
+            }
+            const result = await approvePending({
+                targetDir: options.targetDir,
+                approvalId: options.approvalId,
+                token: options.approvalToken,
+            });
+            process.stdout.write(`${result.message}\n`);
+            process.exitCode = result.ok ? 0 : 1;
             return;
         }
         if (command === 'revoke') {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
@@ -15,6 +16,10 @@ import {
   gateEnabledForAction,
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
+import { recordApproval } from '../../core/approval-service.js'
+import { issueApprovalToken } from '../../core/approval-token.js'
+import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
+import { notifyDeny } from '../../core/notify.js'
 import {
   type ApprovalStateFile,
   approvalCommandMatch,
@@ -25,8 +30,8 @@ import {
   canonicalStringify,
   classifierOptionsFromConfig,
   compactApprovals,
+  configuredControlPlaneDir,
   createApprovalRecord,
-  mergeConfig,
   pendingApprovalsFile,
   persistControlPlaneSpikeResult,
   resolveControlPlaneDir,
@@ -116,7 +121,18 @@ export async function resolveGateConfig(
   deps: GateRuntimeDeps,
 ): Promise<BelayConfigV3> {
   const loaded = await deps.readConfig(ctx.configPath)
-  return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot) as BelayConfigV3)
+  let teamConfig: Record<string, unknown> | null = null
+  const teamPath = teamConfigPath()
+  if (existsSync(teamPath)) {
+    teamConfig = JSON.parse(await readFile(teamPath, 'utf8')) as Record<string, unknown>
+  }
+  return resolveLayeredConfig({
+    repoConfig: loaded,
+    adapterDefaults: ctx.layout.defaultConfig(ctx.repoRoot) as BelayConfigV3,
+    teamConfig,
+    teamConfigPath: teamPath,
+    repoConfigPath: ctx.configPath,
+  }).config
 }
 
 export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
@@ -329,6 +345,33 @@ async function gateDecisionToVerdict(
   }
 
   const approval = await ensurePendingApproval(ctx, deps, kind, result)
+  let approvalToken: string | undefined
+  try {
+    approvalToken = await issueApprovalToken(
+      {
+        approvalId: approval.approvalId,
+        fingerprint: approval.fingerprint,
+        repoRoot: approval.repoRoot,
+        issuedAt: approval.createdAt,
+        expiresAt: approval.expiresAt,
+      },
+      configuredControlPlaneDir(ctx.config),
+    )
+  } catch {
+    approvalToken = undefined
+  }
+
+  if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
+    await notifyDeny(ctx.config.notifications, {
+      approvalId: approval.approvalId,
+      reason: result.reason,
+      summary: result.normalizedCommand ?? result.summary ?? '',
+      repoRoot: ctx.repoRoot,
+      fingerprint: result.fingerprint,
+      approvalToken,
+    })
+  }
+
   await deps.appendAudit(ctx, {
     ...gateBase,
     verdict: result.verdict,
@@ -359,48 +402,36 @@ export async function processApprovalPrompt(
     return { continue: true }
   }
 
-  const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
-  pending.state = compactApprovals(pending.state)
-  const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId)
-  if (index === -1) {
-    await deps.writeApprovals(pending.filePath, pending.state)
-    await deps.appendAudit(ctx, {
-      event: 'approval',
-      kind: 'approval',
-      verdict: 'deny_pending_approval',
-      approvalId,
-      reason: 'approval_missing',
-      summary: prompt,
-    })
-    return {
-      continue: false,
-      user_message: 'Belay approval not found or expired.',
-    }
-  }
-
-  const [approval] = pending.state.approvals.splice(index, 1)
-  await deps.writeApprovals(pending.filePath, pending.state)
-
-  const approved = await deps.loadApprovals(ctx, 'approved-approvals.json')
-  approved.state = compactApprovals(approved.state)
-  approved.state.approvals.push({
-    ...approval,
-    approvedAt: new Date().toISOString(),
+  const recorded = await recordApproval({
+    approvalId,
+    config: ctx.config,
+    store: {
+      loadPending: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
+      loadApproved: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+      writePending: (filePath, state) => deps.writeApprovals(filePath, state),
+      writeApproved: (filePath, state) => deps.writeApprovals(filePath, state),
+    },
   })
-  await deps.writeApprovals(approved.filePath, approved.state)
 
   await deps.appendAudit(ctx, {
     event: 'approval',
     kind: 'approval',
-    verdict: 'allow',
+    verdict: recorded.ok ? 'allow' : 'deny_pending_approval',
     approvalId,
-    reason: 'approval_recorded',
+    reason: recorded.ok ? 'approval_recorded' : 'approval_missing',
     summary: prompt,
   })
 
+  if (!recorded.ok) {
+    return {
+      continue: false,
+      user_message: recorded.message,
+    }
+  }
+
   return {
     continue: false,
-    user_message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
+    user_message: recorded.message,
   }
 }
 

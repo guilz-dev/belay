@@ -8,7 +8,7 @@ import {
   approvedApprovalsPath,
   belayStateDir,
   detectAdapterName,
-  loadConfigFile,
+  loadLayeredConfig,
   pendingApprovalsPath,
   repoLocalStateDirFor,
   runtimeCorePath,
@@ -48,6 +48,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   const warnings: string[] = []
 
   let loadedConfig = null
+  let configProvenance: DoctorReport['configProvenance'] = []
   let adapterName: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
   const adapter = getAdapter(adapterName)
   const layout = adapter.layout
@@ -74,7 +75,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           'Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.',
         )
       }
-      loadedConfig = await loadConfigFile(repoRoot, adapterName)
+      const layered = await loadLayeredConfig(repoRoot, adapterName)
+      loadedConfig = layered.config
+      configProvenance = layered.provenance
+      for (const entry of layered.provenance) {
+        notes.push(`Config layer [${entry.source}]: ${entry.path}`)
+      }
       if (loadedConfig.version !== 3) {
         warnings.push(
           `Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`,
@@ -269,6 +275,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     issues,
     notes,
     warnings,
+    configProvenance,
     dogfood,
     oq3Spike,
   }

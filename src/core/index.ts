@@ -24,6 +24,7 @@ export {
   type BelayRedactionConfig,
   belayStateDir,
   classifierOptionsFromConfig,
+  configuredControlPlaneDir,
   DEFAULT_CONFIG_V2,
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,

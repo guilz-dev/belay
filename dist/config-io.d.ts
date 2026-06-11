@@ -1,6 +1,8 @@
 import { type AdapterName } from './adapters/layouts/index.js';
+import { type LayeredConfigResult } from './core/config-layers.js';
 import { type BelayConfigV3, belayStateDir } from './core/config.js';
 import type { ApprovalStateFile } from './core/types.js';
+export type { LayeredConfigResult };
 export declare function resolveAdapterName(config: BelayConfigV3): AdapterName;
 export declare function detectAdapterName(repoRoot: string): AdapterName;
 export declare function configPathFor(repoRoot: string, adapter?: AdapterName): string;
@@ -12,6 +14,7 @@ export { belayStateDir };
 export declare function ensureBelayStateDir(config: BelayConfigV3, repoRoot: string): Promise<string>;
 export declare function migrateRepoLocalApprovalsToControlPlane(repoRoot: string, config: BelayConfigV3): Promise<void>;
 export declare function migrateControlPlaneApprovalsToRepoLocal(repoRoot: string, config: BelayConfigV3, sourceDir?: string): Promise<void>;
+export declare function loadLayeredConfig(repoRoot: string, adapter?: AdapterName): Promise<LayeredConfigResult>;
 export declare function loadConfigFile(repoRoot: string, adapter?: AdapterName): Promise<BelayConfigV3>;
 export declare function writeConfigFile(repoRoot: string, config: BelayConfigV3, adapter?: AdapterName): Promise<void>;
 export declare function mergeAndWriteConfig(repoRoot: string, adapter?: AdapterName): Promise<BelayConfigV3>;

@@ -1,6 +1,8 @@
+import { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord } from './audit-query.js';
 /** Minimum gate events before recommending enforce with zero would-block rate. */
 export declare const MIN_GATE_EVENTS_FOR_ENFORCE = 20;
 export interface AuditMetricsReport {
+    schemaVersion: number;
     auditLogPath: string;
     totalLines: number;
     parsedRecords: number;
@@ -16,6 +18,19 @@ export interface AuditMetricsReport {
         reason: string;
         count: number;
     }>;
+    approvalLatency: {
+        count: number;
+        medianMs: number | null;
+        p95Ms: number | null;
+    };
+    gateEventsByDay: Record<string, number>;
+    bypassAttemptCount: number;
+    noisyRuleCandidates: Array<{
+        reason: string;
+        denyCount: number;
+        approvedCount: number;
+        approvalRate: number;
+    }>;
     dogfood: {
         mode: string | null;
         unknownLocalEffect: string | null;
@@ -29,3 +44,4 @@ export declare function computeAuditMetrics(records: Record<string, unknown>[], 
     mode?: string;
     unknownLocalEffect?: string;
 }): AuditMetricsReport;
+export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord };

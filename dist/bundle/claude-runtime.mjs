@@ -92,6 +92,10 @@ var DEFAULT_CONTROL_PLANE_V3 = {
   integrity: "hash-pinned",
   spikeOnPrompt: false
 };
+var DEFAULT_NOTIFICATIONS_V3 = {};
+var DEFAULT_APPROVAL_SIGNING_V3 = {
+  required: false
+};
 var DEFAULT_CONFIG_V2 = {
   version: 2,
   mode: "enforce",
@@ -128,6 +132,8 @@ var DEFAULT_CONFIG_V3 = {
   overrides: { ...DEFAULT_OVERRIDES_V3 },
   redaction: { ...DEFAULT_REDACTION_V3 },
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+  approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit }
 };
 function uniqueStrings(values) {
@@ -161,6 +167,8 @@ function migrateV2ToV3(v2, rawOverrides) {
     },
     redaction: { ...DEFAULT_REDACTION_V3 },
     controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
+    notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+    approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     audit: v2.audit
   });
 }
@@ -188,6 +196,14 @@ function mergeV3FromRaw(base, raw) {
     controlPlane: {
       ...base.controlPlane,
       ...raw.controlPlane ?? {}
+    },
+    notifications: {
+      ...base.notifications,
+      ...raw.notifications ?? {}
+    },
+    approvalSigning: {
+      ...base.approvalSigning,
+      ...raw.approvalSigning ?? {}
     }
   });
 }
@@ -221,6 +237,13 @@ function normalizeV3Raw(raw) {
       configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
       integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt
+    },
+    notifications: {
+      ...DEFAULT_NOTIFICATIONS_V3,
+      ...raw.notifications ?? {}
+    },
+    approvalSigning: {
+      required: raw.approvalSigning?.required === true
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -348,6 +371,13 @@ function normalizeConfig(config) {
       integrity: v3.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v3.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true
     },
+    notifications: {
+      webhookUrl: typeof v3.notifications?.webhookUrl === "string" && v3.notifications.webhookUrl.trim() ? v3.notifications.webhookUrl.trim() : void 0,
+      commandHook: typeof v3.notifications?.commandHook === "string" && v3.notifications.commandHook.trim() ? v3.notifications.commandHook.trim() : void 0
+    },
+    approvalSigning: {
+      required: v3.approvalSigning?.required === true
+    },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
       includeAssessment: v3.audit?.includeAssessment !== false
@@ -392,6 +422,14 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
       ...defaults.controlPlane,
       ...migrated.controlPlane
     },
+    notifications: {
+      ...defaults.notifications,
+      ...migrated.notifications
+    },
+    approvalSigning: {
+      ...defaults.approvalSigning,
+      ...migrated.approvalSigning
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit
@@ -430,6 +468,9 @@ function resolveControlPlaneDir(config) {
     return config.controlPlane.configDir;
   }
   return defaultControlPlaneDir();
+}
+function configuredControlPlaneDir(config) {
+  return resolveControlPlaneDir(config);
 }
 function belayStateDir(config, repoLocalStateDir) {
   if (config.controlPlane.enabled) {
@@ -485,8 +526,9 @@ var claudeLayout = {
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import path7 from "node:path";
+import { existsSync as existsSync3 } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import path9 from "node:path";
 
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
@@ -2526,6 +2568,66 @@ function gateEnabledForAction(config, action) {
   return true;
 }
 
+// src/core/approval-token.ts
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path5 from "node:path";
+function base64UrlEncode(value) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+function base64UrlDecode(value) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+function approvalSigningKeyPath(controlPlaneDir = defaultControlPlaneDir()) {
+  return path5.join(controlPlaneDir, "approval-signing.key");
+}
+async function loadOrCreateApprovalSigningKey(controlPlaneDir = defaultControlPlaneDir()) {
+  const keyPath = approvalSigningKeyPath(controlPlaneDir);
+  if (existsSync(keyPath)) {
+    return readFile(keyPath);
+  }
+  await mkdir(controlPlaneDir, { recursive: true });
+  const key = randomBytes(32);
+  await writeFile(keyPath, key, { mode: 384 });
+  return key;
+}
+function signPayload(payload, key) {
+  const body = base64UrlEncode(JSON.stringify(payload));
+  const signature = createHmac("sha256", key).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+async function issueApprovalToken(payload, controlPlaneDir = defaultControlPlaneDir()) {
+  const key = await loadOrCreateApprovalSigningKey(controlPlaneDir);
+  return signPayload(payload, key);
+}
+async function verifyApprovalToken(token, controlPlaneDir = defaultControlPlaneDir()) {
+  const [body, signature] = token.split(".");
+  if (!body || !signature) {
+    return null;
+  }
+  const keyPath = approvalSigningKeyPath(controlPlaneDir);
+  if (!existsSync(keyPath)) {
+    return null;
+  }
+  const key = await readFile(keyPath);
+  const expected = createHmac("sha256", key).update(body).digest("base64url");
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(base64UrlDecode(body));
+    if (Date.parse(payload.expiresAt) <= Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 // src/core/approval.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -2566,17 +2668,183 @@ function createApprovalRecord(params) {
   };
 }
 
+// src/core/approval-service.ts
+async function recordApproval(params) {
+  const { approvalId, config, store, token } = params;
+  if (config.approvalSigning.required) {
+    if (!token) {
+      return { ok: false, message: "Signed approval token required for out-of-band approval." };
+    }
+    const controlPlaneDir = configuredControlPlaneDir(config);
+    const verified = await verifyApprovalToken(token, controlPlaneDir);
+    if (!verified || verified.approvalId !== approvalId) {
+      return { ok: false, message: "Invalid or expired signed approval token." };
+    }
+  }
+  const pending = await store.loadPending();
+  pending.state = compactApprovals(pending.state);
+  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
+  if (index === -1) {
+    await store.writePending(pending.filePath, pending.state);
+    return { ok: false, message: "Belay approval not found or expired." };
+  }
+  const [approval] = pending.state.approvals.splice(index, 1);
+  await store.writePending(pending.filePath, pending.state);
+  const approved = await store.loadApproved();
+  approved.state = compactApprovals(approved.state);
+  approved.state.approvals.push({
+    ...approval,
+    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  await store.writeApproved(approved.filePath, approved.state);
+  return {
+    ok: true,
+    message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
+    approval
+  };
+}
+
+// src/core/config-layers.ts
+import path6 from "node:path";
+
+// src/presets.ts
+var CONFIG_PRESETS = {
+  strict: {
+    mode: "enforce",
+    policy: {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { allow: 0.9, flag: 0.8 },
+      modelAssist: { enabled: false }
+    }
+  },
+  standard: {
+    mode: "enforce"
+  },
+  "audit-first": {
+    mode: "audit",
+    policy: {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { allow: 0.88, flag: 0.72 },
+      modelAssist: { enabled: false }
+    }
+  }
+};
+function applyConfigPreset(preset, extra = {}) {
+  const base = CONFIG_PRESETS[preset] ?? CONFIG_PRESETS.standard;
+  return {
+    version: 3,
+    ...base,
+    ...extra,
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...base.policy ?? {},
+      ...extra.policy
+    }
+  };
+}
+
+// src/core/config-layers.ts
+function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  const base = xdg || path6.join(homedir(), ".config");
+  return path6.join(base, "agent-belay", "team.config.json");
+}
+function applyProtectedLayer(config, builtin) {
+  const protectedIntegrity = builtin.controlPlane.integrity === "hash-pinned" ? "hash-pinned" : config.controlPlane.integrity;
+  return {
+    ...config,
+    controlPlane: {
+      ...config.controlPlane,
+      integrity: config.controlPlane.integrity === "none" ? protectedIntegrity : config.controlPlane.integrity
+    }
+  };
+}
+function asV3Layer(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { version: 3 };
+  }
+  return { version: 3, ...raw };
+}
+function mergeConfigLayer(base, layer) {
+  const merged = mergeConfig(layer, base);
+  if (!layer.policy) {
+    return { ...merged, policy: base.policy };
+  }
+  return merged;
+}
+function resolveLayeredConfig(params) {
+  const provenance = [
+    { path: "(builtin)", source: "builtin" }
+  ];
+  let config = mergeConfig({}, params.adapterDefaults);
+  if (params.teamConfig) {
+    const teamFile = params.teamConfig;
+    const teamRaw = teamFile.preset ? applyConfigPreset(teamFile.preset, teamFile.config ?? {}) : teamFile.config ?? params.teamConfig;
+    config = mergeConfigLayer(config, asV3Layer(teamRaw));
+    provenance.push({
+      path: params.teamConfigPath ?? teamConfigPath(),
+      source: "team"
+    });
+  }
+  config = mergeConfigLayer(config, asV3Layer(params.repoConfig));
+  if (params.repoConfigPath) {
+    provenance.push({ path: params.repoConfigPath, source: "repo" });
+  }
+  const protectedConfig = applyProtectedLayer(config, DEFAULT_CONFIG_V3);
+  if (JSON.stringify(protectedConfig) !== JSON.stringify(config)) {
+    provenance.push({ path: "(protected-layer)", source: "protected" });
+    config = protectedConfig;
+  }
+  return { config, provenance };
+}
+
+// src/core/notify.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+async function notifyDeny(config, event) {
+  const payload = JSON.stringify(event);
+  if (config.webhookUrl) {
+    try {
+      await fetch(config.webhookUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload
+      });
+    } catch {
+    }
+  }
+  if (config.commandHook) {
+    try {
+      await execFileAsync(config.commandHook, [], {
+        env: {
+          ...process.env,
+          BELAY_APPROVAL_ID: event.approvalId,
+          BELAY_REASON: event.reason,
+          BELAY_SUMMARY: event.summary,
+          BELAY_REPO_ROOT: event.repoRoot,
+          BELAY_FINGERPRINT: event.fingerprint,
+          BELAY_APPROVAL_TOKEN: event.approvalToken ?? ""
+        }
+      });
+    } catch {
+    }
+  }
+}
+
 // src/core/control-plane-spike.ts
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path5 from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
+import path7 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path5.join(
+  const outputPath = path7.join(
     controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
     "oq3-spike-last.json"
   );
-  await mkdir(path5.dirname(outputPath), { recursive: true });
-  await writeFile(
+  await mkdir2(path7.dirname(outputPath), { recursive: true });
+  await writeFile2(
     outputPath,
     `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
 `,
@@ -2586,7 +2854,7 @@ async function persistControlPlaneSpikeResult(result, env = process.env, homedir
 }
 async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
   const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path5.join(controlPlaneDir, "oq3-spike.json");
+  const testFile = path7.join(controlPlaneDir, "oq3-spike.json");
   const payload = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     cwd,
@@ -2603,15 +2871,15 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
     readBack: null
   };
   try {
-    await mkdir(controlPlaneDir, { recursive: true });
-    await writeFile(testFile, `${JSON.stringify(payload)}
+    await mkdir2(controlPlaneDir, { recursive: true });
+    await writeFile2(testFile, `${JSON.stringify(payload)}
 `, "utf8");
-    const readBack = await readFile(testFile, "utf8");
+    const readBack = await readFile2(testFile, "utf8");
     const parsed = JSON.parse(readBack.trim());
     await rm(testFile, { force: true });
     return {
       ...base,
-      ok: parsed.cwd === cwd && existsSync(controlPlaneDir),
+      ok: parsed.cwd === cwd && existsSync2(controlPlaneDir),
       wrote: true,
       readBack: readBack.trim()
     };
@@ -2624,7 +2892,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path6 from "node:path";
+import path8 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -2636,7 +2904,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path6.resolve(entry));
+  return roots.map((entry) => path8.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -2646,7 +2914,7 @@ var EMPTY_APPROVALS = {
 };
 async function loadJsonFile(filePath, fallback) {
   try {
-    const raw = await readFile2(filePath, "utf8");
+    const raw = await readFile3(filePath, "utf8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -2658,14 +2926,14 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path7.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir2(path7.dirname(auditPath), { recursive: true });
+      const auditPath = path9.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir3(path9.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
       }
       const scrubbed = scrubValue(record, scrubOptionsFromConfig(ctx.config));
-      await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
+      await writeFile3(auditPath, `${JSON.stringify(scrubbed)}
 `, {
         encoding: "utf8",
         flag: "a"
@@ -2684,15 +2952,26 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir2(path7.dirname(filePath), { recursive: true });
-      await writeFile2(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
+      await mkdir3(path9.dirname(filePath), { recursive: true });
+      await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
   };
 }
 async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
-  return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot));
+  let teamConfig = null;
+  const teamPath = teamConfigPath();
+  if (existsSync3(teamPath)) {
+    teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
+  }
+  return resolveLayeredConfig({
+    repoConfig: loaded,
+    adapterDefaults: ctx.layout.defaultConfig(ctx.repoRoot),
+    teamConfig,
+    teamConfigPath: teamPath,
+    repoConfigPath: ctx.configPath
+  }).config;
 }
 function runtimeClassifierOptions(ctx, config) {
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
@@ -2861,6 +3140,31 @@ async function gateDecisionToVerdict(ctx, deps, kind, result) {
     });
   }
   const approval = await ensurePendingApproval(ctx, deps, kind, result);
+  let approvalToken;
+  try {
+    approvalToken = await issueApprovalToken(
+      {
+        approvalId: approval.approvalId,
+        fingerprint: approval.fingerprint,
+        repoRoot: approval.repoRoot,
+        issuedAt: approval.createdAt,
+        expiresAt: approval.expiresAt
+      },
+      configuredControlPlaneDir(ctx.config)
+    );
+  } catch {
+    approvalToken = void 0;
+  }
+  if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
+    await notifyDeny(ctx.config.notifications, {
+      approvalId: approval.approvalId,
+      reason: result.reason,
+      summary: result.normalizedCommand ?? result.summary ?? "",
+      repoRoot: ctx.repoRoot,
+      fingerprint: result.fingerprint,
+      approvalToken
+    });
+  }
   await deps.appendAudit(ctx, {
     ...gateBase,
     verdict: result.verdict,
@@ -2884,44 +3188,33 @@ async function processApprovalPrompt(ctx, deps, prompt) {
   if (!approvalId) {
     return { continue: true };
   }
-  const pending = await deps.loadApprovals(ctx, "pending-approvals.json");
-  pending.state = compactApprovals(pending.state);
-  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
-  if (index === -1) {
-    await deps.writeApprovals(pending.filePath, pending.state);
-    await deps.appendAudit(ctx, {
-      event: "approval",
-      kind: "approval",
-      verdict: "deny_pending_approval",
-      approvalId,
-      reason: "approval_missing",
-      summary: prompt
-    });
-    return {
-      continue: false,
-      user_message: "Belay approval not found or expired."
-    };
-  }
-  const [approval] = pending.state.approvals.splice(index, 1);
-  await deps.writeApprovals(pending.filePath, pending.state);
-  const approved = await deps.loadApprovals(ctx, "approved-approvals.json");
-  approved.state = compactApprovals(approved.state);
-  approved.state.approvals.push({
-    ...approval,
-    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
+  const recorded = await recordApproval({
+    approvalId,
+    config: ctx.config,
+    store: {
+      loadPending: () => deps.loadApprovals(ctx, "pending-approvals.json"),
+      loadApproved: () => deps.loadApprovals(ctx, "approved-approvals.json"),
+      writePending: (filePath, state) => deps.writeApprovals(filePath, state),
+      writeApproved: (filePath, state) => deps.writeApprovals(filePath, state)
+    }
   });
-  await deps.writeApprovals(approved.filePath, approved.state);
   await deps.appendAudit(ctx, {
     event: "approval",
     kind: "approval",
-    verdict: "allow",
+    verdict: recorded.ok ? "allow" : "deny_pending_approval",
     approvalId,
-    reason: "approval_recorded",
+    reason: recorded.ok ? "approval_recorded" : "approval_missing",
     summary: prompt
   });
+  if (!recorded.ok) {
+    return {
+      continue: false,
+      user_message: recorded.message
+    };
+  }
   return {
     continue: false,
-    user_message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`
+    user_message: recorded.message
   };
 }
 var controlPlaneSpikeRanFor = /* @__PURE__ */ new Set();
@@ -2989,19 +3282,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync2 } from "node:fs";
-import path8 from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import path10 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path8.resolve(startPath);
+  let current = path10.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync2(path8.join(current, marker))) {
+      if (existsSync4(path10.join(current, marker))) {
         return current;
       }
     }
-    const parent = path8.dirname(current);
+    const parent = path10.dirname(current);
     if (parent === current) {
-      return path8.resolve(startPath);
+      return path10.resolve(startPath);
     }
     current = parent;
   }

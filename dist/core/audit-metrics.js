@@ -1,4 +1,6 @@
-const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate']);
+import { bucketGateEventsByDay, computeApprovalLatencyStats, countVerdicts, detectBypassAttempts, detectNoisyRules, } from './audit-analysis.js';
+import { buildApprovalRoundTrips, filterAuditRecords, inferWouldBlock, isApprovalRecorded, toAuditRecord, } from './audit-query.js';
+import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js';
 /** Minimum gate events before recommending enforce with zero would-block rate. */
 export const MIN_GATE_EVENTS_FOR_ENFORCE = 20;
 export function parseAuditNdjson(raw) {
@@ -20,23 +22,17 @@ export function parseAuditNdjson(raw) {
 function increment(bucket, key) {
     bucket[key] = (bucket[key] ?? 0) + 1;
 }
-function inferWouldBlock(record) {
-    if (typeof record.wouldBlock === 'boolean') {
-        return record.wouldBlock;
-    }
-    return record.verdict === 'deny_pending_approval';
-}
 export function computeAuditMetrics(records, options = {}) {
+    const auditRecords = records.map(toAuditRecord);
     const byReason = {};
     const byKind = {};
-    const byVerdict = {};
     const summaryCounts = new Map();
     let gateEvents = 0;
     let wouldBlockCount = 0;
     let approvalRecordedCount = 0;
-    for (const record of records) {
+    for (const record of auditRecords) {
         const event = typeof record.event === 'string' ? record.event : '';
-        if (event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded') {
+        if (isApprovalRecorded(record)) {
             approvalRecordedCount += 1;
             continue;
         }
@@ -46,10 +42,8 @@ export function computeAuditMetrics(records, options = {}) {
         gateEvents += 1;
         const reason = typeof record.reason === 'string' ? record.reason : 'unknown';
         const kind = typeof record.kind === 'string' ? record.kind : 'unknown';
-        const verdict = typeof record.verdict === 'string' ? record.verdict : 'unknown';
         increment(byReason, reason);
         increment(byKind, kind);
-        increment(byVerdict, verdict);
         if (inferWouldBlock(record)) {
             wouldBlockCount += 1;
             const summary = typeof record.summary === 'string' ? record.summary : '';
@@ -63,6 +57,11 @@ export function computeAuditMetrics(records, options = {}) {
             }
         }
     }
+    const byVerdict = countVerdicts(auditRecords);
+    const roundTrips = buildApprovalRoundTrips(auditRecords);
+    const approvalLatency = computeApprovalLatencyStats(roundTrips);
+    const bypassAttempts = detectBypassAttempts(auditRecords);
+    const noisyRuleCandidates = detectNoisyRules(auditRecords, roundTrips);
     const wouldBlockRate = gateEvents > 0 ? wouldBlockCount / gateEvents : 0;
     const topWouldBlockSummaries = [...summaryCounts.values()]
         .sort((left, right) => right.count - left.count)
@@ -105,7 +104,11 @@ export function computeAuditMetrics(records, options = {}) {
     else {
         notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.');
     }
+    if (noisyRuleCandidates.length > 0) {
+        notes.push(`${noisyRuleCandidates.length} noisy rule candidate(s) — high deny-then-approve rate.`);
+    }
     return {
+        schemaVersion: AUDIT_METRICS_SCHEMA_VERSION,
         auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
         totalLines: records.length,
         parsedRecords: records.length,
@@ -117,6 +120,10 @@ export function computeAuditMetrics(records, options = {}) {
         byVerdict,
         approvalRecordedCount,
         topWouldBlockSummaries,
+        approvalLatency,
+        gateEventsByDay: bucketGateEventsByDay(auditRecords),
+        bypassAttemptCount: bypassAttempts.length,
+        noisyRuleCandidates,
         dogfood: {
             mode,
             unknownLocalEffect,
@@ -125,3 +132,4 @@ export function computeAuditMetrics(records, options = {}) {
         },
     };
 }
+export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord };

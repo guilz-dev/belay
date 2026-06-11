@@ -73,6 +73,11 @@ export interface DogfoodStatus {
   notes: string[]
 }
 
+export interface ConfigProvenanceNote {
+  path: string
+  source: 'builtin' | 'team' | 'repo' | 'protected'
+}
+
 export interface DoctorReport {
   ok: boolean
   repoRoot: string
@@ -86,6 +91,7 @@ export interface DoctorReport {
   issues: string[]
   notes: string[]
   warnings: string[]
+  configProvenance: ConfigProvenanceNote[]
   dogfood: DogfoodStatus | null
   oq3Spike: Oq3SpikeStatus | null
 }

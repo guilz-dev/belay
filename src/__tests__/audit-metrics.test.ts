@@ -42,6 +42,7 @@ describe('audit-metrics', () => {
       { mode: 'audit', unknownLocalEffect: 'deny' },
     )
 
+    expect(report.schemaVersion).toBe(2)
     expect(report.gateEvents).toBe(2)
     expect(report.wouldBlockCount).toBe(1)
     expect(report.wouldBlockRate).toBe(0.5)
