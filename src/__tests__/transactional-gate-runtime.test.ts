@@ -42,6 +42,7 @@ function transactionalConfig() {
       },
     },
     controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
       enabled: false,
       configDir: null,
       integrity: 'none' as const,

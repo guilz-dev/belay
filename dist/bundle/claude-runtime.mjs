@@ -1065,12 +1065,6 @@ function isSandboxBrokerEnabled(config) {
   return config.sandbox.enabled;
 }
 
-// src/core/capability/reasons.ts
-var FS_SCOPE_REASONS = /* @__PURE__ */ new Set(["outside_repo_mutation", "outside_repo_redirect"]);
-function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
-  return brokerActive && FS_SCOPE_REASONS.has(reason);
-}
-
 // src/core/shell-tokenizer.ts
 var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
 function tokenizeShell(input) {
@@ -1194,6 +1188,12 @@ function collectOutsideRepoPaths(command, cwd, repoRoot) {
     }
   }
   return [...paths];
+}
+
+// src/core/capability/reasons.ts
+var FS_SCOPE_REASONS = /* @__PURE__ */ new Set(["outside_repo_mutation", "outside_repo_redirect"]);
+function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
+  return brokerActive && FS_SCOPE_REASONS.has(reason);
 }
 
 // src/adapters/shared/gate-runtime.ts

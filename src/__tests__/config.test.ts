@@ -101,7 +101,12 @@ describe('config migration', () => {
         unknownLocalEffect: 'deny',
         unparseableShell: 'deny',
       },
-      controlPlane: { enabled: true, configDir: '  /tmp/belay  ', integrity: 'none' },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        enabled: true,
+        configDir: '  /tmp/belay  ',
+        integrity: 'none',
+      },
     })
 
     expect(normalized.policy.unknownLocalEffect).toBe('deny')
@@ -180,7 +185,12 @@ describe('config migration', () => {
   it('resolveControlPlaneDir prefers explicit configDir', () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
-      controlPlane: { enabled: true, configDir: '/explicit/belay', integrity: 'none' },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        enabled: true,
+        configDir: '/explicit/belay',
+        integrity: 'none',
+      },
     })
     expect(resolveControlPlaneDir(config)).toBe('/explicit/belay')
   })

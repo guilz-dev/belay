@@ -11,18 +11,18 @@ import {
 import { createApprovalRecord } from '../core/approval.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
 import { classifyShell } from '../core/classify-shell.js'
-import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
 
 const tempDirs: string[] = []
 
-function sandboxBrokerConfig() {
+function sandboxBrokerConfig(): BelayConfigV3 {
   return {
     ...DEFAULT_CONFIG_V3,
     policy: {
       ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: 'allow_flagged' as const,
     },
-    sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'container' },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'container' as const },
     controlPlane: {
       enabled: false,
       configDir: null,
