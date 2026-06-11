@@ -1,6 +1,12 @@
 import path from 'node:path'
 
-import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
+import type {
+  ClassifierOptions,
+  ControlPlaneIntegrity,
+  ScrubOptions,
+  UnknownLocalEffectPolicy,
+  UnparseableShellPolicy,
+} from './types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -45,6 +51,7 @@ export interface BelayConfigV2 {
 
 export interface BelayPolicyConfig {
   unknownLocalEffect: UnknownLocalEffectPolicy
+  unparseableShell: UnparseableShellPolicy
 }
 
 export interface BelayOverridesConfig {
@@ -63,6 +70,7 @@ export interface BelayRedactionConfig {
 export interface BelayControlPlaneConfig {
   enabled: boolean
   configDir: string | null
+  integrity: ControlPlaneIntegrity
   /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
   spikeOnPrompt?: boolean
 }
@@ -74,6 +82,7 @@ export interface BelayClassifierConfig {
 
 export interface BelayConfigV3 {
   version: 3
+  adapter?: 'cursor' | 'claude'
   mode: BelayMode
   approvalTtlMinutes: number
   tokenPrefix: string
@@ -88,8 +97,16 @@ export interface BelayConfigV3 {
 
 export type BelayConfig = BelayConfigV3
 
-export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
+/** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+export const LEGACY_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'allow_flagged',
+  unparseableShell: 'allow_flagged',
+}
+
+/** Fresh v0.4 install defaults (fail-closed). */
+export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
+  unknownLocalEffect: 'deny',
+  unparseableShell: 'deny',
 }
 
 export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
@@ -105,9 +122,17 @@ export const DEFAULT_REDACTION_V3: BelayRedactionConfig = {
   maskHighEntropyStrings: false,
 }
 
-export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
+export const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   enabled: false,
   configDir: null,
+  integrity: 'none',
+  spikeOnPrompt: false,
+}
+
+export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
+  enabled: true,
+  configDir: null,
+  integrity: 'hash-pinned',
   spikeOnPrompt: false,
 }
 
@@ -129,7 +154,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
     sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
   },
   audit: {
-    logPath: '.cursor/belay/audit.ndjson',
+    logPath: 'belay/audit.ndjson',
     includeAssessment: true,
   },
 }
@@ -186,13 +211,13 @@ export function migrateV2ToV3(
       strictChains: v2.classifier.strictChains,
       sensitivePaths: v2.classifier.sensitivePaths,
     },
-    policy: { ...DEFAULT_POLICY_V3 },
+    policy: { ...LEGACY_POLICY_V3 },
     overrides: {
       allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
       external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external),
     },
     redaction: { ...DEFAULT_REDACTION_V3 },
-    controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+    controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
     audit: v2.audit,
   })
 }
@@ -278,8 +303,8 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
       ...(raw.classifier ?? {}),
     },
     policy: {
-      ...DEFAULT_CONFIG_V3.policy,
-      ...(raw.policy ?? {}),
+      unknownLocalEffect: raw.policy?.unknownLocalEffect ?? LEGACY_POLICY_V3.unknownLocalEffect,
+      unparseableShell: raw.policy?.unparseableShell ?? LEGACY_POLICY_V3.unparseableShell,
     },
     overrides: {
       ...DEFAULT_CONFIG_V3.overrides,
@@ -290,8 +315,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
       ...(raw.redaction ?? {}),
     },
     controlPlane: {
-      ...DEFAULT_CONFIG_V3.controlPlane,
-      ...(raw.controlPlane ?? {}),
+      enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
+      configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
+      integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
+      spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -420,7 +447,17 @@ export function normalizeConfig(
     },
     policy: {
       unknownLocalEffect:
-        v3.policy?.unknownLocalEffect === 'deny' ? 'deny' : DEFAULT_POLICY_V3.unknownLocalEffect,
+        v3.policy?.unknownLocalEffect === 'deny'
+          ? 'deny'
+          : v3.policy?.unknownLocalEffect === 'allow_flagged'
+            ? 'allow_flagged'
+            : DEFAULT_POLICY_V3.unknownLocalEffect,
+      unparseableShell:
+        v3.policy?.unparseableShell === 'deny'
+          ? 'deny'
+          : v3.policy?.unparseableShell === 'allow_flagged'
+            ? 'allow_flagged'
+            : DEFAULT_POLICY_V3.unparseableShell,
     },
     overrides: {
       allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
@@ -434,11 +471,22 @@ export function normalizeConfig(
       maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true,
     },
     controlPlane: {
-      enabled: v3.controlPlane?.enabled === true,
+      enabled:
+        v3.controlPlane?.enabled === true
+          ? true
+          : v3.controlPlane?.enabled === false
+            ? false
+            : DEFAULT_CONTROL_PLANE_V3.enabled,
       configDir:
         typeof v3.controlPlane?.configDir === 'string' && v3.controlPlane.configDir.trim()
           ? v3.controlPlane.configDir.trim()
           : null,
+      integrity:
+        v3.controlPlane?.integrity === 'hash-pinned'
+          ? 'hash-pinned'
+          : v3.controlPlane?.integrity === 'none'
+            ? 'none'
+            : DEFAULT_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
     },
     audit: {
@@ -448,11 +496,23 @@ export function normalizeConfig(
   }
 }
 
+export function isFreshConfigInput(loaded: unknown): boolean {
+  if (loaded === null || loaded === undefined) {
+    return true
+  }
+  if (typeof loaded !== 'object') {
+    return true
+  }
+  return Object.keys(loaded as Record<string, unknown>).length === 0
+}
+
 export function mergeConfig(
   existing: unknown,
   defaults: BelayConfigV3 = DEFAULT_CONFIG_V3,
 ): BelayConfigV3 {
-  const migrated = migrateConfig(existing)
+  const migrated = isFreshConfigInput(existing)
+    ? normalizeConfig({ ...defaults, version: 3 })
+    : migrateConfig(existing)
   return normalizeConfig({
     ...defaults,
     ...migrated,
@@ -498,6 +558,7 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
     customAllowCommands: config.overrides.allow,
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
+    unparseableShell: config.policy.unparseableShell,
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config),
   }
@@ -505,8 +566,14 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
 
 export function defaultControlPlaneDir(
   env: NodeJS.ProcessEnv = process.env,
-  homedir: () => string = () => process.env.HOME ?? '',
+  homedir: () => string = () => env.HOME ?? env.USERPROFILE ?? '',
 ): string {
+  if (process.platform === 'win32') {
+    const appData = env.APPDATA?.trim()
+    if (appData) {
+      return path.join(appData, 'agent-belay')
+    }
+  }
   const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
   const base = xdgConfigHome || path.join(homedir(), '.config')
   return path.join(base, 'agent-belay')
@@ -524,17 +591,17 @@ export function configuredControlPlaneDir(config: BelayConfigV3): string {
   return resolveControlPlaneDir(config)
 }
 
-export function belayStateDir(config: BelayConfigV3, repoRoot: string): string {
+export function belayStateDir(config: BelayConfigV3, repoLocalStateDir: string): string {
   if (config.controlPlane.enabled) {
     return resolveControlPlaneDir(config)
   }
-  return path.join(repoRoot, '.cursor', 'belay')
+  return repoLocalStateDir
 }
 
-export function pendingApprovalsFile(config: BelayConfigV3, repoRoot: string): string {
-  return path.join(belayStateDir(config, repoRoot), 'pending-approvals.json')
+export function pendingApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string {
+  return path.join(belayStateDir(config, repoLocalStateDir), 'pending-approvals.json')
 }
 
-export function approvedApprovalsFile(config: BelayConfigV3, repoRoot: string): string {
-  return path.join(belayStateDir(config, repoRoot), 'approved-approvals.json')
+export function approvedApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string {
+  return path.join(belayStateDir(config, repoLocalStateDir), 'approved-approvals.json')
 }

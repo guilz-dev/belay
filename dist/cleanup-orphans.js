@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { migrateControlPlaneApprovalsToRepoLocal } from './config-io.js';
+import { migrateControlPlaneApprovalsToRepoLocal, repoLocalStateDirFor } from './config-io.js';
 import { configuredControlPlaneDir, defaultControlPlaneDir, } from './core/config.js';
 const APPROVAL_STATE_FILES = ['pending-approvals.json', 'approved-approvals.json'];
-function repoLocalApprovalDir(repoRoot) {
-    return path.join(repoRoot, '.cursor', 'belay');
+function repoLocalApprovalDir(repoRoot, config) {
+    return repoLocalStateDirFor(repoRoot, config);
 }
 function hasApprovalFiles(dir) {
     return APPROVAL_STATE_FILES.some((fileName) => existsSync(path.join(dir, fileName)));
@@ -23,7 +23,7 @@ async function archiveApprovalFiles(sourceDir, archiveDir) {
 export async function cleanupOrphanApprovalState(repoRoot, config, options = {}) {
     const actions = [];
     const dryRun = options.dryRun === true;
-    const repoLocalDir = repoLocalApprovalDir(repoRoot);
+    const repoLocalDir = repoLocalApprovalDir(repoRoot, config);
     const stamp = new Date().toISOString().replaceAll(':', '-');
     if (config.controlPlane.enabled) {
         if (hasApprovalFiles(repoLocalDir)) {

@@ -47,9 +47,33 @@ export function classifyToolUse(
   const toolName = String(payload.tool_name ?? '')
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...(options.sensitivePaths ?? [])]
 
+  const protectedRoots = [
+    ...(options.protectedArtifactRoots ?? []),
+    ...(options.controlPlaneDir ? [options.controlPlaneDir] : []),
+  ]
+
   if (toolName === 'Shell') {
     const command = extractShellCommand(payload)
     if (!command) {
+      if (options.unknownLocalEffect === 'deny') {
+        return {
+          verdict: 'deny_pending_approval',
+          reason: 'tool_shell_missing_command',
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot,
+          ),
+          assessment: {
+            reversibility: 'irreversible',
+            external: false,
+            blastRadius: 'tool shell',
+            confidence: 0.85,
+            signals: ['missing_command'],
+          },
+        }
+      }
       return {
         verdict: 'allow_flagged',
         reason: 'tool_shell_missing_command',
@@ -78,6 +102,25 @@ export function classifyToolUse(
   if (toolName === 'Write' || toolName === 'StrReplace' || toolName === 'Delete') {
     const filePath = extractFilePath(payload)
     if (!filePath) {
+      if (options.unknownLocalEffect === 'deny') {
+        return {
+          verdict: 'deny_pending_approval',
+          reason: 'file_mutation_missing_path',
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot,
+          ),
+          assessment: {
+            reversibility: 'irreversible',
+            external: false,
+            blastRadius: 'file mutation',
+            confidence: 0.85,
+            signals: ['missing_path'],
+          },
+        }
+      }
       return {
         verdict: 'allow_flagged',
         reason: 'file_mutation_missing_path',
@@ -100,7 +143,8 @@ export function classifyToolUse(
     const signals: string[] = []
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath)
 
-    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+    const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))
+    if (hitsProtectedRoot) {
       signals.push('control_plane_path')
       return {
         verdict: 'deny_pending_approval',

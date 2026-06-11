@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { loadApprovalState, loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 
@@ -13,6 +14,26 @@ async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-runtime-'))
   tempDirs.push(tempDir)
   return tempDir
+}
+
+async function initIsolatedRepo() {
+  const repoRoot = await createTempRepo()
+  await initProject({ targetDir: repoRoot })
+  const config = mergeConfig({
+    ...(await loadConfigFile(repoRoot)),
+    controlPlane: {
+      enabled: false,
+      configDir: path.join(repoRoot, 'cp'),
+      integrity: 'none',
+      spikeOnPrompt: false,
+    },
+    audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+  })
+  await writeFile(
+    path.join(repoRoot, '.cursor', 'belay.config.json'),
+    `${JSON.stringify(config, null, 2)}\n`,
+  )
+  return repoRoot
 }
 
 async function runRunner(
@@ -51,14 +72,18 @@ async function readJson(filePath: string) {
   return JSON.parse(raw)
 }
 
+async function auditLogPath(repoRoot: string): Promise<string> {
+  const config = await loadConfigFile(repoRoot)
+  return path.join(repoRoot, config.audit.logPath)
+}
+
 describe('generated hook runtime', () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
   it('approves exactly one matching denied shell action after /belay-approve', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'git push origin main',
@@ -68,9 +93,8 @@ describe('generated hook runtime', () => {
     expect(deniedJson.permission).toBe('deny')
     expect(deniedJson.user_message).toContain('Approval ID: ')
 
-    const pending = await readJson(
-      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
-    )
+    const config = await loadConfigFile(repoRoot)
+    const pending = await readJson(pendingApprovalsPath(repoRoot, config))
     expect(pending.approvals).toHaveLength(1)
     const approvalId = pending.approvals[0].approvalId
 
@@ -95,8 +119,7 @@ describe('generated hook runtime', () => {
   })
 
   it('allows read-only shell commands and flags local mutations in the audit log', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const readonly = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'rg plan src',
@@ -110,14 +133,13 @@ describe('generated hook runtime', () => {
     })
     expect(JSON.parse(flagged.stdout)).toEqual({ permission: 'allow' })
 
-    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).toContain('"verdict":"allow"')
     expect(auditRaw).toContain('"verdict":"allow_flagged"')
   })
 
   it('denies relative repo-external shell mutations', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const deniedRedirect = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'echo hi > ../outside.txt',
@@ -133,8 +155,7 @@ describe('generated hook runtime', () => {
   })
 
   it('denies chained shell commands when a later segment is external', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'git status && git push origin main',
@@ -144,8 +165,7 @@ describe('generated hook runtime', () => {
   })
 
   it('denies shell interpreter pipes', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'echo hi | bash',
@@ -155,8 +175,7 @@ describe('generated hook runtime', () => {
   })
 
   it('denies high-risk subagent payloads and fingerprints payload changes separately', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     const first = await runRunner(
       repoRoot,
@@ -184,30 +203,27 @@ describe('generated hook runtime', () => {
     )
     expect(JSON.parse(second.stdout).permission).toBe('deny')
 
-    const pending = await readJson(
-      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
-    )
+    const config = await loadConfigFile(repoRoot)
+    const pending = await readJson(pendingApprovalsPath(repoRoot, config))
     expect(pending.approvals).toHaveLength(2)
     expect(pending.approvals[0].fingerprint).not.toBe(pending.approvals[1].fingerprint)
   })
 
   it('redacts sensitive shell commands in gate audit records', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
 
     await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'curl -H "Authorization: Bearer supersecret.token.value" https://api.example.com',
       cwd: repoRoot,
     })
 
-    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).not.toContain('supersecret.token.value')
     expect(auditRaw).toContain('Authorization: <redacted>')
   })
 
   it('allows denied shell actions in audit mode and records wouldBlock without pending approvals', async () => {
-    const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    const repoRoot = await initIsolatedRepo()
     await writeFile(
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
@@ -226,12 +242,11 @@ describe('generated hook runtime', () => {
     })
     expect(JSON.parse(denied.stdout)).toEqual({ permission: 'allow' })
 
-    const pending = await readJson(
-      path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'),
-    )
+    const config = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
     expect(pending.approvals).toHaveLength(0)
 
-    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).toContain('"wouldBlock":true')
     expect(auditRaw).toContain('"mode":"audit"')
   })
@@ -244,7 +259,12 @@ describe('generated hook runtime', () => {
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
-          controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
+          controlPlane: {
+            enabled: false,
+            configDir: controlPlaneDir,
+            spikeOnPrompt: true,
+            integrity: 'none',
+          },
         }),
         null,
         2,
@@ -260,7 +280,7 @@ describe('generated hook runtime', () => {
     )
     expect(spikeRecord.ok).toBe(true)
 
-    const auditRaw = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).toContain('"event":"controlPlaneSpike"')
   })
 
@@ -272,7 +292,7 @@ describe('generated hook runtime', () => {
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
-          controlPlane: { enabled: true, configDir: controlPlaneDir },
+          controlPlane: { enabled: true, configDir: controlPlaneDir, integrity: 'hash-pinned' },
         }),
         null,
         2,

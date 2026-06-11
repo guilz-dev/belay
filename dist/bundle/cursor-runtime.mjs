@@ -1,49 +1,468 @@
 // agent-belay cursor runtime bundle
 
 // src/adapters/cursor/runtime-entry.ts
-import { randomUUID } from "node:crypto";
-import { existsSync as existsSync2 } from "node:fs";
-import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import path5 from "node:path";
 import process2 from "node:process";
 
-// src/core/approval.ts
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
+// src/adapters/layouts/cursor.ts
+import path2 from "node:path";
+
+// src/core/config.ts
+import path from "node:path";
+var LEGACY_POLICY_V3 = {
+  unknownLocalEffect: "allow_flagged",
+  unparseableShell: "allow_flagged"
+};
+var DEFAULT_POLICY_V3 = {
+  unknownLocalEffect: "deny",
+  unparseableShell: "deny"
+};
+var DEFAULT_OVERRIDES_V3 = {
+  allow: [],
+  external: []
+};
+var DEFAULT_REDACTION_V3 = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+var LEGACY_CONTROL_PLANE_V3 = {
+  enabled: false,
+  configDir: null,
+  integrity: "none",
+  spikeOnPrompt: false
+};
+var DEFAULT_CONTROL_PLANE_V3 = {
+  enabled: true,
+  configDir: null,
+  integrity: "hash-pinned",
+  spikeOnPrompt: false
+};
+var DEFAULT_CONFIG_V2 = {
+  version: 2,
+  mode: "enforce",
+  approvalTtlMinutes: 15,
+  tokenPrefix: "/belay-approve",
+  gates: {
+    shell: true,
+    subagent: true,
+    fileMutation: true,
+    toolShell: true
+  },
+  classifier: {
+    strictChains: true,
+    customExternalCommands: [],
+    customAllowCommands: [],
+    sensitivePaths: [".env", ".env.*", "**/credentials/**"]
+  },
+  audit: {
+    logPath: "belay/audit.ndjson",
+    includeAssessment: true
+  }
+};
+var DEFAULT_CONFIG_V3 = {
+  version: 3,
+  mode: DEFAULT_CONFIG_V2.mode,
+  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
+  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
+  gates: { ...DEFAULT_CONFIG_V2.gates },
+  classifier: {
+    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
+    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
+  },
+  policy: { ...DEFAULT_POLICY_V3 },
+  overrides: { ...DEFAULT_OVERRIDES_V3 },
+  redaction: { ...DEFAULT_REDACTION_V3 },
+  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  audit: { ...DEFAULT_CONFIG_V2.audit }
+};
+function uniqueStrings(values) {
+  return [...new Set(values)];
 }
-function isExpired(approval) {
-  return Date.parse(approval.expiresAt) <= Date.now();
+function mergeOverrideLists(primary, secondary) {
+  return uniqueStrings([...primary, ...secondary]);
 }
-function compactApprovals(state) {
+function mapLegacyClassifierToOverrides(classifier) {
   return {
-    version: 1,
-    approvals: state.approvals.filter((approval) => !isExpired(approval))
+    allow: Array.isArray(classifier.customAllowCommands) ? classifier.customAllowCommands : [],
+    external: Array.isArray(classifier.customExternalCommands) ? classifier.customExternalCommands : []
   };
 }
-function escapeRegex(value) {
-  const specials = /* @__PURE__ */ new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
-  return [...value].map((char) => specials.has(char) ? `\\${char}` : char).join("");
+function migrateV2ToV3(v2, rawOverrides) {
+  const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
+  return normalizeConfig({
+    version: 3,
+    mode: v2.mode,
+    approvalTtlMinutes: v2.approvalTtlMinutes,
+    tokenPrefix: v2.tokenPrefix,
+    gates: v2.gates,
+    classifier: {
+      strictChains: v2.classifier.strictChains,
+      sensitivePaths: v2.classifier.sensitivePaths
+    },
+    policy: { ...LEGACY_POLICY_V3 },
+    overrides: {
+      allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
+      external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external)
+    },
+    redaction: { ...DEFAULT_REDACTION_V3 },
+    controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
+    audit: v2.audit
+  });
 }
-function approvalCommandMatch(prompt, tokenPrefix) {
-  const escapedPrefix = escapeRegex(tokenPrefix);
-  const match = prompt.match(new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, "i"));
-  return match?.[1] ?? null;
+function hasV3Sections(raw) {
+  return raw.policy !== void 0 || raw.overrides !== void 0 || raw.redaction !== void 0 || raw.controlPlane !== void 0;
 }
-function buildRetryInstruction(tokenPrefix, approvalId) {
-  return `To allow the next matching action once, send ${tokenPrefix} ${approvalId} and then retry the original action unchanged.`;
+function looksLikeV2Config(raw) {
+  return raw.gates?.fileMutation !== void 0 || raw.gates?.toolShell !== void 0 || raw.classifier?.customAllowCommands !== void 0 || raw.classifier?.customExternalCommands !== void 0 || raw.audit?.includeAssessment !== void 0;
 }
-function createApprovalRecord(params) {
-  const createdAt = nowIso();
-  const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 6e4).toISOString();
+function mergeV3FromRaw(base, raw) {
+  return normalizeConfig({
+    ...base,
+    policy: {
+      ...base.policy,
+      ...raw.policy ?? {}
+    },
+    overrides: {
+      allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
+      external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? [])
+    },
+    redaction: {
+      ...base.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      ...base.controlPlane,
+      ...raw.controlPlane ?? {}
+    }
+  });
+}
+function normalizeV3Raw(raw) {
+  return normalizeConfig({
+    ...DEFAULT_CONFIG_V3,
+    ...raw,
+    version: 3,
+    gates: {
+      ...DEFAULT_CONFIG_V3.gates,
+      ...raw.gates ?? {}
+    },
+    classifier: {
+      ...DEFAULT_CONFIG_V3.classifier,
+      ...raw.classifier ?? {}
+    },
+    policy: {
+      unknownLocalEffect: raw.policy?.unknownLocalEffect ?? LEGACY_POLICY_V3.unknownLocalEffect,
+      unparseableShell: raw.policy?.unparseableShell ?? LEGACY_POLICY_V3.unparseableShell
+    },
+    overrides: {
+      ...DEFAULT_CONFIG_V3.overrides,
+      ...raw.overrides ?? {}
+    },
+    redaction: {
+      ...DEFAULT_CONFIG_V3.redaction,
+      ...raw.redaction ?? {}
+    },
+    controlPlane: {
+      enabled: raw.controlPlane?.enabled ?? LEGACY_CONTROL_PLANE_V3.enabled,
+      configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
+      integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
+      spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt
+    },
+    audit: {
+      ...DEFAULT_CONFIG_V3.audit,
+      ...raw.audit ?? {}
+    }
+  });
+}
+function migrateConfig(loaded) {
+  if (typeof loaded !== "object" || loaded === null) {
+    return { ...DEFAULT_CONFIG_V3 };
+  }
+  const raw = loaded;
+  if (raw.version === 3 || raw.version === void 0 && hasV3Sections(raw)) {
+    return normalizeV3Raw(raw);
+  }
+  const baseV2 = { ...DEFAULT_CONFIG_V2 };
+  if (raw.version === 1 || raw.version === void 0 && !looksLikeV2Config(raw)) {
+    const migratedV22 = normalizeConfigV2({
+      ...baseV2,
+      mode: raw.mode ?? baseV2.mode,
+      approvalTtlMinutes: raw.approvalTtlMinutes ?? baseV2.approvalTtlMinutes,
+      tokenPrefix: raw.tokenPrefix ?? baseV2.tokenPrefix,
+      gates: {
+        ...baseV2.gates,
+        shell: raw.gates?.shell ?? baseV2.gates.shell,
+        subagent: raw.gates?.subagent ?? baseV2.gates.subagent
+      },
+      audit: {
+        ...baseV2.audit,
+        logPath: raw.audit?.logPath ?? baseV2.audit.logPath
+      }
+    });
+    return mergeV3FromRaw(migrateV2ToV3(migratedV22, raw.overrides), raw);
+  }
+  const migratedV2 = normalizeConfigV2({
+    ...baseV2,
+    ...raw,
+    version: 2,
+    gates: {
+      ...baseV2.gates,
+      ...raw.gates ?? {}
+    },
+    classifier: {
+      ...baseV2.classifier,
+      ...raw.classifier ?? {}
+    },
+    audit: {
+      ...baseV2.audit,
+      ...raw.audit ?? {}
+    }
+  });
+  return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw);
+}
+function normalizeConfigV2(config) {
   return {
-    approvalId: params.approvalId,
-    kind: params.kind,
-    fingerprint: params.fingerprint,
-    repoRoot: params.repoRoot,
+    version: 2,
+    mode: config.mode === "audit" ? "audit" : "enforce",
+    approvalTtlMinutes: typeof config.approvalTtlMinutes === "number" && config.approvalTtlMinutes > 0 ? config.approvalTtlMinutes : DEFAULT_CONFIG_V2.approvalTtlMinutes,
+    tokenPrefix: config.tokenPrefix || DEFAULT_CONFIG_V2.tokenPrefix,
+    gates: {
+      shell: config.gates.shell !== false,
+      subagent: config.gates.subagent !== false,
+      fileMutation: config.gates.fileMutation !== false,
+      toolShell: config.gates.toolShell !== false
+    },
+    classifier: {
+      strictChains: config.classifier?.strictChains !== false,
+      customExternalCommands: Array.isArray(config.classifier?.customExternalCommands) ? config.classifier.customExternalCommands : [],
+      customAllowCommands: Array.isArray(config.classifier?.customAllowCommands) ? config.classifier.customAllowCommands : [],
+      sensitivePaths: Array.isArray(config.classifier?.sensitivePaths) ? config.classifier.sensitivePaths : DEFAULT_CONFIG_V2.classifier.sensitivePaths
+    },
+    audit: {
+      logPath: config.audit?.logPath || DEFAULT_CONFIG_V2.audit.logPath,
+      includeAssessment: config.audit?.includeAssessment !== false
+    }
+  };
+}
+function normalizeConfig(config) {
+  if (config.version === 2) {
+    return normalizeConfigV2(config);
+  }
+  const v3 = config;
+  return {
+    version: 3,
+    mode: v3.mode === "audit" ? "audit" : "enforce",
+    approvalTtlMinutes: typeof v3.approvalTtlMinutes === "number" && v3.approvalTtlMinutes > 0 ? v3.approvalTtlMinutes : DEFAULT_CONFIG_V3.approvalTtlMinutes,
+    tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
+    gates: {
+      shell: v3.gates.shell !== false,
+      subagent: v3.gates.subagent !== false,
+      fileMutation: v3.gates.fileMutation !== false,
+      toolShell: v3.gates.toolShell !== false
+    },
+    classifier: {
+      strictChains: v3.classifier?.strictChains !== false,
+      sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths) ? v3.classifier.sensitivePaths : DEFAULT_CONFIG_V3.classifier.sensitivePaths
+    },
+    policy: {
+      unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : v3.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
+      unparseableShell: v3.policy?.unparseableShell === "deny" ? "deny" : v3.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell
+    },
+    overrides: {
+      allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
+      external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : []
+    },
+    redaction: {
+      maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
+      maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
+      maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
+      maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
+      maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true
+    },
+    controlPlane: {
+      enabled: v3.controlPlane?.enabled === true ? true : v3.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
+      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null,
+      integrity: v3.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v3.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
+      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true
+    },
+    audit: {
+      logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
+      includeAssessment: v3.audit?.includeAssessment !== false
+    }
+  };
+}
+function isFreshConfigInput(loaded) {
+  if (loaded === null || loaded === void 0) {
+    return true;
+  }
+  if (typeof loaded !== "object") {
+    return true;
+  }
+  return Object.keys(loaded).length === 0;
+}
+function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
+  const migrated = isFreshConfigInput(existing) ? normalizeConfig({ ...defaults, version: 3 }) : migrateConfig(existing);
+  return normalizeConfig({
+    ...defaults,
+    ...migrated,
+    gates: {
+      ...defaults.gates,
+      ...migrated.gates
+    },
+    classifier: {
+      ...defaults.classifier,
+      ...migrated.classifier
+    },
+    policy: {
+      ...defaults.policy,
+      ...migrated.policy
+    },
+    overrides: {
+      allow: mergeOverrideLists(defaults.overrides.allow, migrated.overrides.allow),
+      external: mergeOverrideLists(defaults.overrides.external, migrated.overrides.external)
+    },
+    redaction: {
+      ...defaults.redaction,
+      ...migrated.redaction
+    },
+    controlPlane: {
+      ...defaults.controlPlane,
+      ...migrated.controlPlane
+    },
+    audit: {
+      ...defaults.audit,
+      ...migrated.audit
+    }
+  });
+}
+function scrubOptionsFromConfig(config) {
+  return { ...config.redaction };
+}
+function classifierOptionsFromConfig(config) {
+  return {
+    strictChains: config.classifier.strictChains,
+    customExternalCommands: config.overrides.external,
+    customAllowCommands: config.overrides.allow,
+    sensitivePaths: config.classifier.sensitivePaths,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+    unparseableShell: config.policy.unparseableShell,
+    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
+    scrubOptions: scrubOptionsFromConfig(config)
+  };
+}
+function defaultControlPlaneDir(env = process.env, homedir = () => env.HOME ?? env.USERPROFILE ?? "") {
+  if (process.platform === "win32") {
+    const appData = env.APPDATA?.trim();
+    if (appData) {
+      return path.join(appData, "agent-belay");
+    }
+  }
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const base = xdgConfigHome || path.join(homedir(), ".config");
+  return path.join(base, "agent-belay");
+}
+function resolveControlPlaneDir(config) {
+  if (config.controlPlane.configDir) {
+    return config.controlPlane.configDir;
+  }
+  return defaultControlPlaneDir();
+}
+function belayStateDir(config, repoLocalStateDir) {
+  if (config.controlPlane.enabled) {
+    return resolveControlPlaneDir(config);
+  }
+  return repoLocalStateDir;
+}
+function pendingApprovalsFile(config, repoLocalStateDir) {
+  return path.join(belayStateDir(config, repoLocalStateDir), "pending-approvals.json");
+}
+function approvedApprovalsFile(config, repoLocalStateDir) {
+  return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
+}
+
+// src/adapters/layouts/cursor.ts
+function runnerCommand(platform, hookName, ...args) {
+  const base = platform === "win32" ? ".\\.cursor\\hooks\\belay-runner.cmd" : "./.cursor/hooks/belay-runner";
+  return [base, hookName, ...args].join(" ");
+}
+var cursorLayout = {
+  name: "cursor",
+  configPath(repoRoot) {
+    return path2.join(repoRoot, ".cursor", "belay.config.json");
+  },
+  hooksSettingsPath(repoRoot) {
+    return path2.join(repoRoot, ".cursor", "hooks.json");
+  },
+  hooksDir(repoRoot) {
+    return path2.join(repoRoot, ".cursor", "hooks");
+  },
+  runtimeDir(repoRoot) {
+    return path2.join(repoRoot, ".cursor", "belay", "runtime");
+  },
+  repoLocalStateDir(repoRoot) {
+    return path2.join(repoRoot, ".cursor", "belay");
+  },
+  defaultAuditLogPath(_repoRoot) {
+    return path2.join(".cursor", "belay", "audit.ndjson");
+  },
+  repoRootMarkers: [".git", ".cursor"],
+  runnerCommand,
+  defaultConfig(repoRoot) {
+    return {
+      ...DEFAULT_CONFIG_V3,
+      adapter: "cursor",
+      audit: {
+        ...DEFAULT_CONFIG_V3.audit,
+        logPath: cursorLayout.defaultAuditLogPath(repoRoot)
+      }
+    };
+  }
+};
+
+// src/adapters/shared/gate-runtime.ts
+import { randomUUID } from "node:crypto";
+import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import path7 from "node:path";
+
+// src/core/gate-contract.ts
+var GATE_CONTRACT_VERSION = 1;
+function classifyResultToGateVerdict(params) {
+  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: result.verdict,
+    reason: result.reason,
+    fingerprint: result.fingerprint,
+    assessment: result.assessment,
+    normalizedCommand: result.normalizedCommand,
+    summary: result.summary,
+    permission,
+    wouldBlock,
+    mode,
+    approvalId,
+    user_message,
+    agent_message
+  };
+}
+function unnormalizedGateVerdict(params) {
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: "deny_pending_approval",
     reason: params.reason,
-    summary: params.summary,
-    createdAt,
-    expiresAt
+    fingerprint: "unnormalized",
+    assessment: {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "unknown",
+      confidence: 0,
+      signals: ["normalization_failed"]
+    },
+    permission: "deny",
+    wouldBlock: true,
+    mode: params.mode,
+    user_message: params.user_message,
+    agent_message: params.agent_message
   };
 }
 
@@ -85,27 +504,27 @@ function toolFingerprint(toolName, scrubbed, repoRoot) {
 
 // src/core/path-utils.ts
 import { realpathSync } from "node:fs";
-import path from "node:path";
+import path3 from "node:path";
 function resolveRealpath(targetPath) {
   try {
     return realpathSync.native(targetPath);
   } catch {
-    return path.resolve(targetPath);
+    return path3.resolve(targetPath);
   }
 }
 function pathWithinRoot(root, targetPath) {
   const resolvedRoot = resolveRealpath(root);
   const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path3.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return true;
   }
-  return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+  return !relativePath.startsWith("..") && !path3.isAbsolute(relativePath);
 }
 function relativeWithinRepo(repoRoot, targetPath) {
   const resolvedRoot = resolveRealpath(repoRoot);
   const resolvedTarget = resolveRealpath(targetPath);
-  const relativePath = path.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path3.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
   }
@@ -115,7 +534,7 @@ function relativeWithinRepo(repoRoot, targetPath) {
   return relativePath;
 }
 function normalizeToken(token, repoRoot) {
-  if (!path.isAbsolute(token)) {
+  if (!path3.isAbsolute(token)) {
     return token;
   }
   const relativePath = relativeWithinRepo(repoRoot, token);
@@ -128,16 +547,16 @@ function resolveMutationTarget(token, cwd) {
   if (token === "2>" || token === "1>" || token === "&>" || token === "1>>" || token === "2>>") {
     return null;
   }
-  if (path.isAbsolute(token)) {
+  if (path3.isAbsolute(token)) {
     return resolveRealpath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return resolveRealpath(path.resolve(cwd, token));
+    return resolveRealpath(path3.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return resolveRealpath(path.resolve(cwd, token));
+    return resolveRealpath(path3.resolve(cwd, token));
   }
-  return resolveRealpath(path.resolve(cwd, token));
+  return resolveRealpath(path3.resolve(cwd, token));
 }
 function hasOutsideRepoPath(tokens, cwd, repoRoot) {
   return tokens.some((token) => {
@@ -336,6 +755,11 @@ function tokenizeShell(input) {
       tokens.push(char);
       continue;
     }
+    if (char === "\n" || char === "\r") {
+      flush();
+      tokens.push(";");
+      continue;
+    }
     if (/\s/.test(char)) {
       flush();
       continue;
@@ -376,12 +800,106 @@ function extractRedirectTargets(tokens) {
   return targets;
 }
 
+// src/core/shell-unparseable.ts
+function detectUnparseableShell(command) {
+  if (hasProcessSubstitution(command)) {
+    return true;
+  }
+  if (hasSubshell(command)) {
+    return true;
+  }
+  if (hasBraceGroup(command)) {
+    return true;
+  }
+  if (hasUnclosedQuote(command)) {
+    return true;
+  }
+  if (hasUnbalancedDollarParen(command)) {
+    return true;
+  }
+  return false;
+}
+function hasProcessSubstitution(command) {
+  return /<\s*\(/.test(command);
+}
+function hasSubshell(command) {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("(")) {
+    return true;
+  }
+  return /(?:^|[;&|]\s*)\(/.test(trimmed);
+}
+function hasBraceGroup(command) {
+  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
+  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
+}
+function hasUnclosedQuote(command) {
+  let quote = null;
+  let escaping = false;
+  for (const char of command) {
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    }
+  }
+  return quote !== null;
+}
+function hasUnbalancedDollarParen(command) {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+    }
+  }
+  return depth > 0;
+}
+
 // src/core/classify-shell.ts
 var READ_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "cat",
   "cd",
   "echo",
-  "find",
   "git diff",
   "git log",
   "git rev-parse",
@@ -438,6 +956,7 @@ var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "
 var DYNAMIC_SHELL_COMMANDS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
 var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
+var FIND_DANGEROUS_FLAGS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
 var VERDICT_RANK = {
   allow: 0,
   allow_flagged: 1,
@@ -499,8 +1018,16 @@ function matchesCustomExternal(normalizedCommand, key, options) {
     (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
   );
 }
-function targetsControlPlane(paths, cwd, controlPlaneDir) {
-  if (!controlPlaneDir) {
+function protectedRoots(options) {
+  const roots = [...options.protectedArtifactRoots ?? []];
+  if (options.controlPlaneDir) {
+    roots.push(options.controlPlaneDir);
+  }
+  return roots;
+}
+function targetsProtectedArtifact(paths, cwd, options) {
+  const roots = protectedRoots(options);
+  if (roots.length === 0) {
     return false;
   }
   return paths.some((target) => {
@@ -508,8 +1035,37 @@ function targetsControlPlane(paths, cwd, controlPlaneDir) {
     if (!resolved) {
       return false;
     }
-    return pathWithinRoot(controlPlaneDir, resolved);
+    return roots.some((root) => pathWithinRoot(root, resolved));
   });
+}
+function findHasDangerousFlags(tokens) {
+  return tokens.some(
+    (token) => FIND_DANGEROUS_FLAGS.has(token) || token.startsWith("-exec") || token.startsWith("-ok") || token === "-delete"
+  );
+}
+function unparseableShellResult(normalizedCommand, cwdRelative, options) {
+  const assessment = {
+    reversibility: "irreversible",
+    external: false,
+    blastRadius: "unparseable shell construct",
+    confidence: 0.9,
+    signals: ["unparseable_shell"]
+  };
+  if (options.unparseableShell === "deny") {
+    return denyResult({
+      reason: "unparseable_shell",
+      normalizedCommand,
+      cwdRelative,
+      assessment
+    });
+  }
+  return {
+    verdict: "allow_flagged",
+    reason: "unparseable_shell",
+    normalizedCommand,
+    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    assessment
+  };
 }
 function classifySubstitutionInners(params) {
   const { command, cwd, repoRoot, options, depth } = params;
@@ -629,7 +1185,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   const key = commandKey(segmentTokens);
   const redirects = extractRedirectTargets(segmentTokens);
   const signals = [];
-  if (matchesCustomAllow(normalizedCommand, key, options)) {
+  if (matchesCustomAllow(normalizedCommand, key, options) && matchesCustomExternal(normalizedCommand, key, options)) {
     return {
       verdict: "allow",
       reason: "custom_allow",
@@ -673,7 +1229,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (targetsControlPlane(redirects, cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(redirects, cwd, options)) {
     signals.push("control_plane_redirect");
     return denyResult({
       reason: "control_plane_mutation",
@@ -688,7 +1244,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (targetsControlPlane(segmentTokens.slice(1), cwd, options.controlPlaneDir)) {
+  if (targetsProtectedArtifact(segmentTokens.slice(1), cwd, options)) {
     signals.push("control_plane_path");
     return denyResult({
       reason: "control_plane_mutation",
@@ -810,20 +1366,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     );
     if (hasAuthHeader) {
       signals.push("credential_header");
-      return {
-        verdict: "allow_flagged",
-        reason: "credential_header",
-        normalizedCommand,
-        fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-        assessment: {
-          reversibility: "recoverable_with_cost",
-          external: true,
-          blastRadius: "external request with credentials",
-          confidence: 0.75,
-          signals
-        }
-      };
     }
+  }
+  if (key === "find" && findHasDangerousFlags(segmentTokens)) {
+    signals.push("find_dangerous_action");
+    return denyResult({
+      reason: "find_dangerous_action",
+      normalizedCommand,
+      cwdRelative,
+      assessment: {
+        reversibility: "irreversible",
+        external: false,
+        blastRadius: "find mutation",
+        confidence: 0.93,
+        signals
+      }
+    });
   }
   if (isExternalKey(key, normalizedCommand, options)) {
     signals.push("external_command", key);
@@ -840,7 +1398,22 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       }
     });
   }
-  if (READ_ONLY_COMMANDS.has(key)) {
+  if (matchesCustomAllow(normalizedCommand, key, options)) {
+    return {
+      verdict: "allow",
+      reason: "custom_allow",
+      normalizedCommand,
+      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      assessment: {
+        reversibility: "reversible",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.99,
+        signals: ["custom_allow_command"]
+      }
+    };
+  }
+  if (READ_ONLY_COMMANDS.has(key) || key === "find") {
     return {
       verdict: "allow",
       reason: "read_only",
@@ -901,6 +1474,11 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   });
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
+  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
+  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+  if (depth === 0 && detectUnparseableShell(command)) {
+    return unparseableShellResult(normalizedCommand, cwdRelative, options);
+  }
   const substitutionResult = classifySubstitutionInners({
     command,
     cwd,
@@ -910,8 +1488,6 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   });
   const tokens = tokenizeShell(command);
   const segments = splitSegmentsWithSeparators(tokens);
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
   let effective = {
     verdict: "allow",
     reason: "read_only",
@@ -1176,7 +1752,7 @@ function classifySubagent(payload, repoRoot, options = {}) {
 }
 
 // src/core/classify-tool.ts
-import path2 from "node:path";
+import path4 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -1253,9 +1829,32 @@ function extractShellCommand(payload) {
 function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   const toolName = String(payload.tool_name ?? "");
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
+  const protectedRoots2 = [
+    ...options.protectedArtifactRoots ?? [],
+    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
+  ];
   if (toolName === "Shell") {
     const command = extractShellCommand(payload);
     if (!command) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "tool_shell_missing_command",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "tool shell",
+            confidence: 0.85,
+            signals: ["missing_command"]
+          }
+        };
+      }
       return {
         verdict: "allow_flagged",
         reason: "tool_shell_missing_command",
@@ -1283,6 +1882,25 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
     const filePath = extractFilePath(payload);
     if (!filePath) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "file_mutation_missing_path",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "file mutation",
+            confidence: 0.85,
+            signals: ["missing_path"]
+          }
+        };
+      }
       return {
         verdict: "allow_flagged",
         reason: "file_mutation_missing_path",
@@ -1302,8 +1920,9 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path2.isAbsolute(filePath) ? filePath : path2.resolve(cwd, filePath);
-    if (options.controlPlaneDir && pathWithinRoot(options.controlPlaneDir, resolvedPath)) {
+    const resolvedPath = path4.isAbsolute(filePath) ? filePath : path4.resolve(cwd, filePath);
+    const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
+    if (hitsProtectedRoot) {
       signals.push("control_plane_path");
       return {
         verdict: "deny_pending_approval",
@@ -1402,359 +2021,138 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
   };
 }
 
-// src/core/config.ts
-import path3 from "node:path";
-var DEFAULT_POLICY_V3 = {
-  unknownLocalEffect: "allow_flagged"
-};
-var DEFAULT_OVERRIDES_V3 = {
-  allow: [],
-  external: []
-};
-var DEFAULT_REDACTION_V3 = {
-  maskApprovalIds: true,
-  maskBearerTokens: true,
-  maskAuthHeaders: true,
-  maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false
-};
-var DEFAULT_CONTROL_PLANE_V3 = {
-  enabled: false,
-  configDir: null,
-  spikeOnPrompt: false
-};
-var DEFAULT_CONFIG_V2 = {
-  version: 2,
-  mode: "enforce",
-  approvalTtlMinutes: 15,
-  tokenPrefix: "/belay-approve",
-  gates: {
-    shell: true,
-    subagent: true,
-    fileMutation: true,
-    toolShell: true
-  },
-  classifier: {
-    strictChains: true,
-    customExternalCommands: [],
-    customAllowCommands: [],
-    sensitivePaths: [".env", ".env.*", "**/credentials/**"]
-  },
-  audit: {
-    logPath: ".cursor/belay/audit.ndjson",
-    includeAssessment: true
+// src/core/gate-engine.ts
+var GateNormalizationError = class extends Error {
+  reason = "normalization_failed";
+  constructor(message) {
+    super(message);
+    this.name = "GateNormalizationError";
   }
 };
-var DEFAULT_CONFIG_V3 = {
-  version: 3,
-  mode: DEFAULT_CONFIG_V2.mode,
-  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
-  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
-  gates: { ...DEFAULT_CONFIG_V2.gates },
-  classifier: {
-    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
-    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
-  },
-  policy: { ...DEFAULT_POLICY_V3 },
-  overrides: { ...DEFAULT_OVERRIDES_V3 },
-  redaction: { ...DEFAULT_REDACTION_V3 },
-  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
-  audit: { ...DEFAULT_CONFIG_V2.audit }
-};
-function uniqueStrings(values) {
-  return [...new Set(values)];
+function shellCommandFromPayload(payload) {
+  const direct = payload.command;
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim();
+  }
+  const toolInput = payload.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    const command = toolInput.command;
+    if (typeof command === "string" && command.trim()) {
+      return command.trim();
+    }
+  }
+  return "";
 }
-function mergeOverrideLists(primary, secondary) {
-  return uniqueStrings([...primary, ...secondary]);
-}
-function mapLegacyClassifierToOverrides(classifier) {
+function normalizeGatedAction(params) {
+  const { kind, repoRoot, cwd, payload, toolName, agentAssessment } = params;
+  let command = params.command?.trim() ?? "";
+  if (kind === "shell" && !command && payload) {
+    command = shellCommandFromPayload(payload);
+  }
+  if (kind === "shell" && !command) {
+    throw new GateNormalizationError("Shell gated action requires a command.");
+  }
+  if (kind === "tool" && !payload) {
+    throw new GateNormalizationError("Tool gated action requires a payload.");
+  }
+  if (kind === "subagent" && !payload) {
+    throw new GateNormalizationError("Subagent gated action requires a payload.");
+  }
   return {
-    allow: Array.isArray(classifier.customAllowCommands) ? classifier.customAllowCommands : [],
-    external: Array.isArray(classifier.customExternalCommands) ? classifier.customExternalCommands : []
+    contractVersion: GATE_CONTRACT_VERSION,
+    kind,
+    repoRoot,
+    cwd,
+    command: command || void 0,
+    payload,
+    toolName,
+    agentAssessment
   };
 }
-function migrateV2ToV3(v2, rawOverrides) {
-  const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
-  return normalizeConfig({
-    version: 3,
-    mode: v2.mode,
-    approvalTtlMinutes: v2.approvalTtlMinutes,
-    tokenPrefix: v2.tokenPrefix,
-    gates: v2.gates,
-    classifier: {
-      strictChains: v2.classifier.strictChains,
-      sensitivePaths: v2.classifier.sensitivePaths
-    },
-    policy: { ...DEFAULT_POLICY_V3 },
-    overrides: {
-      allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
-      external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external)
-    },
-    redaction: { ...DEFAULT_REDACTION_V3 },
-    controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
-    audit: v2.audit
-  });
-}
-function hasV3Sections(raw) {
-  return raw.policy !== void 0 || raw.overrides !== void 0 || raw.redaction !== void 0 || raw.controlPlane !== void 0;
-}
-function looksLikeV2Config(raw) {
-  return raw.gates?.fileMutation !== void 0 || raw.gates?.toolShell !== void 0 || raw.classifier?.customAllowCommands !== void 0 || raw.classifier?.customExternalCommands !== void 0 || raw.audit?.includeAssessment !== void 0;
-}
-function mergeV3FromRaw(base, raw) {
-  return normalizeConfig({
-    ...base,
-    policy: {
-      ...base.policy,
-      ...raw.policy ?? {}
-    },
-    overrides: {
-      allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
-      external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? [])
-    },
-    redaction: {
-      ...base.redaction,
-      ...raw.redaction ?? {}
-    },
-    controlPlane: {
-      ...base.controlPlane,
-      ...raw.controlPlane ?? {}
+function classifyGatedAction(action, config, extraOptions = {}) {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
+  if (action.kind === "shell") {
+    const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
+    if (!command) {
+      throw new GateNormalizationError("Shell gated action requires a command.");
     }
-  });
-}
-function normalizeV3Raw(raw) {
-  return normalizeConfig({
-    ...DEFAULT_CONFIG_V3,
-    ...raw,
-    version: 3,
-    gates: {
-      ...DEFAULT_CONFIG_V3.gates,
-      ...raw.gates ?? {}
-    },
-    classifier: {
-      ...DEFAULT_CONFIG_V3.classifier,
-      ...raw.classifier ?? {}
-    },
-    policy: {
-      ...DEFAULT_CONFIG_V3.policy,
-      ...raw.policy ?? {}
-    },
-    overrides: {
-      ...DEFAULT_CONFIG_V3.overrides,
-      ...raw.overrides ?? {}
-    },
-    redaction: {
-      ...DEFAULT_CONFIG_V3.redaction,
-      ...raw.redaction ?? {}
-    },
-    controlPlane: {
-      ...DEFAULT_CONFIG_V3.controlPlane,
-      ...raw.controlPlane ?? {}
-    },
-    audit: {
-      ...DEFAULT_CONFIG_V3.audit,
-      ...raw.audit ?? {}
-    }
-  });
-}
-function migrateConfig(loaded) {
-  if (typeof loaded !== "object" || loaded === null) {
-    return { ...DEFAULT_CONFIG_V3 };
+    return classifyShell(command, action.cwd, action.repoRoot, options);
   }
-  const raw = loaded;
-  if (raw.version === 3 || raw.version === void 0 && hasV3Sections(raw)) {
-    return normalizeV3Raw(raw);
+  if (action.kind === "subagent") {
+    return classifySubagent(action.payload ?? {}, action.repoRoot, options);
   }
-  const baseV2 = { ...DEFAULT_CONFIG_V2 };
-  if (raw.version === 1 || raw.version === void 0 && !looksLikeV2Config(raw)) {
-    const migratedV22 = normalizeConfigV2({
-      ...baseV2,
-      mode: raw.mode ?? baseV2.mode,
-      approvalTtlMinutes: raw.approvalTtlMinutes ?? baseV2.approvalTtlMinutes,
-      tokenPrefix: raw.tokenPrefix ?? baseV2.tokenPrefix,
-      gates: {
-        ...baseV2.gates,
-        shell: raw.gates?.shell ?? baseV2.gates.shell,
-        subagent: raw.gates?.subagent ?? baseV2.gates.subagent
-      },
-      audit: {
-        ...baseV2.audit,
-        logPath: raw.audit?.logPath ?? baseV2.audit.logPath
-      }
-    });
-    return mergeV3FromRaw(migrateV2ToV3(migratedV22, raw.overrides), raw);
-  }
-  const migratedV2 = normalizeConfigV2({
-    ...baseV2,
-    ...raw,
-    version: 2,
-    gates: {
-      ...baseV2.gates,
-      ...raw.gates ?? {}
-    },
-    classifier: {
-      ...baseV2.classifier,
-      ...raw.classifier ?? {}
-    },
-    audit: {
-      ...baseV2.audit,
-      ...raw.audit ?? {}
-    }
-  });
-  return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw);
+  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
 }
-function normalizeConfigV2(config) {
+function gateEnabledForAction(config, action) {
+  if (action.kind === "shell") {
+    return config.gates.shell;
+  }
+  if (action.kind === "subagent") {
+    return config.gates.subagent;
+  }
+  const toolName = action.toolName ?? String(action.payload?.tool_name ?? "");
+  if (toolName === "Shell") {
+    return config.gates.toolShell;
+  }
+  if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
+    return config.gates.fileMutation;
+  }
+  if (toolName === "Task") {
+    return config.gates.subagent;
+  }
+  return true;
+}
+
+// src/core/approval.ts
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function isExpired(approval) {
+  return Date.parse(approval.expiresAt) <= Date.now();
+}
+function compactApprovals(state) {
   return {
-    version: 2,
-    mode: config.mode === "audit" ? "audit" : "enforce",
-    approvalTtlMinutes: typeof config.approvalTtlMinutes === "number" && config.approvalTtlMinutes > 0 ? config.approvalTtlMinutes : DEFAULT_CONFIG_V2.approvalTtlMinutes,
-    tokenPrefix: config.tokenPrefix || DEFAULT_CONFIG_V2.tokenPrefix,
-    gates: {
-      shell: config.gates.shell !== false,
-      subagent: config.gates.subagent !== false,
-      fileMutation: config.gates.fileMutation !== false,
-      toolShell: config.gates.toolShell !== false
-    },
-    classifier: {
-      strictChains: config.classifier?.strictChains !== false,
-      customExternalCommands: Array.isArray(config.classifier?.customExternalCommands) ? config.classifier.customExternalCommands : [],
-      customAllowCommands: Array.isArray(config.classifier?.customAllowCommands) ? config.classifier.customAllowCommands : [],
-      sensitivePaths: Array.isArray(config.classifier?.sensitivePaths) ? config.classifier.sensitivePaths : DEFAULT_CONFIG_V2.classifier.sensitivePaths
-    },
-    audit: {
-      logPath: config.audit?.logPath || DEFAULT_CONFIG_V2.audit.logPath,
-      includeAssessment: config.audit?.includeAssessment !== false
-    }
+    version: 1,
+    approvals: state.approvals.filter((approval) => !isExpired(approval))
   };
 }
-function normalizeConfig(config) {
-  if (config.version === 2) {
-    return normalizeConfigV2(config);
-  }
-  const v3 = config;
+function escapeRegex(value) {
+  const specials = /* @__PURE__ */ new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
+  return [...value].map((char) => specials.has(char) ? `\\${char}` : char).join("");
+}
+function approvalCommandMatch(prompt, tokenPrefix) {
+  const escapedPrefix = escapeRegex(tokenPrefix);
+  const match = prompt.match(new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, "i"));
+  return match?.[1] ?? null;
+}
+function buildRetryInstruction(tokenPrefix, approvalId) {
+  return `To allow the next matching action once, send ${tokenPrefix} ${approvalId} and then retry the original action unchanged.`;
+}
+function createApprovalRecord(params) {
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 6e4).toISOString();
   return {
-    version: 3,
-    mode: v3.mode === "audit" ? "audit" : "enforce",
-    approvalTtlMinutes: typeof v3.approvalTtlMinutes === "number" && v3.approvalTtlMinutes > 0 ? v3.approvalTtlMinutes : DEFAULT_CONFIG_V3.approvalTtlMinutes,
-    tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
-    gates: {
-      shell: v3.gates.shell !== false,
-      subagent: v3.gates.subagent !== false,
-      fileMutation: v3.gates.fileMutation !== false,
-      toolShell: v3.gates.toolShell !== false
-    },
-    classifier: {
-      strictChains: v3.classifier?.strictChains !== false,
-      sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths) ? v3.classifier.sensitivePaths : DEFAULT_CONFIG_V3.classifier.sensitivePaths
-    },
-    policy: {
-      unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : DEFAULT_POLICY_V3.unknownLocalEffect
-    },
-    overrides: {
-      allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
-      external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : []
-    },
-    redaction: {
-      maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
-      maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
-      maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
-      maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
-      maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true
-    },
-    controlPlane: {
-      enabled: v3.controlPlane?.enabled === true,
-      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null,
-      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true
-    },
-    audit: {
-      logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
-      includeAssessment: v3.audit?.includeAssessment !== false
-    }
+    approvalId: params.approvalId,
+    kind: params.kind,
+    fingerprint: params.fingerprint,
+    repoRoot: params.repoRoot,
+    reason: params.reason,
+    summary: params.summary,
+    createdAt,
+    expiresAt
   };
-}
-function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
-  const migrated = migrateConfig(existing);
-  return normalizeConfig({
-    ...defaults,
-    ...migrated,
-    gates: {
-      ...defaults.gates,
-      ...migrated.gates
-    },
-    classifier: {
-      ...defaults.classifier,
-      ...migrated.classifier
-    },
-    policy: {
-      ...defaults.policy,
-      ...migrated.policy
-    },
-    overrides: {
-      allow: mergeOverrideLists(defaults.overrides.allow, migrated.overrides.allow),
-      external: mergeOverrideLists(defaults.overrides.external, migrated.overrides.external)
-    },
-    redaction: {
-      ...defaults.redaction,
-      ...migrated.redaction
-    },
-    controlPlane: {
-      ...defaults.controlPlane,
-      ...migrated.controlPlane
-    },
-    audit: {
-      ...defaults.audit,
-      ...migrated.audit
-    }
-  });
-}
-function scrubOptionsFromConfig(config) {
-  return { ...config.redaction };
-}
-function classifierOptionsFromConfig(config) {
-  return {
-    strictChains: config.classifier.strictChains,
-    customExternalCommands: config.overrides.external,
-    customAllowCommands: config.overrides.allow,
-    sensitivePaths: config.classifier.sensitivePaths,
-    unknownLocalEffect: config.policy.unknownLocalEffect,
-    controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
-    scrubOptions: scrubOptionsFromConfig(config)
-  };
-}
-function defaultControlPlaneDir(env = process.env, homedir = () => process.env.HOME ?? "") {
-  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
-  const base = xdgConfigHome || path3.join(homedir(), ".config");
-  return path3.join(base, "agent-belay");
-}
-function resolveControlPlaneDir(config) {
-  if (config.controlPlane.configDir) {
-    return config.controlPlane.configDir;
-  }
-  return defaultControlPlaneDir();
-}
-function belayStateDir(config, repoRoot) {
-  if (config.controlPlane.enabled) {
-    return resolveControlPlaneDir(config);
-  }
-  return path3.join(repoRoot, ".cursor", "belay");
-}
-function pendingApprovalsFile(config, repoRoot) {
-  return path3.join(belayStateDir(config, repoRoot), "pending-approvals.json");
-}
-function approvedApprovalsFile(config, repoRoot) {
-  return path3.join(belayStateDir(config, repoRoot), "approved-approvals.json");
 }
 
 // src/core/control-plane-spike.ts
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path4 from "node:path";
+import path5 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path4.join(
+  const outputPath = path5.join(
     controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
     "oq3-spike-last.json"
   );
-  await mkdir(path4.dirname(outputPath), { recursive: true });
+  await mkdir(path5.dirname(outputPath), { recursive: true });
   await writeFile(
     outputPath,
     `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -1765,7 +2163,7 @@ async function persistControlPlaneSpikeResult(result, env = process.env, homedir
 }
 async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
   const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path4.join(controlPlaneDir, "oq3-spike.json");
+  const testFile = path5.join(controlPlaneDir, "oq3-spike.json");
   const payload = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     cwd,
@@ -1802,16 +2200,369 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
   }
 }
 
-// src/adapters/cursor/runtime-entry.ts
+// src/adapters/layouts/protected-paths.ts
+import path6 from "node:path";
+function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
+  const roots = [
+    layout.configPath(repoRoot),
+    layout.hooksSettingsPath(repoRoot),
+    layout.hooksDir(repoRoot),
+    layout.repoLocalStateDir(repoRoot),
+    layout.runtimeDir(repoRoot)
+  ];
+  if (controlPlaneDir) {
+    roots.push(controlPlaneDir);
+  }
+  return roots.map((entry) => path6.resolve(entry));
+}
+
+// src/adapters/shared/gate-runtime.ts
 var EMPTY_APPROVALS = {
   version: 1,
   approvals: []
 };
-var controlPlaneSpikeRan = false;
-function jsonResponse(value) {
-  process2.stdout.write(`${JSON.stringify(value)}
-`);
+async function loadJsonFile(filePath, fallback) {
+  try {
+    const raw = await readFile2(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }
+function createDefaultGateRuntimeDeps() {
+  return {
+    async readConfig(configPath) {
+      return loadJsonFile(configPath, {});
+    },
+    async appendAudit(ctx, event) {
+      const auditPath = path7.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir2(path7.dirname(auditPath), { recursive: true });
+      const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
+      if (!ctx.config.audit.includeAssessment) {
+        delete record.assessment;
+      }
+      const scrubbed = scrubValue(record, scrubOptionsFromConfig(ctx.config));
+      await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
+`, {
+        encoding: "utf8",
+        flag: "a"
+      });
+    },
+    async loadApprovals(ctx, fileName) {
+      const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
+      const filePath = fileName === "pending-approvals.json" ? pendingApprovalsFile(ctx.config, repoLocalStateDir) : approvedApprovalsFile(ctx.config, repoLocalStateDir);
+      const loaded = await loadJsonFile(filePath, EMPTY_APPROVALS);
+      return {
+        filePath,
+        state: {
+          version: 1,
+          approvals: Array.isArray(loaded.approvals) ? loaded.approvals : []
+        }
+      };
+    },
+    async writeApprovals(filePath, state) {
+      await mkdir2(path7.dirname(filePath), { recursive: true });
+      await writeFile2(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
+`, "utf8");
+    }
+  };
+}
+async function resolveGateConfig(ctx, deps) {
+  const loaded = await deps.readConfig(ctx.configPath);
+  return mergeConfig(loaded, ctx.layout.defaultConfig(ctx.repoRoot));
+}
+function runtimeClassifierOptions(ctx, config) {
+  const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
+  return {
+    ...classifierOptionsFromConfig(config),
+    protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir)
+  };
+}
+function gateAuditEventName(kind) {
+  if (kind === "shell") {
+    return "beforeShellExecution";
+  }
+  if (kind === "tool") {
+    return "preToolUse";
+  }
+  return "subagentGate";
+}
+async function ensurePendingApproval(ctx, deps, kind, result) {
+  const pending = await deps.loadApprovals(ctx, "pending-approvals.json");
+  pending.state = compactApprovals(pending.state);
+  const existing = pending.state.approvals.find(
+    (approval2) => approval2.kind === kind && approval2.fingerprint === result.fingerprint && approval2.repoRoot === ctx.repoRoot
+  );
+  if (existing) {
+    await deps.writeApprovals(pending.filePath, pending.state);
+    return existing;
+  }
+  const approval = createApprovalRecord({
+    kind,
+    fingerprint: result.fingerprint,
+    repoRoot: ctx.repoRoot,
+    reason: result.reason,
+    summary: result.normalizedCommand ?? result.summary ?? "",
+    approvalTtlMinutes: ctx.config.approvalTtlMinutes,
+    approvalId: `belay_${randomUUID().replaceAll("-", "").slice(0, 12)}`
+  });
+  pending.state.approvals.push(approval);
+  await deps.writeApprovals(pending.filePath, pending.state);
+  return approval;
+}
+async function consumeApprovedApproval(ctx, deps, kind, fingerprint) {
+  const approved = await deps.loadApprovals(ctx, "approved-approvals.json");
+  approved.state = compactApprovals(approved.state);
+  const index = approved.state.approvals.findIndex(
+    (approval2) => approval2.kind === kind && approval2.fingerprint === fingerprint && approval2.repoRoot === ctx.repoRoot
+  );
+  if (index === -1) {
+    await deps.writeApprovals(approved.filePath, approved.state);
+    return null;
+  }
+  const [approval] = approved.state.approvals.splice(index, 1);
+  await deps.writeApprovals(approved.filePath, approved.state);
+  return approval;
+}
+async function evaluateGatedAction(ctx, deps, params) {
+  let action;
+  try {
+    action = normalizeGatedAction({
+      kind: params.kind,
+      repoRoot: ctx.repoRoot,
+      cwd: params.cwd,
+      command: params.command,
+      payload: params.payload,
+      toolName: params.toolName
+    });
+  } catch {
+    const verdict = unnormalizedGateVerdict({
+      reason: "normalization_failed",
+      mode: ctx.config.mode,
+      user_message: "agent-belay could not normalize this gated action. Run agent-belay doctor, then retry.",
+      agent_message: "Belay denied this action because the hook payload could not be normalized."
+    });
+    await deps.appendAudit(ctx, {
+      event: gateAuditEventName(params.kind),
+      kind: params.kind,
+      verdict: verdict.verdict,
+      reason: verdict.reason,
+      mode: ctx.config.mode,
+      wouldBlock: true,
+      permission: "deny"
+    });
+    return verdict;
+  }
+  if (!gateEnabledForAction(ctx.config, action)) {
+    return classifyResultToGateVerdict({
+      result: {
+        verdict: "allow",
+        reason: "gate_disabled",
+        fingerprint: "gate_disabled",
+        assessment: {
+          reversibility: "reversible",
+          external: false,
+          blastRadius: "none",
+          confidence: 1,
+          signals: ["gate_disabled"]
+        }
+      },
+      mode: ctx.config.mode,
+      permission: "allow",
+      wouldBlock: false
+    });
+  }
+  const result = classifyGatedAction(action, ctx.config, runtimeClassifierOptions(ctx, ctx.config));
+  return gateDecisionToVerdict(ctx, deps, params.kind, result);
+}
+async function gateDecisionToVerdict(ctx, deps, kind, result) {
+  const gateBase = {
+    event: gateAuditEventName(kind),
+    kind,
+    fingerprint: result.fingerprint,
+    summary: result.normalizedCommand ?? result.summary ?? "",
+    assessment: result.assessment,
+    mode: ctx.config.mode
+  };
+  const approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint);
+  if (approved) {
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: "allow",
+      reason: "approved_once",
+      approvalId: approved.approvalId,
+      wouldBlock: false,
+      permission: "allow"
+    });
+    return classifyResultToGateVerdict({
+      result: { ...result, verdict: "allow", reason: "approved_once" },
+      mode: ctx.config.mode,
+      permission: "allow",
+      wouldBlock: false,
+      approvalId: approved.approvalId
+    });
+  }
+  if (result.verdict === "allow" || result.verdict === "allow_flagged") {
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: false,
+      permission: "allow"
+    });
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: "allow",
+      wouldBlock: false
+    });
+  }
+  if (ctx.config.mode === "audit") {
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: true,
+      permission: "allow"
+    });
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: "allow",
+      wouldBlock: true
+    });
+  }
+  const approval = await ensurePendingApproval(ctx, deps, kind, result);
+  await deps.appendAudit(ctx, {
+    ...gateBase,
+    verdict: result.verdict,
+    reason: result.reason,
+    approvalId: approval.approvalId,
+    wouldBlock: true,
+    permission: "deny"
+  });
+  return classifyResultToGateVerdict({
+    result,
+    mode: ctx.config.mode,
+    permission: "deny",
+    wouldBlock: true,
+    approvalId: approval.approvalId,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)}`,
+    agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`
+  });
+}
+async function processApprovalPrompt(ctx, deps, prompt) {
+  const approvalId = approvalCommandMatch(prompt, ctx.config.tokenPrefix);
+  if (!approvalId) {
+    return { continue: true };
+  }
+  const pending = await deps.loadApprovals(ctx, "pending-approvals.json");
+  pending.state = compactApprovals(pending.state);
+  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
+  if (index === -1) {
+    await deps.writeApprovals(pending.filePath, pending.state);
+    await deps.appendAudit(ctx, {
+      event: "approval",
+      kind: "approval",
+      verdict: "deny_pending_approval",
+      approvalId,
+      reason: "approval_missing",
+      summary: prompt
+    });
+    return {
+      continue: false,
+      user_message: "Belay approval not found or expired."
+    };
+  }
+  const [approval] = pending.state.approvals.splice(index, 1);
+  await deps.writeApprovals(pending.filePath, pending.state);
+  const approved = await deps.loadApprovals(ctx, "approved-approvals.json");
+  approved.state = compactApprovals(approved.state);
+  approved.state.approvals.push({
+    ...approval,
+    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  await deps.writeApprovals(approved.filePath, approved.state);
+  await deps.appendAudit(ctx, {
+    event: "approval",
+    kind: "approval",
+    verdict: "allow",
+    approvalId,
+    reason: "approval_recorded",
+    summary: prompt
+  });
+  return {
+    continue: false,
+    user_message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`
+  };
+}
+var controlPlaneSpikeRanFor = /* @__PURE__ */ new Set();
+async function maybeRunControlPlaneSpike(ctx, deps, envEnabled) {
+  if (!envEnabled && !ctx.config.controlPlane.spikeOnPrompt) {
+    return;
+  }
+  const spikeKey = `${ctx.repoRoot}:${ctx.configPath}`;
+  if (controlPlaneSpikeRanFor.has(spikeKey)) {
+    return;
+  }
+  controlPlaneSpikeRanFor.add(spikeKey);
+  const controlPlaneDir = ctx.config.controlPlane.configDir ?? resolveControlPlaneDir(ctx.config);
+  const homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const spike = await runControlPlaneSpike(process.env, process.cwd(), homedir, controlPlaneDir);
+  const spikePath = await persistControlPlaneSpikeResult(
+    spike,
+    process.env,
+    homedir,
+    controlPlaneDir
+  );
+  await deps.appendAudit(ctx, {
+    event: "controlPlaneSpike",
+    kind: "diagnostic",
+    verdict: spike.ok ? "allow" : "deny_pending_approval",
+    reason: spike.ok ? "control_plane_writable" : "control_plane_blocked",
+    summary: spike.error ?? spikePath,
+    mode: ctx.config.mode,
+    wouldBlock: !spike.ok,
+    permission: "allow"
+  });
+}
+function gateVerdictToCursorResponse(verdict) {
+  return {
+    permission: verdict.permission,
+    user_message: verdict.user_message,
+    agent_message: verdict.agent_message
+  };
+}
+async function appendObservedAudit(ctx, deps, eventName, payload) {
+  await deps.appendAudit(ctx, {
+    event: eventName,
+    kind: "audit",
+    verdict: "allow",
+    reason: "observed",
+    summary: canonicalStringify(payload)
+  });
+}
+
+// src/adapters/shared/repo-root.ts
+import { existsSync as existsSync2 } from "node:fs";
+import path8 from "node:path";
+function findRepoRoot(startPath, layout) {
+  let current = path8.resolve(startPath);
+  while (true) {
+    for (const marker of layout.repoRootMarkers) {
+      if (existsSync2(path8.join(current, marker))) {
+        return current;
+      }
+    }
+    const parent = path8.dirname(current);
+    if (parent === current) {
+      return path8.resolve(startPath);
+    }
+    current = parent;
+  }
+}
+
+// src/adapters/cursor/runtime-entry.ts
 async function readStdinJson() {
   const chunks = [];
   for await (const chunk of process2.stdin) {
@@ -1827,246 +2578,34 @@ async function readStdinJson() {
     return {};
   }
 }
-function findRepoRoot(startPath) {
-  let current = path5.resolve(startPath);
-  while (true) {
-    if (existsSync2(path5.join(current, ".git")) || existsSync2(path5.join(current, ".cursor"))) {
-      return current;
-    }
-    const parent = path5.dirname(current);
-    if (parent === current) {
-      return path5.resolve(startPath);
-    }
-    current = parent;
-  }
+function jsonResponse(value) {
+  process2.stdout.write(`${JSON.stringify(value)}
+`);
 }
-async function loadJsonFile(filePath, fallback) {
-  try {
-    const raw = await readFile2(filePath, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
+async function loadRuntimeContext(cwd) {
+  const repoRoot = findRepoRoot(cwd, cursorLayout);
+  const configPath = cursorLayout.configPath(repoRoot);
+  const deps = createDefaultGateRuntimeDeps();
+  const config = await resolveGateConfig({ layout: cursorLayout, repoRoot, configPath }, deps);
+  return { layout: cursorLayout, repoRoot, config, configPath };
 }
-async function writeJsonFile(filePath, value) {
-  await mkdir2(path5.dirname(filePath), { recursive: true });
-  await writeFile2(filePath, `${JSON.stringify(value, null, 2)}
-`, "utf8");
+function isSubagentEvent(payload, eventName) {
+  return eventName === "subagentStart" || payload.subagent_type !== void 0;
 }
-async function loadConfig(repoRoot) {
-  const configPath = path5.join(repoRoot, ".cursor", "belay.config.json");
-  const loaded = await loadJsonFile(configPath, {});
-  return {
-    configPath,
-    config: mergeConfig(loaded)
-  };
-}
-function approvalsPath(repoRoot, config, fileName) {
-  return fileName === "pending-approvals.json" ? pendingApprovalsFile(config, repoRoot) : approvedApprovalsFile(config, repoRoot);
-}
-async function loadApprovals(repoRoot, config, fileName) {
-  const filePath = approvalsPath(repoRoot, config, fileName);
-  const loaded = await loadJsonFile(filePath, EMPTY_APPROVALS);
-  return {
-    filePath,
-    state: {
-      version: 1,
-      approvals: Array.isArray(loaded.approvals) ? loaded.approvals : []
-    }
-  };
-}
-async function appendAudit(repoRoot, config, event) {
-  const auditPath = path5.join(repoRoot, config.audit.logPath);
-  await mkdir2(path5.dirname(auditPath), { recursive: true });
-  const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
-  if (!config.audit.includeAssessment) {
-    delete record.assessment;
-  }
-  const scrubbed = scrubValue(record, scrubOptionsFromConfig(config));
-  await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
-`, {
-    encoding: "utf8",
-    flag: "a"
-  });
-}
-async function ensurePendingApproval(repoRoot, kind, result, config) {
-  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
-  pending.state = compactApprovals(pending.state);
-  const existing = pending.state.approvals.find(
-    (approval2) => approval2.kind === kind && approval2.fingerprint === result.fingerprint && approval2.repoRoot === repoRoot
-  );
-  if (existing) {
-    await writeJsonFile(pending.filePath, pending.state);
-    return existing;
-  }
-  const approval = createApprovalRecord({
-    kind,
-    fingerprint: result.fingerprint,
-    repoRoot,
-    reason: result.reason,
-    summary: result.normalizedCommand ?? result.summary ?? "",
-    approvalTtlMinutes: config.approvalTtlMinutes,
-    approvalId: `belay_${randomUUID().replaceAll("-", "").slice(0, 12)}`
-  });
-  pending.state.approvals.push(approval);
-  await writeJsonFile(pending.filePath, pending.state);
-  return approval;
-}
-async function consumeApprovedApproval(repoRoot, config, kind, fingerprint) {
-  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
-  approved.state = compactApprovals(approved.state);
-  const index = approved.state.approvals.findIndex(
-    (approval2) => approval2.kind === kind && approval2.fingerprint === fingerprint && approval2.repoRoot === repoRoot
-  );
-  if (index === -1) {
-    await writeJsonFile(approved.filePath, approved.state);
-    return null;
-  }
-  const [approval] = approved.state.approvals.splice(index, 1);
-  await writeJsonFile(approved.filePath, approved.state);
-  return approval;
-}
-async function movePendingToApproved(repoRoot, config, approvalId) {
-  const pending = await loadApprovals(repoRoot, config, "pending-approvals.json");
-  pending.state = compactApprovals(pending.state);
-  const index = pending.state.approvals.findIndex((approval2) => approval2.approvalId === approvalId);
-  if (index === -1) {
-    await writeJsonFile(pending.filePath, pending.state);
-    return { ok: false, message: "Belay approval not found or expired." };
-  }
-  const [approval] = pending.state.approvals.splice(index, 1);
-  await writeJsonFile(pending.filePath, pending.state);
-  const approved = await loadApprovals(repoRoot, config, "approved-approvals.json");
-  approved.state = compactApprovals(approved.state);
-  approved.state.approvals.push({
-    ...approval,
-    approvedAt: (/* @__PURE__ */ new Date()).toISOString()
-  });
-  await writeJsonFile(approved.filePath, approved.state);
-  return {
-    ok: true,
-    message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`
-  };
-}
-function gateAuditEventName(kind) {
-  if (kind === "shell") {
-    return "beforeShellExecution";
-  }
-  if (kind === "tool") {
-    return "preToolUse";
-  }
-  return "subagentGate";
-}
-async function gateDecisionToResponse(params) {
-  const { repoRoot, kind, result, config } = params;
-  const gateBase = {
-    event: gateAuditEventName(kind),
-    kind,
-    fingerprint: result.fingerprint,
-    summary: result.normalizedCommand ?? result.summary ?? "",
-    assessment: result.assessment,
-    mode: config.mode
-  };
-  const approved = await consumeApprovedApproval(repoRoot, config, kind, result.fingerprint);
-  if (approved) {
-    await appendAudit(repoRoot, config, {
-      ...gateBase,
-      verdict: "allow",
-      reason: "approved_once",
-      approvalId: approved.approvalId,
-      wouldBlock: false,
-      permission: "allow"
-    });
-    return { permission: "allow" };
-  }
-  if (result.verdict === "allow" || result.verdict === "allow_flagged") {
-    await appendAudit(repoRoot, config, {
-      ...gateBase,
-      verdict: result.verdict,
-      reason: result.reason,
-      wouldBlock: false,
-      permission: "allow"
-    });
-    return { permission: "allow" };
-  }
-  if (config.mode === "audit") {
-    await appendAudit(repoRoot, config, {
-      ...gateBase,
-      verdict: result.verdict,
-      reason: result.reason,
-      wouldBlock: true,
-      permission: "allow"
-    });
-    return { permission: "allow" };
-  }
-  const approval = await ensurePendingApproval(repoRoot, kind, result, config);
-  await appendAudit(repoRoot, config, {
-    ...gateBase,
-    verdict: result.verdict,
-    reason: result.reason,
-    approvalId: approval.approvalId,
-    wouldBlock: true,
-    permission: "deny"
-  });
-  return {
-    permission: "deny",
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(config.tokenPrefix, approval.approvalId)}`,
-    agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`
-  };
-}
-async function maybeRunControlPlaneSpike(repoRoot, config) {
-  const envEnabled = process2.env.BELAY_OQ3_SPIKE === "1";
-  if (!envEnabled && !config.controlPlane.spikeOnPrompt) {
-    return;
-  }
-  if (controlPlaneSpikeRan) {
-    return;
-  }
-  controlPlaneSpikeRan = true;
-  const controlPlaneDir = config.controlPlane.configDir ?? resolveControlPlaneDir(config);
-  const homedir = () => process2.env.HOME ?? "";
-  const spike = await runControlPlaneSpike(process2.env, process2.cwd(), homedir, controlPlaneDir);
-  const spikePath = await persistControlPlaneSpikeResult(
-    spike,
-    process2.env,
-    homedir,
-    controlPlaneDir
-  );
-  await appendAudit(repoRoot, config, {
-    event: "controlPlaneSpike",
-    kind: "diagnostic",
-    verdict: spike.ok ? "allow" : "deny_pending_approval",
-    reason: spike.ok ? "control_plane_writable" : "control_plane_blocked",
-    summary: spike.error ?? spikePath,
-    mode: config.mode,
-    wouldBlock: !spike.ok,
-    permission: "allow"
-  });
+function isFileMutationTool(toolName) {
+  return toolName === "Write" || toolName === "StrReplace" || toolName === "Delete";
 }
 async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson();
     const prompt = String(payload.prompt ?? "");
-    const repoRoot = findRepoRoot(process2.cwd());
-    const { config } = await loadConfig(repoRoot);
-    await maybeRunControlPlaneSpike(repoRoot, config);
-    const approvalId = approvalCommandMatch(prompt, config.tokenPrefix);
-    if (!approvalId) {
-      jsonResponse({ continue: true });
-      return;
-    }
-    const moved = await movePendingToApproved(repoRoot, config, approvalId);
-    await appendAudit(repoRoot, config, {
-      event: "beforeSubmitPrompt",
-      kind: "approval",
-      verdict: moved.ok ? "allow" : "deny_pending_approval",
-      approvalId,
-      reason: moved.ok ? "approval_recorded" : "approval_missing",
-      summary: prompt
-    });
+    const ctx = await loadRuntimeContext(process2.cwd());
+    const deps = createDefaultGateRuntimeDeps();
+    await maybeRunControlPlaneSpike(ctx, deps, process2.env.BELAY_OQ3_SPIKE === "1");
+    const result = await processApprovalPrompt(ctx, deps, prompt);
     jsonResponse({
-      continue: false,
-      user_message: moved.message
+      continue: result.continue,
+      ...result.user_message ? { user_message: result.user_message } : {}
     });
   } catch {
     jsonResponse({
@@ -2080,21 +2619,14 @@ async function runShellGateHook() {
     const payload = await readStdinJson();
     const command = String(payload.command ?? "").trim();
     const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
-    const repoRoot = findRepoRoot(cwd);
-    const { config } = await loadConfig(repoRoot);
-    if (!config.gates.shell) {
-      jsonResponse({ permission: "allow" });
-      return;
-    }
-    const options = classifierOptionsFromConfig(config);
-    const result = classifyShell(command, cwd, repoRoot, options);
-    const response = await gateDecisionToResponse({
-      repoRoot,
+    const ctx = await loadRuntimeContext(cwd);
+    const deps = createDefaultGateRuntimeDeps();
+    const verdict = await evaluateGatedAction(ctx, deps, {
       kind: "shell",
-      result,
-      config
+      cwd,
+      command
     });
-    jsonResponse(response);
+    jsonResponse(gateVerdictToCursorResponse(verdict));
   } catch {
     jsonResponse({
       permission: "deny",
@@ -2102,78 +2634,49 @@ async function runShellGateHook() {
     });
   }
 }
-function isSubagentEvent(payload, eventName) {
-  return eventName === "subagentStart" || payload.subagent_type !== void 0;
-}
-function isFileMutationTool(toolName) {
-  return toolName === "Write" || toolName === "StrReplace" || toolName === "Delete";
-}
 async function runToolGateHook(eventName) {
   try {
     const payload = await readStdinJson();
     const cwd = process2.cwd();
-    const repoRoot = findRepoRoot(cwd);
-    const { config } = await loadConfig(repoRoot);
-    const options = classifierOptionsFromConfig(config);
+    const ctx = await loadRuntimeContext(cwd);
+    const deps = createDefaultGateRuntimeDeps();
     const toolName = String(payload.tool_name ?? "");
     if (isSubagentEvent(payload, eventName)) {
-      if (!config.gates.subagent) {
-        jsonResponse({ permission: "allow" });
-        return;
-      }
-      const result = classifySubagent(payload, repoRoot, options);
-      const response = await gateDecisionToResponse({
-        repoRoot,
+      const verdict = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
-        result,
-        config
+        cwd,
+        payload
       });
-      jsonResponse(response);
+      jsonResponse(gateVerdictToCursorResponse(verdict));
       return;
     }
     if (toolName === "Shell") {
-      if (!config.gates.toolShell) {
-        jsonResponse({ permission: "allow" });
-        return;
-      }
-      const result = classifyToolUse(payload, repoRoot, cwd, options);
-      const response = await gateDecisionToResponse({
-        repoRoot,
+      const verdict = await evaluateGatedAction(ctx, deps, {
         kind: "shell",
-        result,
-        config
+        cwd,
+        payload,
+        toolName
       });
-      jsonResponse(response);
+      jsonResponse(gateVerdictToCursorResponse(verdict));
       return;
     }
     if (isFileMutationTool(toolName)) {
-      if (!config.gates.fileMutation) {
-        jsonResponse({ permission: "allow" });
-        return;
-      }
-      const result = classifyToolUse(payload, repoRoot, cwd, options);
-      const response = await gateDecisionToResponse({
-        repoRoot,
+      const verdict = await evaluateGatedAction(ctx, deps, {
         kind: "tool",
-        result,
-        config
+        cwd,
+        payload,
+        toolName
       });
-      jsonResponse(response);
+      jsonResponse(gateVerdictToCursorResponse(verdict));
       return;
     }
     if (payload.tool_name === "Task") {
-      if (!config.gates.subagent) {
-        jsonResponse({ permission: "allow" });
-        return;
-      }
-      const result = classifySubagent(payload, repoRoot, options);
-      const response = await gateDecisionToResponse({
-        repoRoot,
+      const verdict = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
-        result,
-        config
+        cwd,
+        payload
       });
-      jsonResponse(response);
+      jsonResponse(gateVerdictToCursorResponse(verdict));
       return;
     }
     jsonResponse({ permission: "allow" });
@@ -2187,15 +2690,9 @@ async function runToolGateHook(eventName) {
 async function runAuditHook(eventName) {
   try {
     const payload = await readStdinJson();
-    const repoRoot = findRepoRoot(process2.cwd());
-    const { config } = await loadConfig(repoRoot);
-    await appendAudit(repoRoot, config, {
-      event: eventName,
-      kind: "audit",
-      verdict: "allow",
-      reason: "observed",
-      summary: canonicalStringify(payload)
-    });
+    const ctx = await loadRuntimeContext(process2.cwd());
+    const deps = createDefaultGateRuntimeDeps();
+    await appendObservedAudit(ctx, deps, eventName, payload);
     jsonResponse({});
   } catch (error) {
     console.error(

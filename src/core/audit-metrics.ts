@@ -147,7 +147,7 @@ export function computeAuditMetrics(
   }
 
   return {
-    auditLogPath: options.auditLogPath ?? '.cursor/belay/audit.ndjson',
+    auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
     totalLines: records.length,
     parsedRecords: records.length,
     gateEvents,

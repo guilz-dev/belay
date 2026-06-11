@@ -106,7 +106,7 @@ export function computeAuditMetrics(records, options = {}) {
         notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.');
     }
     return {
-        auditLogPath: options.auditLogPath ?? '.cursor/belay/audit.ndjson',
+        auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
         totalLines: records.length,
         parsedRecords: records.length,
         gateEvents,

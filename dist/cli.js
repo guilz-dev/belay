@@ -32,6 +32,15 @@ function parseArgs(argv) {
             options.noSpike = true;
             continue;
         }
+        if (token === '--adapter') {
+            const next = rest[index + 1];
+            if (!next || !['cursor', 'claude'].includes(next)) {
+                throw new Error('--adapter requires cursor or claude.');
+            }
+            options.adapter = next;
+            index += 1;
+            continue;
+        }
         if (token === '--json') {
             options.json = true;
             continue;
@@ -108,10 +117,10 @@ function printHelp() {
     process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--with-skill] [--dogfood]
-  agent-belay upgrade [--target <dir>] [--with-skill]
-  agent-belay dogfood [--target <dir>] [--enforce] [--force] [--no-spike]
-  agent-belay doctor [--target <dir>] [--json] [--fix] [--dry-run]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--with-skill] [--dogfood]
+  agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
+  agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
+  agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
@@ -130,12 +139,14 @@ async function main() {
                 targetDir: options.targetDir,
                 withSkill: options.withSkill,
                 dogfood: options.dogfood,
+                adapter: options.adapter,
             });
             const extras = [
+                `adapter=${result.adapter}`,
                 result.withSkill ? 'skill extras enabled' : null,
                 result.dogfood ? 'dogfood mode enabled' : null,
             ].filter(Boolean);
-            process.stdout.write(`Initialized agent-belay in ${result.repoRoot}${extras.length > 0 ? ` (${extras.join(', ')})` : ''}.\n`);
+            process.stdout.write(`Initialized agent-belay in ${result.repoRoot} (${extras.join(', ')}).\n`);
             return;
         }
         if (command === 'dogfood') {
@@ -144,6 +155,7 @@ async function main() {
                 enforce: options.enforce,
                 force: options.force,
                 spikeOnPrompt: options.noSpike ? false : undefined,
+                adapter: options.adapter,
             });
             process.stdout.write(formatDogfoodResult(result));
             process.exitCode = result.ok ? 0 : 1;
@@ -153,8 +165,9 @@ async function main() {
             const result = await upgradeProject({
                 targetDir: options.targetDir,
                 withSkill: options.withSkill,
+                adapter: options.adapter,
             });
-            process.stdout.write(`Upgraded agent-belay in ${result.repoRoot}.\n`);
+            process.stdout.write(`Upgraded agent-belay (${result.adapter}) in ${result.repoRoot}.\n`);
             return;
         }
         if (command === 'doctor') {
@@ -162,6 +175,7 @@ async function main() {
                 targetDir: options.targetDir,
                 fix: options.fix,
                 dryRun: options.dryRun,
+                adapter: options.adapter,
             });
             if (options.json) {
                 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

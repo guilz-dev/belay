@@ -2,7 +2,16 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js'
+import { cursorLayout } from './adapters/layouts/cursor.js'
+import type { AdapterName } from './adapters/layouts/types.js'
+import { getAdapter } from './adapters/registry.js'
+import {
+  approvedApprovalsPath,
+  detectAdapterName,
+  mergeAndWriteConfig,
+  pendingApprovalsPath,
+} from './config-io.js'
+import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
 import { dogfoodProject } from './dogfood.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
@@ -64,7 +73,7 @@ async function readBundledTemplate(fileUrl: URL): Promise<string> {
   }
 }
 
-async function loadHooksFile(hooksPath: string): Promise<HooksFile> {
+export async function loadHooksFile(hooksPath: string): Promise<HooksFile> {
   if (!existsSync(hooksPath)) {
     return { version: 1, hooks: {} }
   }
@@ -101,7 +110,7 @@ function mergeHookEntry(
   return [...filtered, expected]
 }
 
-function mergeHooksFile(current: HooksFile): HooksFile {
+export function mergeHooksFile(current: HooksFile): HooksFile {
   const next: HooksFile = {
     version: current.version || 1,
     hooks: { ...current.hooks },
@@ -120,16 +129,15 @@ function mergeHooksFile(current: HooksFile): HooksFile {
   return next
 }
 
-async function writeRuntimeArtifacts(repoRoot: string): Promise<void> {
-  const cursorDir = path.join(repoRoot, '.cursor')
-  const hooksDir = path.join(cursorDir, 'hooks')
-  const runtimeDir = path.join(cursorDir, 'belay', 'runtime')
+async function writeCursorRuntimeArtifacts(repoRoot: string): Promise<void> {
+  const hooksDir = cursorLayout.hooksDir(repoRoot)
+  const runtimeDir = cursorLayout.runtimeDir(repoRoot)
 
   await writeTextFile(path.join(hooksDir, 'belay-before-submit.mjs'), renderBeforeSubmitHook())
   await writeTextFile(path.join(hooksDir, 'belay-shell-gate.mjs'), renderShellGateHook())
   await writeTextFile(path.join(hooksDir, 'belay-tool-gate.mjs'), renderToolGateHook())
   await writeTextFile(path.join(hooksDir, 'belay-audit.mjs'), renderAuditHook())
-  await writeTextFile(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore())
+  await writeTextFile(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore('cursor'))
   await writeTextFile(
     path.join(hooksDir, 'belay-runner'),
     buildRunnerScript(process.execPath),
@@ -138,6 +146,14 @@ async function writeRuntimeArtifacts(repoRoot: string): Promise<void> {
   await writeTextFile(
     path.join(hooksDir, 'belay-runner.cmd'),
     buildWindowsRunnerScript(process.execPath),
+  )
+}
+
+async function writeCursorIntegrityManifest(repoRoot: string): Promise<void> {
+  await writeIntegrityManifest(
+    repoRoot,
+    cursorLayout,
+    runtimeIntegrityFiles(cursorLayout, repoRoot),
   )
 }
 
@@ -153,21 +169,22 @@ async function writeSkillArtifacts(repoRoot: string): Promise<void> {
   await writeTextFile(path.join(commandsDir, 'belay-approve.md'), bundledCommand)
 }
 
-async function installBase(repoRoot: string, withSkill: boolean): Promise<void> {
-  const cursorDir = path.join(repoRoot, '.cursor')
-  const hooksDir = path.join(cursorDir, 'hooks')
-  const belayDir = path.join(cursorDir, 'belay')
-  const hooksPath = path.join(cursorDir, 'hooks.json')
+export async function initCursorProject(
+  options: InitOptions = {},
+): Promise<{ repoRoot: string; withSkill: boolean }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const withSkill = options.withSkill === true
+  const hooksPath = cursorLayout.hooksSettingsPath(repoRoot)
+  const belayDir = cursorLayout.repoLocalStateDir(repoRoot)
   const hooksFile = await loadHooksFile(hooksPath)
   const merged = mergeHooksFile(hooksFile)
 
-  await ensureDir(hooksDir)
+  await ensureDir(cursorLayout.hooksDir(repoRoot))
   await ensureDir(path.join(belayDir, 'runtime'))
   await ensureDir(belayDir)
 
-  const config = await mergeAndWriteConfig(repoRoot)
-
-  await writeRuntimeArtifacts(repoRoot)
+  const config = await mergeAndWriteConfig(repoRoot, 'cursor')
+  await writeCursorRuntimeArtifacts(repoRoot)
 
   await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS)
   await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS)
@@ -178,26 +195,18 @@ async function installBase(repoRoot: string, withSkill: boolean): Promise<void> 
   }
 
   await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+  await writeCursorIntegrityManifest(repoRoot)
+  return { repoRoot, withSkill }
 }
 
-export async function initProject(
-  options: InitOptions = {},
-): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean }> {
+export async function upgradeCursorProject(
+  options: UpgradeOptions = {},
+): Promise<{ repoRoot: string }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const withSkill = options.withSkill === true
-  await installBase(repoRoot, withSkill)
-  if (options.dogfood === true) {
-    await dogfoodProject({ targetDir: repoRoot })
-  }
-  return { repoRoot, withSkill, dogfood: options.dogfood === true }
-}
+  await mergeAndWriteConfig(repoRoot, 'cursor')
+  await writeCursorRuntimeArtifacts(repoRoot)
 
-export async function upgradeProject(options: UpgradeOptions = {}): Promise<{ repoRoot: string }> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  await mergeAndWriteConfig(repoRoot)
-  await writeRuntimeArtifacts(repoRoot)
-
-  const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+  const hooksPath = cursorLayout.hooksSettingsPath(repoRoot)
   const hooksFile = await loadHooksFile(hooksPath)
   const merged = mergeHooksFile(hooksFile)
   await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
@@ -206,7 +215,46 @@ export async function upgradeProject(options: UpgradeOptions = {}): Promise<{ re
     await writeSkillArtifacts(repoRoot)
   }
 
+  await writeCursorIntegrityManifest(repoRoot)
   return { repoRoot }
 }
 
-export { loadHooksFile, mergeHooksFile }
+function resolveAdapterName(options: InitOptions | UpgradeOptions, repoRoot?: string): AdapterName {
+  if (options.adapter === 'claude') {
+    return 'claude'
+  }
+  if (options.adapter === 'cursor') {
+    return 'cursor'
+  }
+  if (repoRoot) {
+    return detectAdapterName(repoRoot)
+  }
+  return 'cursor'
+}
+
+export async function initProject(
+  options: InitOptions = {},
+): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const adapterName = resolveAdapterName(options, repoRoot)
+  const adapter = getAdapter(adapterName)
+  const result = await adapter.install(repoRoot, options)
+  if (options.dogfood === true) {
+    await dogfoodProject({ targetDir: repoRoot, adapter: adapterName })
+  }
+  return {
+    repoRoot,
+    withSkill: result.withSkill,
+    dogfood: options.dogfood === true,
+    adapter: adapterName,
+  }
+}
+
+export async function upgradeProject(
+  options: UpgradeOptions = {},
+): Promise<{ repoRoot: string; adapter: AdapterName }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const adapterName = resolveAdapterName(options, repoRoot)
+  await getAdapter(adapterName).upgrade(repoRoot, options)
+  return { repoRoot, adapter: adapterName }
+}

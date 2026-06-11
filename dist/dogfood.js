@@ -1,15 +1,16 @@
 import path from 'node:path';
-import { loadConfigFile, writeConfigFile } from './config-io.js';
+import { configPathFor, loadConfigFile, writeConfigFile } from './config-io.js';
 import { mergeConfig } from './core/config.js';
 import { metricsProject } from './metrics.js';
 import { isDogfoodConfig, loadOperationalInsights, readOq3SpikeStatus, } from './operational-insights.js';
 export async function dogfoodProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json');
+    const adapter = options.adapter ?? 'cursor';
+    const configPath = configPathFor(repoRoot, adapter);
     if (options.enforce) {
-        return promoteDogfoodToEnforce(repoRoot, configPath, options.force === true);
+        return promoteDogfoodToEnforce(repoRoot, configPath, options.force === true, adapter);
     }
-    const existing = await loadConfigFile(repoRoot);
+    const existing = await loadConfigFile(repoRoot, adapter);
     const spikeOnPrompt = options.spikeOnPrompt !== false;
     const updated = mergeConfig({
         ...existing,
@@ -23,7 +24,7 @@ export async function dogfoodProject(options = {}) {
             spikeOnPrompt,
         },
     });
-    await writeConfigFile(repoRoot, updated);
+    await writeConfigFile(repoRoot, updated, adapter);
     return {
         ok: true,
         repoRoot,
@@ -40,8 +41,8 @@ export async function dogfoodProject(options = {}) {
         ].join(' '),
     };
 }
-async function promoteDogfoodToEnforce(repoRoot, configPath, force) {
-    const existing = await loadConfigFile(repoRoot);
+async function promoteDogfoodToEnforce(repoRoot, configPath, force, adapter = 'cursor') {
+    const existing = await loadConfigFile(repoRoot, adapter);
     const metrics = await metricsProject({ targetDir: repoRoot });
     if (!force && !metrics.dogfood.readyForEnforce) {
         return {
@@ -95,7 +96,7 @@ async function promoteDogfoodToEnforce(repoRoot, configPath, force) {
             spikeOnPrompt: false,
         },
     });
-    await writeConfigFile(repoRoot, updated);
+    await writeConfigFile(repoRoot, updated, adapter);
     return {
         ok: true,
         repoRoot,

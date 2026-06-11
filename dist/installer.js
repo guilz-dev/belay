@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath } from './config-io.js';
+import { cursorLayout } from './adapters/layouts/cursor.js';
+import { getAdapter } from './adapters/registry.js';
+import { approvedApprovalsPath, detectAdapterName, mergeAndWriteConfig, pendingApprovalsPath, } from './config-io.js';
+import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { dogfoodProject } from './dogfood.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js';
@@ -50,7 +53,7 @@ async function readBundledTemplate(fileUrl) {
         throw new Error(`Bundled template missing at ${fileUrl.pathname}: ${detail}`);
     }
 }
-async function loadHooksFile(hooksPath) {
+export async function loadHooksFile(hooksPath) {
     if (!existsSync(hooksPath)) {
         return { version: 1, hooks: {} };
     }
@@ -81,7 +84,7 @@ function mergeHookEntry(current, expected, placement) {
     }
     return [...filtered, expected];
 }
-function mergeHooksFile(current) {
+export function mergeHooksFile(current) {
     const next = {
         version: current.version || 1,
         hooks: { ...current.hooks },
@@ -95,17 +98,19 @@ function mergeHooksFile(current) {
     }
     return next;
 }
-async function writeRuntimeArtifacts(repoRoot) {
-    const cursorDir = path.join(repoRoot, '.cursor');
-    const hooksDir = path.join(cursorDir, 'hooks');
-    const runtimeDir = path.join(cursorDir, 'belay', 'runtime');
+async function writeCursorRuntimeArtifacts(repoRoot) {
+    const hooksDir = cursorLayout.hooksDir(repoRoot);
+    const runtimeDir = cursorLayout.runtimeDir(repoRoot);
     await writeTextFile(path.join(hooksDir, 'belay-before-submit.mjs'), renderBeforeSubmitHook());
     await writeTextFile(path.join(hooksDir, 'belay-shell-gate.mjs'), renderShellGateHook());
     await writeTextFile(path.join(hooksDir, 'belay-tool-gate.mjs'), renderToolGateHook());
     await writeTextFile(path.join(hooksDir, 'belay-audit.mjs'), renderAuditHook());
-    await writeTextFile(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore());
+    await writeTextFile(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore('cursor'));
     await writeTextFile(path.join(hooksDir, 'belay-runner'), buildRunnerScript(process.execPath), true);
     await writeTextFile(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath));
+}
+async function writeCursorIntegrityManifest(repoRoot) {
+    await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, repoRoot));
 }
 async function writeSkillArtifacts(repoRoot) {
     const cursorDir = path.join(repoRoot, '.cursor');
@@ -118,18 +123,18 @@ async function writeSkillArtifacts(repoRoot) {
     await writeTextFile(path.join(skillsDir, 'SKILL.md'), bundledSkill);
     await writeTextFile(path.join(commandsDir, 'belay-approve.md'), bundledCommand);
 }
-async function installBase(repoRoot, withSkill) {
-    const cursorDir = path.join(repoRoot, '.cursor');
-    const hooksDir = path.join(cursorDir, 'hooks');
-    const belayDir = path.join(cursorDir, 'belay');
-    const hooksPath = path.join(cursorDir, 'hooks.json');
+export async function initCursorProject(options = {}) {
+    const repoRoot = path.resolve(options.targetDir ?? process.cwd());
+    const withSkill = options.withSkill === true;
+    const hooksPath = cursorLayout.hooksSettingsPath(repoRoot);
+    const belayDir = cursorLayout.repoLocalStateDir(repoRoot);
     const hooksFile = await loadHooksFile(hooksPath);
     const merged = mergeHooksFile(hooksFile);
-    await ensureDir(hooksDir);
+    await ensureDir(cursorLayout.hooksDir(repoRoot));
     await ensureDir(path.join(belayDir, 'runtime'));
     await ensureDir(belayDir);
-    const config = await mergeAndWriteConfig(repoRoot);
-    await writeRuntimeArtifacts(repoRoot);
+    const config = await mergeAndWriteConfig(repoRoot, 'cursor');
+    await writeCursorRuntimeArtifacts(repoRoot);
     await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
     await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
     await writeTextIfMissing(path.join(belayDir, 'audit.ndjson'), '');
@@ -137,27 +142,53 @@ async function installBase(repoRoot, withSkill) {
         await writeSkillArtifacts(repoRoot);
     }
     await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    await writeCursorIntegrityManifest(repoRoot);
+    return { repoRoot, withSkill };
 }
-export async function initProject(options = {}) {
+export async function upgradeCursorProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const withSkill = options.withSkill === true;
-    await installBase(repoRoot, withSkill);
-    if (options.dogfood === true) {
-        await dogfoodProject({ targetDir: repoRoot });
-    }
-    return { repoRoot, withSkill, dogfood: options.dogfood === true };
-}
-export async function upgradeProject(options = {}) {
-    const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    await mergeAndWriteConfig(repoRoot);
-    await writeRuntimeArtifacts(repoRoot);
-    const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json');
+    await mergeAndWriteConfig(repoRoot, 'cursor');
+    await writeCursorRuntimeArtifacts(repoRoot);
+    const hooksPath = cursorLayout.hooksSettingsPath(repoRoot);
     const hooksFile = await loadHooksFile(hooksPath);
     const merged = mergeHooksFile(hooksFile);
     await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
     if (options.withSkill) {
         await writeSkillArtifacts(repoRoot);
     }
+    await writeCursorIntegrityManifest(repoRoot);
     return { repoRoot };
 }
-export { loadHooksFile, mergeHooksFile };
+function resolveAdapterName(options, repoRoot) {
+    if (options.adapter === 'claude') {
+        return 'claude';
+    }
+    if (options.adapter === 'cursor') {
+        return 'cursor';
+    }
+    if (repoRoot) {
+        return detectAdapterName(repoRoot);
+    }
+    return 'cursor';
+}
+export async function initProject(options = {}) {
+    const repoRoot = path.resolve(options.targetDir ?? process.cwd());
+    const adapterName = resolveAdapterName(options, repoRoot);
+    const adapter = getAdapter(adapterName);
+    const result = await adapter.install(repoRoot, options);
+    if (options.dogfood === true) {
+        await dogfoodProject({ targetDir: repoRoot, adapter: adapterName });
+    }
+    return {
+        repoRoot,
+        withSkill: result.withSkill,
+        dogfood: options.dogfood === true,
+        adapter: adapterName,
+    };
+}
+export async function upgradeProject(options = {}) {
+    const repoRoot = path.resolve(options.targetDir ?? process.cwd());
+    const adapterName = resolveAdapterName(options, repoRoot);
+    await getAdapter(adapterName).upgrade(repoRoot, options);
+    return { repoRoot, adapter: adapterName };
+}

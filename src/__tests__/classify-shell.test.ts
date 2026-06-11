@@ -49,14 +49,15 @@ describe('classifyShell', () => {
     expect(result.reason).toBe('external_script')
   })
 
-  it('flags curl with authorization headers', () => {
+  it('denies curl with authorization headers as external effect', () => {
     const result = classifyShell(
       'curl -H "Authorization: Bearer secret" https://api.example.com',
       cwd,
       repoRoot,
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('credential_header')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
+    expect(result.assessment.signals).toContain('credential_header')
   })
 
   it('denies docker run', () => {
@@ -193,6 +194,46 @@ describe('classifyShell', () => {
       repoRoot,
       { controlPlaneDir },
     )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
+
+  it('denies newline-separated command chains', () => {
+    const result = classifyShell('ls\ncurl https://example.com', cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
+  })
+
+  it('denies find -delete', () => {
+    const result = classifyShell("find . -name '*.ts' -delete", cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('find_dangerous_action')
+  })
+
+  it('does not allow custom allow to bypass protected artifact paths', () => {
+    const controlPlaneDir = '/home/user/.config/agent-belay'
+    const result = classifyShell(`tee ${controlPlaneDir}/pending-approvals.json`, cwd, repoRoot, {
+      controlPlaneDir,
+      customAllowCommands: ['tee *'],
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
+
+  it('denies unparseable shell under fail-closed policy', () => {
+    const result = classifyShell('(curl https://example.com)', cwd, repoRoot, {
+      unparseableShell: 'deny',
+    })
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('unparseable_shell')
+  })
+
+  it('protects repo-local belay config from tee overrides', () => {
+    const protectedRoot = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const result = classifyShell(`tee ${protectedRoot}`, cwd, repoRoot, {
+      protectedArtifactRoots: [path.join(repoRoot, '.cursor')],
+      customAllowCommands: ['tee *'],
+    })
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('control_plane_mutation')
   })

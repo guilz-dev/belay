@@ -32,21 +32,21 @@ async function seedDogfoodEnforceReady(repoRoot: string, controlPlaneDir: string
       controlPlaneDir,
     })}\n`,
   )
-  await writeFile(
-    path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'),
-    auditAllowLine().repeat(20),
-  )
+  const config = mergeConfig({
+    mode: 'audit',
+    policy: { unknownLocalEffect: 'deny', unparseableShell: 'deny' },
+    controlPlane: {
+      enabled: false,
+      configDir: controlPlaneDir,
+      spikeOnPrompt: true,
+      integrity: 'none',
+    },
+    audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+  })
+  await writeFile(path.join(repoRoot, config.audit.logPath), auditAllowLine().repeat(20))
   await writeFile(
     path.join(repoRoot, '.cursor', 'belay.config.json'),
-    `${JSON.stringify(
-      mergeConfig({
-        mode: 'audit',
-        policy: { unknownLocalEffect: 'deny' },
-        controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
-      }),
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(config, null, 2)}\n`,
   )
 }
 
@@ -97,21 +97,21 @@ describe('dogfood command', () => {
     tempDirs.push(repoRoot)
     const controlPlaneDir = path.join(repoRoot, 'cp')
     await initProject({ targetDir: repoRoot, dogfood: true })
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'),
-      auditAllowLine().repeat(20),
-    )
+    const config = mergeConfig({
+      mode: 'audit',
+      policy: { unknownLocalEffect: 'deny', unparseableShell: 'deny' },
+      controlPlane: {
+        enabled: false,
+        configDir: controlPlaneDir,
+        spikeOnPrompt: true,
+        integrity: 'none',
+      },
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+    })
+    await writeFile(path.join(repoRoot, config.audit.logPath), auditAllowLine().repeat(20))
     await writeFile(
       path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          mode: 'audit',
-          policy: { unknownLocalEffect: 'deny' },
-          controlPlane: { enabled: false, configDir: controlPlaneDir, spikeOnPrompt: true },
-        }),
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify(config, null, 2)}\n`,
     )
 
     const result = await dogfoodProject({ targetDir: repoRoot, enforce: true })

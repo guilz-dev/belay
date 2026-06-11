@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, } from './config-io.js';
+import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, } from './config-io.js';
 import { compactApprovals } from './core/approval.js';
 import { loadOperationalInsights } from './operational-insights.js';
 export async function statusProject(options = {}) {
@@ -11,7 +11,7 @@ export async function statusProject(options = {}) {
     const operational = await loadOperationalInsights({ targetDir: repoRoot });
     return {
         repoRoot,
-        approvalStateDir: belayStateDir(config, repoRoot),
+        approvalStateDir: belayStateDir(config, repoLocalStateDirFor(repoRoot, config)),
         pending: compactApprovals(pendingRaw).approvals,
         approved: compactApprovals(approvedRaw).approvals,
         expiredPendingCount,

@@ -10,19 +10,23 @@ export interface HooksFile {
     version: number;
     hooks: Record<string, HookEntry[]>;
 }
+export type AdapterName = 'cursor' | 'claude';
 export interface InitOptions {
     targetDir?: string;
     withSkill?: boolean;
     dogfood?: boolean;
+    adapter?: AdapterName;
 }
 export interface UpgradeOptions {
     targetDir?: string;
     withSkill?: boolean;
+    adapter?: AdapterName;
 }
 export interface DoctorOptions {
     targetDir?: string;
     fix?: boolean;
     dryRun?: boolean;
+    adapter?: AdapterName;
 }
 export interface Oq3SpikeStatus {
     path: string;
@@ -76,6 +80,7 @@ export interface DogfoodOptions {
     enforce?: boolean;
     force?: boolean;
     spikeOnPrompt?: boolean;
+    adapter?: AdapterName;
 }
 export interface DogfoodResult {
     ok: boolean;

@@ -4,4 +4,4 @@ export declare function renderBeforeSubmitHook(): string;
 export declare function renderShellGateHook(): string;
 export declare function renderToolGateHook(): string;
 export declare function renderAuditHook(): string;
-export declare function renderRuntimeCore(): Promise<string>;
+export declare function renderRuntimeCore(adapter?: 'cursor' | 'claude'): Promise<string>;

@@ -58,6 +58,11 @@ export function tokenizeShell(input) {
             tokens.push(char);
             continue;
         }
+        if (char === '\n' || char === '\r') {
+            flush();
+            tokens.push(';');
+            continue;
+        }
         if (/\s/.test(char)) {
             flush();
             continue;
