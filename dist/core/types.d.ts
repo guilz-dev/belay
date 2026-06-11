@@ -1,3 +1,4 @@
+import type { FsScopeAllowlistFile } from './capability/types.js';
 export type BelayMode = 'enforce' | 'audit';
 export type HookVerdict = 'allow' | 'allow_flagged' | 'deny_pending_approval';
 export type Reversibility = 'reversible' | 'recoverable_with_cost' | 'irreversible';
@@ -45,10 +46,13 @@ export interface ClassifierOptions {
     egressEnabled?: boolean;
     /** When true with egress enabled, external command rules become early warnings only. */
     demoteL3External?: boolean;
+    /** When true with sandbox enabled, outside-repo rules defer to fs-scope allowlist. */
+    brokerFsScope?: boolean;
+    fsScopeAllowlist?: FsScopeAllowlistFile;
 }
 export interface ApprovalRecord {
     approvalId: string;
-    kind: 'shell' | 'subagent' | 'tool' | 'egress';
+    kind: 'shell' | 'subagent' | 'tool' | 'egress' | 'capability';
     fingerprint: string;
     repoRoot: string;
     reason: string;

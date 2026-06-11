@@ -4,6 +4,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { recordApproval } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
+import {
+  fsScopeAllowlistPath,
+  isSandboxBrokerEnabled,
+  loadFsScopeAllowlistSync,
+} from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
 import {
@@ -144,14 +149,16 @@ export async function resolveGateConfig(
 }
 
 export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
+  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
+  const brokerFsScope = isSandboxBrokerEnabled(config)
   return {
     ...classifierOptionsFromConfig(config),
-    demoteL3External: isEgressProxyActiveForRepo(
-      config,
-      ctx.repoRoot,
-      ctx.layout.repoLocalStateDir(ctx.repoRoot),
-    ),
+    demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
+    brokerFsScope,
+    fsScopeAllowlist: brokerFsScope
+      ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
+      : undefined,
     protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
   }
 }

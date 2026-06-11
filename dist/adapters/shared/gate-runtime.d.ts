@@ -22,6 +22,8 @@ export declare function createDefaultGateRuntimeDeps(): GateRuntimeDeps;
 export declare function resolveGateConfig(ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>, deps: GateRuntimeDeps): Promise<BelayConfigV3>;
 export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3): {
     demoteL3External: boolean;
+    brokerFsScope: boolean;
+    fsScopeAllowlist: import("../../core/capability/types.js").FsScopeAllowlistFile | undefined;
     protectedArtifactRoots: string[];
     strictChains?: boolean;
     customExternalCommands?: string[];

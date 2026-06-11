@@ -1,3 +1,4 @@
+import { collectOutsideRepoPaths } from './capability/paths.js'
 import { DEFAULT_CONFIDENCE_THRESHOLDS } from './config.js'
 import { shellFingerprint } from './fingerprint.js'
 import { normalizeToken, relativeWithinRepo } from './path-utils.js'
@@ -251,11 +252,17 @@ function classifySegment(
     options,
     separator: segment.separator,
   })
+  const outsideRepoPaths = attributes.hitsOutsideRepo
+    ? collectOutsideRepoPaths(normalizedCommand, cwd, repoRoot)
+    : []
   const policyResult = evaluatePolicyRules(attributes, {
     unknownLocalEffect: options.unknownLocalEffect ?? 'allow_flagged',
     unparseableShell: options.unparseableShell ?? 'allow_flagged',
     confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
     demoteL3External: options.demoteL3External === true,
+    brokerFsScope: options.brokerFsScope === true,
+    fsScopeAllowlist: options.fsScopeAllowlist,
+    outsideRepoPaths,
   })
   return policyResultToClassifyResult(attributes, policyResult)
 }

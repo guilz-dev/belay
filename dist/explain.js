@@ -1,8 +1,10 @@
 import path from 'node:path';
 import { loadConfigFile } from './config-io.js';
+import { isSandboxBrokerEnabled } from './core/capability/broker.js';
 import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from './core/index.js';
 import { isTransactionalEligible } from './core/transactional/index.js';
 import { egressStatus } from './egress-service.js';
+import { sandboxStatus } from './sandbox-service.js';
 function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
     const kind = options.kind ?? 'shell';
     if (kind === 'shell') {
@@ -55,6 +57,7 @@ export async function explainCommand(options) {
     const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot;
     const config = await loadConfigFile(repoRoot);
     const egress = await egressStatus({ targetDir: repoRoot });
+    const sandbox = await sandboxStatus({ targetDir: repoRoot });
     const classifierOptions = {
         ...classifierOptionsFromConfig(config),
         demoteL3External: config.egress.enabled &&
@@ -62,6 +65,7 @@ export async function explainCommand(options) {
             egress.running &&
             !egress.repoRootMismatch &&
             !egress.foreignProxy,
+        brokerFsScope: isSandboxBrokerEnabled(config),
     };
     const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
     const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);
@@ -75,6 +79,9 @@ export async function explainCommand(options) {
         egress: config.egress,
         egressProxyRunning: egress.running && !egress.foreignProxy && !egress.repoRootMismatch,
         egressL3DemotionActive: classifierOptions.demoteL3External === true,
+        sandbox: config.sandbox,
+        sandboxBrokerActive: classifierOptions.brokerFsScope === true,
+        l1FullActive: sandbox.l1FullActive,
         transactionalEligible,
         result: classified.result,
     };
@@ -91,6 +98,7 @@ export function formatExplainReport(report) {
         report.egress.enabled
             ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
             : 'Egress proxy: not configured',
+        `Sandbox (L1 broker): ${report.sandbox.enabled ? 'enabled' : 'disabled'} (runtime=${report.sandbox.runtime}, fs broker active=${report.sandboxBrokerActive}, L1-full=${report.l1FullActive})`,
         `Transactional (L2): ${report.policy.transactional.enabled ? 'enabled' : 'disabled'} (eligible for this command=${report.transactionalEligible})`,
         report.policy.transactional.enabled
             ? `Transactional band: [${report.policy.transactional.minConfidence}, ${report.policy.transactional.maxConfidence})`

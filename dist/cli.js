@@ -9,6 +9,7 @@ import { explainCommand, formatExplainReport } from './explain.js';
 import { initProject, upgradeProject } from './installer.js';
 import { formatMetricsReport, metricsProject } from './metrics.js';
 import { revokeApproval } from './revoke.js';
+import { formatSandboxStatusReport, sandboxStatus } from './sandbox-service.js';
 import { formatSimulateReport, simulateProject } from './simulate.js';
 import { formatStatusReport, statusProject } from './status.js';
 function parseArgs(argv) {
@@ -125,10 +126,19 @@ function parseArgs(argv) {
         }
         if (token === '--scope') {
             const next = rest[index + 1];
-            if (!next || !['once', 'domain'].includes(next)) {
-                throw new Error('--scope requires once or domain.');
+            if (!next || !['once', 'domain', 'path'].includes(next)) {
+                throw new Error('--scope requires once, domain, or path.');
             }
             options.approveScope = next;
+            index += 1;
+            continue;
+        }
+        if (token === '--path') {
+            const next = rest[index + 1];
+            if (!next) {
+                throw new Error('--path requires a filesystem path.');
+            }
+            options.approvePath = next;
             index += 1;
             continue;
         }
@@ -197,6 +207,13 @@ function parseArgs(argv) {
             }
             throw new Error('egress requires subcommand: start, stop, status, or env');
         }
+        if (command === 'sandbox' && !options.sandboxSubcommand) {
+            if (token === 'status') {
+                options.sandboxSubcommand = token;
+                continue;
+            }
+            throw new Error('sandbox requires subcommand: status');
+        }
         if ((command === 'revoke' || command === 'approve') && !options.approvalId) {
             options.approvalId = token;
             continue;
@@ -219,7 +236,8 @@ Usage:
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
   agent-belay egress <start|stop|status|env> [--target <dir>] [--json]
-  agent-belay approve <approval-id> [--scope once|domain] [--token <signed-token>] [--target <dir>]
+  agent-belay sandbox status [--target <dir>] [--json]
+  agent-belay approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
   agent-belay revoke <approval-id> [--target <dir>]
 `);
 }
@@ -408,6 +426,20 @@ async function main() {
             }
             return;
         }
+        if (command === 'sandbox') {
+            if (!options.sandboxSubcommand) {
+                throw new Error('sandbox requires subcommand: status');
+            }
+            const report = await sandboxStatus({ targetDir: options.targetDir });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatSandboxStatusReport(report));
+            }
+            process.exitCode = report.issues.length > 0 && report.sandboxEnabled ? 1 : 0;
+            return;
+        }
         if (command === 'approve') {
             if (!options.approvalId) {
                 throw new Error('approve requires an approval ID.');
@@ -417,6 +449,7 @@ async function main() {
                 approvalId: options.approvalId,
                 token: options.approvalToken,
                 scope: options.approveScope,
+                scopePath: options.approvePath,
             });
             process.stdout.write(`${result.message}\n`);
             process.exitCode = result.ok ? 0 : 1;

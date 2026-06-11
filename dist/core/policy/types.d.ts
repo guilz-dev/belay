@@ -1,3 +1,4 @@
+import type { FsScopeAllowlistFile } from '../capability/types.js';
 import type { Assessment, ConfidenceThresholds, HookVerdict } from '../types.js';
 export type PolicyAction = 'allow' | 'flag' | 'deny' | 'escalate' | 'threshold';
 export type BlastRadiusScope = 'none' | 'file' | 'dir' | 'repo' | 'outside' | 'external';
@@ -50,6 +51,9 @@ export interface PolicyEvaluationContext {
     unparseableShell: 'allow_flagged' | 'deny';
     confidenceThresholds: ConfidenceThresholds;
     demoteL3External?: boolean;
+    brokerFsScope?: boolean;
+    fsScopeAllowlist?: FsScopeAllowlistFile;
+    outsideRepoPaths?: string[];
 }
 export interface PolicyEvaluationResult {
     verdict: HookVerdict;

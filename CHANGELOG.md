@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Sandbox capability broker (L1-full path, opt-in)** — `sandbox.enabled` integrates with external sandbox runtimes; belay brokers fs-outside capability via `fs-scope-allowlist.json`
+- `agent-belay sandbox status` — reports sandbox broker, control-plane isolation, and L1-full prerequisites
+- `agent-belay approve --scope path --path <abs-path>` — persist outside-repo path allowances (parallel to egress `--scope domain`)
+- **Control-plane trust domain** — `controlPlane.isolation` (`none` | `read-only-mount` | `separate-user`) with doctor/sandbox verification
+- **Layer conformance matrix** — `src/conformance/layer-profiles.ts` + tests for L3+L4 / partial L1 / L2 / L1-full profiles
+- [`docs/guarantee-table.md`](docs/guarantee-table.md) — per-configuration guarantee documentation
+
+### Changed
+
+- Config v3 adds `sandbox` section and `controlPlane.isolation`
+- Outside-repo shell rules demote to `capability_fs_hint` when sandbox broker is active and paths are allowlisted
+
 ## 0.8.0
 
 ### Fixed

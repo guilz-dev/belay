@@ -9,6 +9,7 @@ export type {
   BelayOverridesConfig,
   BelayPolicyConfig,
   BelayRedactionConfig,
+  BelaySandboxConfig,
   BelayTransactionalConfig,
   UnknownLocalEffectPolicy,
 } from './core/config.js'
@@ -20,7 +21,12 @@ export type {
   HookVerdict,
 } from './core/types.js'
 
-import type { BelayEgressConfig, BelayOverridesConfig, BelayPolicyConfig } from './core/config.js'
+import type {
+  BelayEgressConfig,
+  BelayOverridesConfig,
+  BelayPolicyConfig,
+  BelaySandboxConfig,
+} from './core/config.js'
 import type { ApprovalRecord, ClassifyResult } from './core/types.js'
 
 export interface HookEntry {
@@ -143,6 +149,9 @@ export interface ExplainReport {
   egress: BelayEgressConfig
   egressProxyRunning: boolean
   egressL3DemotionActive: boolean
+  sandbox: BelaySandboxConfig
+  sandboxBrokerActive: boolean
+  l1FullActive: boolean
   transactionalEligible: boolean
   result: ClassifyResult
 }

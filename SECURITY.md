@@ -100,6 +100,22 @@ When those conditions hold:
   repositories, and external network I/O (L1 egress remains separate). Overlayfs /
   APFS clone backends are future optimizations.
 
+### Sandbox capability broker & control-plane isolation (v0.9, opt-in) — L1-full path
+
+v0.9 adds the **configuration path** toward full L1, but belay does **not** implement OS
+sandboxes itself. A real sandbox runtime (container / seatbelt / landlock / Cursor
+sandbox) must enforce deny-all; belay brokers capability widening:
+
+- **FS outside repo** — `sandbox.enabled` + fs-scope allowlist grown via
+  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths
+- **Egress** — continues to use the v0.7 egress proxy + domain allowlist
+- **Control-plane isolation** — `controlPlane.isolation` verifies that the agent process
+  should not write approval state / signing keys; paired with `approvalSigning.required`
+  for L1-full claims
+- **Adversarial claims** — only when `agent-belay sandbox status` reports
+  `l1FullActive: true` **and** the external sandbox is actually engaged. See
+  [`docs/guarantee-table.md`](docs/guarantee-table.md).
+
 ### Known limitations
 
 - Classification is heuristic, not proof of safety.
