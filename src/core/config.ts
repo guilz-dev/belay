@@ -93,6 +93,16 @@ export interface BelayClassifierConfig {
   sensitivePaths: string[]
 }
 
+export interface BelayNotificationsConfig {
+  webhookUrl?: string
+  commandHook?: string
+}
+
+export interface BelayApprovalSigningConfig {
+  /** When true, out-of-band approvals must present a signed token. */
+  required: boolean
+}
+
 export interface BelayConfigV3 {
   version: 3
   adapter?: 'cursor' | 'claude'
@@ -105,6 +115,8 @@ export interface BelayConfigV3 {
   overrides: BelayOverridesConfig
   redaction: BelayRedactionConfig
   controlPlane: BelayControlPlaneConfig
+  notifications: BelayNotificationsConfig
+  approvalSigning: BelayApprovalSigningConfig
   audit: BelayConfigV2['audit']
 }
 
@@ -163,6 +175,12 @@ export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   spikeOnPrompt: false,
 }
 
+export const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig = {}
+
+export const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig = {
+  required: false,
+}
+
 export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   version: 2,
   mode: 'enforce',
@@ -200,6 +218,8 @@ export const DEFAULT_CONFIG_V3: BelayConfigV3 = {
   overrides: { ...DEFAULT_OVERRIDES_V3 },
   redaction: { ...DEFAULT_REDACTION_V3 },
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+  approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit },
 }
 
@@ -245,6 +265,8 @@ export function migrateV2ToV3(
     },
     redaction: { ...DEFAULT_REDACTION_V3 },
     controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
+    notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+    approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     audit: v2.audit,
   })
 }
@@ -272,6 +294,8 @@ type RawConfigInput = Partial<{
   overrides: Partial<BelayOverridesConfig>
   redaction: Partial<BelayRedactionConfig>
   controlPlane: Partial<BelayControlPlaneConfig>
+  notifications: Partial<BelayNotificationsConfig>
+  approvalSigning: Partial<BelayApprovalSigningConfig>
   audit: Partial<BelayConfigV2['audit']>
 }>
 
@@ -313,6 +337,14 @@ function mergeV3FromRaw(base: BelayConfigV3, raw: RawConfigInput): BelayConfigV3
       ...base.controlPlane,
       ...(raw.controlPlane ?? {}),
     },
+    notifications: {
+      ...base.notifications,
+      ...(raw.notifications ?? {}),
+    },
+    approvalSigning: {
+      ...base.approvalSigning,
+      ...(raw.approvalSigning ?? {}),
+    },
   })
 }
 
@@ -346,6 +378,13 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
       configDir: raw.controlPlane?.configDir ?? LEGACY_CONTROL_PLANE_V3.configDir,
       integrity: raw.controlPlane?.integrity ?? LEGACY_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: raw.controlPlane?.spikeOnPrompt ?? LEGACY_CONTROL_PLANE_V3.spikeOnPrompt,
+    },
+    notifications: {
+      ...DEFAULT_NOTIFICATIONS_V3,
+      ...(raw.notifications ?? {}),
+    },
+    approvalSigning: {
+      required: raw.approvalSigning?.required === true,
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -534,6 +573,19 @@ export function normalizeConfig(
             : DEFAULT_CONTROL_PLANE_V3.integrity,
       spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
     },
+    notifications: {
+      webhookUrl:
+        typeof v3.notifications?.webhookUrl === 'string' && v3.notifications.webhookUrl.trim()
+          ? v3.notifications.webhookUrl.trim()
+          : undefined,
+      commandHook:
+        typeof v3.notifications?.commandHook === 'string' && v3.notifications.commandHook.trim()
+          ? v3.notifications.commandHook.trim()
+          : undefined,
+    },
+    approvalSigning: {
+      required: v3.approvalSigning?.required === true,
+    },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
       includeAssessment: v3.audit?.includeAssessment !== false,
@@ -584,6 +636,14 @@ export function mergeConfig(
     controlPlane: {
       ...defaults.controlPlane,
       ...migrated.controlPlane,
+    },
+    notifications: {
+      ...defaults.notifications,
+      ...migrated.notifications,
+    },
+    approvalSigning: {
+      ...defaults.approvalSigning,
+      ...migrated.approvalSigning,
     },
     audit: {
       ...defaults.audit,

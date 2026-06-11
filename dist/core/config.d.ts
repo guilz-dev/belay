@@ -73,6 +73,14 @@ export interface BelayClassifierConfig {
     strictChains: boolean;
     sensitivePaths: string[];
 }
+export interface BelayNotificationsConfig {
+    webhookUrl?: string;
+    commandHook?: string;
+}
+export interface BelayApprovalSigningConfig {
+    /** When true, out-of-band approvals must present a signed token. */
+    required: boolean;
+}
 export interface BelayConfigV3 {
     version: 3;
     adapter?: 'cursor' | 'claude';
@@ -85,6 +93,8 @@ export interface BelayConfigV3 {
     overrides: BelayOverridesConfig;
     redaction: BelayRedactionConfig;
     controlPlane: BelayControlPlaneConfig;
+    notifications: BelayNotificationsConfig;
+    approvalSigning: BelayApprovalSigningConfig;
     audit: BelayConfigV2['audit'];
 }
 export type BelayConfig = BelayConfigV3;
@@ -98,6 +108,8 @@ export declare const DEFAULT_OVERRIDES_V3: BelayOverridesConfig;
 export declare const DEFAULT_REDACTION_V3: BelayRedactionConfig;
 export declare const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig;
 export declare const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig;
+export declare const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig;
+export declare const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig;
 export declare const DEFAULT_CONFIG_V2: BelayConfigV2;
 export declare const DEFAULT_CONFIG_V3: BelayConfigV3;
 export declare function mapLegacyClassifierToOverrides(classifier: {

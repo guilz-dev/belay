@@ -22,9 +22,9 @@ async function initIsolatedRepo() {
   const config = mergeConfig({
     ...(await loadConfigFile(repoRoot)),
     controlPlane: {
-      enabled: false,
-      configDir: path.join(repoRoot, 'cp'),
-      integrity: 'none',
+      enabled: true,
+      configDir: path.join(repoRoot, '.belay-cp'),
+      integrity: 'hash-pinned',
       spikeOnPrompt: false,
     },
     audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
@@ -224,12 +224,14 @@ describe('generated hook runtime', () => {
 
   it('allows denied shell actions in audit mode and records wouldBlock without pending approvals', async () => {
     const repoRoot = await initIsolatedRepo()
+    const base = await loadConfigFile(repoRoot)
     await writeFile(
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
+          ...base,
           mode: 'audit',
-          policy: { unknownLocalEffect: 'deny' },
+          policy: { ...base.policy, unknownLocalEffect: 'deny' },
         }),
         null,
         2,

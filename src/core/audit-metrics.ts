@@ -1,9 +1,24 @@
-const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
+import {
+  bucketGateEventsByDay,
+  computeApprovalLatencyStats,
+  countVerdicts,
+  detectBypassAttempts,
+  detectNoisyRules,
+} from './audit-analysis.js'
+import {
+  buildApprovalRoundTrips,
+  filterAuditRecords,
+  inferWouldBlock,
+  isApprovalRecorded,
+  toAuditRecord,
+} from './audit-query.js'
+import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 
 /** Minimum gate events before recommending enforce with zero would-block rate. */
 export const MIN_GATE_EVENTS_FOR_ENFORCE = 20
 
 export interface AuditMetricsReport {
+  schemaVersion: number
   auditLogPath: string
   totalLines: number
   parsedRecords: number
@@ -15,6 +30,19 @@ export interface AuditMetricsReport {
   byVerdict: Record<string, number>
   approvalRecordedCount: number
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
+  approvalLatency: {
+    count: number
+    medianMs: number | null
+    p95Ms: number | null
+  }
+  gateEventsByDay: Record<string, number>
+  bypassAttemptCount: number
+  noisyRuleCandidates: Array<{
+    reason: string
+    denyCount: number
+    approvedCount: number
+    approvalRate: number
+  }>
   dogfood: {
     mode: string | null
     unknownLocalEffect: string | null
@@ -43,13 +71,6 @@ function increment(bucket: Record<string, number>, key: string): void {
   bucket[key] = (bucket[key] ?? 0) + 1
 }
 
-function inferWouldBlock(record: Record<string, unknown>): boolean {
-  if (typeof record.wouldBlock === 'boolean') {
-    return record.wouldBlock
-  }
-  return record.verdict === 'deny_pending_approval'
-}
-
 export function computeAuditMetrics(
   records: Record<string, unknown>[],
   options: {
@@ -58,17 +79,17 @@ export function computeAuditMetrics(
     unknownLocalEffect?: string
   } = {},
 ): AuditMetricsReport {
+  const auditRecords = records.map(toAuditRecord)
   const byReason: Record<string, number> = {}
   const byKind: Record<string, number> = {}
-  const byVerdict: Record<string, number> = {}
   const summaryCounts = new Map<string, { summary: string; reason: string; count: number }>()
   let gateEvents = 0
   let wouldBlockCount = 0
   let approvalRecordedCount = 0
 
-  for (const record of records) {
+  for (const record of auditRecords) {
     const event = typeof record.event === 'string' ? record.event : ''
-    if (event === 'beforeSubmitPrompt' && record.reason === 'approval_recorded') {
+    if (isApprovalRecorded(record)) {
       approvalRecordedCount += 1
       continue
     }
@@ -79,10 +100,8 @@ export function computeAuditMetrics(
     gateEvents += 1
     const reason = typeof record.reason === 'string' ? record.reason : 'unknown'
     const kind = typeof record.kind === 'string' ? record.kind : 'unknown'
-    const verdict = typeof record.verdict === 'string' ? record.verdict : 'unknown'
     increment(byReason, reason)
     increment(byKind, kind)
-    increment(byVerdict, verdict)
 
     if (inferWouldBlock(record)) {
       wouldBlockCount += 1
@@ -96,6 +115,12 @@ export function computeAuditMetrics(
       }
     }
   }
+
+  const byVerdict = countVerdicts(auditRecords)
+  const roundTrips = buildApprovalRoundTrips(auditRecords)
+  const approvalLatency = computeApprovalLatencyStats(roundTrips)
+  const bypassAttempts = detectBypassAttempts(auditRecords)
+  const noisyRuleCandidates = detectNoisyRules(auditRecords, roundTrips)
 
   const wouldBlockRate = gateEvents > 0 ? wouldBlockCount / gateEvents : 0
   const topWouldBlockSummaries = [...summaryCounts.values()]
@@ -146,7 +171,14 @@ export function computeAuditMetrics(
     notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.')
   }
 
+  if (noisyRuleCandidates.length > 0) {
+    notes.push(
+      `${noisyRuleCandidates.length} noisy rule candidate(s) — high deny-then-approve rate.`,
+    )
+  }
+
   return {
+    schemaVersion: AUDIT_METRICS_SCHEMA_VERSION,
     auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
     totalLines: records.length,
     parsedRecords: records.length,
@@ -158,6 +190,10 @@ export function computeAuditMetrics(
     byVerdict,
     approvalRecordedCount,
     topWouldBlockSummaries,
+    approvalLatency,
+    gateEventsByDay: bucketGateEventsByDay(auditRecords),
+    bypassAttemptCount: bypassAttempts.length,
+    noisyRuleCandidates,
     dogfood: {
       mode,
       unknownLocalEffect,
@@ -166,3 +202,5 @@ export function computeAuditMetrics(
     },
   }
 }
+
+export { filterAuditRecords, buildApprovalRoundTrips, toAuditRecord }

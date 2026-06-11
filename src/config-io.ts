@@ -4,6 +4,11 @@ import path from 'node:path'
 import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
 import {
+  type LayeredConfigResult,
+  resolveLayeredConfig,
+  teamConfigPath,
+} from './core/config-layers.js'
+import {
   approvedApprovalsFile,
   type BelayConfigV3,
   belayStateDir,
@@ -12,6 +17,8 @@ import {
   pendingApprovalsFile,
 } from './core/config.js'
 import type { ApprovalStateFile } from './core/types.js'
+
+export type { LayeredConfigResult }
 export function resolveAdapterName(config: BelayConfigV3): AdapterName {
   return config.adapter === 'claude' ? 'claude' : 'cursor'
 }
@@ -135,18 +142,38 @@ export async function migrateControlPlaneApprovalsToRepoLocal(
   await migrateApprovalFilesBetween(sourceDir, targetDir)
 }
 
+export async function loadLayeredConfig(
+  repoRoot: string,
+  adapter: AdapterName = detectAdapterName(repoRoot),
+): Promise<LayeredConfigResult> {
+  const layout = getAdapterLayout(adapter)
+  const configPath = configPathFor(repoRoot, adapter)
+  let repoConfig: unknown = {}
+  if (existsSync(configPath)) {
+    repoConfig = JSON.parse(await readFile(configPath, 'utf8'))
+  }
+
+  let teamConfig: Record<string, unknown> | null = null
+  const teamPath = teamConfigPath()
+  if (existsSync(teamPath)) {
+    teamConfig = JSON.parse(await readFile(teamPath, 'utf8')) as Record<string, unknown>
+  }
+
+  return resolveLayeredConfig({
+    repoConfig,
+    adapterDefaults: layout.defaultConfig(repoRoot) as BelayConfigV3,
+    teamConfig,
+    teamConfigPath: teamPath,
+    repoConfigPath: existsSync(configPath) ? configPath : undefined,
+  })
+}
+
 export async function loadConfigFile(
   repoRoot: string,
-  adapter: AdapterName = 'cursor',
+  adapter: AdapterName = detectAdapterName(repoRoot),
 ): Promise<BelayConfigV3> {
-  const configPath = configPathFor(repoRoot, adapter)
-  if (!existsSync(configPath)) {
-    const layout = getAdapterLayout(adapter)
-    return mergeConfig({}, layout.defaultConfig(repoRoot) as BelayConfigV3)
-  }
-  const raw = await readFile(configPath, 'utf8')
-  const layout = getAdapterLayout(adapter)
-  return mergeConfig(JSON.parse(raw), layout.defaultConfig(repoRoot) as BelayConfigV3)
+  const layered = await loadLayeredConfig(repoRoot, adapter)
+  return layered.config
 }
 
 export async function writeConfigFile(

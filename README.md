@@ -102,6 +102,7 @@ agent runtimes, not as a proof that a command is truly reversible.
 - `v0.3`: config v3, fail-closed shell mode, user control plane — see [docs/SPEC-v0.3.md](./docs/SPEC-v0.3.md), [docs/v0.3-remaining.md](./docs/v0.3-remaining.md), and [docs/ROADMAP.md](./docs/ROADMAP.md)
 - `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
 - `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
+- `v0.6`: audit tooling, policy simulation, layered config, signed OOB approval — see [docs/v0.6-plan.md](./docs/v0.6-plan.md)
 
 ## Install
 

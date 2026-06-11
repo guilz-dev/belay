@@ -35,6 +35,20 @@ describe('v0.2 operational commands', () => {
     expect(report.result.verdict).toBe('deny_pending_approval')
   })
 
+  it('explain respects --kind for tool classification', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const report = await explainCommand({
+      targetDir: repoRoot,
+      kind: 'tool',
+      toolName: 'Write',
+      command: '/etc/passwd',
+    })
+    expect(report.kind).toBe('tool')
+    expect(report.result.verdict).toBe('deny_pending_approval')
+  })
+
   it('explain prints shell classification details', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
@@ -67,7 +81,7 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(3)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
-    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.5\.0@/)
+    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.6\.0@/)
     expect(coreAfter).toContain('classifyShell')
   })
 

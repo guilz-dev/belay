@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getAdapter } from './adapters/registry.js';
 import { cleanupOrphanApprovalState } from './cleanup-orphans.js';
-import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from './config-io.js';
+import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredConfig, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from './config-io.js';
 import { defaultControlPlaneDir } from './core/config.js';
 import { verifyIntegrityManifest } from './core/integrity.js';
 import { resolveNodeBinary } from './node-resolution.js';
@@ -35,6 +35,7 @@ export async function doctorProject(options = {}) {
     const notes = [];
     const warnings = [];
     let loadedConfig = null;
+    let configProvenance = [];
     let adapterName = options.adapter ?? detectAdapterName(repoRoot);
     const adapter = getAdapter(adapterName);
     const layout = adapter.layout;
@@ -55,7 +56,12 @@ export async function doctorProject(options = {}) {
             if (rawConfig.version === undefined) {
                 warnings.push('Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.');
             }
-            loadedConfig = await loadConfigFile(repoRoot, adapterName);
+            const layered = await loadLayeredConfig(repoRoot, adapterName);
+            loadedConfig = layered.config;
+            configProvenance = layered.provenance;
+            for (const entry of layered.provenance) {
+                notes.push(`Config layer [${entry.source}]: ${entry.path}`);
+            }
             if (loadedConfig.version !== 3) {
                 warnings.push(`Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`);
             }
@@ -225,6 +231,7 @@ export async function doctorProject(options = {}) {
         issues,
         notes,
         warnings,
+        configProvenance,
         dogfood,
         oq3Spike,
     };
