@@ -15,6 +15,7 @@ import {
 import { explainCommand, formatExplainReport } from './explain.js'
 import { initProject, upgradeProject } from './installer.js'
 import { formatMetricsReport, metricsProject } from './metrics.js'
+import type { ConfigPresetName } from './presets.js'
 import { revokeApproval } from './revoke.js'
 import { formatSandboxStatusReport, sandboxStatus } from './sandbox-service.js'
 import { formatSimulateReport, simulateProject } from './simulate.js'
@@ -54,6 +55,7 @@ function parseArgs(argv: string[]) {
     approveScope?: 'once' | 'domain' | 'path'
     approvePath?: string
     sandboxSubcommand?: 'status'
+    preset?: ConfigPresetName
   } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -84,6 +86,16 @@ function parseArgs(argv: string[]) {
         throw new Error('--adapter requires cursor or claude.')
       }
       options.adapter = next as 'cursor' | 'claude'
+      index += 1
+      continue
+    }
+    if (token === '--preset') {
+      const next = rest[index + 1]
+      const allowed = ['strict', 'standard', 'audit-first', 'l1-full-recommended'] as const
+      if (!next || !allowed.includes(next as (typeof allowed)[number])) {
+        throw new Error('--preset requires strict, standard, audit-first, or l1-full-recommended.')
+      }
+      options.preset = next as ConfigPresetName
       index += 1
       continue
     }
@@ -268,7 +280,7 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--with-skill] [--dogfood]
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
@@ -298,6 +310,7 @@ async function main() {
         withSkill: options.withSkill,
         dogfood: options.dogfood,
         adapter: options.adapter,
+        preset: options.preset,
       })
       const extras = [
         `adapter=${result.adapter}`,

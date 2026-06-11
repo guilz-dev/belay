@@ -16,6 +16,7 @@ export interface InitOptions {
     withSkill?: boolean;
     dogfood?: boolean;
     adapter?: AdapterName;
+    preset?: import('./presets.js').ConfigPresetName;
 }
 export interface UpgradeOptions {
     targetDir?: string;

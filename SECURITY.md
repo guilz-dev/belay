@@ -20,6 +20,25 @@ Include:
 matching mistakes, or bypasses in hook integration should be treated as
 security-relevant reports.
 
+## L3 classifier lists (v1.0)
+
+Built-in command keys (`src/core/policy/command-keys.ts`) and policy rules are a
+**noise-reduction cache** for the prediction layer (L3). They are **not** security
+boundaries unless paired with L1/L2 enforcement. List updates ship in **minor**
+releases per [docs/semver-policy.md](docs/semver-policy.md).
+
+## Recommended adversarial configuration (v1.0)
+
+For operators targeting same-OS-user adversarial resistance:
+
+```bash
+agent-belay init --preset l1-full-recommended
+agent-belay sandbox status
+```
+
+Requires external OS sandbox runtime + running egress proxy. See
+[docs/guarantee-table.md](docs/guarantee-table.md).
+
 ## Threat model (v0.4)
 
 ### Assets

@@ -73,18 +73,20 @@ denylist.
 
 ## Scope
 
-`agent-belay` is an **agent-skill-oriented hook heuristic for Belay-style gating**, not the
-full abstract Belay substrate model.
+`agent-belay` is a **layered hook gate** for agent runtimes — not a static denylist.
 
-- It forms an independent judgment on every gated action. Optional agent-side
-  `Assessment` fields in the payload can reinforce confidence or surface mismatch
-  signals, but never replace Belay's own verdict.
-- It primarily denies **external or irreversible-looking effects**.
-- Local mutations are usually allowed as `allow_flagged`, not blocked.
-- Command-name and payload heuristics are part of the current implementation.
+| Layer | Role | Opt-in |
+|-------|------|--------|
+| **L1** Containment | Egress proxy, sandbox capability broker | `egress`, `sandbox` config |
+| **L2** Observation | Transactional git-worktree diff | `policy.transactional` |
+| **L3** Prediction | Policy rules + command-key heuristics (noise-reduction cache) | default |
+| **L4** Approval | Human one-shot / scoped approvals | default |
 
-This means `agent-belay` is best understood as a practical hook gate for
-agent runtimes, not as a proof that a command is truly reversible.
+- L3 command lists are **not security boundaries** by themselves — see
+  [docs/semver-policy.md](./docs/semver-policy.md) and [docs/guarantee-table.md](./docs/guarantee-table.md).
+- Adversarial resistance requires the **L1-full** stack; use
+  `agent-belay init --preset l1-full-recommended` and verify with `agent-belay sandbox status`.
+- Fresh installs default to **fail-closed** shell policy (L3+L4) with control plane enabled.
 
 ## Runtime Support
 
@@ -103,7 +105,8 @@ agent runtimes, not as a proof that a command is truly reversible.
 - `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
 - `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
 - `v0.6`: audit tooling, policy simulation, layered config, signed OOB approval — see [docs/v0.6-plan.md](./docs/v0.6-plan.md)
-- `v0.7`: egress chokepoint (L1), domain allowlist from approvals, L3 external demotion — see [docs/v0.7-v1.0-plan.md](./docs/v0.7-v1.0-plan.md)
+- `v0.7`–`v0.9`: layered enforcement (L1 egress, L2 transactional, L1-full broker) — see [docs/v0.7-v1.0-plan.md](./docs/v0.7-v1.0-plan.md)
+- `v1.0`: stable guarantees, adapter SDK, semver policy — see [docs/SPEC-v1.0.md](./docs/SPEC-v1.0.md)
 
 ## Install
 
@@ -112,6 +115,7 @@ agent runtimes, not as a proof that a command is truly reversible.
 ```bash
 npx agent-belay init --with-skill
 npx agent-belay init --adapter claude
+npx agent-belay init --preset l1-full-recommended   # adversarial L1-full stack
 ```
 
 This installs the runtime hooks and also writes helper artifacts for:

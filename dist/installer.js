@@ -3,7 +3,9 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { cursorLayout } from './adapters/layouts/cursor.js';
 import { getAdapter } from './adapters/registry.js';
-import { approvedApprovalsPath, detectAdapterName, mergeAndWriteConfig, pendingApprovalsPath, } from './config-io.js';
+import { approvedApprovalsPath, detectAdapterName, loadConfigFile, mergeAndWriteConfig, pendingApprovalsPath, writeConfigFile, } from './config-io.js';
+import { mergeConfig } from './core/config.js';
+import { applyConfigPreset } from './presets.js';
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js';
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js';
 import { dogfoodProject } from './dogfood.js';
@@ -176,6 +178,12 @@ export async function initProject(options = {}) {
     const adapterName = resolveAdapterName(options, repoRoot);
     const adapter = getAdapter(adapterName);
     const result = await adapter.install(repoRoot, options);
+    if (options.preset) {
+        const existing = await loadConfigFile(repoRoot, adapterName);
+        const presetConfig = mergeConfig(applyConfigPreset(options.preset));
+        const merged = mergeConfig(presetConfig, existing);
+        await writeConfigFile(repoRoot, merged, adapterName);
+    }
     if (options.dogfood === true) {
         await dogfoodProject({ targetDir: repoRoot, adapter: adapterName });
     }

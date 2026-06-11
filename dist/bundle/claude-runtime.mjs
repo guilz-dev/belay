@@ -656,6 +656,31 @@ function applyConfigPreset(preset, extra = {}) {
       ...DEFAULT_CONFIG_V3.policy,
       ...base.policy ?? {},
       ...extra.policy
+    },
+    sandbox: {
+      ...DEFAULT_CONFIG_V3.sandbox,
+      ...base.sandbox ?? {},
+      ...extra.sandbox
+    },
+    egress: {
+      ...DEFAULT_CONFIG_V3.egress,
+      ...base.egress ?? {},
+      ...extra.egress
+    },
+    approvalSigning: {
+      ...DEFAULT_CONFIG_V3.approvalSigning,
+      ...base.approvalSigning ?? {},
+      ...extra.approvalSigning
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      ...base.controlPlane ?? {},
+      ...extra.controlPlane,
+      isolation: {
+        ...DEFAULT_CONFIG_V3.controlPlane.isolation,
+        ...base.controlPlane?.isolation ?? {},
+        ...extra.controlPlane?.isolation ?? {}
+      }
     }
   };
 }
@@ -689,6 +714,36 @@ var init_presets = __esm({
           transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
         },
         sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
+      },
+      "l1-full-recommended": {
+        mode: "enforce",
+        policy: {
+          unknownLocalEffect: "deny",
+          unparseableShell: "deny",
+          confidenceThresholds: { ...DEFAULT_CONFIG_V3.policy.confidenceThresholds },
+          modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist },
+          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+        },
+        sandbox: {
+          enabled: true,
+          runtime: "container",
+          denyNetworkByDefault: true
+        },
+        egress: {
+          ...DEFAULT_CONFIG_V3.egress,
+          enabled: true,
+          demoteL3External: true
+        },
+        approvalSigning: {
+          required: true
+        },
+        controlPlane: {
+          ...DEFAULT_CONFIG_V3.controlPlane,
+          isolation: {
+            mode: "separate-user",
+            verifyAgentWritable: true
+          }
+        }
       }
     };
   }

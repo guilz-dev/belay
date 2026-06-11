@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0
+
+### Added
+
+- **[SPEC-v1.0.md](docs/SPEC-v1.0.md)** — stable 1.x commitments: layer guarantees, adapter SDK, semver policy
+- **`l1-full-recommended` preset** — signed + isolated control plane, sandbox, egress (`init --preset`)
+- **Guarantee table conformance** — scenario IDs in `src/conformance/guarantee-table.ts` + profile-specific tests
+- **Docs:** [adapter-sdk.md](docs/adapter-sdk.md), [semver-policy.md](docs/semver-policy.md), [config-schema-v3.md](docs/config-schema-v3.md)
+
+### Changed
+
+- Package version **1.0.0** — stable documented exports (`GATE_CONTRACT_VERSION`, presets, gate types)
+- [guarantee-table.md](docs/guarantee-table.md) promoted to v1.0 with tested-scenario column
+- Layer matrix scenarios expanded (`external_effect` reason on external deny cases)
+
 ## Unreleased
 
 ### Fixed
