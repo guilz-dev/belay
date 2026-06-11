@@ -83,6 +83,7 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
     cwd,
     policy: config.policy,
     overrides: config.overrides,
+    egress: config.egress,
     result: classified.result,
   }
 }
@@ -95,6 +96,10 @@ export function formatExplainReport(report: ExplainReport): string {
     `Input: ${report.command}`,
     `CWD: ${report.cwd}`,
     `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
+    `Egress (L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (demoteL3External=${report.egress.demoteL3External})`,
+    report.egress.enabled
+      ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
+      : 'Egress proxy: not configured',
     `Overrides allow: ${report.overrides.allow.join(', ') || '(none)'}`,
     `Overrides external: ${report.overrides.external.join(', ') || '(none)'}`,
     '',

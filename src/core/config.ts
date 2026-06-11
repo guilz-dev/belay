@@ -103,6 +103,14 @@ export interface BelayApprovalSigningConfig {
   required: boolean
 }
 
+export interface BelayEgressConfig {
+  enabled: boolean
+  listenHost: string
+  listenPort: number
+  /** When true with egress enabled, L3 external command lists become hints only. */
+  demoteL3External: boolean
+}
+
 export interface BelayConfigV3 {
   version: 3
   adapter?: 'cursor' | 'claude'
@@ -117,6 +125,7 @@ export interface BelayConfigV3 {
   controlPlane: BelayControlPlaneConfig
   notifications: BelayNotificationsConfig
   approvalSigning: BelayApprovalSigningConfig
+  egress: BelayEgressConfig
   audit: BelayConfigV2['audit']
 }
 
@@ -181,6 +190,13 @@ export const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig = {
   required: false,
 }
 
+export const DEFAULT_EGRESS_V3: BelayEgressConfig = {
+  enabled: false,
+  listenHost: '127.0.0.1',
+  listenPort: 17831,
+  demoteL3External: true,
+}
+
 export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   version: 2,
   mode: 'enforce',
@@ -220,6 +236,7 @@ export const DEFAULT_CONFIG_V3: BelayConfigV3 = {
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
   notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
   approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+  egress: { ...DEFAULT_EGRESS_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit },
 }
 
@@ -267,6 +284,7 @@ export function migrateV2ToV3(
     controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+    egress: { ...DEFAULT_EGRESS_V3 },
     audit: v2.audit,
   })
 }
@@ -296,6 +314,7 @@ type RawConfigInput = Partial<{
   controlPlane: Partial<BelayControlPlaneConfig>
   notifications: Partial<BelayNotificationsConfig>
   approvalSigning: Partial<BelayApprovalSigningConfig>
+  egress: Partial<BelayEgressConfig>
   audit: Partial<BelayConfigV2['audit']>
 }>
 
@@ -345,6 +364,10 @@ function mergeV3FromRaw(base: BelayConfigV3, raw: RawConfigInput): BelayConfigV3
       ...base.approvalSigning,
       ...(raw.approvalSigning ?? {}),
     },
+    egress: {
+      ...base.egress,
+      ...(raw.egress ?? {}),
+    },
   })
 }
 
@@ -385,6 +408,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV3 {
     },
     approvalSigning: {
       required: raw.approvalSigning?.required === true,
+    },
+    egress: {
+      ...DEFAULT_EGRESS_V3,
+      ...(raw.egress ?? {}),
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -586,6 +613,18 @@ export function normalizeConfig(
     approvalSigning: {
       required: v3.approvalSigning?.required === true,
     },
+    egress: {
+      enabled: v3.egress?.enabled === true,
+      listenHost:
+        typeof v3.egress?.listenHost === 'string' && v3.egress.listenHost.trim()
+          ? v3.egress.listenHost.trim()
+          : DEFAULT_EGRESS_V3.listenHost,
+      listenPort:
+        typeof v3.egress?.listenPort === 'number' && v3.egress.listenPort > 0
+          ? v3.egress.listenPort
+          : DEFAULT_EGRESS_V3.listenPort,
+      demoteL3External: v3.egress?.demoteL3External !== false,
+    },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
       includeAssessment: v3.audit?.includeAssessment !== false,
@@ -645,6 +684,10 @@ export function mergeConfig(
       ...defaults.approvalSigning,
       ...migrated.approvalSigning,
     },
+    egress: {
+      ...defaults.egress,
+      ...migrated.egress,
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit,
@@ -667,6 +710,8 @@ export function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOp
     confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
     scrubOptions: scrubOptionsFromConfig(config),
+    egressEnabled: config.egress.enabled,
+    demoteL3External: config.egress.enabled && config.egress.demoteL3External,
   }
 }
 

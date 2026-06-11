@@ -7,6 +7,7 @@ import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredCon
 import { defaultControlPlaneDir } from './core/config.js';
 import { verifyIntegrityManifest } from './core/integrity.js';
 import { resolveNodeBinary } from './node-resolution.js';
+import { egressStatus } from './egress-service.js';
 import { loadOperationalInsights } from './operational-insights.js';
 import { PACKAGE_VERSION } from './version.js';
 async function readRuntimeVersion(corePath) {
@@ -219,6 +220,16 @@ export async function doctorProject(options = {}) {
             }
             else {
                 warnings.push('OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt.');
+            }
+        }
+        if (loadedConfig.egress.enabled) {
+            const egress = await egressStatus({ targetDir: repoRoot });
+            notes.push(`Egress (L1): enabled — demoteL3External=${loadedConfig.egress.demoteL3External}, proxy ${egress.host}:${egress.port}.`);
+            if (!egress.running) {
+                warnings.push('Egress is enabled in config but the local proxy is not running. Run agent-belay egress start.');
+            }
+            else {
+                notes.push(`Egress proxy running (pid ${egress.pid}).`);
             }
         }
     }

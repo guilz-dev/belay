@@ -103,6 +103,7 @@ agent runtimes, not as a proof that a command is truly reversible.
 - `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
 - `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
 - `v0.6`: audit tooling, policy simulation, layered config, signed OOB approval — see [docs/v0.6-plan.md](./docs/v0.6-plan.md)
+- `v0.7`: egress chokepoint (L1), domain allowlist from approvals, L3 external demotion — see [docs/v0.7-v1.0-plan.md](./docs/v0.7-v1.0-plan.md)
 
 ## Install
 
@@ -189,6 +190,10 @@ npx agent-belay status
 npx agent-belay explain -- <shell-command>
 npx agent-belay explain --kind subagent -- "deploy to production"
 npx agent-belay explain --kind tool --tool Write -- .env
+npx agent-belay egress start
+npx agent-belay egress status
+npx agent-belay egress env
+npx agent-belay approve <approval-id> --scope domain
 npx agent-belay revoke <approval-id>
 ```
 

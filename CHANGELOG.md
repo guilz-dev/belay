@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- **Egress chokepoint (L1, opt-in)** — `egress.enabled` runs a local HTTP(S) proxy that observes outbound connections and blocks unknown destinations pending approval
+- `agent-belay egress start|stop|status|env` — manage the egress proxy process and print recommended `HTTP_PROXY` / `HTTPS_PROXY` variables
+- Egress approvals reuse the existing one-shot approval loop (`kind: egress`); `agent-belay approve --scope domain` persists host allowlist entries
+- **L3 demotion** — when egress is enabled with `demoteL3External`, external-command shell rules become `allow_flagged` hints (`l3_external_hint`) instead of `deny_pending_approval`; L1 proxy is the real external boundary
+- `explain` and `doctor` report egress layer status; doctor warns when egress is enabled but the proxy is not running
+
+### Changed
+
+- Config v3 adds `egress` section (`enabled`, `listenHost`, `listenPort`, `demoteL3External`)
+
+## 0.6.0
+
+### Added
+
+- `agent-belay audit query|summarize|replay` — filter and replay audit NDJSON
+- `agent-belay simulate --config <path>` — dry-run config against recent audit history
+- Layered config resolution (builtin → team → repo → protected)
+- Signed out-of-band approval tokens (`approvalSigning.required`) with notification hooks
+- Metrics v2 fields in audit summarize
+
 ## 0.3.3
 
 ### Fixed

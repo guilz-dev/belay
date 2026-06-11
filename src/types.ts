@@ -4,6 +4,7 @@ export type {
   BelayConfigV2,
   BelayConfigV3,
   BelayControlPlaneConfig,
+  BelayEgressConfig,
   BelayMode,
   BelayOverridesConfig,
   BelayPolicyConfig,
@@ -18,7 +19,7 @@ export type {
   HookVerdict,
 } from './core/types.js'
 
-import type { BelayOverridesConfig, BelayPolicyConfig } from './core/config.js'
+import type { BelayEgressConfig, BelayOverridesConfig, BelayPolicyConfig } from './core/config.js'
 import type { ApprovalRecord, ClassifyResult } from './core/types.js'
 
 export interface HookEntry {
@@ -138,6 +139,7 @@ export interface ExplainReport {
   cwd: string
   policy: BelayPolicyConfig
   overrides: BelayOverridesConfig
+  egress: BelayEgressConfig
   result: ClassifyResult
 }
 

@@ -48,9 +48,24 @@ security-relevant reports.
 - **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `agent-belay upgrade` records runtime hashes; `doctor` verifies them.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
+### Egress chokepoint (v0.7, opt-in)
+
+When `egress.enabled` is true and the local proxy is running with agent processes
+configured to use `HTTP_PROXY` / `HTTPS_PROXY`:
+
+- **L1 boundary** — outbound HTTP(S) is observed at connect time; unknown hosts are
+  blocked pending approval or domain allowlist entry.
+- **L3 demotion** — shell `external_effect` / `custom_external` rules become early
+  warnings (`l3_external_hint`) when `demoteL3External` is true; they do not replace
+  the proxy boundary.
+- **Not covered** — DNS exfiltration, raw sockets, or processes that bypass proxy
+  environment variables (covert channels; full L1 enforcement is v0.9+).
+
 ### Known limitations
 
 - Classification is heuristic, not proof of safety.
+- Egress protection requires opt-in config, a running proxy, and agent/tooling that
+  honors proxy environment variables.
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
 - Command substitution parsing does not cover `${...}` parameter expansion; complex quoting edge cases may still evade detection.

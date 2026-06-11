@@ -21,3 +21,4 @@ export function subagentFingerprint(kind, scrubbed, repoRoot) {
 export function toolFingerprint(toolName, scrubbed, repoRoot) {
     return hashValue(`tool:${toolName}:${canonicalStringify(scrubbed)}:${repoRoot}`);
 }
+export { egressFingerprint } from './egress/fingerprint.js';

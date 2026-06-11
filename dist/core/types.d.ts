@@ -41,10 +41,14 @@ export interface ClassifierOptions {
     protectedArtifactRoots?: string[];
     confidenceThresholds?: ConfidenceThresholds;
     scrubOptions?: ScrubOptions;
+    /** When true, L1 egress proxy is the external-effect boundary. */
+    egressEnabled?: boolean;
+    /** When true with egress enabled, external command rules become early warnings only. */
+    demoteL3External?: boolean;
 }
 export interface ApprovalRecord {
     approvalId: string;
-    kind: 'shell' | 'subagent' | 'tool';
+    kind: 'shell' | 'subagent' | 'tool' | 'egress';
     fingerprint: string;
     repoRoot: string;
     reason: string;

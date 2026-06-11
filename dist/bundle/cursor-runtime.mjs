@@ -55,6 +55,12 @@ var DEFAULT_NOTIFICATIONS_V3 = {};
 var DEFAULT_APPROVAL_SIGNING_V3 = {
   required: false
 };
+var DEFAULT_EGRESS_V3 = {
+  enabled: false,
+  listenHost: "127.0.0.1",
+  listenPort: 17831,
+  demoteL3External: true
+};
 var DEFAULT_CONFIG_V2 = {
   version: 2,
   mode: "enforce",
@@ -93,6 +99,7 @@ var DEFAULT_CONFIG_V3 = {
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
   notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
   approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+  egress: { ...DEFAULT_EGRESS_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit }
 };
 function uniqueStrings(values) {
@@ -128,6 +135,7 @@ function migrateV2ToV3(v2, rawOverrides) {
     controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+    egress: { ...DEFAULT_EGRESS_V3 },
     audit: v2.audit
   });
 }
@@ -163,6 +171,10 @@ function mergeV3FromRaw(base, raw) {
     approvalSigning: {
       ...base.approvalSigning,
       ...raw.approvalSigning ?? {}
+    },
+    egress: {
+      ...base.egress,
+      ...raw.egress ?? {}
     }
   });
 }
@@ -203,6 +215,10 @@ function normalizeV3Raw(raw) {
     },
     approvalSigning: {
       required: raw.approvalSigning?.required === true
+    },
+    egress: {
+      ...DEFAULT_EGRESS_V3,
+      ...raw.egress ?? {}
     },
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
@@ -337,6 +353,12 @@ function normalizeConfig(config) {
     approvalSigning: {
       required: v3.approvalSigning?.required === true
     },
+    egress: {
+      enabled: v3.egress?.enabled === true,
+      listenHost: typeof v3.egress?.listenHost === "string" && v3.egress.listenHost.trim() ? v3.egress.listenHost.trim() : DEFAULT_EGRESS_V3.listenHost,
+      listenPort: typeof v3.egress?.listenPort === "number" && v3.egress.listenPort > 0 ? v3.egress.listenPort : DEFAULT_EGRESS_V3.listenPort,
+      demoteL3External: v3.egress?.demoteL3External !== false
+    },
     audit: {
       logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
       includeAssessment: v3.audit?.includeAssessment !== false
@@ -389,6 +411,10 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
       ...defaults.approvalSigning,
       ...migrated.approvalSigning
     },
+    egress: {
+      ...defaults.egress,
+      ...migrated.egress
+    },
     audit: {
       ...defaults.audit,
       ...migrated.audit
@@ -408,7 +434,9 @@ function classifierOptionsFromConfig(config) {
     unparseableShell: config.policy.unparseableShell,
     confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,
-    scrubOptions: scrubOptionsFromConfig(config)
+    scrubOptions: scrubOptionsFromConfig(config),
+    egressEnabled: config.egress.enabled,
+    demoteL3External: config.egress.enabled && config.egress.demoteL3External
   };
 }
 function defaultControlPlaneDir(env = process.env, homedir = () => env.HOME ?? env.USERPROFILE ?? "") {
@@ -1404,11 +1432,21 @@ function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
     if (rule.id === "custom_external" && attributes.isCustomAllow && attributes.isCustomExternal) {
       continue;
     }
-    const verdict = actionToVerdict(rule.action, fullCtx);
+    let verdict = actionToVerdict(rule.action, fullCtx);
+    let reason = rule.reason;
+    let resultAssessment = rule.assessment ? { ...assessment, ...rule.assessment } : assessment;
+    if (ctx.demoteL3External && verdict === "deny_pending_approval" && (rule.id === "external_effect" || rule.id === "custom_external" || rule.id === "external_script")) {
+      verdict = "allow_flagged";
+      reason = "l3_external_hint";
+      resultAssessment = {
+        ...resultAssessment,
+        signals: [...resultAssessment.signals, "l3_external_hint", "egress_boundary_expected"]
+      };
+    }
     return {
       verdict,
-      reason: rule.reason,
-      assessment: rule.assessment ? { ...assessment, ...rule.assessment } : assessment,
+      reason,
+      assessment: resultAssessment,
       matchedRuleId: rule.id
     };
   }
@@ -1751,7 +1789,8 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
   const policyResult = evaluatePolicyRules(attributes, {
     unknownLocalEffect: options.unknownLocalEffect ?? "allow_flagged",
     unparseableShell: options.unparseableShell ?? "allow_flagged",
-    confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS
+    confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
+    demoteL3External: options.demoteL3External === true
   });
   return policyResultToClassifyResult(attributes, policyResult);
 }

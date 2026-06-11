@@ -5,6 +5,13 @@ import { approvePending } from './approve.js'
 import { auditProject, formatAuditReport } from './audit.js'
 import { doctorProject, formatDoctorReport } from './doctor.js'
 import { dogfoodProject, formatDogfoodResult } from './dogfood.js'
+import {
+  egressEnv,
+  egressStatus,
+  formatEgressStatusReport,
+  startEgressProxy,
+  stopEgressProxy,
+} from './egress-service.js'
 import { explainCommand, formatExplainReport } from './explain.js'
 import { initProject, upgradeProject } from './installer.js'
 import { formatMetricsReport, metricsProject } from './metrics.js'
@@ -42,6 +49,8 @@ function parseArgs(argv: string[]) {
     limit?: number
     configPath?: string
     approvalToken?: string
+    egressSubcommand?: 'start' | 'stop' | 'status' | 'env'
+    approveScope?: 'once' | 'domain'
   } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -152,6 +161,15 @@ function parseArgs(argv: string[]) {
       index += 1
       continue
     }
+    if (token === '--scope') {
+      const next = rest[index + 1]
+      if (!next || !['once', 'domain'].includes(next)) {
+        throw new Error('--scope requires once or domain.')
+      }
+      options.approveScope = next as 'once' | 'domain'
+      index += 1
+      continue
+    }
     if (token === '--fix') {
       options.fix = true
       continue
@@ -210,6 +228,13 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('audit requires subcommand: query, summarize, or replay')
     }
+    if (command === 'egress' && !options.egressSubcommand) {
+      if (token === 'start' || token === 'stop' || token === 'status' || token === 'env') {
+        options.egressSubcommand = token
+        continue
+      }
+      throw new Error('egress requires subcommand: start, stop, status, or env')
+    }
     if ((command === 'revoke' || command === 'approve') && !options.approvalId) {
       options.approvalId = token
       continue
@@ -233,7 +258,8 @@ Usage:
   agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
-  agent-belay approve <approval-id> [--token <signed-token>] [--target <dir>]
+  agent-belay egress <start|stop|status|env> [--target <dir>] [--json]
+  agent-belay approve <approval-id> [--scope once|domain] [--token <signed-token>] [--target <dir>]
   agent-belay revoke <approval-id> [--target <dir>]
 `)
 }
@@ -393,6 +419,41 @@ async function main() {
       return
     }
 
+    if (command === 'egress') {
+      if (!options.egressSubcommand) {
+        throw new Error('egress requires subcommand: start, stop, status, or env')
+      }
+      if (options.egressSubcommand === 'start') {
+        const result = await startEgressProxy({ targetDir: options.targetDir })
+        process.stdout.write(`${result.message}\n`)
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.egressSubcommand === 'stop') {
+        const result = await stopEgressProxy({ targetDir: options.targetDir })
+        process.stdout.write(`${result.message}\n`)
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.egressSubcommand === 'env') {
+        const result = await egressEnv({ targetDir: options.targetDir })
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify({ ok: result.ok, env: result.env }, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${result.message}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      const report = await egressStatus({ targetDir: options.targetDir })
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      } else {
+        process.stdout.write(formatEgressStatusReport(report))
+      }
+      return
+    }
+
     if (command === 'approve') {
       if (!options.approvalId) {
         throw new Error('approve requires an approval ID.')
@@ -401,6 +462,7 @@ async function main() {
         targetDir: options.targetDir,
         approvalId: options.approvalId,
         token: options.approvalToken,
+        scope: options.approveScope,
       })
       process.stdout.write(`${result.message}\n`)
       process.exitCode = result.ok ? 0 : 1

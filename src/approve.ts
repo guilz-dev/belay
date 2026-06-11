@@ -8,11 +8,15 @@ import {
   saveApprovalState,
 } from './config-io.js'
 import { recordApproval } from './core/approval-service.js'
+import { recordEgressApproval } from './core/egress-approval.js'
+import type { EgressApprovalScope } from './core/egress/types.js'
+import { createEgressApprovalStore } from './egress-service.js'
 
 export interface ApproveOptions {
   targetDir?: string
   approvalId: string
   token?: string
+  scope?: EgressApprovalScope
 }
 
 export async function approvePending(
@@ -20,6 +24,20 @@ export async function approvePending(
 ): Promise<{ ok: boolean; message: string }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
+  const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+  const match = pending.approvals.find((approval) => approval.approvalId === options.approvalId)
+
+  if (match?.kind === 'egress') {
+    const result = await recordEgressApproval({
+      approvalId: options.approvalId,
+      config,
+      scope: options.scope ?? 'once',
+      token: options.token,
+      requireSignedToken: config.approvalSigning.required,
+      store: createEgressApprovalStore(repoRoot, config),
+    })
+    return { ok: result.ok, message: result.message }
+  }
 
   const result = await recordApproval({
     approvalId: options.approvalId,

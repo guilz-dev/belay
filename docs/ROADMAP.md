@@ -15,6 +15,8 @@
 | **v0.3.3** | OQ3 + minimum-sample gates on `dogfood --enforce` | Shipped |
 | **v0.4** | Portable adapters, gate contract, Claude Code adapter, fail-closed defaults | Shipped — see [v0.4-plan.md](./v0.4-plan.md) |
 | **v0.5** | Policy-as-code judgment, corpus metrics, confidence thresholds | Shipped — see [v0.5-plan.md](./v0.5-plan.md) |
+| **v0.6** | Audit tooling, simulation, layered config, signed OOB approval | Shipped — see [v0.6-plan.md](./v0.6-plan.md) |
+| **v0.7** | Egress chokepoint (L1), approval broker reuse, L3 external demotion | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md) |
 
 ## v0.3 (0.3.0)
 

@@ -46,11 +46,25 @@ export function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULE
         if (rule.id === 'custom_external' && attributes.isCustomAllow && attributes.isCustomExternal) {
             continue;
         }
-        const verdict = actionToVerdict(rule.action, fullCtx);
+        let verdict = actionToVerdict(rule.action, fullCtx);
+        let reason = rule.reason;
+        let resultAssessment = rule.assessment ? { ...assessment, ...rule.assessment } : assessment;
+        if (ctx.demoteL3External &&
+            verdict === 'deny_pending_approval' &&
+            (rule.id === 'external_effect' ||
+                rule.id === 'custom_external' ||
+                rule.id === 'external_script')) {
+            verdict = 'allow_flagged';
+            reason = 'l3_external_hint';
+            resultAssessment = {
+                ...resultAssessment,
+                signals: [...resultAssessment.signals, 'l3_external_hint', 'egress_boundary_expected'],
+            };
+        }
         return {
             verdict,
-            reason: rule.reason,
-            assessment: rule.assessment ? { ...assessment, ...rule.assessment } : assessment,
+            reason,
+            assessment: resultAssessment,
             matchedRuleId: rule.id,
         };
     }

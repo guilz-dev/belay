@@ -31,6 +31,8 @@ export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config
     controlPlaneDir?: string | null;
     confidenceThresholds?: import("../../core/types.js").ConfidenceThresholds;
     scrubOptions?: import("../../core/types.js").ScrubOptions;
+    egressEnabled?: boolean;
+    demoteL3External?: boolean;
 };
 export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateRuntimeDeps, params: {
     kind: GatedActionKind;

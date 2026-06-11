@@ -55,6 +55,7 @@ export interface PolicyEvaluationContext {
   unknownLocalEffect: 'allow_flagged' | 'deny'
   unparseableShell: 'allow_flagged' | 'deny'
   confidenceThresholds: ConfidenceThresholds
+  demoteL3External?: boolean
 }
 
 export interface PolicyEvaluationResult {
