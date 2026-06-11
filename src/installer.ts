@@ -8,13 +8,17 @@ import { getAdapter } from './adapters/registry.js'
 import {
   approvedApprovalsPath,
   detectAdapterName,
+  loadConfigFile,
   mergeAndWriteConfig,
   pendingApprovalsPath,
+  writeConfigFile,
 } from './config-io.js'
+import { mergeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
 import { dogfoodProject } from './dogfood.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
+import { applyConfigPreset } from './presets.js'
 import {
   renderAuditHook,
   renderBeforeSubmitHook,
@@ -239,6 +243,12 @@ export async function initProject(
   const adapterName = resolveAdapterName(options, repoRoot)
   const adapter = getAdapter(adapterName)
   const result = await adapter.install(repoRoot, options)
+  if (options.preset) {
+    const existing = await loadConfigFile(repoRoot, adapterName)
+    const presetConfig = mergeConfig(applyConfigPreset(options.preset))
+    const merged = mergeConfig(presetConfig, existing)
+    await writeConfigFile(repoRoot, merged, adapterName)
+  }
   if (options.dogfood === true) {
     await dogfoodProject({ targetDir: repoRoot, adapter: adapterName })
   }

@@ -19,6 +19,7 @@
 | **v0.7** | Egress chokepoint (L1), approval broker reuse, L3 external demotion | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md) |
 | **v0.8** | Transactional execution (L2), observed diff assessment, predicted vs observed audit | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md) |
 | **v0.9** | Capability broker, control-plane isolation, layer conformance matrix | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md), [guarantee-table.md](./guarantee-table.md) |
+| **v1.0** | Stable Belay — guarantee table tested per config, adapter SDK, semver policy, L1-full preset | Shipped — see [SPEC-v1.0.md](./SPEC-v1.0.md) |
 
 ## v0.3 (0.3.0)
 

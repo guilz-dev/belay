@@ -46,6 +46,16 @@ function parseArgs(argv) {
             index += 1;
             continue;
         }
+        if (token === '--preset') {
+            const next = rest[index + 1];
+            const allowed = ['strict', 'standard', 'audit-first', 'l1-full-recommended'];
+            if (!next || !allowed.includes(next)) {
+                throw new Error('--preset requires strict, standard, audit-first, or l1-full-recommended.');
+            }
+            options.preset = next;
+            index += 1;
+            continue;
+        }
         if (token === '--json') {
             options.json = true;
             continue;
@@ -226,7 +236,8 @@ function printHelp() {
     process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--with-skill] [--dogfood]
+    (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
@@ -254,6 +265,7 @@ async function main() {
                 withSkill: options.withSkill,
                 dogfood: options.dogfood,
                 adapter: options.adapter,
+                preset: options.preset,
             });
             const extras = [
                 `adapter=${result.adapter}`,

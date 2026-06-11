@@ -1,17 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.0.0
 
-### Fixed
+### Added
 
-- **Path canonicalization** — `canonicalPath()` resolves symlinks only for existing path prefixes so new-file transactional diffs and fs-scope allowlist matching stay symmetric on symlinked paths (e.g. macOS `/var` → `/private/var`)
-- **Capability broker demotion** — `capability_fs_hint` now requires `sandbox.runtime` ≠ `none`, not `sandbox.enabled` alone
-- **Transactional dirty worktree** — skip isolated execution when tracked files are modified (`dirty_worktree`; untracked files ignored)
-- **Transactional apply failure** — failed `copyFile` during apply returns `transactional_apply_failed` (deny) instead of falling through to host execution; partial applies roll back best-effort
+- **[SPEC-v1.0.md](docs/SPEC-v1.0.md)** — stable 1.x commitments: layer guarantees, adapter SDK, semver policy
+- **`l1-full-recommended` preset** — signed + isolated control plane, sandbox, egress (`init --preset`)
+- **Guarantee table conformance** — scenario IDs in `src/conformance/guarantee-table.ts` + profile-specific tests
+- **Docs:** [adapter-sdk.md](docs/adapter-sdk.md), [semver-policy.md](docs/semver-policy.md), [config-schema-v3.md](docs/config-schema-v3.md)
 
 ### Changed
 
-- CI runs tests on `macos-latest` in addition to Ubuntu
+- Package version **1.0.0** — stable documented exports (`GATE_CONTRACT_VERSION`, presets, gate types)
+- [guarantee-table.md](docs/guarantee-table.md) promoted to v1.0 with tested-scenario column
+- Layer matrix scenarios expanded (`external_effect` reason on external deny cases)
 
 ## 0.9.0
 

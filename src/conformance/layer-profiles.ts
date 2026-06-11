@@ -1,13 +1,10 @@
 import type { BelayConfigV3 } from '../core/config.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { GUARANTEE_SCENARIOS, layerConformanceScenarios } from './guarantee-table.js'
+import type { LayerProfileId } from './types.js'
 
-export type LayerProfileId = 'l3-l4-only' | 'l1-partial-egress' | 'l1-l2-transactional' | 'l1-full'
-
-export interface LayerConformanceScenario {
-  command: string
-  permission: 'allow' | 'deny'
-  reason?: string
-}
+export type { LayerConformanceScenario, LayerProfileId } from './types.js'
+export { GUARANTEE_SCENARIOS }
 
 export function layerProfileConfig(profile: LayerProfileId): BelayConfigV3 {
   const base = {
@@ -55,26 +52,4 @@ export function layerProfileConfig(profile: LayerProfileId): BelayConfigV3 {
   }
 }
 
-export const LAYER_CONFORMANCE_SCENARIOS: Record<LayerProfileId, LayerConformanceScenario[]> = {
-  'l3-l4-only': [
-    { command: 'git status', permission: 'allow' },
-    { command: 'curl https://example.com', permission: 'deny' },
-  ],
-  'l1-partial-egress': [
-    { command: 'git status', permission: 'allow' },
-    { command: 'curl https://example.com', permission: 'deny' },
-  ],
-  'l1-l2-transactional': [
-    { command: 'git status', permission: 'allow' },
-    { command: 'curl https://example.com', permission: 'deny' },
-  ],
-  'l1-full': [
-    { command: 'git status', permission: 'allow' },
-    { command: 'curl https://example.com', permission: 'deny' },
-    {
-      command: 'echo hi > ../outside.txt',
-      permission: 'deny',
-      reason: 'outside_repo_redirect',
-    },
-  ],
-}
+export const LAYER_CONFORMANCE_SCENARIOS = layerConformanceScenarios()

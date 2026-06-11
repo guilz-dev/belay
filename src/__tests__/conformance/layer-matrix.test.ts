@@ -8,12 +8,14 @@ import {
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
 } from '../../adapters/shared/gate-runtime.js'
+import { belayStateDir } from '../../config-io.js'
 import {
   LAYER_CONFORMANCE_SCENARIOS,
   type LayerProfileId,
   layerProfileConfig,
 } from '../../conformance/layer-profiles.js'
 import type { BelayConfigV3 } from '../../core/config.js'
+import { writeEgressDaemonState } from '../../egress-service.js'
 
 async function withProfileRepo(
   profile: LayerProfileId,
@@ -32,6 +34,19 @@ describe('layer conformance matrix', () => {
       for (const scenario of LAYER_CONFORMANCE_SCENARIOS[profile]) {
         it(`${scenario.command} -> ${scenario.permission}`, async () => {
           await withProfileRepo(profile, async (repoRoot, config) => {
+            if (scenario.requiresEgressProxy) {
+              const stateDir = belayStateDir(
+                config,
+                cursorAdapter.layout.repoLocalStateDir(repoRoot),
+              )
+              await writeEgressDaemonState({
+                stateDir,
+                pid: process.pid,
+                host: config.egress.listenHost,
+                port: config.egress.listenPort,
+                repoRoot,
+              })
+            }
             const ctx = {
               layout: cursorAdapter.layout,
               repoRoot,

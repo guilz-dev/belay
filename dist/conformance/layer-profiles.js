@@ -1,4 +1,6 @@
 import { DEFAULT_CONFIG_V3 } from '../core/config.js';
+import { GUARANTEE_SCENARIOS, layerConformanceScenarios } from './guarantee-table.js';
+export { GUARANTEE_SCENARIOS };
 export function layerProfileConfig(profile) {
     const base = {
         ...DEFAULT_CONFIG_V3,
@@ -40,26 +42,4 @@ export function layerProfileConfig(profile) {
         },
     };
 }
-export const LAYER_CONFORMANCE_SCENARIOS = {
-    'l3-l4-only': [
-        { command: 'git status', permission: 'allow' },
-        { command: 'curl https://example.com', permission: 'deny' },
-    ],
-    'l1-partial-egress': [
-        { command: 'git status', permission: 'allow' },
-        { command: 'curl https://example.com', permission: 'deny' },
-    ],
-    'l1-l2-transactional': [
-        { command: 'git status', permission: 'allow' },
-        { command: 'curl https://example.com', permission: 'deny' },
-    ],
-    'l1-full': [
-        { command: 'git status', permission: 'allow' },
-        { command: 'curl https://example.com', permission: 'deny' },
-        {
-            command: 'echo hi > ../outside.txt',
-            permission: 'deny',
-            reason: 'outside_repo_redirect',
-        },
-    ],
-};
+export const LAYER_CONFORMANCE_SCENARIOS = layerConformanceScenarios();

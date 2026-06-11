@@ -55,6 +55,23 @@ afterEach(async () => {
 })
 
 describe('dogfood command', () => {
+  it('init --preset l1-full-recommended --dogfood keeps preset layers but sets audit mode', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-preset-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, preset: 'l1-full-recommended', dogfood: true })
+
+    const config = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
+    )
+    expect(config.mode).toBe('audit')
+    expect(config.sandbox.enabled).toBe(true)
+    expect(config.egress.enabled).toBe(true)
+    expect(config.approvalSigning.required).toBe(true)
+    expect(config.controlPlane.isolation.mode).toBe('separate-user')
+    expect(config.policy.unknownLocalEffect).toBe('deny')
+    expect(config.controlPlane.spikeOnPrompt).toBe(true)
+  })
+
   it('enables audit mode with fail-closed policy and spikeOnPrompt', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-'))
     tempDirs.push(repoRoot)

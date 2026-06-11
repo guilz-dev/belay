@@ -3,6 +3,11 @@ export { cursorAdapter } from './adapters/cursor/adapter.js'
 export { getAdapter, listAdapters } from './adapters/registry.js'
 export type { BelayAdapter } from './adapters/types.js'
 export {
+  GATE_CONTRACT_VERSION,
+  type GatedAction,
+  type GateVerdict,
+} from './core/gate-contract.js'
+export {
   classifyShell,
   classifySubagent,
   classifyToolUse,
@@ -15,6 +20,7 @@ export { doctorProject, formatDoctorReport } from './doctor.js'
 export { explainCommand, formatExplainReport } from './explain.js'
 export { initProject, upgradeProject } from './installer.js'
 export { resolveNodeBinary } from './node-resolution.js'
+export { applyConfigPreset, CONFIG_PRESETS, type ConfigPresetName } from './presets.js'
 export { revokeApproval } from './revoke.js'
 export { formatStatusReport, statusProject } from './status.js'
 export type {

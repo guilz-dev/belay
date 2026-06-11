@@ -121,6 +121,22 @@ describe('agent-belay installer', () => {
     ])
   })
 
+  it('writes l1-full-recommended preset fields into belay.config.json', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, preset: 'l1-full-recommended' })
+
+    const config = await readJson(path.join(repoRoot, '.cursor', 'belay.config.json'))
+    expect(config.mode).toBe('enforce')
+    expect(config.sandbox.enabled).toBe(true)
+    expect(config.sandbox.runtime).toBe('container')
+    expect(config.egress.enabled).toBe(true)
+    expect(config.egress.demoteL3External).toBe(true)
+    expect(config.approvalSigning.required).toBe(true)
+    expect(config.controlPlane.isolation.mode).toBe('separate-user')
+    expect(config.policy.unknownLocalEffect).toBe('deny')
+    expect(config.policy.unparseableShell).toBe('deny')
+  })
+
   it('reports a healthy installation via doctor', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })

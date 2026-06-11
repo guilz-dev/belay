@@ -1,4 +1,8 @@
-/** Single source for built-in command-key buckets used by analysis and policy rules. */
+/**
+ * Single source for built-in command-key buckets used by analysis and policy rules.
+ * L3 noise-reduction cache — not a security boundary. Updates ship in minor releases;
+ * see docs/semver-policy.md.
+ */
 export const READ_ONLY_COMMAND_KEYS = [
     'cat',
     'cd',
