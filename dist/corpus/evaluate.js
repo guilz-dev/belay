@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js';
-import { classifyShellV2 } from '../core/v2/adapter.js';
+import { classifyShell } from '../core/v2/adapter.js';
 export function assessmentsDiverge(predicted, observed) {
     return (predicted.reversibility !== observed.reversibility ||
         predicted.external !== observed.external ||
@@ -23,7 +23,7 @@ export async function evaluateCorpus(cases, repoRoot = '/workspace/project') {
         confusion[expected] = { allow: 0, allow_flagged: 0, deny_pending_approval: 0 };
     }
     for (const testCase of cases) {
-        const result = await classifyShellV2(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options);
+        const result = await classifyShell(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options);
         confusion[testCase.verdict][result.verdict] += 1;
         const verdictOk = result.verdict === testCase.verdict;
         const reasonOk = !testCase.reason || result.reason === testCase.reason;

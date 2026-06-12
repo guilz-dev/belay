@@ -326,7 +326,9 @@ Recommended ignore entries:
 The package exposes a testable core for classification and config migration:
 
 ```ts
-import { classifyShell, mergeConfig } from 'agent-belay'
+import { classifyShell, DEFAULT_CONFIG_V3, mergeConfig } from 'agent-belay'
+
+const result = await classifyShell('git status', process.cwd(), process.cwd(), mergeConfig({}))
 ```
 
 See also `agent-belay/core` for lower-level exports.

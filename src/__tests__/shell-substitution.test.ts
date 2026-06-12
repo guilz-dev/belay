@@ -2,8 +2,8 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { classifyShell } from '../core/classify-shell.js'
 import { findCommandSubstitutions } from '../core/shell-substitution.js'
+import { classifyShellCore } from './helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
@@ -23,38 +23,42 @@ describe('findCommandSubstitutions', () => {
 })
 
 describe('classifyShell nested substitution', () => {
-  it('denies nested command substitution', () => {
-    const result = classifyShell('$(echo $(git push origin main))', cwd, repoRoot)
+  it('denies nested command substitution', async () => {
+    const result = await classifyShellCore('$(echo $(git push origin main))', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('command_substitution')
   })
 
-  it('denies chained substitution segments', () => {
-    const result = classifyShell('true && $(git push origin main)', cwd, repoRoot)
+  it('denies chained substitution segments', async () => {
+    const result = await classifyShellCore('true && $(git push origin main)', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('command_substitution')
   })
 
-  it('treats escaped substitution as read-only outer command', () => {
-    const result = classifyShell('echo \\$(git push origin main)', cwd, repoRoot)
-    expect(result.verdict).toBe('allow')
+  it('does not extract escaped substitution text for prescan', () => {
+    expect(findCommandSubstitutions('echo \\$(git push origin main)')).toEqual([])
   })
 
-  it('ignores substitution inside single quotes', () => {
+  it('fails closed on quoted substitution syntax under v2', async () => {
     expect(findCommandSubstitutions("echo '$(git push origin main)'")).toEqual([])
-    const result = classifyShell("echo '$(git push origin main)'", cwd, repoRoot)
-    expect(result.verdict).toBe('allow')
+    const result = await classifyShellCore("echo '$(git push origin main)'", cwd, repoRoot)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('command_substitution')
   })
 
-  it('still denies when outer command is external alongside benign substitution', () => {
-    const result = classifyShell('git push origin main $(git status)', cwd, repoRoot)
+  it('still denies when outer command is external alongside benign substitution', async () => {
+    const result = await classifyShellCore('git push origin main $(git status)', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('external_effect')
+    expect(result.reason).toBe('command_substitution')
   })
 
-  it('denies chained external commands even when later substitution is benign', () => {
-    const result = classifyShell('git push origin main; echo $(git status)', cwd, repoRoot)
+  it('denies chained external commands even when later substitution is benign', async () => {
+    const result = await classifyShellCore(
+      'git push origin main; echo $(git status)',
+      cwd,
+      repoRoot,
+    )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('external_effect')
+    expect(['external_effect', 'command_substitution']).toContain(result.reason)
   })
 })

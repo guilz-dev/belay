@@ -92,6 +92,3 @@ export const GUARANTEE_SCENARIOS = {
         },
     ],
 };
-export function layerConformanceScenarios() {
-    return GUARANTEE_SCENARIOS;
-}

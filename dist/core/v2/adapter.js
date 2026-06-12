@@ -16,7 +16,7 @@ export function buildVerdictContext(params) {
         unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell,
     };
 }
-export async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
+export async function classifyShell(command, cwd, repoRoot, config, options = {}, judge) {
     const context = buildVerdictContext({ cwd, repoRoot, config, options, judge });
     const result = await verdict(command, context);
     return verdictToClassifyResult(result);

@@ -9,7 +9,6 @@ export {
 } from './approval.js'
 export type { AuditMetricsReport } from './audit-metrics.js'
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js'
-export { classifyShell } from './classify-shell.js'
 export { classifySubagent } from './classify-subagent.js'
 export { classifyToolUse } from './classify-tool.js'
 export {
@@ -98,7 +97,7 @@ export type {
 } from './types.js'
 export {
   buildVerdictContext,
-  classifyShellV2,
+  classifyShell,
   verdict,
   verdictToClassifyResult,
 } from './v2/index.js'

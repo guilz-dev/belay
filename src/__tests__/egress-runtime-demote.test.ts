@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { runtimeClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { belayStateDir } from '../config-io.js'
-import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { writeEgressDaemonState } from '../services/egress-service.js'
+import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 
@@ -50,10 +50,10 @@ describe('egress L3 demotion runtime gating', () => {
 
     const cwd = path.join(repoRoot, 'src')
     await mkdir(cwd, { recursive: true })
-    const denied = classifyShell('git push origin main', cwd, repoRoot, inactive)
+    const denied = await classifyShellGated('git push origin main', cwd, repoRoot, config, inactive)
     expect(denied.verdict).toBe('deny_pending_approval')
 
-    const flagged = classifyShell('git push origin main', cwd, repoRoot, active)
+    const flagged = await classifyShellGated('git push origin main', cwd, repoRoot, config, active)
     expect(flagged.verdict).toBe('allow_flagged')
     expect(flagged.reason).toBe('l3_external_hint')
   })

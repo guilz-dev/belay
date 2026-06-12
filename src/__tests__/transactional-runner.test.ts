@@ -5,13 +5,13 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPLY_FAILED,
 } from '../core/transactional/reasons.js'
 import { runTransactionalExecution } from '../core/transactional/runner.js'
+import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -35,7 +35,7 @@ describe('transactional runner', () => {
 
   it('observes safe mutations and commits them to the real repo', async () => {
     const repoRoot = await createGitRepo()
-    const predicted = classifyShell('touch safe.txt', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
@@ -64,7 +64,7 @@ describe('transactional runner', () => {
 
   it('discards dangerous mutations without applying them', async () => {
     const repoRoot = await createGitRepo()
-    const predicted = classifyShell('rm -f README.md', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('rm -f README.md', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
@@ -93,7 +93,7 @@ describe('transactional runner', () => {
   it('skips transactional execution when tracked files are modified', async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
-    const predicted = classifyShell('touch safe.txt', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
@@ -121,7 +121,7 @@ describe('transactional runner', () => {
   it('denies when applying observed-safe changes fails', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, 'safe.txt'))
-    const predicted = classifyShell('touch safe.txt', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
@@ -148,7 +148,7 @@ describe('transactional runner', () => {
 
   it('falls back to prediction when the isolated command exits non-zero', async () => {
     const repoRoot = await createGitRepo()
-    const predicted = classifyShell('false', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('false', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
-import { classifyShellV2 } from '../core/v2/adapter.js'
+import { classifyShell } from '../core/v2/adapter.js'
 
 const repoRoot = '/workspace/project'
 const cwd = repoRoot
@@ -22,8 +22,8 @@ describe('classifyToolUse', () => {
     expect(shellOnly.summary).toBe('git push origin main')
     expect(shellOnly.v2).toBeDefined()
 
-    const shellV2 = await classifyShellV2('git push origin main', cwd, repoRoot, config)
-    expect(shellOnly.fingerprint).toBe(shellV2.fingerprint)
+    const shellCore = await classifyShell('git push origin main', cwd, repoRoot, config)
+    expect(shellOnly.fingerprint).toBe(shellCore.fingerprint)
   })
 
   it('denies writes outside the repository', async () => {

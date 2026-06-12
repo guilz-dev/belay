@@ -5,7 +5,7 @@ import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
 import { classifierOptionsFromConfig, classifySubagent, classifyToolUse } from '../core/index.js'
 import { isTransactionalEligible } from '../core/transactional/index.js'
 import type { ClassifyResult } from '../core/types.js'
-import { classifyShellV2 } from '../core/v2/adapter.js'
+import { classifyShell } from '../core/v2/adapter.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { ExplainOptions, ExplainReport } from '../types.js'
@@ -26,7 +26,7 @@ async function classifyExplainTarget(
     return {
       kind: 'shell',
       input: options.command,
-      result: await classifyShellV2(options.command, cwd, repoRoot, config, classifierOptions),
+      result: await classifyShell(options.command, cwd, repoRoot, config, classifierOptions),
     }
   }
 

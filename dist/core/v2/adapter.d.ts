@@ -9,6 +9,6 @@ export declare function buildVerdictContext(params: {
     judge?: Tier1Judge;
     trustedCwd?: boolean;
 }): VerdictContext;
-export declare function classifyShellV2(command: string, cwd: string, repoRoot: string, config: BelayConfigV3, options?: ClassifierOptions, judge?: Tier1Judge): Promise<ClassifyResult>;
+export declare function classifyShell(command: string, cwd: string, repoRoot: string, config: BelayConfigV3, options?: ClassifierOptions, judge?: Tier1Judge): Promise<ClassifyResult>;
 export declare function verdictToClassifyResult(result: VerdictResult): ClassifyResult;
 export declare function verdictAuditFields(result: VerdictResult): Record<string, unknown>;

@@ -7,8 +7,8 @@ import {
   isCapabilityBrokerDemotionActive,
   isSandboxBrokerEnabled,
 } from '../core/capability/broker.js'
-import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { classifyShellCore, classifyShellGated } from './helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const outsidePath = path.resolve(repoRoot, '..', 'outside.txt')
@@ -24,7 +24,7 @@ describe('capability broker policy', () => {
     expect(isSandboxBrokerEnabled(DEFAULT_CONFIG_V3)).toBe(false)
   })
 
-  it('does not demote outside-repo rules when sandbox.runtime is none', () => {
+  it('does not demote outside-repo rules when sandbox.runtime is none', async () => {
     expect(
       isCapabilityBrokerDemotionActive({
         ...DEFAULT_CONFIG_V3,
@@ -32,7 +32,7 @@ describe('capability broker policy', () => {
       }),
     ).toBe(false)
 
-    const result = classifyShell('echo hi > ../outside.txt', repoRoot, repoRoot, {
+    const result = await classifyShellCore('echo hi > ../outside.txt', repoRoot, repoRoot, {
       brokerFsScope: false,
       unknownLocalEffect: 'deny',
     })
@@ -40,24 +40,30 @@ describe('capability broker policy', () => {
     expect(result.reason).toBe('outside_repo_redirect')
   })
 
-  it('demotes outside-repo shell denies to capability hints when paths are allowlisted', () => {
-    const result = classifyShell('echo hi > ../outside.txt', repoRoot, repoRoot, {
-      brokerFsScope: true,
-      fsScopeAllowlist: {
-        version: 1,
-        paths: [
-          { path: outsidePath, approvedAt: '2026-01-01T00:00:00.000Z', approvalId: 'belay_test' },
-        ],
+  it('demotes outside-repo shell denies to capability hints when paths are allowlisted', async () => {
+    const result = await classifyShellGated(
+      'echo hi > ../outside.txt',
+      repoRoot,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      {
+        brokerFsScope: true,
+        fsScopeAllowlist: {
+          version: 1,
+          paths: [
+            { path: outsidePath, approvedAt: '2026-01-01T00:00:00.000Z', approvalId: 'belay_test' },
+          ],
+        },
+        unknownLocalEffect: 'deny',
       },
-      unknownLocalEffect: 'deny',
-    })
+    )
     expect(result.verdict).toBe('allow_flagged')
     expect(result.reason).toBe('capability_fs_hint')
     expect(result.assessment.signals).toContain('sandbox_boundary_expected')
   })
 
-  it('still denies outside-repo shell when broker is inactive', () => {
-    const result = classifyShell('cp README.md ../copy.txt', repoRoot, repoRoot, {
+  it('still denies outside-repo shell when broker is inactive', async () => {
+    const result = await classifyShellCore('cp README.md ../copy.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'deny',
     })
     expect(result.verdict).toBe('deny_pending_approval')
@@ -90,7 +96,7 @@ describe('capability broker policy', () => {
     expect(isPathAllowlisted('/tmp/shared/nested/file.txt', allowlist)).toBe(true)
   })
 
-  it('requires all L1-full prerequisites', () => {
+  it('requires all full-isolation prerequisites', () => {
     const active = evaluateL1FullStatus({
       config: {
         ...DEFAULT_CONFIG_V3,

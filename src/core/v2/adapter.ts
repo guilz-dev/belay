@@ -30,7 +30,7 @@ export function buildVerdictContext(params: {
   }
 }
 
-export async function classifyShellV2(
+export async function classifyShell(
   command: string,
   cwd: string,
   repoRoot: string,

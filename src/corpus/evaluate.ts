@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import type { Assessment, HookVerdict } from '../core/types.js'
-import { classifyShellV2 } from '../core/v2/adapter.js'
+import { classifyShell } from '../core/v2/adapter.js'
 
 export interface CorpusCase {
   command: string
@@ -52,13 +52,7 @@ export async function evaluateCorpus(
   }
 
   for (const testCase of cases) {
-    const result = await classifyShellV2(
-      testCase.command,
-      cwd,
-      repoRoot,
-      DEFAULT_CONFIG_V3,
-      options,
-    )
+    const result = await classifyShell(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
     confusion[testCase.verdict][result.verdict] += 1
     const verdictOk = result.verdict === testCase.verdict
     const reasonOk = !testCase.reason || result.reason === testCase.reason
