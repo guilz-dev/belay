@@ -79,19 +79,25 @@ export async function resolveGateConfig(ctx, deps) {
         repoConfigPath: ctx.configPath,
     }).config;
 }
-export function runtimeClassifierOptions(ctx, config) {
-    const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
+export function repoShellClassifierOptions(config, repoRoot, layout, extras = {}) {
     const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
-    const brokerFsScope = isCapabilityBrokerDemotionActive(config);
     return {
         ...classifierOptionsFromConfig(config),
+        controlPlaneDir,
+        protectedArtifactRoots: protectedArtifactRoots(layout, repoRoot, controlPlaneDir),
+        ...extras,
+    };
+}
+export function runtimeClassifierOptions(ctx, config) {
+    const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
+    const brokerFsScope = isCapabilityBrokerDemotionActive(config);
+    return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
         demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
         brokerFsScope,
         fsScopeAllowlist: brokerFsScope
             ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
             : undefined,
-        protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
-    };
+    });
 }
 function gateAuditEventName(kind) {
     if (kind === 'shell') {

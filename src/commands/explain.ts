@@ -1,8 +1,9 @@
 import path from 'node:path'
-
-import { loadConfigFile } from '../config-io.js'
+import { getAdapter } from '../adapters/registry.js'
+import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
+import { detectAdapterName, loadConfigFile } from '../config-io.js'
 import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
-import { classifierOptionsFromConfig, classifySubagent, classifyToolUse } from '../core/index.js'
+import { classifySubagent, classifyToolUse } from '../core/index.js'
 import { isTransactionalEligible } from '../core/transactional/index.js'
 import type { ClassifyResult } from '../core/types.js'
 import { classifyShell } from '../core/v2/adapter.js'
@@ -14,7 +15,7 @@ async function classifyExplainTarget(
   options: ExplainOptions,
   repoRoot: string,
   cwd: string,
-  classifierOptions: ReturnType<typeof classifierOptionsFromConfig>,
+  classifierOptions: ReturnType<typeof repoShellClassifierOptions>,
   config: Awaited<ReturnType<typeof loadConfigFile>>,
 ): Promise<{ kind: string; input: string; result: ClassifyResult }> {
   const kind = options.kind ?? 'shell'
@@ -76,8 +77,8 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
   const config = await loadConfigFile(repoRoot)
   const egress = await egressStatus({ targetDir: repoRoot })
   const sandbox = await sandboxStatus({ targetDir: repoRoot })
-  const classifierOptions = {
-    ...classifierOptionsFromConfig(config),
+  const adapter = getAdapter(config.adapter ?? detectAdapterName(repoRoot))
+  const classifierOptions = repoShellClassifierOptions(config, repoRoot, adapter.layout, {
     demoteL3External:
       config.egress.enabled &&
       config.egress.demoteL3External &&
@@ -85,7 +86,7 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
       !egress.repoRootMismatch &&
       !egress.foreignProxy,
     brokerFsScope: isCapabilityBrokerDemotionActive(config),
-  }
+  })
   const classified = await classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config)
 
   const transactionalEligible =

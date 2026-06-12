@@ -42,6 +42,8 @@ export interface VerdictContext {
   trustedCwd: boolean
   sensitivePaths: string[]
   protectedArtifactRoots?: string[]
+  customAllowCommands?: string[]
+  customExternalCommands?: string[]
   judge: Tier1Judge
   mode: VerdictMode
   unknownLocalEffect: 'allow_flagged' | 'deny'

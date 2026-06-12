@@ -2,6 +2,7 @@ import type { GatedActionKind } from '../../core/gate-contract.js';
 import { type GatePermissionResponse, type GateVerdict } from '../../core/gate-contract.js';
 import { GateNormalizationError } from '../../core/gate-engine.js';
 import { type ApprovalStateFile, type BelayConfigV3 } from '../../core/index.js';
+import type { ClassifierOptions } from '../../core/types.js';
 import type { AdapterLayout } from '../layouts/types.js';
 export interface GateRuntimeContext {
     layout: AdapterLayout;
@@ -20,22 +21,8 @@ export interface GateRuntimeDeps {
 }
 export declare function createDefaultGateRuntimeDeps(): GateRuntimeDeps;
 export declare function resolveGateConfig(ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>, deps: GateRuntimeDeps): Promise<BelayConfigV3>;
-export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3): {
-    demoteL3External: boolean;
-    brokerFsScope: boolean;
-    fsScopeAllowlist: import("../../core/capability/types.js").FsScopeAllowlistFile | undefined;
-    protectedArtifactRoots: string[];
-    strictChains?: boolean;
-    customExternalCommands?: string[];
-    customAllowCommands?: string[];
-    sensitivePaths?: string[];
-    unknownLocalEffect?: import("../../types.js").UnknownLocalEffectPolicy;
-    unparseableShell?: import("../../core/types.js").UnparseableShellPolicy;
-    controlPlaneDir?: string | null;
-    confidenceThresholds?: import("../../core/types.js").ConfidenceThresholds;
-    scrubOptions?: import("../../core/types.js").ScrubOptions;
-    egressEnabled?: boolean;
-};
+export declare function repoShellClassifierOptions(config: BelayConfigV3, repoRoot: string, layout: AdapterLayout, extras?: ClassifierOptions): ClassifierOptions;
+export declare function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3): ClassifierOptions;
 export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateRuntimeDeps, params: {
     kind: GatedActionKind;
     cwd: string;

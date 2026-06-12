@@ -12,12 +12,21 @@ export function buildVerdictContext(params: {
   judge?: Tier1Judge
   trustedCwd?: boolean
 }): VerdictContext {
+  const protectedArtifactRoots = [
+    ...(params.options?.protectedArtifactRoots ?? []),
+    ...(params.options?.controlPlaneDir ? [params.options.controlPlaneDir] : []),
+  ]
+
   return {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
     trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
-    protectedArtifactRoots: params.options?.protectedArtifactRoots,
+    protectedArtifactRoots:
+      protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,
+    customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
+    customExternalCommands:
+      params.options?.customExternalCommands ?? params.config.overrides.external,
     judge:
       params.judge ??
       (params.config.policy.modelAssist.enabled

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **v2 verdict engine** — shell classification uses `location × opacity × effect × confidence` axes (`src/core/v2/`)
+- Structural test suite with catastrophic bypass equivalence hard gate (`src/__tests__/v2/structural-suite.test.ts`)
+- Audit CLI filters for v2 axes: `--location`, `--opacity`, `--effect`, `--confidence`
+
+### Changed
+
+- **BREAKING:** `classifyShell` is now async and requires `BelayConfigV3` as the fourth argument. The v1 synchronous classifier (`classify-shell.ts`) has been removed.
+- `explain`, `doctor`, metrics, and audit aggregation report v2 semantics
+- Launcher resolution appends `npm`/`pnpm` forwarded args (`--`) and evaluates multi-line `make` recipes line-by-line
+
+### Removed
+
+- v1 `classify-shell` policy stack (`policy/*`, `shell-analysis.ts`)
+- Layer-profile conformance matrix tests (`layer-matrix.test.ts`); guarantee table doc tests remain
+
+### Fixed
+
+- `npm run … -- …` forwarded args no longer dropped before classification
+- Multi-line `make` targets no longer flatten into a single benign-leading command
+- `xargs` is peeled as a transparent wrapper so piped stdin execution escalates correctly
+
 ## 1.0.0
 
 ### Added

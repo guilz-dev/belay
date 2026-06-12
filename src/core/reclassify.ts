@@ -1,7 +1,9 @@
+import { getAdapter } from '../adapters/registry.js'
+import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
+import { detectAdapterName } from '../config-io.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
 import type { BelayConfigV3 } from './config.js'
-import { classifierOptionsFromConfig } from './config.js'
 import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js'
 import type { ClassifyResult } from './types.js'
 
@@ -19,6 +21,11 @@ export interface ReclassifyDiff {
 function shellCommandFromSummary(summary: string): string | null {
   const trimmed = summary.trim()
   return trimmed || null
+}
+
+function classifierOptionsForRepo(config: BelayConfigV3, repoRoot: string) {
+  const adapter = getAdapter(config.adapter ?? detectAdapterName(repoRoot))
+  return repoShellClassifierOptions(config, repoRoot, adapter.layout)
 }
 
 export async function reclassifyAuditRecord(
@@ -45,7 +52,7 @@ export async function reclassifyAuditRecord(
         cwd: repoRoot,
         command,
       })
-      return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+      return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
     }
 
     if (kind === 'subagent') {
@@ -58,7 +65,7 @@ export async function reclassifyAuditRecord(
           tool_input: { description: summary },
         },
       })
-      return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+      return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
     }
 
     const action = normalizeGatedAction({
@@ -71,7 +78,7 @@ export async function reclassifyAuditRecord(
         tool_input: { command: summary },
       },
     })
-    return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+    return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
   } catch {
     return null
   }
