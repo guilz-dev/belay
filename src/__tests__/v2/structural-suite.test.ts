@@ -57,6 +57,24 @@ describe('v2 structural suite', () => {
     })
   })
 
+  describe('v1 regression guards', () => {
+    it('find -delete is ask', async () => {
+      const result = await verdict("find . -name '*.ts' -delete", context)
+      expect(result.permission).toBe('ask')
+    })
+
+    it('denies substitution under fail-closed policy even when inner is read-only', async () => {
+      const result = await verdict('echo $(git status)', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('command_substitution')
+    })
+
+    it('npm install is ask under fail-closed defaults', async () => {
+      const result = await verdict('npm install', context)
+      expect(result.permission).toBe('ask')
+    })
+  })
+
   describe('fixed edge cases', () => {
     it('rm -rf .git is ask', async () => {
       const result = await verdict('rm -rf .git', context)

@@ -20,5 +20,5 @@ export interface CorpusMetrics {
 }
 export declare function assessmentsDiverge(predicted: Assessment, observed: Assessment): boolean;
 export declare function loadCorpusCases(corpusDir: string): Promise<CorpusCase[]>;
-export declare function evaluateCorpus(cases: CorpusCase[], repoRoot?: string): CorpusMetrics;
+export declare function evaluateCorpus(cases: CorpusCase[], repoRoot?: string): Promise<CorpusMetrics>;
 export declare function runCorpusEvaluation(corpusDir?: string): Promise<CorpusMetrics>;

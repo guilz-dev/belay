@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { classifyShell } from '../core/classify-shell.js'
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import type { Assessment, HookVerdict } from '../core/types.js'
+import { classifyShellV2 } from '../core/v2/adapter.js'
 
 export interface CorpusCase {
   command: string
@@ -37,10 +37,10 @@ export async function loadCorpusCases(corpusDir: string): Promise<CorpusCase[]> 
   return JSON.parse(raw) as CorpusCase[]
 }
 
-export function evaluateCorpus(
+export async function evaluateCorpus(
   cases: CorpusCase[],
   repoRoot = '/workspace/project',
-): CorpusMetrics {
+): Promise<CorpusMetrics> {
   const cwd = path.join(repoRoot, 'src')
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
   const mismatches: CorpusMetrics['mismatches'] = []
@@ -52,7 +52,13 @@ export function evaluateCorpus(
   }
 
   for (const testCase of cases) {
-    const result = classifyShell(testCase.command, cwd, repoRoot, options)
+    const result = await classifyShellV2(
+      testCase.command,
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      options,
+    )
     confusion[testCase.verdict][result.verdict] += 1
     const verdictOk = result.verdict === testCase.verdict
     const reasonOk = !testCase.reason || result.reason === testCase.reason

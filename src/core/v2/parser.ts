@@ -162,11 +162,18 @@ export function isBareInterpreter(tokens: string[]): boolean {
   if (hasScriptFlag) {
     return false
   }
-  const scriptArg = peeled[1]
+  const args = peeled.slice(1)
+  if (args.length === 0) {
+    return true
+  }
+  if (args.every((token) => token.startsWith('-'))) {
+    return false
+  }
+  const scriptArg = args.find((token) => !token.startsWith('-'))
   if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path.extname(scriptArg))) {
     return false
   }
-  if (scriptArg && !scriptArg.startsWith('-')) {
+  if (scriptArg) {
     return false
   }
   return true

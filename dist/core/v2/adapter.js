@@ -12,6 +12,8 @@ export function buildVerdictContext(params) {
                 ? createOllamaJudge(params.config.policy.modelAssist.model)
                 : createDeterministicJudgeStub()),
         mode: params.config.mode,
+        unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
+        unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell,
     };
 }
 export async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
@@ -19,24 +21,43 @@ export async function classifyShellV2(command, cwd, repoRoot, config, options = 
     const result = await verdict(command, context);
     return verdictToClassifyResult(result);
 }
+function mapLegacyReason(result) {
+    if (result.reason === 'repo_outside_mutation') {
+        return result.effect === 'read_only' ? 'outside_repo_redirect' : 'outside_repo_mutation';
+    }
+    if (result.reason === 'tier0_external') {
+        return 'external_effect';
+    }
+    if (result.reason === 'high_stakes_path') {
+        return 'protected_artifact';
+    }
+    if (result.reason === 'opaque_execution' && /\|\s*(bash|sh|zsh|dash|fish)\b/.test(result.commandRedacted)) {
+        return 'pipe_to_shell';
+    }
+    if (result.reason === 'launcher_unresolved' || result.reason === 'makefile_missing') {
+        return 'unknown_local_effect';
+    }
+    if (result.reason === 'npm_script_undefined' || result.reason === 'package_json_missing') {
+        return 'unknown_local_effect';
+    }
+    if (result.reason === 'repo_local_mutation') {
+        return 'local_mutation';
+    }
+    return result.reason;
+}
 export function verdictToClassifyResult(result) {
     const external = result.location === 'external' ||
         result.location === 'repo_outside' ||
         result.effect === 'remote_mutation';
-    const hookVerdict = result.permission === 'allow'
-        ? result.effect === 'local_mutation'
+    const legacyReason = mapLegacyReason(result);
+    const hookVerdict = result.permission === 'ask'
+        ? 'deny_pending_approval'
+        : legacyReason === 'command_substitution' ||
+            legacyReason === 'unknown_local_effect' ||
+            legacyReason === 'unparseable_shell' ||
+            result.effect === 'local_mutation'
             ? 'allow_flagged'
-            : 'allow'
-        : 'deny_pending_approval';
-    const legacyReason = result.reason === 'repo_outside_mutation'
-        ? result.effect === 'read_only'
-            ? 'outside_repo_redirect'
-            : 'outside_repo_mutation'
-        : result.reason === 'tier0_external'
-            ? 'external_effect'
-            : result.reason === 'high_stakes_path'
-                ? 'protected_artifact'
-                : result.reason;
+            : 'allow';
     const assessment = {
         reversibility: result.effect === 'read_only'
             ? 'reversible'

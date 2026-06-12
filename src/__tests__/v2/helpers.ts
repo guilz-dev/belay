@@ -12,6 +12,8 @@ export function v2TestContext(overrides: Partial<VerdictContext> = {}): VerdictC
     sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
     judge: createDeterministicJudgeStub(),
     mode: 'enforce',
+    unknownLocalEffect: 'deny',
+    unparseableShell: 'deny',
     ...overrides,
   }
 }

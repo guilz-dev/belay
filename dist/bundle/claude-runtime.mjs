@@ -3146,6 +3146,9 @@ function npmScriptName(tokens) {
 function resolveNpmRecipe(cwd, repoRoot, scriptName) {
   const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
   if (!packagePath) {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: "external_script" };
+    }
     return { recipe: null, opaque: true, reason: "package_json_missing" };
   }
   const pkg = readPackageJson(path9.dirname(packagePath));
@@ -3155,6 +3158,9 @@ function resolveNpmRecipe(cwd, repoRoot, scriptName) {
   }
   const recipe = scripts[scriptName];
   if (!recipe || typeof recipe !== "string") {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: "external_script" };
+    }
     return { recipe: null, opaque: true, reason: "npm_script_undefined" };
   }
   if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
@@ -3219,7 +3225,7 @@ function resolveMakeRecipe(cwd, repoRoot, target) {
     searchDir = path9.dirname(searchDir);
   }
   if (!makefilePath) {
-    return { recipe: null, opaque: true, reason: "makefile_missing" };
+    return { recipe: null, opaque: true, reason: "unknown_local_effect" };
   }
   const recipes = parseMakefileRecipes(makefilePath);
   const recipe = recipes.get(target);
@@ -3373,11 +3379,18 @@ function isBareInterpreter(tokens) {
   if (hasScriptFlag) {
     return false;
   }
-  const scriptArg = peeled[1];
+  const args = peeled.slice(1);
+  if (args.length === 0) {
+    return true;
+  }
+  if (args.every((token) => token.startsWith("-"))) {
+    return false;
+  }
+  const scriptArg = args.find((token) => !token.startsWith("-"));
   if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path10.extname(scriptArg))) {
     return false;
   }
-  if (scriptArg && !scriptArg.startsWith("-")) {
+  if (scriptArg) {
     return false;
   }
   return true;
@@ -3447,6 +3460,7 @@ var DEFAULT_MAX_DEPTH = 8;
 var TIER0_EXTERNAL_KEYS = /* @__PURE__ */ new Set([
   "git push",
   "docker push",
+  "docker run",
   "npm publish",
   "pnpm publish",
   "terraform apply",
@@ -3521,13 +3535,55 @@ var LOCAL_ROUTINE_HEADS = /* @__PURE__ */ new Set([
   "cargo",
   "go",
   "make",
-  "cmake",
-  "pnpm",
-  "npm",
-  "node"
+  "cmake"
 ]);
+var FIND_DANGEROUS_FLAGS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
+function isFindDangerous(tokens) {
+  return tokens.some(
+    (token) => FIND_DANGEROUS_FLAGS.has(token) || token.startsWith("-exec") || token.startsWith("-ok")
+  );
+}
 function worsePermission(left, right) {
   return left === "ask" || right === "ask" ? "ask" : "allow";
+}
+async function evaluateSubstitutions(command, context, depth) {
+  const inners = substitutionInners(command);
+  if (inners.length === 0) {
+    return null;
+  }
+  if (context.unknownLocalEffect === "deny") {
+    return askVerdict({
+      location: "unknown",
+      opacity: "recursive",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "command_substitution",
+      signals: ["command_substitution"]
+    });
+  }
+  let worst = null;
+  for (const inner of inners) {
+    const innerVerdict = await evaluateSegment(inner, context, depth + 1);
+    if (innerVerdict.permission === "ask") {
+      return askVerdict({
+        ...innerVerdict,
+        opacity: "recursive",
+        reason: "command_substitution",
+        signals: [...innerVerdict.signals, "command_substitution"]
+      });
+    }
+    worst = worst ? combineInternal(worst, innerVerdict) : innerVerdict;
+  }
+  if (!worst) {
+    return null;
+  }
+  return {
+    ...worst,
+    permission: "allow",
+    opacity: "recursive",
+    reason: "command_substitution",
+    signals: [...worst.signals, "command_substitution"]
+  };
 }
 function mergeLocation(left, right) {
   if (left === right) {
@@ -3548,7 +3604,7 @@ function combineInternal(left, right) {
     opacity: left.opacity === "unparseable" || right.opacity === "unparseable" ? "unparseable" : left.opacity === "opaque" || right.opacity === "opaque" ? "opaque" : left.opacity === "recursive" || right.opacity === "recursive" ? "recursive" : "transparent",
     effect: left.effect === "remote_mutation" || right.effect === "remote_mutation" ? "remote_mutation" : left.effect === "unknown" || right.effect === "unknown" ? "unknown" : left.effect === "local_mutation" || right.effect === "local_mutation" ? "local_mutation" : "read_only",
     confidence: left.confidence === "deterministic" || right.confidence === "deterministic" ? "deterministic" : left.confidence,
-    reason: worsePermission(left.permission, right.permission) === "ask" ? left.reason : right.reason,
+    reason: worsePermission(left.permission, right.permission) === "ask" ? right.permission === "ask" ? right.reason : left.reason : right.reason,
     signals: [.../* @__PURE__ */ new Set([...left.signals, ...right.signals])]
   };
 }
@@ -3666,7 +3722,17 @@ async function evaluateSegment(command, context, depth) {
   }
   const opacity = segmentOpacity(command);
   if (opacity === "unparseable") {
-    return askVerdict({
+    if (context.unparseableShell === "deny") {
+      return askVerdict({
+        location: "unknown",
+        opacity: "unparseable",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "unparseable_shell",
+        signals: ["unparseable_shell"]
+      });
+    }
+    return allowVerdict({
       location: "unknown",
       opacity: "unparseable",
       effect: "unknown",
@@ -3675,16 +3741,9 @@ async function evaluateSegment(command, context, depth) {
       signals: ["unparseable_shell"]
     });
   }
-  for (const inner of substitutionInners(command)) {
-    const innerVerdict = await evaluateSegment(inner, context, depth + 1);
-    if (innerVerdict.permission === "ask") {
-      return askVerdict({
-        ...innerVerdict,
-        opacity: "recursive",
-        reason: "command_substitution",
-        signals: [...innerVerdict.signals, "command_substitution"]
-      });
-    }
+  const substitutionResult = await evaluateSubstitutions(command, context, depth);
+  if (substitutionResult) {
+    return substitutionResult;
   }
   const tokens = tokenizeShell(command);
   const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens);
@@ -3723,9 +3782,11 @@ async function evaluateSegment(command, context, depth) {
       });
     }
     const innerVerdict = await evaluateSegment(recursiveScript, context, depth + 1);
+    const wrapReason = segment.head === "eval" ? "dynamic_shell_evaluation" : ["bash", "sh", "zsh", "dash", "fish"].includes(segment.head) ? "shell_interpreter_script" : innerVerdict.reason;
     return {
       ...innerVerdict,
       opacity: "recursive",
+      reason: wrapReason,
       signals: [...innerVerdict.signals, "recursive_wrapper"]
     };
   }
@@ -3817,6 +3878,16 @@ async function evaluateSegment(command, context, depth) {
       signals: pathAnalysis.signals
     });
   }
+  if (segment.head === "find" && isFindDangerous(peeled)) {
+    return askVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "find_dangerous_action",
+      signals: ["find_dangerous_action"]
+    });
+  }
   if (pathAnalysis.location === "repo_outside" || pathAnalysis.location === "mixed") {
     const outsideEffect = effect === "read_only" ? "read_only" : effect === "unknown" ? "local_mutation" : effect;
     return askVerdict({
@@ -3876,13 +3947,23 @@ async function evaluateSegment(command, context, depth) {
       signals: ["read_only"]
     });
   }
+  if (context.unknownLocalEffect === "allow_flagged") {
+    return allowVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity,
+      effect: "unknown",
+      confidence: "assumed_repo_local",
+      reason: "unknown_local_effect",
+      signals: ["unknown_local_effect"]
+    });
+  }
   return askVerdict({
     location: pathAnalysis.location,
     opacity,
     effect,
     confidence: "deterministic",
-    reason: "default_ask",
-    signals: ["default_ask"]
+    reason: "unknown_local_effect",
+    signals: ["unknown_local_effect"]
   });
 }
 function toVerdictResult(internal, command, context) {
@@ -3945,7 +4026,9 @@ function buildVerdictContext(params) {
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
     protectedArtifactRoots: params.options?.protectedArtifactRoots,
     judge: params.judge ?? (params.config.policy.modelAssist.enabled ? createOllamaJudge(params.config.policy.modelAssist.model) : createDeterministicJudgeStub()),
-    mode: params.config.mode
+    mode: params.config.mode,
+    unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
+    unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell
   };
 }
 async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
@@ -3953,10 +4036,34 @@ async function classifyShellV2(command, cwd, repoRoot, config, options = {}, jud
   const result = await verdict(command, context);
   return verdictToClassifyResult(result);
 }
+function mapLegacyReason(result) {
+  if (result.reason === "repo_outside_mutation") {
+    return result.effect === "read_only" ? "outside_repo_redirect" : "outside_repo_mutation";
+  }
+  if (result.reason === "tier0_external") {
+    return "external_effect";
+  }
+  if (result.reason === "high_stakes_path") {
+    return "protected_artifact";
+  }
+  if (result.reason === "opaque_execution" && /\|\s*(bash|sh|zsh|dash|fish)\b/.test(result.commandRedacted)) {
+    return "pipe_to_shell";
+  }
+  if (result.reason === "launcher_unresolved" || result.reason === "makefile_missing") {
+    return "unknown_local_effect";
+  }
+  if (result.reason === "npm_script_undefined" || result.reason === "package_json_missing") {
+    return "unknown_local_effect";
+  }
+  if (result.reason === "repo_local_mutation") {
+    return "local_mutation";
+  }
+  return result.reason;
+}
 function verdictToClassifyResult(result) {
   const external = result.location === "external" || result.location === "repo_outside" || result.effect === "remote_mutation";
-  const hookVerdict = result.permission === "allow" ? result.effect === "local_mutation" ? "allow_flagged" : "allow" : "deny_pending_approval";
-  const legacyReason = result.reason === "repo_outside_mutation" ? result.effect === "read_only" ? "outside_repo_redirect" : "outside_repo_mutation" : result.reason === "tier0_external" ? "external_effect" : result.reason === "high_stakes_path" ? "protected_artifact" : result.reason;
+  const legacyReason = mapLegacyReason(result);
+  const hookVerdict = result.permission === "ask" ? "deny_pending_approval" : legacyReason === "command_substitution" || legacyReason === "unknown_local_effect" || legacyReason === "unparseable_shell" || result.effect === "local_mutation" ? "allow_flagged" : "allow";
   const assessment = {
     reversibility: result.effect === "read_only" ? "reversible" : result.permission === "allow" ? "recoverable_with_cost" : "irreversible",
     external,

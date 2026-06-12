@@ -35,6 +35,8 @@ export interface VerdictContext {
     protectedArtifactRoots?: string[];
     judge: Tier1Judge;
     mode: VerdictMode;
+    unknownLocalEffect: 'allow_flagged' | 'deny';
+    unparseableShell: 'allow_flagged' | 'deny';
     maxRecursionDepth?: number;
 }
 export interface InternalSegmentVerdict {

@@ -63,6 +63,9 @@ function npmScriptName(tokens: string[]): string | null {
 function resolveNpmRecipe(cwd: string, repoRoot: string, scriptName: string): LauncherResolution {
   const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd)
   if (!packagePath) {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: 'external_script' }
+    }
     return { recipe: null, opaque: true, reason: 'package_json_missing' }
   }
   const pkg = readPackageJson(path.dirname(packagePath))
@@ -72,6 +75,9 @@ function resolveNpmRecipe(cwd: string, repoRoot: string, scriptName: string): La
   }
   const recipe = (scripts as Record<string, string>)[scriptName]
   if (!recipe || typeof recipe !== 'string') {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: 'external_script' }
+    }
     return { recipe: null, opaque: true, reason: 'npm_script_undefined' }
   }
   if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
@@ -140,7 +146,7 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
     searchDir = path.dirname(searchDir)
   }
   if (!makefilePath) {
-    return { recipe: null, opaque: true, reason: 'makefile_missing' }
+    return { recipe: null, opaque: true, reason: 'unknown_local_effect' }
   }
   const recipes = parseMakefileRecipes(makefilePath)
   const recipe = recipes.get(target)

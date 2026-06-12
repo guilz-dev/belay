@@ -30,6 +30,7 @@ const DEFAULT_MAX_DEPTH = 8
 const TIER0_EXTERNAL_KEYS = new Set([
   'git push',
   'docker push',
+  'docker run',
   'npm publish',
   'pnpm publish',
   'terraform apply',
@@ -110,13 +111,67 @@ const LOCAL_ROUTINE_HEADS = new Set([
   'go',
   'make',
   'cmake',
-  'pnpm',
-  'npm',
-  'node',
 ])
+
+const FIND_DANGEROUS_FLAGS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
+
+function isFindDangerous(tokens: string[]): boolean {
+  return tokens.some(
+    (token) =>
+      FIND_DANGEROUS_FLAGS.has(token) || token.startsWith('-exec') || token.startsWith('-ok'),
+  )
+}
 
 function worsePermission(left: VerdictPermission, right: VerdictPermission): VerdictPermission {
   return left === 'ask' || right === 'ask' ? 'ask' : 'allow'
+}
+
+async function evaluateSubstitutions(
+  command: string,
+  context: VerdictContext,
+  depth: number,
+): Promise<InternalSegmentVerdict | null> {
+  const inners = substitutionInners(command)
+  if (inners.length === 0) {
+    return null
+  }
+
+  if (context.unknownLocalEffect === 'deny') {
+    return askVerdict({
+      location: 'unknown',
+      opacity: 'recursive',
+      effect: 'unknown',
+      confidence: 'deterministic',
+      reason: 'command_substitution',
+      signals: ['command_substitution'],
+    })
+  }
+
+  let worst: InternalSegmentVerdict | null = null
+  for (const inner of inners) {
+    const innerVerdict = await evaluateSegment(inner, context, depth + 1)
+    if (innerVerdict.permission === 'ask') {
+      return askVerdict({
+        ...innerVerdict,
+        opacity: 'recursive',
+        reason: 'command_substitution',
+        signals: [...innerVerdict.signals, 'command_substitution'],
+      })
+    }
+    worst = worst ? combineInternal(worst, innerVerdict) : innerVerdict
+  }
+
+  if (!worst) {
+    return null
+  }
+
+  return {
+    ...worst,
+    permission: 'allow',
+    opacity: 'recursive',
+    reason: 'command_substitution',
+    signals: [...worst.signals, 'command_substitution'],
+  }
 }
 
 function mergeLocation(left: VerdictLocation, right: VerdictLocation): VerdictLocation {
@@ -160,7 +215,11 @@ function combineInternal(
         ? 'deterministic'
         : left.confidence,
     reason:
-      worsePermission(left.permission, right.permission) === 'ask' ? left.reason : right.reason,
+      worsePermission(left.permission, right.permission) === 'ask'
+        ? right.permission === 'ask'
+          ? right.reason
+          : left.reason
+        : right.reason,
     signals: [...new Set([...left.signals, ...right.signals])],
   }
 }
@@ -292,7 +351,17 @@ async function evaluateSegment(
 
   const opacity = segmentOpacity(command)
   if (opacity === 'unparseable') {
-    return askVerdict({
+    if (context.unparseableShell === 'deny') {
+      return askVerdict({
+        location: 'unknown',
+        opacity: 'unparseable',
+        effect: 'unknown',
+        confidence: 'deterministic',
+        reason: 'unparseable_shell',
+        signals: ['unparseable_shell'],
+      })
+    }
+    return allowVerdict({
       location: 'unknown',
       opacity: 'unparseable',
       effect: 'unknown',
@@ -302,16 +371,9 @@ async function evaluateSegment(
     })
   }
 
-  for (const inner of substitutionInners(command)) {
-    const innerVerdict = await evaluateSegment(inner, context, depth + 1)
-    if (innerVerdict.permission === 'ask') {
-      return askVerdict({
-        ...innerVerdict,
-        opacity: 'recursive',
-        reason: 'command_substitution',
-        signals: [...innerVerdict.signals, 'command_substitution'],
-      })
-    }
+  const substitutionResult = await evaluateSubstitutions(command, context, depth)
+  if (substitutionResult) {
+    return substitutionResult
   }
 
   const tokens = tokenizeShell(command)
@@ -353,9 +415,16 @@ async function evaluateSegment(
       })
     }
     const innerVerdict = await evaluateSegment(recursiveScript, context, depth + 1)
+    const wrapReason =
+      segment.head === 'eval'
+        ? 'dynamic_shell_evaluation'
+        : ['bash', 'sh', 'zsh', 'dash', 'fish'].includes(segment.head)
+          ? 'shell_interpreter_script'
+          : innerVerdict.reason
     return {
       ...innerVerdict,
       opacity: 'recursive',
+      reason: wrapReason,
       signals: [...innerVerdict.signals, 'recursive_wrapper'],
     }
   }
@@ -456,6 +525,17 @@ async function evaluateSegment(
     })
   }
 
+  if (segment.head === 'find' && isFindDangerous(peeled)) {
+    return askVerdict({
+      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+      opacity: 'transparent',
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: 'find_dangerous_action',
+      signals: ['find_dangerous_action'],
+    })
+  }
+
   if (pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed') {
     const outsideEffect: VerdictEffect =
       effect === 'read_only' ? 'read_only' : effect === 'unknown' ? 'local_mutation' : effect
@@ -534,13 +614,24 @@ async function evaluateSegment(
     })
   }
 
+  if (context.unknownLocalEffect === 'allow_flagged') {
+    return allowVerdict({
+      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+      opacity,
+      effect: 'unknown',
+      confidence: 'assumed_repo_local',
+      reason: 'unknown_local_effect',
+      signals: ['unknown_local_effect'],
+    })
+  }
+
   return askVerdict({
     location: pathAnalysis.location,
     opacity,
     effect,
     confidence: 'deterministic',
-    reason: 'default_ask',
-    signals: ['default_ask'],
+    reason: 'unknown_local_effect',
+    signals: ['unknown_local_effect'],
   })
 }
 

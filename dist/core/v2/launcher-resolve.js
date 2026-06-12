@@ -53,6 +53,9 @@ function npmScriptName(tokens) {
 function resolveNpmRecipe(cwd, repoRoot, scriptName) {
     const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
     if (!packagePath) {
+        if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+            return { recipe: null, opaque: true, reason: 'external_script' };
+        }
         return { recipe: null, opaque: true, reason: 'package_json_missing' };
     }
     const pkg = readPackageJson(path.dirname(packagePath));
@@ -62,6 +65,9 @@ function resolveNpmRecipe(cwd, repoRoot, scriptName) {
     }
     const recipe = scripts[scriptName];
     if (!recipe || typeof recipe !== 'string') {
+        if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+            return { recipe: null, opaque: true, reason: 'external_script' };
+        }
         return { recipe: null, opaque: true, reason: 'npm_script_undefined' };
     }
     if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
@@ -127,7 +133,7 @@ function resolveMakeRecipe(cwd, repoRoot, target) {
         searchDir = path.dirname(searchDir);
     }
     if (!makefilePath) {
-        return { recipe: null, opaque: true, reason: 'makefile_missing' };
+        return { recipe: null, opaque: true, reason: 'unknown_local_effect' };
     }
     const recipes = parseMakefileRecipes(makefilePath);
     const recipe = recipes.get(target);
