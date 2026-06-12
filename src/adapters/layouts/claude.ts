@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { DEFAULT_CONFIG_V3 } from '../../core/config.js'
+import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
 import type { AdapterLayout } from './types.js'
 
 function runnerCommand(platform: NodeJS.Platform, hookName: string, ...args: string[]): string {
@@ -42,10 +42,10 @@ export const claudeLayout: AdapterLayout = {
 
   defaultConfig(repoRoot: string) {
     return {
-      ...DEFAULT_CONFIG_V3,
+      ...DEFAULT_CONFIG_V4,
       adapter: 'claude',
       audit: {
-        ...DEFAULT_CONFIG_V3.audit,
+        ...DEFAULT_CONFIG_V4.audit,
         logPath: claudeLayout.defaultAuditLogPath(repoRoot),
       },
     }

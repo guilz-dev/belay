@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { DEFAULT_CONFIG_V3 } from '../../core/config.js';
+import { DEFAULT_CONFIG_V4 } from '../../core/config.js';
 function runnerCommand(platform, hookName, ...args) {
     const base = platform === 'win32' ? '.\\.cursor\\hooks\\belay-runner.cmd' : './.cursor/hooks/belay-runner';
     return [base, hookName, ...args].join(' ');
@@ -28,10 +28,10 @@ export const cursorLayout = {
     runnerCommand,
     defaultConfig(repoRoot) {
         return {
-            ...DEFAULT_CONFIG_V3,
+            ...DEFAULT_CONFIG_V4,
             adapter: 'cursor',
             audit: {
-                ...DEFAULT_CONFIG_V3.audit,
+                ...DEFAULT_CONFIG_V4.audit,
                 logPath: cursorLayout.defaultAuditLogPath(repoRoot),
             },
         };

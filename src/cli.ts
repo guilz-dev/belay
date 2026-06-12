@@ -60,6 +60,9 @@ function parseArgs(argv: string[]) {
     approvePath?: string
     sandboxSubcommand?: 'status'
     preset?: ConfigPresetName
+    judgeProfile?: 'cursor-composer' | 'local-ollama'
+    judgeProvider?: 'cursor' | 'ollama'
+    judgeModel?: string
   } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -100,6 +103,33 @@ function parseArgs(argv: string[]) {
         throw new Error('--preset requires strict, standard, audit-first, or l1-full-recommended.')
       }
       options.preset = next as ConfigPresetName
+      index += 1
+      continue
+    }
+    if (token === '--judge-profile') {
+      const next = rest[index + 1]
+      if (!next || !['cursor-composer', 'local-ollama'].includes(next)) {
+        throw new Error('--judge-profile requires cursor-composer or local-ollama.')
+      }
+      options.judgeProfile = next as 'cursor-composer' | 'local-ollama'
+      index += 1
+      continue
+    }
+    if (token === '--judge-provider') {
+      const next = rest[index + 1]
+      if (!next || !['cursor', 'ollama'].includes(next)) {
+        throw new Error('--judge-provider requires cursor or ollama.')
+      }
+      options.judgeProvider = next as 'cursor' | 'ollama'
+      index += 1
+      continue
+    }
+    if (token === '--judge-model') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--judge-model requires a model id or auto.')
+      }
+      options.judgeModel = next
       index += 1
       continue
     }
@@ -304,7 +334,7 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile cursor-composer|local-ollama] [--judge-provider cursor|ollama] [--judge-model <id|auto>] [--with-skill] [--dogfood]
     (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
@@ -336,6 +366,9 @@ async function main() {
         dogfood: options.dogfood,
         adapter: options.adapter,
         preset: options.preset,
+        judgeProfile: options.judgeProfile,
+        judgeProvider: options.judgeProvider,
+        judgeModel: options.judgeModel,
       })
       const extras = [
         `adapter=${result.adapter}`,

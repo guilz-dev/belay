@@ -3,6 +3,7 @@ import { relativeWithinRepo } from '../path-utils.js'
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
 import { analyzePathTargets, cwdRelative } from './containment.js'
 import { verdictFingerprint } from './fingerprint.js'
+import type { TracedTier1Judge } from './judge.js'
 import { prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
 import { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
 import {
@@ -24,6 +25,7 @@ import {
 } from './parser.js'
 import type {
   InternalSegmentVerdict,
+  JudgeTrace,
   VerdictContext,
   VerdictEffect,
   VerdictLocation,
@@ -227,6 +229,7 @@ function combineInternal(
           : left.reason
         : right.reason,
     signals: [...new Set([...left.signals, ...right.signals])],
+    judgeTrace: right.judgeTrace ?? left.judgeTrace,
   }
 }
 
@@ -603,11 +606,13 @@ async function evaluateSegment(
     segment.head === 'wget'
 
   if (needsTier1) {
+    const tier1Text = recursiveScript ?? command
     const tier1 = await context.judge.evaluate({
-      command,
+      text: tier1Text,
+      context: { cwd: context.cwd, repoRoot: context.repoRoot },
       innerCode: recursiveScript ?? undefined,
-      head: segment.head,
     })
+    const judgeTrace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
     if (tier1RequiresAsk(tier1)) {
       return askVerdict({
         location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
@@ -615,7 +620,8 @@ async function evaluateSegment(
         effect: tier1.external_change ? 'remote_mutation' : effect,
         confidence: 'llm',
         reason: 'tier1_catastrophic',
-        signals: ['tier1_catastrophic'],
+        signals: ['tier1_catastrophic', tier1.reason],
+        judgeTrace,
       })
     }
   }
@@ -688,6 +694,7 @@ function toVerdictResult(
     commandRedacted,
     fingerprint: verdictFingerprint(relative, commandRedacted),
     signals: internal.signals,
+    judgeTrace: internal.judgeTrace,
   }
 }
 

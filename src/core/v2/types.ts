@@ -22,16 +22,33 @@ export interface VerdictResult {
   commandRedacted: string
   fingerprint: string
   signals: string[]
+  judgeTrace?: JudgeTrace
 }
 
 export interface Tier1Verdict {
   external_change: boolean
   destroys_outside_repo: boolean
   destroys_history_or_secrets: boolean
+  reason: string
+}
+
+export interface Tier1EvaluateInput {
+  text: string
+  context: { cwd: string; repoRoot: string }
+  innerCode?: string
 }
 
 export interface Tier1Judge {
-  evaluate(input: { command: string; innerCode?: string; head: string }): Promise<Tier1Verdict>
+  evaluate(input: Tier1EvaluateInput): Promise<Tier1Verdict>
+}
+
+export interface JudgeTrace {
+  provider: 'cursor' | 'ollama' | 'fallback'
+  modelRequested: string
+  modelResolved: string
+  latencyMs: number
+  outboundRedacted?: boolean
+  fallbackReason?: string
 }
 
 export type VerdictMode = 'enforce' | 'audit'
@@ -59,4 +76,5 @@ export interface InternalSegmentVerdict {
   confidence: VerdictConfidence
   reason: string
   signals: string[]
+  judgeTrace?: JudgeTrace
 }

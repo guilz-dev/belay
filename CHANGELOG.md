@@ -4,6 +4,11 @@
 
 ### Added
 
+- **SPEC v2.1 judge providers** — config `version: 4` with top-level `judge` field (`cursor` / `ollama`)
+- Judge profiles `cursor-composer` (distribution default) and `local-ollama` (principle default)
+- `init` flags: `--judge-profile`, `--judge-provider`, `--judge-model`
+- Provider-aware `doctor` diagnostics and audit fields (`judgeProvider`, `judgeModelResolved`, `judgeLatencyMs`, `judgeOutboundRedacted`)
+- Outbound redaction (R23) for cloud judge calls via `scrubOutboundForJudge`
 - **v2 verdict engine** — shell classification uses `location × opacity × effect × confidence` axes (`src/core/v2/`)
 - Structural test suite with catastrophic bypass equivalence hard gate (`src/__tests__/v2/structural-suite.test.ts`)
 - Audit CLI filters for v2 axes: `--location`, `--opacity`, `--effect`, `--confidence`

@@ -174,6 +174,7 @@ function combineInternal(left, right) {
                 : left.reason
             : right.reason,
         signals: [...new Set([...left.signals, ...right.signals])],
+        judgeTrace: right.judgeTrace ?? left.judgeTrace,
     };
 }
 function askVerdict(params) {
@@ -512,11 +513,13 @@ async function evaluateSegment(command, context, depth) {
         segment.head === 'curl' ||
         segment.head === 'wget';
     if (needsTier1) {
+        const tier1Text = recursiveScript ?? command;
         const tier1 = await context.judge.evaluate({
-            command,
+            text: tier1Text,
+            context: { cwd: context.cwd, repoRoot: context.repoRoot },
             innerCode: recursiveScript ?? undefined,
-            head: segment.head,
         });
+        const judgeTrace = context.judge.lastTrace;
         if (tier1RequiresAsk(tier1)) {
             return askVerdict({
                 location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
@@ -524,7 +527,8 @@ async function evaluateSegment(command, context, depth) {
                 effect: tier1.external_change ? 'remote_mutation' : effect,
                 confidence: 'llm',
                 reason: 'tier1_catastrophic',
-                signals: ['tier1_catastrophic'],
+                signals: ['tier1_catastrophic', tier1.reason],
+                judgeTrace,
             });
         }
     }
@@ -585,6 +589,7 @@ function toVerdictResult(internal, command, context) {
         commandRedacted,
         fingerprint: verdictFingerprint(relative, commandRedacted),
         signals: internal.signals,
+        judgeTrace: internal.judgeTrace,
     };
 }
 export async function verdict(command, context) {

@@ -14,8 +14,9 @@ import {
   pendingApprovalsPath,
   writeConfigFile,
 } from './config-io.js'
-import { mergeConfig } from './core/config.js'
+import { isFreshConfigInput, mergeConfig, normalizeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
+import { resolveJudgeConfig } from './core/judge-config.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
 import { applyConfigPreset } from './presets.js'
@@ -181,7 +182,7 @@ export async function initCursorProject(
   const hooksPath = cursorLayout.hooksSettingsPath(repoRoot)
   const belayDir = cursorLayout.repoLocalStateDir(repoRoot)
   const hooksFile = await loadHooksFile(hooksPath)
-  const merged = mergeHooksFile(hooksFile)
+  const mergedHooks = mergeHooksFile(hooksFile)
 
   await ensureDir(cursorLayout.hooksDir(repoRoot))
   await ensureDir(path.join(belayDir, 'runtime'))
@@ -198,7 +199,7 @@ export async function initCursorProject(
     await writeSkillArtifacts(repoRoot)
   }
 
-  await writeFile(hooksPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+  await writeFile(hooksPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
   await writeCursorIntegrityManifest(repoRoot)
   return { repoRoot, withSkill }
 }
@@ -236,6 +237,38 @@ function resolveAdapterName(options: InitOptions | UpgradeOptions, repoRoot?: st
   return 'cursor'
 }
 
+async function applyInitJudgeConfig(
+  repoRoot: string,
+  adapterName: AdapterName,
+  options: InitOptions,
+): Promise<void> {
+  if (options.skipJudgeWrite) {
+    return
+  }
+  const layout = getAdapter(adapterName).layout
+  const configPath = layout.configPath(repoRoot)
+  let existingConfig: unknown = {}
+  if (await pathExists(configPath)) {
+    existingConfig = JSON.parse(await readFile(configPath, 'utf8'))
+  }
+  const isFresh = isFreshConfigInput(existingConfig)
+  const mergedConfig = await loadConfigFile(repoRoot, adapterName)
+  const hasExplicitJudgeFlags = options.judgeProfile || options.judgeProvider || options.judgeModel
+  const judge = resolveJudgeConfig(
+    hasExplicitJudgeFlags
+      ? {
+          judgeProfile: options.judgeProfile,
+          judgeProvider: options.judgeProvider,
+          judgeModel: options.judgeModel,
+        }
+      : isFresh
+        ? { judgeProfile: 'cursor-composer' }
+        : { existingJudge: mergedConfig.judge },
+  )
+  const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge })
+  await writeConfigFile(repoRoot, configWithJudge, adapterName)
+}
+
 export async function initProject(
   options: InitOptions = {},
 ): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
@@ -243,6 +276,7 @@ export async function initProject(
   const adapterName = resolveAdapterName(options, repoRoot)
   const adapter = getAdapter(adapterName)
   const result = await adapter.install(repoRoot, options)
+  await applyInitJudgeConfig(repoRoot, adapterName, options)
   if (options.preset) {
     const existing = await loadConfigFile(repoRoot, adapterName)
     const presetConfig = mergeConfig(applyConfigPreset(options.preset))

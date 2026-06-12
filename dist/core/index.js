@@ -2,7 +2,7 @@ export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createAp
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js';
 export { classifySubagent } from './classify-subagent.js';
 export { classifyToolUse } from './classify-tool.js';
-export { approvedApprovalsFile, belayStateDir, classifierOptionsFromConfig, configuredControlPlaneDir, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, defaultControlPlaneDir, isFreshConfigInput, LEGACY_POLICY_V3, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, } from './config.js';
+export { approvedApprovalsFile, belayStateDir, classifierOptionsFromConfig, configuredControlPlaneDir, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, DEFAULT_CONFIG_V4, DEFAULT_JUDGE_CURSOR_COMPOSER, DEFAULT_JUDGE_LOCAL_OLLAMA, defaultControlPlaneDir, isConfigV4, isFreshConfigInput, LEGACY_POLICY_V3, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, normalizeJudgeConfig, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, } from './config.js';
 export { persistControlPlaneSpikeResult, runControlPlaneSpike, } from './control-plane-spike.js';
 export { matchesCustomCommand } from './custom-command-match.js';
 export { canonicalStringify, hashValue, shellFingerprint, subagentFingerprint, toolFingerprint, } from './fingerprint.js';
