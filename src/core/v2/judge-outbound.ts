@@ -5,6 +5,22 @@ import type { ScrubOptions } from '../types.js'
 const PATH_LIKE =
   /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g
 
+const REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i
+
+function hasResidualBearerToken(text: string): boolean {
+  for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
+    const token = match[1] ?? ''
+    if (!REDACTED_PLACEHOLDER.test(token)) {
+      return true
+    }
+  }
+  return false
+}
+
+function hasResidualApiKey(text: string): boolean {
+  return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text)
+}
+
 export interface OutboundScrubOptions {
   sensitivePaths: string[]
   scrubOptions: ScrubOptions
@@ -39,7 +55,7 @@ export function scrubOutboundForJudge(
       return match.replace(pathToken, redacted)
     })
 
-    if (/\bsk-\S+/i.test(scrubbed) || /\bBearer\s+\S+/i.test(scrubbed)) {
+    if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
       return { ok: false, reason: 'residual_secret_detected' }
     }
 

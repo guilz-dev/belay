@@ -1,6 +1,19 @@
 import { matchesSensitivePath } from '../glob.js';
 import { scrubString } from '../scrub.js';
 const PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
+const REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
+function hasResidualBearerToken(text) {
+    for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
+        const token = match[1] ?? '';
+        if (!REDACTED_PLACEHOLDER.test(token)) {
+            return true;
+        }
+    }
+    return false;
+}
+function hasResidualApiKey(text) {
+    return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text);
+}
 function redactSensitivePathToken(token, sensitivePaths) {
     const trimmed = token.replace(/^['"`]+|['"`]+$/g, '');
     const normalized = trimmed.replaceAll('\\', '/');
@@ -24,7 +37,7 @@ export function scrubOutboundForJudge(text, options) {
             const redacted = redactSensitivePathToken(pathToken, options.sensitivePaths);
             return match.replace(pathToken, redacted);
         });
-        if (/\bsk-\S+/i.test(scrubbed) || /\bBearer\s+\S+/i.test(scrubbed)) {
+        if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
             return { ok: false, reason: 'residual_secret_detected' };
         }
         return { ok: true, text: scrubbed };

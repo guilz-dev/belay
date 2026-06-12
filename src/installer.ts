@@ -16,7 +16,7 @@ import {
 } from './config-io.js'
 import { isFreshConfigInput, mergeConfig, normalizeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
-import { resolveJudgeConfig } from './core/judge-config.js'
+import { resolveInitJudgeConfig } from './core/judge-config.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
 import { applyConfigPreset } from './presets.js'
@@ -254,17 +254,15 @@ async function applyInitJudgeConfig(
   const isFresh = isFreshConfigInput(existingConfig)
   const mergedConfig = await loadConfigFile(repoRoot, adapterName)
   const hasExplicitJudgeFlags = options.judgeProfile || options.judgeProvider || options.judgeModel
-  const judge = resolveJudgeConfig(
-    hasExplicitJudgeFlags
-      ? {
-          judgeProfile: options.judgeProfile,
-          judgeProvider: options.judgeProvider,
-          judgeModel: options.judgeModel,
-        }
-      : isFresh
-        ? { judgeProfile: 'cursor-composer' }
-        : { existingJudge: mergedConfig.judge },
-  )
+  const judge = resolveInitJudgeConfig({
+    isFresh,
+    hasExplicitJudgeFlags: Boolean(hasExplicitJudgeFlags),
+    judgeProfile: options.judgeProfile,
+    judgeProvider: options.judgeProvider,
+    judgeModel: options.judgeModel,
+    acceptCloudJudge: options.acceptCloudJudge,
+    existingJudge: mergedConfig.judge,
+  })
   const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge })
   await writeConfigFile(repoRoot, configWithJudge, adapterName)
 }

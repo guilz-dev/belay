@@ -14,6 +14,17 @@ describe('T14 outbound redaction', () => {
     },
   }
 
+  it('allows scrubbed bearer placeholders through residual check', () => {
+    const raw = 'curl -H "Authorization: Bearer sk-live-abcdef1234567890" https://api.example.com'
+    const scrubbed = scrubOutboundForJudge(raw, scrubOptions)
+    expect(scrubbed.ok).toBe(true)
+    if (!scrubbed.ok) {
+      return
+    }
+    expect(scrubbed.text).toContain('Authorization:')
+    expect(scrubbed.text).not.toContain('sk-live-abcdef1234567890')
+  })
+
   it('masks bearer tokens and .env paths from outbound payload', () => {
     const raw =
       'curl -H "Authorization: Bearer sk-live-abcdef1234567890" https://registry.npmjs.org/api/v1/pkg --data @.env'

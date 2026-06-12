@@ -241,6 +241,16 @@ function allowVerdict(params: Omit<InternalSegmentVerdict, 'permission'>): Inter
   return { ...params, permission: 'allow' }
 }
 
+function withJudgeTrace(
+  verdict: InternalSegmentVerdict,
+  judgeTrace?: JudgeTrace,
+): InternalSegmentVerdict {
+  if (!judgeTrace) {
+    return verdict
+  }
+  return { ...verdict, judgeTrace }
+}
+
 function extractPathArgs(tokens: string[]): string[] {
   const redirects = extractRedirectTargets(tokens)
   const args: string[] = [...redirects]
@@ -605,6 +615,7 @@ async function evaluateSegment(
     segment.head === 'curl' ||
     segment.head === 'wget'
 
+  let tier1Trace: JudgeTrace | undefined
   if (needsTier1) {
     const tier1Text = recursiveScript ?? command
     const tier1 = await context.judge.evaluate({
@@ -612,7 +623,7 @@ async function evaluateSegment(
       context: { cwd: context.cwd, repoRoot: context.repoRoot },
       innerCode: recursiveScript ?? undefined,
     })
-    const judgeTrace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
+    tier1Trace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
     if (tier1RequiresAsk(tier1)) {
       return askVerdict({
         location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
@@ -621,7 +632,7 @@ async function evaluateSegment(
         confidence: 'llm',
         reason: 'tier1_catastrophic',
         signals: ['tier1_catastrophic', tier1.reason],
-        judgeTrace,
+        judgeTrace: tier1Trace,
       })
     }
   }
@@ -631,50 +642,62 @@ async function evaluateSegment(
     (effect === 'read_only' || effect === 'local_mutation') &&
     opacity !== 'opaque'
   ) {
-    return allowVerdict({
-      location: 'repo_local',
-      opacity,
-      effect,
-      confidence: 'assumed_repo_local',
-      reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
-      signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
-    })
+    return withJudgeTrace(
+      allowVerdict({
+        location: 'repo_local',
+        opacity,
+        effect,
+        confidence: 'assumed_repo_local',
+        reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
+        signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
+      }),
+      tier1Trace,
+    )
   }
 
   if (effect === 'read_only') {
-    return allowVerdict({
-      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
-      opacity,
-      effect: 'read_only',
-      confidence: 'assumed_repo_local',
-      reason: 'read_only',
-      signals: ['read_only'],
-    })
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+        opacity,
+        effect: 'read_only',
+        confidence: 'assumed_repo_local',
+        reason: 'read_only',
+        signals: ['read_only'],
+      }),
+      tier1Trace,
+    )
   }
 
   if (allowOverride) {
-    return allowFromCustomOverride(opacity)
+    return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace)
   }
 
   if (context.unknownLocalEffect === 'allow_flagged') {
-    return allowVerdict({
-      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
-      opacity,
-      effect: 'unknown',
-      confidence: 'assumed_repo_local',
-      reason: 'unknown_local_effect',
-      signals: ['unknown_local_effect'],
-    })
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+        opacity,
+        effect: 'unknown',
+        confidence: 'assumed_repo_local',
+        reason: 'unknown_local_effect',
+        signals: ['unknown_local_effect'],
+      }),
+      tier1Trace,
+    )
   }
 
-  return askVerdict({
-    location: pathAnalysis.location,
-    opacity,
-    effect,
-    confidence: 'deterministic',
-    reason: 'unknown_local_effect',
-    signals: ['unknown_local_effect'],
-  })
+  return withJudgeTrace(
+    askVerdict({
+      location: pathAnalysis.location,
+      opacity,
+      effect,
+      confidence: 'deterministic',
+      reason: 'unknown_local_effect',
+      signals: ['unknown_local_effect'],
+    }),
+    tier1Trace,
+  )
 }
 
 function toVerdictResult(

@@ -1588,6 +1588,19 @@ init_config();
 
 // src/core/v2/judge-outbound.ts
 var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
+var REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
+function hasResidualBearerToken(text) {
+  for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
+    const token = match[1] ?? "";
+    if (!REDACTED_PLACEHOLDER.test(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+function hasResidualApiKey(text) {
+  return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text);
+}
 function redactSensitivePathToken(token, sensitivePaths) {
   const trimmed = token.replace(/^['"`]+|['"`]+$/g, "");
   const normalized = trimmed.replaceAll("\\", "/");
@@ -1611,7 +1624,7 @@ function scrubOutboundForJudge(text, options) {
       const redacted = redactSensitivePathToken(pathToken, options.sensitivePaths);
       return match.replace(pathToken, redacted);
     });
-    if (/\bsk-\S+/i.test(scrubbed) || /\bBearer\s+\S+/i.test(scrubbed)) {
+    if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
       return { ok: false, reason: "residual_secret_detected" };
     }
     return { ok: true, text: scrubbed };
@@ -1729,13 +1742,23 @@ function createOllamaJudge(options = {}) {
         }
         const payload = await response.json();
         const parsed = parseTier1Json(payload.response ?? "{}");
+        if (!parsed) {
+          judge.lastTrace = {
+            provider: "fallback",
+            modelRequested: model,
+            modelResolved: model,
+            latencyMs: Date.now() - started,
+            fallbackReason: "ollama_parse_error"
+          };
+          return failClosedVerdict("ollama_parse_error");
+        }
         judge.lastTrace = {
           provider: "ollama",
           modelRequested: model,
           modelResolved: model,
           latencyMs: Date.now() - started
         };
-        return parsed ?? failClosedVerdict("ollama_parse_error");
+        return parsed;
       } catch (error) {
         judge.lastTrace = {
           provider: "fallback",
@@ -1763,8 +1786,7 @@ function createCursorJudge(options) {
           provider: "cursor",
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
-          latencyMs: Date.now() - started,
-          outboundRedacted: true
+          latencyMs: Date.now() - started
         };
         return prescan;
       }
@@ -1883,6 +1905,21 @@ function createJudgeFromConfig(config, options = {}) {
     });
   }
   return createDeterministicJudgeStub();
+}
+
+// src/core/v2/judge-audit.ts
+function judgeTraceAuditFields(trace) {
+  if (!trace) {
+    return {};
+  }
+  return {
+    judgeProvider: trace.provider,
+    judgeModelRequested: trace.modelRequested,
+    judgeModelResolved: trace.modelResolved,
+    judgeLatencyMs: trace.latencyMs,
+    ...trace.outboundRedacted !== void 0 ? { judgeOutboundRedacted: trace.outboundRedacted } : {},
+    ...trace.fallbackReason ? { judgeFallbackReason: trace.fallbackReason } : {}
+  };
 }
 
 // src/core/v2/verdict.ts
@@ -2807,6 +2844,12 @@ function askVerdict(params) {
 function allowVerdict(params) {
   return { ...params, permission: "allow" };
 }
+function withJudgeTrace(verdict2, judgeTrace) {
+  if (!judgeTrace) {
+    return verdict2;
+  }
+  return { ...verdict2, judgeTrace };
+}
 function extractPathArgs(tokens) {
   const redirects = extractRedirectTargets(tokens);
   const args = [...redirects];
@@ -3128,6 +3171,7 @@ async function evaluateSegment(command, context, depth) {
     });
   }
   const needsTier1 = effect === "unknown" || TIER0_EXTERNAL_HEADS.has(segment.head) || segment.head === "curl" || segment.head === "wget";
+  let tier1Trace;
   if (needsTier1) {
     const tier1Text = recursiveScript ?? command;
     const tier1 = await context.judge.evaluate({
@@ -3135,7 +3179,7 @@ async function evaluateSegment(command, context, depth) {
       context: { cwd: context.cwd, repoRoot: context.repoRoot },
       innerCode: recursiveScript ?? void 0
     });
-    const judgeTrace = context.judge.lastTrace;
+    tier1Trace = context.judge.lastTrace;
     if (tier1RequiresAsk(tier1)) {
       return askVerdict({
         location: pathAnalysis.location === "unknown" ? "unknown" : "repo_local",
@@ -3144,51 +3188,63 @@ async function evaluateSegment(command, context, depth) {
         confidence: "llm",
         reason: "tier1_catastrophic",
         signals: ["tier1_catastrophic", tier1.reason],
-        judgeTrace
+        judgeTrace: tier1Trace
       });
     }
   }
   if (pathAnalysis.location === "repo_local" && (effect === "read_only" || effect === "local_mutation") && opacity !== "opaque") {
-    return allowVerdict({
-      location: "repo_local",
-      opacity,
-      effect,
-      confidence: "assumed_repo_local",
-      reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
-      signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
-    });
+    return withJudgeTrace(
+      allowVerdict({
+        location: "repo_local",
+        opacity,
+        effect,
+        confidence: "assumed_repo_local",
+        reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
+        signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
+      }),
+      tier1Trace
+    );
   }
   if (effect === "read_only") {
-    return allowVerdict({
-      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
-      opacity,
-      effect: "read_only",
-      confidence: "assumed_repo_local",
-      reason: "read_only",
-      signals: ["read_only"]
-    });
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+        opacity,
+        effect: "read_only",
+        confidence: "assumed_repo_local",
+        reason: "read_only",
+        signals: ["read_only"]
+      }),
+      tier1Trace
+    );
   }
   if (allowOverride) {
-    return allowFromCustomOverride(opacity);
+    return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace);
   }
   if (context.unknownLocalEffect === "allow_flagged") {
-    return allowVerdict({
-      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+        opacity,
+        effect: "unknown",
+        confidence: "assumed_repo_local",
+        reason: "unknown_local_effect",
+        signals: ["unknown_local_effect"]
+      }),
+      tier1Trace
+    );
+  }
+  return withJudgeTrace(
+    askVerdict({
+      location: pathAnalysis.location,
       opacity,
-      effect: "unknown",
-      confidence: "assumed_repo_local",
+      effect,
+      confidence: "deterministic",
       reason: "unknown_local_effect",
       signals: ["unknown_local_effect"]
-    });
-  }
-  return askVerdict({
-    location: pathAnalysis.location,
-    opacity,
-    effect,
-    confidence: "deterministic",
-    reason: "unknown_local_effect",
-    signals: ["unknown_local_effect"]
-  });
+    }),
+    tier1Trace
+  );
 }
 function toVerdictResult(internal, command, context) {
   const commandRedacted = redactCommand(command);
@@ -3319,13 +3375,7 @@ function verdictToClassifyResult(result) {
       commandRedacted: result.commandRedacted,
       commandFingerprint: result.fingerprint,
       signals: result.signals,
-      ...result.judgeTrace ? {
-        judgeProvider: result.judgeTrace.provider,
-        judgeModelRequested: result.judgeTrace.modelRequested,
-        judgeModelResolved: result.judgeTrace.modelResolved,
-        judgeLatencyMs: result.judgeTrace.latencyMs,
-        judgeOutboundRedacted: result.judgeTrace.outboundRedacted
-      } : {}
+      ...judgeTraceAuditFields(result.judgeTrace)
     }
   };
 }

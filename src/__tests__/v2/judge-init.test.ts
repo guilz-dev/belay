@@ -5,7 +5,11 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfigFile } from '../../config-io.js'
 import { migrateConfig, normalizeConfig } from '../../core/config.js'
-import { resolveJudgeConfig } from '../../core/judge-config.js'
+import {
+  CloudJudgeConsentRequiredError,
+  resolveInitJudgeConfig,
+  resolveJudgeConfig,
+} from '../../core/judge-config.js'
 import { initProject } from '../../installer.js'
 
 const tempDirs: string[] = []
@@ -21,13 +25,32 @@ describe('T11 init judge setup matrix', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('writes cursor-composer profile as version 4', async () => {
+  it('writes cursor-composer profile as version 4 with cloud consent', async () => {
     const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot, judgeProfile: 'cursor-composer' })
+    await initProject({
+      targetDir: repoRoot,
+      judgeProfile: 'cursor-composer',
+      acceptCloudJudge: true,
+    })
     const config = await loadConfigFile(repoRoot)
     expect(config.version).toBe(4)
     expect(config.judge.provider).toBe('cursor')
     expect(config.judge.model).toBe('auto')
+  })
+
+  it('rejects cursor-composer without cloud consent', async () => {
+    const repoRoot = await createTempRepo()
+    await expect(
+      initProject({ targetDir: repoRoot, judgeProfile: 'cursor-composer' }),
+    ).rejects.toBeInstanceOf(CloudJudgeConsentRequiredError)
+  })
+
+  it('defaults fresh init to local-ollama without cloud consent', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    const config = await loadConfigFile(repoRoot)
+    expect(config.judge.provider).toBe('ollama')
+    expect(config.judge.model).toBe('gemma4:e2b')
   })
 
   it('writes local-ollama profile as version 4', async () => {
@@ -47,6 +70,16 @@ describe('T11 init judge setup matrix', () => {
     })
     expect(judge.provider).toBe('ollama')
     expect(judge.model).toBe('custom:7b')
+  })
+
+  it('requires consent for explicit cursor provider', () => {
+    expect(() =>
+      resolveInitJudgeConfig({
+        isFresh: true,
+        hasExplicitJudgeFlags: true,
+        judgeProvider: 'cursor',
+      }),
+    ).toThrow(CloudJudgeConsentRequiredError)
   })
 
   it('migrates v3 without judge to v4 ollama principle default', () => {

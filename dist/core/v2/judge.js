@@ -118,13 +118,23 @@ export function createOllamaJudge(options = {}) {
                 }
                 const payload = (await response.json());
                 const parsed = parseTier1Json(payload.response ?? '{}');
+                if (!parsed) {
+                    judge.lastTrace = {
+                        provider: 'fallback',
+                        modelRequested: model,
+                        modelResolved: model,
+                        latencyMs: Date.now() - started,
+                        fallbackReason: 'ollama_parse_error',
+                    };
+                    return failClosedVerdict('ollama_parse_error');
+                }
                 judge.lastTrace = {
                     provider: 'ollama',
                     modelRequested: model,
                     modelResolved: model,
                     latencyMs: Date.now() - started,
                 };
-                return parsed ?? failClosedVerdict('ollama_parse_error');
+                return parsed;
             }
             catch (error) {
                 judge.lastTrace = {
@@ -156,7 +166,6 @@ export function createCursorJudge(options) {
                     modelRequested: options.modelRequested,
                     modelResolved: options.modelResolved,
                     latencyMs: Date.now() - started,
-                    outboundRedacted: true,
                 };
                 return prescan;
             }

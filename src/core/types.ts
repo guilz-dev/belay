@@ -29,6 +29,7 @@ export interface V2TraceFields {
   judgeModelResolved?: string
   judgeLatencyMs?: number
   judgeOutboundRedacted?: boolean
+  judgeFallbackReason?: string
 }
 
 export interface ClassifyResult {

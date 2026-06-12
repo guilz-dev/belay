@@ -1,5 +1,6 @@
 import type { BelayConfigV4 } from '../config.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
+import { judgeTraceAuditFields } from './judge-audit.js'
 import { createJudgeFromConfig } from './judge-factory.js'
 import type { Tier1Judge, VerdictContext, VerdictResult } from './types.js'
 import { verdict } from './verdict.js'
@@ -131,15 +132,7 @@ export function verdictToClassifyResult(result: VerdictResult): ClassifyResult {
       commandRedacted: result.commandRedacted,
       commandFingerprint: result.fingerprint,
       signals: result.signals,
-      ...(result.judgeTrace
-        ? {
-            judgeProvider: result.judgeTrace.provider,
-            judgeModelRequested: result.judgeTrace.modelRequested,
-            judgeModelResolved: result.judgeTrace.modelResolved,
-            judgeLatencyMs: result.judgeTrace.latencyMs,
-            judgeOutboundRedacted: result.judgeTrace.outboundRedacted,
-          }
-        : {}),
+      ...judgeTraceAuditFields(result.judgeTrace),
     },
   }
 }
@@ -156,14 +149,6 @@ export function verdictAuditFields(result: VerdictResult): Record<string, unknow
     would: result.permission,
     by: 'v2',
     signals: result.signals,
-    ...(result.judgeTrace
-      ? {
-          judgeProvider: result.judgeTrace.provider,
-          judgeModelRequested: result.judgeTrace.modelRequested,
-          judgeModelResolved: result.judgeTrace.modelResolved,
-          judgeLatencyMs: result.judgeTrace.latencyMs,
-          judgeOutboundRedacted: result.judgeTrace.outboundRedacted,
-        }
-      : {}),
+    ...judgeTraceAuditFields(result.judgeTrace),
   }
 }

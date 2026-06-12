@@ -10,6 +10,7 @@ import { formatMetricsReport, metricsProject } from './commands/metrics.js'
 import { revokeApproval } from './commands/revoke.js'
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
+import { loadConfigFile } from './config-io.js'
 import { initProject, upgradeProject } from './installer.js'
 import type { ConfigPresetName } from './presets.js'
 import {
@@ -63,6 +64,7 @@ function parseArgs(argv: string[]) {
     judgeProfile?: 'cursor-composer' | 'local-ollama'
     judgeProvider?: 'cursor' | 'ollama'
     judgeModel?: string
+    acceptCloudJudge?: boolean
   } = {}
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -131,6 +133,10 @@ function parseArgs(argv: string[]) {
       }
       options.judgeModel = next
       index += 1
+      continue
+    }
+    if (token === '--accept-cloud-judge') {
+      options.acceptCloudJudge = true
       continue
     }
     if (token === '--json') {
@@ -334,7 +340,7 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile cursor-composer|local-ollama] [--judge-provider cursor|ollama] [--judge-model <id|auto>] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile cursor-composer|local-ollama] [--judge-provider cursor|ollama] [--judge-model <id|auto>] [--accept-cloud-judge] [--with-skill] [--dogfood]
     (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
@@ -369,6 +375,7 @@ async function main() {
         judgeProfile: options.judgeProfile,
         judgeProvider: options.judgeProvider,
         judgeModel: options.judgeModel,
+        acceptCloudJudge: options.acceptCloudJudge,
       })
       const extras = [
         `adapter=${result.adapter}`,
@@ -400,6 +407,12 @@ async function main() {
         withSkill: options.withSkill,
         adapter: options.adapter,
       })
+      const upgraded = await loadConfigFile(result.repoRoot, result.adapter)
+      if (upgraded.policy.modelAssist.enabled) {
+        process.stderr.write(
+          'Warning: policy.modelAssist is enabled but is not wired to v2 Tier1. Use top-level judge instead.\n',
+        )
+      }
       process.stdout.write(`Upgraded agent-belay (${result.adapter}) in ${result.repoRoot}.\n`)
       return
     }

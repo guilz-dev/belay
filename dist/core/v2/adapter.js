@@ -1,4 +1,5 @@
 import { createJudgeFromConfig } from './judge-factory.js';
+import { judgeTraceAuditFields } from './judge-audit.js';
 import { verdict } from './verdict.js';
 export function buildVerdictContext(params) {
     const protectedArtifactRoots = [
@@ -96,15 +97,7 @@ export function verdictToClassifyResult(result) {
             commandRedacted: result.commandRedacted,
             commandFingerprint: result.fingerprint,
             signals: result.signals,
-            ...(result.judgeTrace
-                ? {
-                    judgeProvider: result.judgeTrace.provider,
-                    judgeModelRequested: result.judgeTrace.modelRequested,
-                    judgeModelResolved: result.judgeTrace.modelResolved,
-                    judgeLatencyMs: result.judgeTrace.latencyMs,
-                    judgeOutboundRedacted: result.judgeTrace.outboundRedacted,
-                }
-                : {}),
+            ...judgeTraceAuditFields(result.judgeTrace),
         },
     };
 }
@@ -120,14 +113,6 @@ export function verdictAuditFields(result) {
         would: result.permission,
         by: 'v2',
         signals: result.signals,
-        ...(result.judgeTrace
-            ? {
-                judgeProvider: result.judgeTrace.provider,
-                judgeModelRequested: result.judgeTrace.modelRequested,
-                judgeModelResolved: result.judgeTrace.modelResolved,
-                judgeLatencyMs: result.judgeTrace.latencyMs,
-                judgeOutboundRedacted: result.judgeTrace.outboundRedacted,
-            }
-            : {}),
+        ...judgeTraceAuditFields(result.judgeTrace),
     };
 }

@@ -10,3 +10,15 @@ export interface ResolveJudgeConfigInput {
     existingJudge?: BelayJudgeConfig;
 }
 export declare function resolveJudgeConfig(input?: ResolveJudgeConfigInput): BelayJudgeConfig;
+export declare class CloudJudgeConsentRequiredError extends Error {
+    constructor();
+}
+export declare function resolveInitJudgeConfig(input: {
+    isFresh: boolean;
+    hasExplicitJudgeFlags: boolean;
+    judgeProfile?: JudgeProfileName;
+    judgeProvider?: 'cursor' | 'ollama';
+    judgeModel?: string;
+    acceptCloudJudge?: boolean;
+    existingJudge?: BelayJudgeConfig;
+}): BelayJudgeConfig;

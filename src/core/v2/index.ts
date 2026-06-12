@@ -15,6 +15,7 @@ export {
   prescanInterpreterCode,
   tier1RequiresAsk,
 } from './judge.js'
+export { judgeTraceAuditFields } from './judge-audit.js'
 export {
   createJudgeFromConfig,
   judgeConfigSummary,

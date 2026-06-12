@@ -50,6 +50,8 @@ export interface InitOptions {
   judgeProfile?: 'cursor-composer' | 'local-ollama'
   judgeProvider?: 'cursor' | 'ollama'
   judgeModel?: string
+  /** Acknowledge cloud judge egress + redaction limits (R19). Required for cursor profile/provider. */
+  acceptCloudJudge?: boolean
   /** When true, skip writing judge config (used when user declines cloud consent). */
   skipJudgeWrite?: boolean
 }
