@@ -3,7 +3,7 @@ import { canonicalStringify, toolFingerprint } from './fingerprint.js';
 import { matchesSensitivePath } from './glob.js';
 import { pathWithinRoot, relativeWithinRepo } from './path-utils.js';
 import { scrubValue } from './scrub.js';
-import { classifyShellV2 } from './v2/adapter.js';
+import { classifyShell } from './v2/adapter.js';
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**'];
 function scrubPayload(value, options) {
     return scrubValue(value, options.scrubOptions);
@@ -71,7 +71,7 @@ export async function classifyToolUse(payload, repoRoot, cwd, config, options = 
                 },
             };
         }
-        const shellResult = await classifyShellV2(command, cwd, repoRoot, config, options);
+        const shellResult = await classifyShell(command, cwd, repoRoot, config, options);
         return {
             ...shellResult,
             summary: command,

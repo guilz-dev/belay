@@ -109,7 +109,3 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
     },
   ],
 }
-
-export function layerConformanceScenarios(): Record<LayerProfileId, LayerConformanceScenario[]> {
-  return GUARANTEE_SCENARIOS
-}

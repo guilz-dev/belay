@@ -11,9 +11,9 @@ import {
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
-import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
+import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -97,7 +97,7 @@ describe('transactional gate runtime', () => {
       config,
       configPath: cursorAdapter.layout.configPath(repoRoot),
     }
-    const predicted = classifyShell('rm -f README.md', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('rm -f README.md', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const approval = createApprovalRecord({

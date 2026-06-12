@@ -81,7 +81,7 @@ describe('v0.2 operational commands', () => {
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
     expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "1\.0\.0@/)
-    expect(coreAfter).toContain('classifyShell')
+    expect(coreAfter).toContain('verdict')
   })
 
   it('status and revoke manage pending approvals', async () => {

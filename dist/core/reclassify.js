@@ -1,9 +1,15 @@
+import { getAdapter } from '../adapters/registry.js';
+import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js';
+import { detectAdapterName } from '../config-io.js';
 import { GATE_EVENTS } from './audit-types.js';
-import { classifierOptionsFromConfig } from './config.js';
 import { classifyGatedAction, normalizeGatedAction } from './gate-engine.js';
 function shellCommandFromSummary(summary) {
     const trimmed = summary.trim();
     return trimmed || null;
+}
+function classifierOptionsForRepo(config, repoRoot) {
+    const adapter = getAdapter(config.adapter ?? detectAdapterName(repoRoot));
+    return repoShellClassifierOptions(config, repoRoot, adapter.layout);
 }
 export async function reclassifyAuditRecord(record, config, repoRoot) {
     if (!record.event || !GATE_EVENTS.has(record.event)) {
@@ -23,7 +29,7 @@ export async function reclassifyAuditRecord(record, config, repoRoot) {
                 cwd: repoRoot,
                 command,
             });
-            return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+            return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot));
         }
         if (kind === 'subagent') {
             const action = normalizeGatedAction({
@@ -35,7 +41,7 @@ export async function reclassifyAuditRecord(record, config, repoRoot) {
                     tool_input: { description: summary },
                 },
             });
-            return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+            return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot));
         }
         const action = normalizeGatedAction({
             kind: 'tool',
@@ -47,7 +53,7 @@ export async function reclassifyAuditRecord(record, config, repoRoot) {
                 tool_input: { command: summary },
             },
         });
-        return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+        return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot));
     }
     catch {
         return null;

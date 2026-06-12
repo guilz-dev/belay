@@ -2,10 +2,10 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 import { GUARANTEE_SCENARIOS, GUARANTEE_TABLE_ROWS } from '../../conformance/guarantee-table.js'
-import { layerProfileConfig } from '../../conformance/layer-profiles.js'
 import type { LayerProfileId } from '../../conformance/types.js'
-import { classifyShell } from '../../core/classify-shell.js'
+import { DEFAULT_CONFIG_V3 } from '../../core/config.js'
 import { isTransactionalEligible } from '../../core/transactional/index.js'
+import { classifyShellCore, classifyShellGated } from '../helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
@@ -28,15 +28,21 @@ describe('guarantee table conformance', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('demotes L3 external rules only when egress proxy demotion is active', () => {
-    const demoted = classifyShell('git push origin main', cwd, repoRoot, {
-      demoteL3External: true,
-      unknownLocalEffect: 'allow_flagged',
-    })
+  it('demotes external rules only when egress proxy demotion is active', async () => {
+    const demoted = await classifyShellGated(
+      'git push origin main',
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      {
+        demoteL3External: true,
+        unknownLocalEffect: 'allow_flagged',
+      },
+    )
     expect(demoted.verdict).toBe('allow_flagged')
     expect(demoted.reason).toBe('l3_external_hint')
 
-    const denied = classifyShell('git push origin main', cwd, repoRoot, {
+    const denied = await classifyShellCore('git push origin main', cwd, repoRoot, {
       demoteL3External: false,
       unknownLocalEffect: 'allow_flagged',
     })
@@ -44,16 +50,32 @@ describe('guarantee table conformance', () => {
     expect(denied.reason).toBe('external_effect')
   })
 
-  it('enables transactional eligibility under the L2 profile config', () => {
-    const config = layerProfileConfig('l1-l2-transactional')
-    const predicted = classifyShell('touch notes.txt', repoRoot, repoRoot, {
+  it('enables transactional eligibility under the transactional profile config', async () => {
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        unknownLocalEffect: 'allow_flagged' as const,
+        transactional: { ...DEFAULT_CONFIG_V3.policy.transactional, enabled: true },
+      },
+    }
+    const predicted = await classifyShellCore('touch notes.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     expect(isTransactionalEligible(config, 'shell', predicted)).toBe(true)
   })
 
   it('requires sandbox runtime for capability broker demotion', () => {
-    const config = layerProfileConfig('l1-full')
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'container' as const },
+      egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, demoteL3External: true },
+      approvalSigning: { required: true },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        isolation: { mode: 'separate-user' as const, verifyAgentWritable: true },
+      },
+    }
     expect(config.sandbox.runtime).not.toBe('none')
     expect(config.approvalSigning.required).toBe(true)
     expect(config.controlPlane.isolation.mode).not.toBe('none')

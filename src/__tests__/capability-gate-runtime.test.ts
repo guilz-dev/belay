@@ -10,8 +10,8 @@ import {
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
-import { classifyShell } from '../core/classify-shell.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { classifyShellCore } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 
@@ -87,7 +87,7 @@ describe('capability gate runtime', () => {
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
     const config = sandboxBrokerConfig()
-    const predicted = classifyShell('cp README.md ../copy.txt', repoRoot, repoRoot, {
+    const predicted = await classifyShellCore('cp README.md ../copy.txt', repoRoot, repoRoot, {
       brokerFsScope: true,
       unknownLocalEffect: 'allow_flagged',
     })

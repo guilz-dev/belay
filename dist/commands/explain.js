@@ -1,9 +1,11 @@
 import path from 'node:path';
-import { loadConfigFile } from '../config-io.js';
+import { getAdapter } from '../adapters/registry.js';
+import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js';
+import { detectAdapterName, loadConfigFile } from '../config-io.js';
 import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js';
-import { classifierOptionsFromConfig, classifySubagent, classifyToolUse } from '../core/index.js';
+import { classifySubagent, classifyToolUse } from '../core/index.js';
 import { isTransactionalEligible } from '../core/transactional/index.js';
-import { classifyShellV2 } from '../core/v2/adapter.js';
+import { classifyShell } from '../core/v2/adapter.js';
 import { egressStatus } from '../services/egress-service.js';
 import { sandboxStatus } from '../services/sandbox-service.js';
 async function classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config) {
@@ -15,7 +17,7 @@ async function classifyExplainTarget(options, repoRoot, cwd, classifierOptions, 
         return {
             kind: 'shell',
             input: options.command,
-            result: await classifyShellV2(options.command, cwd, repoRoot, config, classifierOptions),
+            result: await classifyShell(options.command, cwd, repoRoot, config, classifierOptions),
         };
     }
     if (kind === 'subagent') {
@@ -59,15 +61,15 @@ export async function explainCommand(options) {
     const config = await loadConfigFile(repoRoot);
     const egress = await egressStatus({ targetDir: repoRoot });
     const sandbox = await sandboxStatus({ targetDir: repoRoot });
-    const classifierOptions = {
-        ...classifierOptionsFromConfig(config),
+    const adapter = getAdapter(config.adapter ?? detectAdapterName(repoRoot));
+    const classifierOptions = repoShellClassifierOptions(config, repoRoot, adapter.layout, {
         demoteL3External: config.egress.enabled &&
             config.egress.demoteL3External &&
             egress.running &&
             !egress.repoRootMismatch &&
             !egress.foreignProxy,
         brokerFsScope: isCapabilityBrokerDemotionActive(config),
-    };
+    });
     const classified = await classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config);
     const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);
     return {

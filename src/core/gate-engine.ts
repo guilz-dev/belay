@@ -8,7 +8,7 @@ import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
 import { mergeAgentAssessment } from './judgment.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
-import { classifyShellV2 } from './v2/adapter.js'
+import { classifyShell } from './v2/adapter.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -186,7 +186,7 @@ export async function classifyGatedAction(
     if (!command) {
       throw new GateNormalizationError('Shell gated action requires a command.')
     }
-    let result = await classifyShellV2(command, action.cwd, action.repoRoot, config, options)
+    let result = await classifyShell(command, action.cwd, action.repoRoot, config, options)
     result = applyShellPeripheralPolicy(command, action, result, options)
     if (!action.agentAssessment) {
       return result

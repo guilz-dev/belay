@@ -51,7 +51,7 @@ import {
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
-import type { Assessment } from '../../core/types.js'
+import type { Assessment, ClassifierOptions } from '../../core/types.js'
 import { isEgressProxyActiveForRepo } from '../../services/egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
@@ -149,19 +149,31 @@ export async function resolveGateConfig(
   }).config
 }
 
-export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
-  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
+export function repoShellClassifierOptions(
+  config: BelayConfigV3,
+  repoRoot: string,
+  layout: AdapterLayout,
+  extras: ClassifierOptions = {},
+): ClassifierOptions {
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
-  const brokerFsScope = isCapabilityBrokerDemotionActive(config)
   return {
     ...classifierOptionsFromConfig(config),
+    controlPlaneDir,
+    protectedArtifactRoots: protectedArtifactRoots(layout, repoRoot, controlPlaneDir),
+    ...extras,
+  }
+}
+
+export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
+  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
+  const brokerFsScope = isCapabilityBrokerDemotionActive(config)
+  return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
     demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
     brokerFsScope,
     fsScopeAllowlist: brokerFsScope
       ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
       : undefined,
-    protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
-  }
+  })
 }
 
 function gateAuditEventName(kind: GatedActionKind): string {

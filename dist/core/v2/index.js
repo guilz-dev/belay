@@ -1,4 +1,4 @@
-export { buildVerdictContext, classifyShellV2, verdictAuditFields, verdictToClassifyResult, } from './adapter.js';
+export { buildVerdictContext, classifyShell, verdictAuditFields, verdictToClassifyResult, } from './adapter.js';
 export { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containment.js';
 export { verdictFingerprint } from './fingerprint.js';
 export { createDeterministicJudgeStub, createFailClosedJudge, createOllamaJudge, prescanInterpreterCode, tier1RequiresAsk, } from './judge.js';

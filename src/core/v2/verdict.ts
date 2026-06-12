@@ -6,6 +6,12 @@ import { verdictFingerprint } from './fingerprint.js'
 import { prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
 import { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
 import {
+  allowFromCustomOverride,
+  askFromCustomExternal,
+  customAllowMatch,
+  customExternalMatch,
+} from './overrides.js'
+import {
   extractRecursiveScript,
   isBareInterpreter,
   isVariableIndirectHead,
@@ -390,6 +396,18 @@ async function evaluateSegment(
   }
 
   const segment = parseSegment(command)
+  const allowOverride = customAllowMatch(command, segment, context)
+  const externalOverride = customExternalMatch(command, segment, context)
+  if (allowOverride && externalOverride) {
+    return allowFromCustomOverride(opacity)
+  }
+  if (externalOverride) {
+    return askFromCustomExternal(opacity)
+  }
+  if (allowOverride && isRoutineLauncher(peeled)) {
+    return allowFromCustomOverride(opacity)
+  }
+
   if (isVariableIndirectHead(segment.head)) {
     return askVerdict({
       location: 'unknown',
@@ -626,6 +644,10 @@ async function evaluateSegment(
       reason: 'read_only',
       signals: ['read_only'],
     })
+  }
+
+  if (allowOverride) {
+    return allowFromCustomOverride(opacity)
   }
 
   if (context.unknownLocalEffect === 'allow_flagged') {

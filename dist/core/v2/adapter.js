@@ -1,12 +1,18 @@
 import { createDeterministicJudgeStub, createOllamaJudge } from './judge.js';
 import { verdict } from './verdict.js';
 export function buildVerdictContext(params) {
+    const protectedArtifactRoots = [
+        ...(params.options?.protectedArtifactRoots ?? []),
+        ...(params.options?.controlPlaneDir ? [params.options.controlPlaneDir] : []),
+    ];
     return {
         cwd: params.cwd,
         repoRoot: params.repoRoot,
         trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
         sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
-        protectedArtifactRoots: params.options?.protectedArtifactRoots,
+        protectedArtifactRoots: protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,
+        customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
+        customExternalCommands: params.options?.customExternalCommands ?? params.config.overrides.external,
         judge: params.judge ??
             (params.config.policy.modelAssist.enabled
                 ? createOllamaJudge(params.config.policy.modelAssist.model)
@@ -16,7 +22,7 @@ export function buildVerdictContext(params) {
         unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell,
     };
 }
-export async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
+export async function classifyShell(command, cwd, repoRoot, config, options = {}, judge) {
     const context = buildVerdictContext({ cwd, repoRoot, config, options, judge });
     const result = await verdict(command, context);
     return verdictToClassifyResult(result);

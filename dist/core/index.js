@@ -1,6 +1,5 @@
 export { approvalCommandMatch, buildRetryInstruction, compactApprovals, createApprovalRecord, isExpired, mergeApprovalStates, nowIso, } from './approval.js';
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js';
-export { classifyShell } from './classify-shell.js';
 export { classifySubagent } from './classify-subagent.js';
 export { classifyToolUse } from './classify-tool.js';
 export { approvedApprovalsFile, belayStateDir, classifierOptionsFromConfig, configuredControlPlaneDir, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, defaultControlPlaneDir, isFreshConfigInput, LEGACY_POLICY_V3, mapLegacyClassifierToOverrides, mergeConfig, migrateConfig, migrateV2ToV3, normalizeConfig, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, } from './config.js';
@@ -14,4 +13,4 @@ export { canonicalPath, hasOutsideRepoPath, normalizeToken, pathWithinRoot, rela
 export { scrubString, scrubValue } from './scrub.js';
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js';
-export { buildVerdictContext, classifyShellV2, verdict, verdictToClassifyResult, } from './v2/index.js';
+export { buildVerdictContext, classifyShell, verdict, verdictToClassifyResult, } from './v2/index.js';

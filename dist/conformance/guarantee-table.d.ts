@@ -12,4 +12,3 @@ export interface GuaranteeScenario extends LayerConformanceScenario {
 /** Normative rows — keep in sync with docs/guarantee-table.md */
 export declare const GUARANTEE_TABLE_ROWS: GuaranteeTableRow[];
 export declare const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]>;
-export declare function layerConformanceScenarios(): Record<LayerProfileId, LayerConformanceScenario[]>;

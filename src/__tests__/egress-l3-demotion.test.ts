@@ -1,65 +1,92 @@
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
-import { classifyShell } from '../core/classify-shell.js'
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { classifyShellCore, classifyShellGated } from './helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
 
-describe('L3 external demotion with egress enabled', () => {
-  it('flags external commands instead of denying when demoteL3External is set', () => {
-    const result = classifyShell('git push origin main', cwd, repoRoot, {
-      demoteL3External: true,
-    })
+describe('egress external demotion with peripheral policy', () => {
+  it('flags external commands instead of denying when demoteL3External is set', async () => {
+    const result = await classifyShellGated(
+      'git push origin main',
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      {
+        demoteL3External: true,
+      },
+    )
     expect(result.verdict).toBe('allow_flagged')
     expect(result.reason).toBe('l3_external_hint')
     expect(result.assessment.signals).toContain('egress_boundary_expected')
   })
 
-  it('still denies external commands when demoteL3External is false', () => {
-    const result = classifyShell('git push origin main', cwd, repoRoot, {
+  it('still denies external commands when demoteL3External is false', async () => {
+    const result = await classifyShellCore('git push origin main', cwd, repoRoot, {
       demoteL3External: false,
     })
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('external_effect')
   })
 
-  it('demotes python -c style unknown external sends to hints', () => {
-    const result = classifyShell(
+  it('does not demote interpreter opaque paths even when egress demotion is active', async () => {
+    const result = await classifyShellGated(
       'python -c "import urllib.request; urllib.request.urlopen(\'https://example.com\')"',
       cwd,
       repoRoot,
+      DEFAULT_CONFIG_V3,
       { demoteL3External: true },
     )
-    expect(result.verdict).not.toBe('deny_pending_approval')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).not.toBe('l3_external_hint')
   })
 
-  it('demotes npm run deploy scripts to hints', () => {
-    const result = classifyShell('npm run deploy:prod', cwd, repoRoot, {
-      demoteL3External: true,
-    })
+  it('demotes resolved external launcher recipes to hints', async () => {
+    const fixtureRoot = path.join(import.meta.dirname, 'v2', 'fixtures')
+    const result = await classifyShellGated(
+      'npm run deploy',
+      fixtureRoot,
+      fixtureRoot,
+      DEFAULT_CONFIG_V3,
+      {
+        demoteL3External: true,
+      },
+    )
     expect(result.verdict).toBe('allow_flagged')
     expect(result.reason).toBe('l3_external_hint')
   })
 
-  it('does not demote when egress is disabled in config', () => {
+  it('does not demote when egress is disabled in config', async () => {
     const options = classifierOptionsFromConfig({
       ...DEFAULT_CONFIG_V3,
       egress: { ...DEFAULT_CONFIG_V3.egress, enabled: false, demoteL3External: true },
     })
-    const result = classifyShell('git push origin main', cwd, repoRoot, options)
+    const result = await classifyShellGated(
+      'git push origin main',
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      options,
+    )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('external_effect')
   })
 
-  it('does not demote via classifierOptionsFromConfig until proxy is running', () => {
+  it('does not demote via classifierOptionsFromConfig until proxy is running', async () => {
     const options = classifierOptionsFromConfig({
       ...DEFAULT_CONFIG_V3,
       egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, demoteL3External: true },
     })
     expect(options.demoteL3External).toBeUndefined()
-    const result = classifyShell('git push origin main', cwd, repoRoot, options)
+    const result = await classifyShellGated(
+      'git push origin main',
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      options,
+    )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('external_effect')
   })

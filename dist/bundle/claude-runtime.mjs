@@ -1910,6 +1910,54 @@ function isRoutineLauncher(tokens) {
   return tokens[0] === "npm" && (tokens[1] === "run" || tokens[1] === "test") || tokens[0] === "pnpm" || tokens[0] === "make";
 }
 
+// src/core/custom-command-match.ts
+function matchesCustomCommand(normalizedCommand, key, pattern) {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return normalizedCommand === trimmed || key === trimmed;
+}
+
+// src/core/v2/overrides.ts
+function matchesCustomPatterns(command, segment, patterns) {
+  if (!patterns || patterns.length === 0) {
+    return false;
+  }
+  const normalized = command.trim();
+  return patterns.some(
+    (pattern) => matchesCustomCommand(normalized, segment.key, pattern) || matchesCustomCommand(segment.normalized, segment.key, pattern)
+  );
+}
+function customAllowMatch(command, segment, context) {
+  return matchesCustomPatterns(command, segment, context.customAllowCommands);
+}
+function customExternalMatch(command, segment, context) {
+  return matchesCustomPatterns(command, segment, context.customExternalCommands);
+}
+function allowFromCustomOverride(opacity) {
+  return {
+    permission: "allow",
+    location: "repo_local",
+    opacity,
+    effect: "unknown",
+    confidence: "deterministic",
+    reason: "custom_allow",
+    signals: ["custom_allow"]
+  };
+}
+function askFromCustomExternal(opacity) {
+  return {
+    permission: "ask",
+    location: "external",
+    opacity,
+    effect: "remote_mutation",
+    confidence: "deterministic",
+    reason: "custom_external",
+    signals: ["custom_external"]
+  };
+}
+
 // src/core/v2/parser.ts
 import path9 from "node:path";
 
@@ -2637,6 +2685,17 @@ async function evaluateSegment(command, context, depth) {
     });
   }
   const segment = parseSegment(command);
+  const allowOverride = customAllowMatch(command, segment, context);
+  const externalOverride = customExternalMatch(command, segment, context);
+  if (allowOverride && externalOverride) {
+    return allowFromCustomOverride(opacity);
+  }
+  if (externalOverride) {
+    return askFromCustomExternal(opacity);
+  }
+  if (allowOverride && isRoutineLauncher(peeled)) {
+    return allowFromCustomOverride(opacity);
+  }
   if (isVariableIndirectHead(segment.head)) {
     return askVerdict({
       location: "unknown",
@@ -2840,6 +2899,9 @@ async function evaluateSegment(command, context, depth) {
       signals: ["read_only"]
     });
   }
+  if (allowOverride) {
+    return allowFromCustomOverride(opacity);
+  }
   if (context.unknownLocalEffect === "allow_flagged") {
     return allowVerdict({
       location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
@@ -2912,19 +2974,25 @@ async function verdict(command, context) {
 
 // src/core/v2/adapter.ts
 function buildVerdictContext(params) {
+  const protectedArtifactRoots2 = [
+    ...params.options?.protectedArtifactRoots ?? [],
+    ...params.options?.controlPlaneDir ? [params.options.controlPlaneDir] : []
+  ];
   return {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
     trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
-    protectedArtifactRoots: params.options?.protectedArtifactRoots,
+    protectedArtifactRoots: protectedArtifactRoots2.length > 0 ? [...new Set(protectedArtifactRoots2)] : void 0,
+    customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
+    customExternalCommands: params.options?.customExternalCommands ?? params.config.overrides.external,
     judge: params.judge ?? (params.config.policy.modelAssist.enabled ? createOllamaJudge(params.config.policy.modelAssist.model) : createDeterministicJudgeStub()),
     mode: params.config.mode,
     unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
     unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell
   };
 }
-async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
+async function classifyShell(command, cwd, repoRoot, config, options = {}, judge) {
   const context = buildVerdictContext({ cwd, repoRoot, config, options, judge });
   const result = await verdict(command, context);
   return verdictToClassifyResult(result);
@@ -3061,7 +3129,7 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
         }
       };
     }
-    const shellResult = await classifyShellV2(command, cwd, repoRoot, config, options);
+    const shellResult = await classifyShell(command, cwd, repoRoot, config, options);
     return {
       ...shellResult,
       summary: command
@@ -3348,7 +3416,7 @@ async function classifyGatedAction(action, config, extraOptions = {}) {
     if (!command) {
       throw new GateNormalizationError("Shell gated action requires a command.");
     }
-    let result = await classifyShellV2(command, action.cwd, action.repoRoot, config, options);
+    let result = await classifyShell(command, action.cwd, action.repoRoot, config, options);
     result = applyShellPeripheralPolicy(command, action, result, options);
     if (!action.agentAssessment) {
       return result;
@@ -3394,189 +3462,6 @@ function gateEnabledForAction(config, action) {
 
 // src/core/index.ts
 init_approval();
-
-// src/core/classify-shell.ts
-init_config();
-
-// src/core/policy/command-keys.ts
-var READ_ONLY_COMMAND_KEYS = [
-  "cat",
-  "cd",
-  "echo",
-  "git diff",
-  "git log",
-  "git rev-parse",
-  "git show",
-  "git status",
-  "head",
-  "ls",
-  "pwd",
-  "rg",
-  "sort",
-  "tail",
-  "wc",
-  "which",
-  "find"
-];
-var FLAGGED_COMMAND_KEYS = [
-  "chmod",
-  "cp",
-  "git add",
-  "git clean",
-  "git commit",
-  "git mv",
-  "git reset",
-  "mkdir",
-  "mv",
-  "rm",
-  "sed",
-  "tee",
-  "touch",
-  "truncate"
-];
-var EXTERNAL_COMMAND_KEYS = [
-  "aws",
-  "curl",
-  "docker push",
-  "docker run",
-  "firebase deploy",
-  "fly deploy",
-  "gh",
-  "git push",
-  "gcloud",
-  "heroku",
-  "kubectl",
-  "netlify",
-  "npm publish",
-  "pnpm publish",
-  "rsync",
-  "scp",
-  "ssh",
-  "supabase",
-  "terraform apply",
-  "vercel",
-  "wget"
-];
-var READ_ONLY_KEYS2 = new Set(READ_ONLY_COMMAND_KEYS);
-var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
-var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
-
-// src/core/policy/default-rules.ts
-var DEFAULT_POLICY_RULES = [
-  {
-    id: "unparseable_shell",
-    priority: 1e3,
-    nonOverridable: true,
-    match: { unparseable: true },
-    action: "threshold",
-    reason: "unparseable_shell"
-  },
-  {
-    id: "protected_artifact",
-    priority: 950,
-    nonOverridable: true,
-    match: { protectedArtifact: true },
-    action: "escalate",
-    reason: "control_plane_mutation"
-  },
-  {
-    id: "outside_repo_redirect",
-    priority: 940,
-    nonOverridable: true,
-    match: { redirectKind: "outside" },
-    action: "escalate",
-    reason: "outside_repo_redirect"
-  },
-  {
-    id: "outside_repo_mutation",
-    priority: 938,
-    nonOverridable: true,
-    match: { outsideRepo: true },
-    action: "escalate",
-    reason: "outside_repo_mutation"
-  },
-  {
-    id: "dynamic_shell",
-    priority: 930,
-    nonOverridable: true,
-    match: { signal: "dynamic_shell_evaluation" },
-    action: "escalate",
-    reason: "dynamic_shell_evaluation"
-  },
-  {
-    id: "pipe_to_shell",
-    priority: 920,
-    nonOverridable: true,
-    match: { signal: "pipe_to_shell" },
-    action: "escalate",
-    reason: "pipe_to_shell"
-  },
-  {
-    id: "find_dangerous",
-    priority: 900,
-    nonOverridable: true,
-    match: { signal: "find_dangerous_action" },
-    action: "escalate",
-    reason: "find_dangerous_action"
-  },
-  {
-    id: "custom_external",
-    priority: 850,
-    match: { customExternal: true },
-    action: "escalate",
-    reason: "custom_external"
-  },
-  {
-    id: "external_effect",
-    priority: 800,
-    nonOverridable: true,
-    match: { targetScope: "external" },
-    action: "escalate",
-    reason: "external_effect"
-  },
-  {
-    id: "external_script",
-    priority: 790,
-    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
-    action: "escalate",
-    reason: "external_script"
-  },
-  {
-    id: "custom_allow",
-    priority: 600,
-    match: { customAllow: true },
-    action: "allow",
-    reason: "custom_allow"
-  },
-  {
-    id: "read_only",
-    priority: 500,
-    match: {
-      commandKey: [...READ_ONLY_COMMAND_KEYS],
-      redirectKind: "none"
-    },
-    action: "allow",
-    reason: "read_only"
-  },
-  {
-    id: "local_mutation",
-    priority: 400,
-    match: {
-      commandKey: [...FLAGGED_COMMAND_KEYS]
-    },
-    action: "flag",
-    reason: "local_mutation"
-  },
-  {
-    id: "unknown_local",
-    priority: 100,
-    match: {},
-    action: "threshold",
-    reason: "unknown_local_effect"
-  }
-];
-
-// src/core/index.ts
 init_config();
 
 // src/core/control-plane-spike.ts
@@ -4230,17 +4115,23 @@ async function resolveGateConfig(ctx, deps) {
     repoConfigPath: ctx.configPath
   }).config;
 }
-function runtimeClassifierOptions(ctx, config) {
-  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
+function repoShellClassifierOptions(config, repoRoot, layout, extras = {}) {
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null;
-  const brokerFsScope = isCapabilityBrokerDemotionActive(config);
   return {
     ...classifierOptionsFromConfig(config),
+    controlPlaneDir,
+    protectedArtifactRoots: protectedArtifactRoots(layout, repoRoot, controlPlaneDir),
+    ...extras
+  };
+}
+function runtimeClassifierOptions(ctx, config) {
+  const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
+  const brokerFsScope = isCapabilityBrokerDemotionActive(config);
+  return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
     demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
     brokerFsScope,
-    fsScopeAllowlist: brokerFsScope ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir)) : void 0,
-    protectedArtifactRoots: protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir)
-  };
+    fsScopeAllowlist: brokerFsScope ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir)) : void 0
+  });
 }
 function gateAuditEventName(kind) {
   if (kind === "shell") {

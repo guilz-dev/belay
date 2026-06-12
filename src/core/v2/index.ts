@@ -1,6 +1,6 @@
 export {
   buildVerdictContext,
-  classifyShellV2,
+  classifyShell,
   verdictAuditFields,
   verdictToClassifyResult,
 } from './adapter.js'
