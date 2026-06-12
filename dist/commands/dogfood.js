@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { configPathFor, loadConfigFile, writeConfigFile } from '../config-io.js';
 import { mergeConfig } from '../core/config.js';
-import { metricsProject } from './metrics.js';
 import { isDogfoodConfig, loadOperationalInsights, readOq3SpikeStatus, } from '../operational-insights.js';
+import { metricsProject } from './metrics.js';
 export async function dogfoodProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const adapter = options.adapter ?? 'cursor';

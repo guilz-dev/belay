@@ -5,6 +5,13 @@ import { approvePending } from './commands/approve.js'
 import { auditProject, formatAuditReport } from './commands/audit.js'
 import { doctorProject, formatDoctorReport } from './commands/doctor.js'
 import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js'
+import { explainCommand, formatExplainReport } from './commands/explain.js'
+import { formatMetricsReport, metricsProject } from './commands/metrics.js'
+import { revokeApproval } from './commands/revoke.js'
+import { formatSimulateReport, simulateProject } from './commands/simulate.js'
+import { formatStatusReport, statusProject } from './commands/status.js'
+import { initProject, upgradeProject } from './installer.js'
+import type { ConfigPresetName } from './presets.js'
 import {
   egressEnv,
   egressStatus,
@@ -12,14 +19,7 @@ import {
   startEgressProxy,
   stopEgressProxy,
 } from './services/egress-service.js'
-import { explainCommand, formatExplainReport } from './commands/explain.js'
-import { initProject, upgradeProject } from './installer.js'
-import { formatMetricsReport, metricsProject } from './commands/metrics.js'
-import type { ConfigPresetName } from './presets.js'
-import { revokeApproval } from './commands/revoke.js'
 import { formatSandboxStatusReport, sandboxStatus } from './services/sandbox-service.js'
-import { formatSimulateReport, simulateProject } from './commands/simulate.js'
-import { formatStatusReport, statusProject } from './commands/status.js'
 
 function parseArgs(argv: string[]) {
   const [command, ...rest] = argv

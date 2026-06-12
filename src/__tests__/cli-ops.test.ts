@@ -3,12 +3,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
-import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { explainCommand } from '../commands/explain.js'
-import { initProject, upgradeProject } from '../installer.js'
 import { revokeApproval } from '../commands/revoke.js'
 import { statusProject } from '../commands/status.js'
+import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
+import { initProject, upgradeProject } from '../installer.js'
 
 const tempDirs: string[] = []
 

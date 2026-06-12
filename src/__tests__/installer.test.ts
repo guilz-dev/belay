@@ -3,9 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
-import { getManagedHookEntries } from '../defaults.js'
 import { doctorProject } from '../commands/doctor.js'
+import { getManagedHookEntries } from '../defaults.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []

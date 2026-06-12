@@ -1,7 +1,6 @@
 import path from 'node:path'
-
-import { getManagedHookEntries } from '../../defaults.js'
 import { doctorProject } from '../../commands/doctor.js'
+import { getManagedHookEntries } from '../../defaults.js'
 import { initCursorProject, upgradeCursorProject } from '../../installer.js'
 import type { DoctorOptions, InitOptions, UpgradeOptions } from '../../types.js'
 import { cursorLayout } from '../layouts/cursor.js'

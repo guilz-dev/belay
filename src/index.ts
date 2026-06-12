@@ -2,6 +2,10 @@ export { claudeAdapter } from './adapters/claude/adapter.js'
 export { cursorAdapter } from './adapters/cursor/adapter.js'
 export { getAdapter, listAdapters } from './adapters/registry.js'
 export type { BelayAdapter } from './adapters/types.js'
+export { doctorProject, formatDoctorReport } from './commands/doctor.js'
+export { explainCommand, formatExplainReport } from './commands/explain.js'
+export { revokeApproval } from './commands/revoke.js'
+export { formatStatusReport, statusProject } from './commands/status.js'
 export {
   GATE_CONTRACT_VERSION,
   type GatedAction,
@@ -16,13 +20,9 @@ export {
   mergeConfig,
   migrateConfig,
 } from './core/index.js'
-export { doctorProject, formatDoctorReport } from './commands/doctor.js'
-export { explainCommand, formatExplainReport } from './commands/explain.js'
 export { initProject, upgradeProject } from './installer.js'
 export { resolveNodeBinary } from './node-resolution.js'
 export { applyConfigPreset, CONFIG_PRESETS, type ConfigPresetName } from './presets.js'
-export { revokeApproval } from './commands/revoke.js'
-export { formatStatusReport, statusProject } from './commands/status.js'
 export type {
   ApprovalRecord,
   ApprovalStateFile,

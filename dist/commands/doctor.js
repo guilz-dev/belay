@@ -7,9 +7,9 @@ import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredCon
 import { configuredControlPlaneDir, defaultControlPlaneDir } from '../core/config.js';
 import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js';
 import { verifyIntegrityManifest } from '../core/integrity.js';
-import { egressStatus } from '../services/egress-service.js';
 import { resolveNodeBinary } from '../node-resolution.js';
 import { loadOperationalInsights } from '../operational-insights.js';
+import { egressStatus } from '../services/egress-service.js';
 import { sandboxStatus } from '../services/sandbox-service.js';
 import { PACKAGE_VERSION } from '../version.js';
 async function readRuntimeVersion(corePath) {
