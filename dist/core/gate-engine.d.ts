@@ -15,6 +15,6 @@ export declare function normalizeGatedAction(params: {
     toolName?: string;
     agentAssessment?: GatedAction['agentAssessment'];
 }): GatedAction;
-export declare function classifyGatedAction(action: GatedAction, config: BelayConfigV3, extraOptions?: ClassifierOptions): ClassifyResult;
+export declare function classifyGatedAction(action: GatedAction, config: BelayConfigV3, extraOptions?: ClassifierOptions): Promise<ClassifyResult>;
 export declare function classifyGatedActionAsync(action: GatedAction, config: BelayConfigV3, extraOptions?: ClassifierOptions): Promise<ClassifyResult>;
 export declare function gateEnabledForAction(config: BelayConfigV3, action: GatedAction): boolean;

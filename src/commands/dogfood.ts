@@ -2,13 +2,13 @@ import path from 'node:path'
 
 import { configPathFor, loadConfigFile, writeConfigFile } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
-import { metricsProject } from './metrics.js'
 import {
   isDogfoodConfig,
   loadOperationalInsights,
   readOq3SpikeStatus,
 } from '../operational-insights.js'
 import type { DogfoodOptions, DogfoodResult } from '../types.js'
+import { metricsProject } from './metrics.js'
 
 export async function dogfoodProject(options: DogfoodOptions = {}): Promise<DogfoodResult> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())

@@ -15,7 +15,7 @@ import {
   layerProfileConfig,
 } from '../../conformance/layer-profiles.js'
 import type { BelayConfigV3 } from '../../core/config.js'
-import { writeEgressDaemonState } from '../../egress-service.js'
+import { writeEgressDaemonState } from '../../services/egress-service.js'
 
 async function withProfileRepo(
   profile: LayerProfileId,

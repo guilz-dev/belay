@@ -89,13 +89,16 @@ describe('recordApproval', () => {
       controlPlane: { ...DEFAULT_CONFIG_V3.controlPlane, configDir: controlPlaneDir },
     }
 
+    const approval = pending.approvals[0]
+    expect(approval).toBeDefined()
+
     const token = await issueApprovalToken(
       {
         approvalId: 'belay_oob',
         fingerprint: 'fp1',
         repoRoot,
-        issuedAt: pending.approvals[0]!.createdAt,
-        expiresAt: pending.approvals[0]!.expiresAt,
+        issuedAt: approval.createdAt,
+        expiresAt: approval.expiresAt,
       },
       controlPlaneDir,
     )
@@ -136,13 +139,16 @@ describe('recordApproval', () => {
       controlPlane: { ...DEFAULT_CONFIG_V3.controlPlane, configDir: controlPlaneDir },
     }
 
+    const approval = pending.approvals[0]
+    expect(approval).toBeDefined()
+
     const mismatched = await issueApprovalToken(
       {
         approvalId: 'belay_oob',
         fingerprint: 'other-fp',
         repoRoot,
-        issuedAt: pending.approvals[0]!.createdAt,
-        expiresAt: pending.approvals[0]!.expiresAt,
+        issuedAt: approval.createdAt,
+        expiresAt: approval.expiresAt,
       },
       controlPlaneDir,
     )

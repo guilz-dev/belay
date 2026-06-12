@@ -30,7 +30,7 @@ describe('corpus evaluation', () => {
 
   it('meets baseline accuracy on shell command corpus', async () => {
     const cases = await loadCorpusCases(corpusDir)
-    const metrics = evaluateCorpus(cases)
+    const metrics = await evaluateCorpus(cases)
     expect(metrics.accuracy).toBeGreaterThanOrEqual(0.9)
     expect(metrics.falsePositiveRate).toBeLessThanOrEqual(0.1)
   })

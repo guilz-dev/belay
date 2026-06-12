@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { mergeConfig } from '../core/config.js'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
+import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []

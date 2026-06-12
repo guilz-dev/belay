@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyShell } from '../core/classify-shell.js';
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js';
+import { classifyShellV2 } from '../core/v2/adapter.js';
 export function assessmentsDiverge(predicted, observed) {
     return (predicted.reversibility !== observed.reversibility ||
         predicted.external !== observed.external ||
@@ -13,7 +13,7 @@ export async function loadCorpusCases(corpusDir) {
     const raw = await readFile(path.join(corpusDir, 'shell-commands.json'), 'utf8');
     return JSON.parse(raw);
 }
-export function evaluateCorpus(cases, repoRoot = '/workspace/project') {
+export async function evaluateCorpus(cases, repoRoot = '/workspace/project') {
     const cwd = path.join(repoRoot, 'src');
     const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3);
     const mismatches = [];
@@ -23,7 +23,7 @@ export function evaluateCorpus(cases, repoRoot = '/workspace/project') {
         confusion[expected] = { allow: 0, allow_flagged: 0, deny_pending_approval: 0 };
     }
     for (const testCase of cases) {
-        const result = classifyShell(testCase.command, cwd, repoRoot, options);
+        const result = await classifyShellV2(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options);
         confusion[testCase.verdict][result.verdict] += 1;
         const verdictOk = result.verdict === testCase.verdict;
         const reasonOk = !testCase.reason || result.reason === testCase.reason;

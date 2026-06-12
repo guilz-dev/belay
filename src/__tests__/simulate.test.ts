@@ -3,9 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
-import { initProject } from '../installer.js'
 import { simulateProject } from '../commands/simulate.js'
+import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
 

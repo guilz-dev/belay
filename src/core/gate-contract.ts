@@ -33,6 +33,7 @@ export interface GateVerdict extends GatePermissionResponse {
   approvalId?: string
   wouldBlock: boolean
   mode: 'enforce' | 'audit'
+  v2?: ClassifyResult['v2']
 }
 
 export function isGatedAction(value: unknown): value is GatedAction {
@@ -72,6 +73,7 @@ export function classifyResultToGateVerdict(params: {
     approvalId,
     user_message,
     agent_message,
+    v2: result.v2,
   }
 }
 

@@ -12,6 +12,10 @@ export interface AuditMetricsReport {
     byReason: Record<string, number>;
     byKind: Record<string, number>;
     byVerdict: Record<string, number>;
+    byLocation: Record<string, number>;
+    byOpacity: Record<string, number>;
+    byEffect: Record<string, number>;
+    byConfidence: Record<string, number>;
     approvalRecordedCount: number;
     topWouldBlockSummaries: Array<{
         summary: string;

@@ -28,6 +28,10 @@ export interface AuditMetricsReport {
   byReason: Record<string, number>
   byKind: Record<string, number>
   byVerdict: Record<string, number>
+  byLocation: Record<string, number>
+  byOpacity: Record<string, number>
+  byEffect: Record<string, number>
+  byConfidence: Record<string, number>
   approvalRecordedCount: number
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
   approvalLatency: {
@@ -82,6 +86,10 @@ export function computeAuditMetrics(
   const auditRecords = records.map(toAuditRecord)
   const byReason: Record<string, number> = {}
   const byKind: Record<string, number> = {}
+  const byLocation: Record<string, number> = {}
+  const byOpacity: Record<string, number> = {}
+  const byEffect: Record<string, number> = {}
+  const byConfidence: Record<string, number> = {}
   const summaryCounts = new Map<string, { summary: string; reason: string; count: number }>()
   let gateEvents = 0
   let wouldBlockCount = 0
@@ -102,6 +110,18 @@ export function computeAuditMetrics(
     const kind = typeof record.kind === 'string' ? record.kind : 'unknown'
     increment(byReason, reason)
     increment(byKind, kind)
+    if (typeof record.location === 'string') {
+      increment(byLocation, record.location)
+    }
+    if (typeof record.opacity === 'string') {
+      increment(byOpacity, record.opacity)
+    }
+    if (typeof record.effect === 'string') {
+      increment(byEffect, record.effect)
+    }
+    if (typeof record.confidence === 'string') {
+      increment(byConfidence, record.confidence)
+    }
 
     if (inferWouldBlock(record)) {
       wouldBlockCount += 1
@@ -188,6 +208,10 @@ export function computeAuditMetrics(
     byReason,
     byKind,
     byVerdict,
+    byLocation,
+    byOpacity,
+    byEffect,
+    byConfidence,
     approvalRecordedCount,
     topWouldBlockSummaries,
     approvalLatency,

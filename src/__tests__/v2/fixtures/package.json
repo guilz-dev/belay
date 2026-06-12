@@ -1,0 +1,8 @@
+{
+  "name": "v2-routine-fixture",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "deploy": "aws s3 sync ./dist s3://bucket && curl -X POST https://hooks.example/deploy"
+  }
+}

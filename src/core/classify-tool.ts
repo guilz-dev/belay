@@ -1,10 +1,11 @@
 import path from 'node:path'
-import { classifyShell } from './classify-shell.js'
+import type { BelayConfigV3 } from './config.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
 import { pathWithinRoot, relativeWithinRepo } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
+import { classifyShellV2 } from './v2/adapter.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
 
@@ -38,12 +39,13 @@ function extractShellCommand(payload: Record<string, unknown>): string | null {
   return null
 }
 
-export function classifyToolUse(
+export async function classifyToolUse(
   payload: Record<string, unknown>,
   repoRoot: string,
   cwd: string,
+  config: BelayConfigV3,
   options: ClassifierOptions = {},
-): ClassifyResult {
+): Promise<ClassifyResult> {
   const toolName = String(payload.tool_name ?? '')
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...(options.sensitivePaths ?? [])]
 
@@ -92,7 +94,7 @@ export function classifyToolUse(
         },
       }
     }
-    const shellResult = classifyShell(command, cwd, repoRoot, options)
+    const shellResult = await classifyShellV2(command, cwd, repoRoot, config, options)
     return {
       ...shellResult,
       summary: command,

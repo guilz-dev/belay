@@ -5,7 +5,7 @@ function shellCommandFromSummary(summary) {
     const trimmed = summary.trim();
     return trimmed || null;
 }
-export function reclassifyAuditRecord(record, config, repoRoot) {
+export async function reclassifyAuditRecord(record, config, repoRoot) {
     if (!record.event || !GATE_EVENTS.has(record.event)) {
         return null;
     }
@@ -23,7 +23,7 @@ export function reclassifyAuditRecord(record, config, repoRoot) {
                 cwd: repoRoot,
                 command,
             });
-            return classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+            return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
         }
         if (kind === 'subagent') {
             const action = normalizeGatedAction({
@@ -35,7 +35,7 @@ export function reclassifyAuditRecord(record, config, repoRoot) {
                     tool_input: { description: summary },
                 },
             });
-            return classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+            return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
         }
         const action = normalizeGatedAction({
             kind: 'tool',
@@ -47,14 +47,14 @@ export function reclassifyAuditRecord(record, config, repoRoot) {
                 tool_input: { command: summary },
             },
         });
-        return classifyGatedAction(action, config, classifierOptionsFromConfig(config));
+        return await classifyGatedAction(action, config, classifierOptionsFromConfig(config));
     }
     catch {
         return null;
     }
 }
-export function diffReclassification(record, config, repoRoot) {
-    const next = reclassifyAuditRecord(record, config, repoRoot);
+export async function diffReclassification(record, config, repoRoot) {
+    const next = await reclassifyAuditRecord(record, config, repoRoot);
     if (!next) {
         return null;
     }

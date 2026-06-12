@@ -36,6 +36,10 @@ export interface AuditFilter {
   fingerprint?: string
   event?: string
   limit?: number
+  location?: string
+  opacity?: string
+  effect?: string
+  confidence?: string
 }
 
 export interface ApprovalRoundTrip {

@@ -849,9 +849,9 @@ import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path13 from "node:path";
+import path17 from "node:path";
 
 // src/core/approval-service.ts
 init_approval();
@@ -1012,13 +1012,6 @@ function relativeWithinRepo(repoRoot, targetPath) {
   }
   return relativePath;
 }
-function normalizeToken(token, repoRoot) {
-  if (!path4.isAbsolute(token)) {
-    return token;
-  }
-  const relativePath = relativeWithinRepo(repoRoot, token);
-  return relativePath ?? token;
-}
 function resolveMutationTarget(token, cwd) {
   if (!token || token === "--" || token.startsWith("-")) {
     return null;
@@ -1036,30 +1029,6 @@ function resolveMutationTarget(token, cwd) {
     return canonicalPath(path4.resolve(cwd, token));
   }
   return canonicalPath(path4.resolve(cwd, token));
-}
-function looksLikePathToken(token) {
-  if (!token || token === "--" || token.startsWith("-")) {
-    return false;
-  }
-  if (path4.isAbsolute(token)) {
-    return true;
-  }
-  if (token.startsWith("./") || token.startsWith("../")) {
-    return true;
-  }
-  return token.includes("/") || token.includes("\\");
-}
-function hasOutsideRepoPath(tokens, cwd, repoRoot) {
-  return tokens.some((token) => {
-    if (!looksLikePathToken(token)) {
-      return false;
-    }
-    const resolved = resolveMutationTarget(token, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return relativeWithinRepo(repoRoot, resolved) === null;
-  });
 }
 
 // src/core/capability/allowlist.ts
@@ -1099,7 +1068,6 @@ function isCapabilityBrokerDemotionActive(config) {
 }
 
 // src/core/shell-tokenizer.ts
-var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
 function tokenizeShell(input) {
   const tokens = [];
   let buffer = "";
@@ -1172,14 +1140,6 @@ function tokenizeShell(input) {
   flush();
   return tokens;
 }
-function normalizeShellCommand(command, repoRoot, normalizeToken2) {
-  const tokens = tokenizeShell(command);
-  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
-    tokens.shift();
-  }
-  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
-  return normalized.join(" ").trim();
-}
 function commandKey(tokens) {
   const filtered = tokens.filter((token) => token !== "sudo");
   const first = filtered[0] ?? "";
@@ -1249,7 +1209,8 @@ function classifyResultToGateVerdict(params) {
     mode,
     approvalId,
     user_message,
-    agent_message
+    agent_message,
+    v2: result.v2
   };
 }
 function unnormalizedGateVerdict(params) {
@@ -1273,9 +1234,6 @@ function unnormalizedGateVerdict(params) {
   };
 }
 
-// src/core/classify-shell.ts
-init_config();
-
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
 function canonicalStringify(value) {
@@ -1293,1113 +1251,11 @@ function canonicalStringify(value) {
 function hashValue(value) {
   return createHash("sha256").update(value).digest("hex");
 }
-function shellFingerprint(cwdRelative, normalizedCommand) {
-  return hashValue(`shell:${cwdRelative}:${normalizedCommand}`);
-}
 function subagentFingerprint(kind, scrubbed, repoRoot) {
   return hashValue(`subagent:${kind}:${canonicalStringify(scrubbed)}:${repoRoot}`);
 }
 function toolFingerprint(toolName, scrubbed, repoRoot) {
   return hashValue(`tool:${toolName}:${canonicalStringify(scrubbed)}:${repoRoot}`);
-}
-
-// src/core/judgment.ts
-var SCOPE_BLAST_RADIUS = {
-  none: "none",
-  file: "single file",
-  dir: "directory tree",
-  repo: "this repository",
-  outside: "outside the repository",
-  external: "external system"
-};
-function blastRadiusLabel(scope) {
-  return SCOPE_BLAST_RADIUS[scope];
-}
-function computeAssessmentFromAttributes(attributes) {
-  const signals = [...attributes.signals];
-  if (attributes.isExternalKey || attributes.targetScope === "external") {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: blastRadiusLabel(attributes.targetScope),
-      confidence: calibrateConfidence(attributes, 0.92),
-      signals: [...signals, "external_command", attributes.commandKey]
-    };
-  }
-  if (attributes.hitsProtectedArtifact) {
-    return {
-      reversibility: "irreversible",
-      external: false,
-      blastRadius: "agent-belay control plane",
-      confidence: calibrateConfidence(attributes, 0.97),
-      signals
-    };
-  }
-  if (attributes.hitsOutsideRepo || attributes.redirectKind === "outside") {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "outside the repository",
-      confidence: calibrateConfidence(attributes, 0.9),
-      signals
-    };
-  }
-  if (attributes.isDynamicEval || attributes.hasPipeToShell) {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "dynamic shell evaluation",
-      confidence: calibrateConfidence(attributes, 0.93),
-      signals
-    };
-  }
-  if (attributes.isReadOnlyKey && attributes.redirectKind === "none") {
-    return {
-      reversibility: "reversible",
-      external: false,
-      blastRadius: blastRadiusLabel("repo"),
-      confidence: calibrateConfidence(attributes, 0.95),
-      signals: [...signals, "read_only_command"]
-    };
-  }
-  if (attributes.isFlaggedKey || attributes.redirectKind === "truncate" || attributes.redirectKind === "append") {
-    const reversibility = attributes.flags.includes("-rf") || attributes.flags.includes("-fr") ? "irreversible" : attributes.redirectKind === "append" ? "recoverable_with_cost" : "recoverable_with_cost";
-    return {
-      reversibility,
-      external: false,
-      blastRadius: blastRadiusLabel(attributes.targetScope),
-      confidence: calibrateConfidence(attributes, 0.72),
-      signals: [...signals, "local_mutation"]
-    };
-  }
-  return {
-    reversibility: "recoverable_with_cost",
-    external: false,
-    blastRadius: blastRadiusLabel(attributes.targetScope),
-    confidence: calibrateConfidence(attributes, 0.61),
-    signals: [...signals, "unknown_local_effect"]
-  };
-}
-function calibrateConfidence(attributes, base) {
-  let confidence = base;
-  if (attributes.signals.length >= 2) {
-    confidence = Math.min(0.99, confidence + 0.02);
-  }
-  if (attributes.isCustomAllow && !attributes.isCustomExternal) {
-    confidence = Math.max(confidence, 0.99);
-  }
-  if (attributes.isUnparseable) {
-    confidence = Math.max(confidence, 0.9);
-  }
-  if (attributes.commandKey === "node" || attributes.commandKey === "sed") {
-    confidence = Math.min(confidence, 0.64);
-  }
-  return Math.round(confidence * 1e3) / 1e3;
-}
-function verdictFromConfidence(assessment, thresholds, unknownLocalEffect) {
-  if (assessment.external || assessment.reversibility === "irreversible") {
-    if (assessment.confidence >= thresholds.allow && !assessment.external) {
-      return "allow_flagged";
-    }
-    return "deny_pending_approval";
-  }
-  if (assessment.confidence >= thresholds.allow) {
-    return "allow";
-  }
-  if (assessment.confidence >= thresholds.flag) {
-    return "allow_flagged";
-  }
-  if (unknownLocalEffect === "deny") {
-    return "deny_pending_approval";
-  }
-  return "allow_flagged";
-}
-function mergeAgentAssessment(independent, agent) {
-  if (!agent) {
-    return { assessment: independent, mismatch: false };
-  }
-  const mismatch = agent.external === false && independent.external === true || agent.reversibility === "reversible" && independent.reversibility === "irreversible";
-  const confidence = mismatch ? Math.min(independent.confidence, 0.55) : Math.min(0.99, independent.confidence + 0.05);
-  return {
-    assessment: {
-      ...independent,
-      confidence,
-      signals: mismatch ? [...independent.signals, "agent_assessment_mismatch"] : [...independent.signals, "agent_assessment_agreement"]
-    },
-    mismatch
-  };
-}
-
-// src/core/custom-command-match.ts
-function matchesCustomCommand(normalizedCommand, key, pattern) {
-  const trimmed = pattern.trim();
-  if (!trimmed) {
-    return false;
-  }
-  return normalizedCommand === trimmed || key === trimmed;
-}
-
-// src/core/policy/command-keys.ts
-var READ_ONLY_COMMAND_KEYS = [
-  "cat",
-  "cd",
-  "echo",
-  "git diff",
-  "git log",
-  "git rev-parse",
-  "git show",
-  "git status",
-  "head",
-  "ls",
-  "pwd",
-  "rg",
-  "sort",
-  "tail",
-  "wc",
-  "which",
-  "find"
-];
-var FLAGGED_COMMAND_KEYS = [
-  "chmod",
-  "cp",
-  "git add",
-  "git clean",
-  "git commit",
-  "git mv",
-  "git reset",
-  "mkdir",
-  "mv",
-  "rm",
-  "sed",
-  "tee",
-  "touch",
-  "truncate"
-];
-var EXTERNAL_COMMAND_KEYS = [
-  "aws",
-  "curl",
-  "docker push",
-  "docker run",
-  "firebase deploy",
-  "fly deploy",
-  "gh",
-  "git push",
-  "gcloud",
-  "heroku",
-  "kubectl",
-  "netlify",
-  "npm publish",
-  "pnpm publish",
-  "rsync",
-  "scp",
-  "ssh",
-  "supabase",
-  "terraform apply",
-  "vercel",
-  "wget"
-];
-var READ_ONLY_KEYS = new Set(READ_ONLY_COMMAND_KEYS);
-var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
-var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
-
-// src/core/shell-unparseable.ts
-function detectUnparseableShell(command) {
-  if (hasProcessSubstitution(command)) {
-    return true;
-  }
-  if (hasSubshell(command)) {
-    return true;
-  }
-  if (hasBraceGroup(command)) {
-    return true;
-  }
-  if (hasUnclosedQuote(command)) {
-    return true;
-  }
-  if (hasUnbalancedDollarParen(command)) {
-    return true;
-  }
-  return false;
-}
-function hasProcessSubstitution(command) {
-  return /<\s*\(/.test(command);
-}
-function hasSubshell(command) {
-  const trimmed = command.trim();
-  if (trimmed.startsWith("(")) {
-    return true;
-  }
-  return /(?:^|[;&|]\s*)\(/.test(trimmed);
-}
-function hasBraceGroup(command) {
-  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
-  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
-}
-function hasUnclosedQuote(command) {
-  let quote = null;
-  let escaping = false;
-  for (const char of command) {
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-    }
-  }
-  return quote !== null;
-}
-function hasUnbalancedDollarParen(command) {
-  let depth = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (inSingle || inDouble) {
-      continue;
-    }
-    if (char === "$" && command[index + 1] === "(") {
-      depth += 1;
-      index += 1;
-      continue;
-    }
-    if (char === ")" && depth > 0) {
-      depth -= 1;
-    }
-  }
-  return depth > 0;
-}
-
-// src/core/shell-analysis.ts
-var DYNAMIC_KEYS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
-var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
-var FIND_DANGEROUS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
-var FORCE_FLAGS = /* @__PURE__ */ new Set(["--force", "-f"]);
-var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
-function protectedRoots(options) {
-  return [
-    ...options.protectedArtifactRoots ?? [],
-    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
-  ];
-}
-function hitsProtected(paths, cwd, roots) {
-  if (roots.length === 0) {
-    return false;
-  }
-  return paths.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return roots.some((root) => pathWithinRoot(root, resolved));
-  });
-}
-function redirectKind(redirects, cwd, repoRoot, roots) {
-  if (redirects.length === 0) {
-    return "none";
-  }
-  if (hitsProtected(redirects, cwd, roots)) {
-    return "protected";
-  }
-  const hasOutside = redirects.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    return resolved !== null && relativeWithinRepo(repoRoot, resolved) === null;
-  });
-  if (hasOutside) {
-    return "outside";
-  }
-  const tokens = redirects.join(" ");
-  if (tokens.includes(">>")) {
-    return "append";
-  }
-  if (redirects.length > 0) {
-    return "truncate";
-  }
-  return "none";
-}
-function inferTargetScope(segmentTokens, cwd, repoRoot, key) {
-  if (EXTERNAL_KEYS.has(key) || key === "curl" || key === "wget") {
-    return "external";
-  }
-  const paths = segmentTokens.slice(1);
-  if (hasOutsideRepoPath(paths, cwd, repoRoot)) {
-    return "outside";
-  }
-  if (key === "find" || key === "chmod" || key === "rm") {
-    const hasRecursive = segmentTokens.some((token) => token === "-R" || token === "-r");
-    if (hasRecursive) {
-      return "dir";
-    }
-  }
-  if (FLAGGED_KEYS.has(key)) {
-    return "file";
-  }
-  if (READ_ONLY_KEYS.has(key)) {
-    return "repo";
-  }
-  return "repo";
-}
-function findDangerousFlags(tokens) {
-  return tokens.some(
-    (token) => FIND_DANGEROUS.has(token) || token.startsWith("-exec") || token.startsWith("-ok")
-  );
-}
-function isExternalKey(key, normalizedCommand, options) {
-  if (EXTERNAL_KEYS.has(key)) {
-    return true;
-  }
-  if (key === "git push" && segmentHasForce(normalizedCommand)) {
-    return true;
-  }
-  return (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-}
-function segmentHasForce(command) {
-  const tokens = tokenizeShell(command);
-  return tokens.some((token) => FORCE_FLAGS.has(token));
-}
-function analyzeShellSegment(params) {
-  const { segmentTokens, cwd, repoRoot, normalizedCommand, cwdRelative, options, separator } = params;
-  const key = commandKey(segmentTokens);
-  const flags = segmentTokens.filter((token) => token.startsWith("-"));
-  const redirects = extractRedirectTargets(segmentTokens);
-  const roots = protectedRoots(options);
-  const redirect = redirectKind(redirects, cwd, repoRoot, roots);
-  const signals = [];
-  const isUnparseable = detectUnparseableShell(normalizedCommand);
-  const isDynamicEval = DYNAMIC_KEYS.has(key) || key === "." && segmentTokens.length > 1;
-  let hasPipeToShell = segmentTokens.includes("|") && segmentTokens.some((token) => SHELL_INTERPRETERS.has(token));
-  if (separator === "|" && SHELL_INTERPRETERS.has(key)) {
-    hasPipeToShell = true;
-  }
-  const hitsProtectedArtifact = hitsProtected(redirects, cwd, roots) || hitsProtected(segmentTokens.slice(1), cwd, roots);
-  const hitsOutsideRepo = hasOutsideRepoPath(segmentTokens.slice(1), cwd, repoRoot) || redirect === "outside";
-  const hasCredentialHeader = segmentTokens.some(
-    (token) => token === "-H" || token === "--header" || /authorization/i.test(token)
-  );
-  const findDangerous = key === "find" && findDangerousFlags(segmentTokens);
-  const isCustomAllow = (options.customAllowCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-  const isCustomExternal = (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-  if (isUnparseable) {
-    signals.push("unparseable_shell");
-  }
-  if (isDynamicEval) {
-    signals.push("dynamic_shell_evaluation");
-  }
-  if (hasPipeToShell) {
-    signals.push("pipe_to_shell");
-  }
-  if (hitsProtectedArtifact) {
-    signals.push("control_plane_path");
-  }
-  if (hitsOutsideRepo) {
-    signals.push("outside_repo_mutation");
-  }
-  if (hasCredentialHeader) {
-    signals.push("credential_header");
-  }
-  if (findDangerous) {
-    signals.push("find_dangerous_action");
-  }
-  if (key === "rm" && flags.some((flag) => flag === "-rf" || flag === "-fr")) {
-    signals.push("rm_recursive_force");
-  }
-  if (key === "git push" && segmentHasForce(normalizedCommand)) {
-    signals.push("git_push_force");
-  }
-  if (key === "docker run" && flags.includes("--privileged")) {
-    signals.push("docker_privileged");
-  }
-  if (key === "sed" && flags.some((flag) => flag === "-i" || flag === "--in-place")) {
-    signals.push("sed_in_place");
-  }
-  if ((key === "npm run" || key === "pnpm run") && segmentTokens[2]) {
-    const scriptName = segmentTokens[2].toLowerCase();
-    if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
-      signals.push("external_script_name", scriptName);
-    }
-  }
-  return {
-    commandKey: key,
-    normalizedCommand,
-    cwdRelative,
-    flags,
-    targetScope: inferTargetScope(segmentTokens, cwd, repoRoot, key),
-    redirectKind: redirect,
-    signals,
-    isUnparseable,
-    isDynamicEval,
-    hasPipeToShell,
-    hitsProtectedArtifact,
-    hitsOutsideRepo,
-    isCustomAllow,
-    isCustomExternal,
-    isReadOnlyKey: READ_ONLY_KEYS.has(key) && redirect === "none",
-    isFlaggedKey: FLAGGED_KEYS.has(key),
-    isExternalKey: isExternalKey(key, normalizedCommand, options),
-    hasCredentialHeader,
-    findDangerous
-  };
-}
-function matchesPolicyRule(match, attributes) {
-  if (match.signal && !attributes.signals.includes(match.signal)) {
-    return false;
-  }
-  if (match.commandKey) {
-    const keys = Array.isArray(match.commandKey) ? match.commandKey : [match.commandKey];
-    if (!keys.includes(attributes.commandKey)) {
-      return false;
-    }
-  }
-  if (match.targetScope) {
-    const scopes = Array.isArray(match.targetScope) ? match.targetScope : [match.targetScope];
-    if (!scopes.includes(attributes.targetScope)) {
-      return false;
-    }
-  }
-  if (match.redirectKind) {
-    const kinds = Array.isArray(match.redirectKind) ? match.redirectKind : [match.redirectKind];
-    if (!kinds.includes(attributes.redirectKind)) {
-      return false;
-    }
-  }
-  if (match.flag) {
-    const flags = Array.isArray(match.flag) ? match.flag : [match.flag];
-    if (!flags.some((flag) => attributes.flags.includes(flag))) {
-      return false;
-    }
-  }
-  if (match.customAllow === true && !attributes.isCustomAllow) {
-    return false;
-  }
-  if (match.customExternal === true && !attributes.isCustomExternal) {
-    return false;
-  }
-  if (match.unparseable === true && !attributes.isUnparseable) {
-    return false;
-  }
-  if (match.protectedArtifact === true && !attributes.hitsProtectedArtifact) {
-    return false;
-  }
-  if (match.outsideRepo === true && !attributes.hitsOutsideRepo) {
-    return false;
-  }
-  return true;
-}
-
-// src/core/policy/default-rules.ts
-var DEFAULT_POLICY_RULES = [
-  {
-    id: "unparseable_shell",
-    priority: 1e3,
-    nonOverridable: true,
-    match: { unparseable: true },
-    action: "threshold",
-    reason: "unparseable_shell"
-  },
-  {
-    id: "protected_artifact",
-    priority: 950,
-    nonOverridable: true,
-    match: { protectedArtifact: true },
-    action: "escalate",
-    reason: "control_plane_mutation"
-  },
-  {
-    id: "outside_repo_redirect",
-    priority: 940,
-    nonOverridable: true,
-    match: { redirectKind: "outside" },
-    action: "escalate",
-    reason: "outside_repo_redirect"
-  },
-  {
-    id: "outside_repo_mutation",
-    priority: 938,
-    nonOverridable: true,
-    match: { outsideRepo: true },
-    action: "escalate",
-    reason: "outside_repo_mutation"
-  },
-  {
-    id: "dynamic_shell",
-    priority: 930,
-    nonOverridable: true,
-    match: { signal: "dynamic_shell_evaluation" },
-    action: "escalate",
-    reason: "dynamic_shell_evaluation"
-  },
-  {
-    id: "pipe_to_shell",
-    priority: 920,
-    nonOverridable: true,
-    match: { signal: "pipe_to_shell" },
-    action: "escalate",
-    reason: "pipe_to_shell"
-  },
-  {
-    id: "find_dangerous",
-    priority: 900,
-    nonOverridable: true,
-    match: { signal: "find_dangerous_action" },
-    action: "escalate",
-    reason: "find_dangerous_action"
-  },
-  {
-    id: "custom_external",
-    priority: 850,
-    match: { customExternal: true },
-    action: "escalate",
-    reason: "custom_external"
-  },
-  {
-    id: "external_effect",
-    priority: 800,
-    nonOverridable: true,
-    match: { targetScope: "external" },
-    action: "escalate",
-    reason: "external_effect"
-  },
-  {
-    id: "external_script",
-    priority: 790,
-    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
-    action: "escalate",
-    reason: "external_script"
-  },
-  {
-    id: "custom_allow",
-    priority: 600,
-    match: { customAllow: true },
-    action: "allow",
-    reason: "custom_allow"
-  },
-  {
-    id: "read_only",
-    priority: 500,
-    match: {
-      commandKey: [...READ_ONLY_COMMAND_KEYS],
-      redirectKind: "none"
-    },
-    action: "allow",
-    reason: "read_only"
-  },
-  {
-    id: "local_mutation",
-    priority: 400,
-    match: {
-      commandKey: [...FLAGGED_COMMAND_KEYS]
-    },
-    action: "flag",
-    reason: "local_mutation"
-  },
-  {
-    id: "unknown_local",
-    priority: 100,
-    match: {},
-    action: "threshold",
-    reason: "unknown_local_effect"
-  }
-];
-
-// src/core/policy/evaluator.ts
-function actionToVerdict(action, ctx) {
-  if (action === "allow") {
-    return "allow";
-  }
-  if (action === "flag") {
-    return "allow_flagged";
-  }
-  if (action === "deny" || action === "escalate") {
-    return "deny_pending_approval";
-  }
-  if (action === "threshold") {
-    if (ctx.attributes.isUnparseable) {
-      return ctx.unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged";
-    }
-    return verdictFromConfidence(ctx.assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect);
-  }
-  return "allow_flagged";
-}
-function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
-  const assessment = computeAssessmentFromAttributes(attributes);
-  const fullCtx = { ...ctx, attributes, assessment };
-  const sorted = [...rules].sort((left, right) => right.priority - left.priority);
-  if (attributes.isCustomAllow && attributes.isCustomExternal) {
-    return {
-      verdict: "allow",
-      reason: "custom_allow",
-      assessment: {
-        ...assessment,
-        confidence: 0.99,
-        signals: [...assessment.signals, "custom_allow_command"]
-      },
-      matchedRuleId: "custom_allow_over_external"
-    };
-  }
-  for (const rule of sorted) {
-    if (!matchesPolicyRule(rule.match, attributes)) {
-      continue;
-    }
-    if (rule.id === "custom_allow" && attributes.isCustomExternal && !rule.nonOverridable) {
-      continue;
-    }
-    if (rule.id === "custom_external" && attributes.isCustomAllow && attributes.isCustomExternal) {
-      continue;
-    }
-    let verdict = actionToVerdict(rule.action, fullCtx);
-    let reason = rule.reason;
-    let resultAssessment = rule.assessment ? { ...assessment, ...rule.assessment } : assessment;
-    if (ctx.demoteL3External && verdict === "deny_pending_approval" && (rule.id === "external_effect" || rule.id === "custom_external" || rule.id === "external_script")) {
-      verdict = "allow_flagged";
-      reason = "l3_external_hint";
-      resultAssessment = {
-        ...resultAssessment,
-        signals: [...resultAssessment.signals, "l3_external_hint", "egress_boundary_expected"]
-      };
-    }
-    if (ctx.brokerFsScope && verdict === "deny_pending_approval" && (rule.id === "outside_repo_mutation" || rule.id === "outside_repo_redirect") && ctx.outsideRepoPaths && ctx.fsScopeAllowlist && allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)) {
-      verdict = "allow_flagged";
-      reason = "capability_fs_hint";
-      resultAssessment = {
-        ...resultAssessment,
-        signals: [...resultAssessment.signals, "capability_fs_hint", "sandbox_boundary_expected"]
-      };
-    }
-    return {
-      verdict,
-      reason,
-      assessment: resultAssessment,
-      matchedRuleId: rule.id
-    };
-  }
-  return {
-    verdict: verdictFromConfidence(assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect),
-    reason: "unknown_local_effect",
-    assessment,
-    matchedRuleId: "fallback"
-  };
-}
-function policyResultToClassifyResult(attributes, result) {
-  return {
-    verdict: result.verdict,
-    reason: result.reason,
-    normalizedCommand: attributes.normalizedCommand,
-    fingerprint: shellFingerprint(attributes.cwdRelative, attributes.normalizedCommand),
-    assessment: result.assessment
-  };
-}
-
-// src/core/shell-substitution.ts
-var MAX_SUBSTITUTION_DEPTH = 8;
-function findCommandSubstitutions(command) {
-  const results = [];
-  let index = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (inSingle || inDouble) {
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (char === "`") {
-      const end = findClosingBacktick(command, index + 1);
-      if (end === -1) {
-        break;
-      }
-      const inner = command.slice(index + 1, end).trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = end + 1;
-      continue;
-    }
-    if (char === "$" && command[index + 1] === "(") {
-      const closed = extractBalancedParenContent(command, index + 2);
-      if (!closed) {
-        index += 1;
-        continue;
-      }
-      const inner = closed.content.trim();
-      if (inner) {
-        results.push(inner);
-      }
-      index = closed.endIndex;
-      continue;
-    }
-    index += 1;
-  }
-  return results;
-}
-function findClosingBacktick(command, start) {
-  let index = start;
-  while (index < command.length) {
-    if (command[index] === "\\" && index + 1 < command.length) {
-      index += 2;
-      continue;
-    }
-    if (command[index] === "`") {
-      return index;
-    }
-    index += 1;
-  }
-  return -1;
-}
-function extractBalancedParenContent(command, start) {
-  let depth = 1;
-  let index = start;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  while (index < command.length && depth > 0) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      index += 1;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      index += 1;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      index += 1;
-      continue;
-    }
-    if (!inSingle && !inDouble) {
-      if (char === "(") {
-        depth += 1;
-      } else if (char === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          return {
-            content: command.slice(start, index),
-            endIndex: index + 1
-          };
-        }
-      }
-    }
-    index += 1;
-  }
-  return null;
-}
-
-// src/core/classify-shell.ts
-var SHELL_INTERPRETERS2 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
-var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
-var VERDICT_RANK = {
-  allow: 0,
-  allow_flagged: 1,
-  deny_pending_approval: 2
-};
-function worseVerdict(left, right) {
-  const leftRank = VERDICT_RANK[left.verdict] ?? 0;
-  const rightRank = VERDICT_RANK[right.verdict] ?? 0;
-  if (rightRank > leftRank) {
-    return right;
-  }
-  if (rightRank < leftRank) {
-    return left;
-  }
-  return right;
-}
-function denyResult(params) {
-  return {
-    verdict: "deny_pending_approval",
-    reason: params.reason,
-    normalizedCommand: params.normalizedCommand,
-    fingerprint: shellFingerprint(params.cwdRelative, params.normalizedCommand),
-    assessment: params.assessment
-  };
-}
-function splitSegmentsWithSeparators(tokens) {
-  const segments = [];
-  let current = [];
-  let separator = "start";
-  const flush = () => {
-    if (current.length > 0) {
-      segments.push({ tokens: current, separator });
-      current = [];
-    }
-  };
-  for (const token of tokens) {
-    if (token === "&&" || token === "||" || token === ";" || token === "|") {
-      flush();
-      separator = token;
-      continue;
-    }
-    current.push(token);
-  }
-  flush();
-  return segments;
-}
-function unparseableShellResult(normalizedCommand, cwdRelative, options) {
-  const assessment = {
-    reversibility: "irreversible",
-    external: false,
-    blastRadius: "unparseable shell construct",
-    confidence: 0.9,
-    signals: ["unparseable_shell"]
-  };
-  if (options.unparseableShell === "deny") {
-    return denyResult({
-      reason: "unparseable_shell",
-      normalizedCommand,
-      cwdRelative,
-      assessment
-    });
-  }
-  return {
-    verdict: "allow_flagged",
-    reason: "unparseable_shell",
-    normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-    assessment
-  };
-}
-function classifySubstitutionInners(params) {
-  const { command, cwd, repoRoot, options, depth } = params;
-  if (depth >= MAX_SUBSTITUTION_DEPTH) {
-    return null;
-  }
-  const substitutions = findCommandSubstitutions(command);
-  if (substitutions.length === 0) {
-    return null;
-  }
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-  let worst = null;
-  for (const substitution of substitutions) {
-    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
-    if (options.unknownLocalEffect === "deny") {
-      return denyResult({
-        reason: "command_substitution",
-        normalizedCommand,
-        cwdRelative,
-        assessment: {
-          reversibility: "irreversible",
-          external: inner.assessment.external,
-          blastRadius: "command substitution",
-          confidence: 0.9,
-          signals: ["command_substitution", ...inner.assessment.signals]
-        }
-      });
-    }
-    const wrapped = wrapInnerVerdict({
-      inner,
-      normalizedCommand,
-      cwdRelative,
-      wrapReason: "command_substitution",
-      wrapSignal: "command_substitution"
-    });
-    worst = worst ? worseVerdict(worst, wrapped) : wrapped;
-  }
-  return worst;
-}
-function extractInterpreterScript(tokens) {
-  for (let index = 1; index < tokens.length; index += 1) {
-    const flag = tokens[index];
-    if (INTERPRETER_SCRIPT_FLAGS.has(flag)) {
-      return tokens[index + 1] ?? null;
-    }
-  }
-  return null;
-}
-function wrapInnerVerdict(params) {
-  const { inner, normalizedCommand, cwdRelative, wrapReason, wrapSignal } = params;
-  const signals = [wrapSignal, ...inner.assessment.signals];
-  if (inner.verdict === "deny_pending_approval") {
-    return {
-      ...inner,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      reason: wrapReason,
-      assessment: {
-        ...inner.assessment,
-        signals
-      }
-    };
-  }
-  if (inner.verdict === "allow_flagged") {
-    return {
-      ...inner,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      reason: wrapReason,
-      assessment: {
-        ...inner.assessment,
-        signals
-      }
-    };
-  }
-  if (inner.verdict === "allow") {
-    return {
-      verdict: "allow_flagged",
-      reason: wrapReason,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: inner.assessment.external,
-        blastRadius: inner.assessment.blastRadius,
-        confidence: Math.min(inner.assessment.confidence, 0.7),
-        signals
-      }
-    };
-  }
-  return inner;
-}
-function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative, options, depth) {
-  const segmentTokens = segment.tokens;
-  const key = commandKey(segmentTokens);
-  if (depth < 2) {
-    const innerScript = extractInterpreterScript(segmentTokens);
-    if (innerScript && (SHELL_INTERPRETERS2.has(key) || key === "node")) {
-      const inner = classifyShell(innerScript, cwd, repoRoot, options, depth + 1);
-      const wrapReason = key === "node" ? "node_eval" : "shell_interpreter_script";
-      const wrapSignal = key === "node" ? "node_eval" : "shell_interpreter_script";
-      return wrapInnerVerdict({
-        inner,
-        normalizedCommand,
-        cwdRelative,
-        wrapReason,
-        wrapSignal
-      });
-    }
-  }
-  const attributes = analyzeShellSegment({
-    segmentTokens,
-    cwd,
-    repoRoot,
-    normalizedCommand,
-    cwdRelative,
-    options,
-    separator: segment.separator
-  });
-  const outsideRepoPaths = attributes.hitsOutsideRepo ? collectOutsideRepoPaths(normalizedCommand, cwd, repoRoot) : [];
-  const policyResult = evaluatePolicyRules(attributes, {
-    unknownLocalEffect: options.unknownLocalEffect ?? "allow_flagged",
-    unparseableShell: options.unparseableShell ?? "allow_flagged",
-    confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
-    demoteL3External: options.demoteL3External === true,
-    brokerFsScope: options.brokerFsScope === true,
-    fsScopeAllowlist: options.fsScopeAllowlist,
-    outsideRepoPaths
-  });
-  return policyResultToClassifyResult(attributes, policyResult);
-}
-function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-  if (depth === 0 && detectUnparseableShell(command)) {
-    return unparseableShellResult(normalizedCommand, cwdRelative, options);
-  }
-  const substitutionResult = classifySubstitutionInners({
-    command,
-    cwd,
-    repoRoot,
-    options,
-    depth
-  });
-  const tokens = tokenizeShell(command);
-  const segments = splitSegmentsWithSeparators(tokens);
-  let effective = {
-    verdict: "allow",
-    reason: "read_only",
-    normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
-    assessment: {
-      reversibility: "reversible",
-      external: false,
-      blastRadius: "this repository",
-      confidence: 0.95,
-      signals: ["read_only"]
-    }
-  };
-  for (let index = 0; index < segments.length; index += 1) {
-    const result = classifySegment(
-      segments[index],
-      cwd,
-      repoRoot,
-      normalizedCommand,
-      cwdRelative,
-      options,
-      depth
-    );
-    effective = worseVerdict(effective, result);
-    if (result.verdict === "deny_pending_approval" && options.strictChains !== true) {
-      break;
-    }
-  }
-  if (substitutionResult) {
-    effective = worseVerdict(effective, substitutionResult);
-  }
-  return effective;
 }
 
 // src/core/scrub.ts
@@ -2632,7 +1488,7 @@ function classifySubagent(payload, repoRoot, options = {}) {
 }
 
 // src/core/classify-tool.ts
-import path7 from "node:path";
+import path11 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -2677,6 +1533,1456 @@ function matchesSensitivePath(filePath, patterns) {
   return false;
 }
 
+// src/core/v2/judge.ts
+var SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i];
+var DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i;
+var GIT_PATTERNS = /\.git\b/i;
+function prescanInterpreterCode(code) {
+  const normalized = code.replaceAll("\\", "/");
+  const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized));
+  const hitsGit = GIT_PATTERNS.test(normalized);
+  const hitsDestructive = DESTRUCTIVE_VERBS.test(normalized);
+  if ((hitsSecret || hitsGit) && hitsDestructive) {
+    return {
+      external_change: false,
+      destroys_outside_repo: false,
+      destroys_history_or_secrets: true
+    };
+  }
+  return null;
+}
+function createDeterministicJudgeStub() {
+  return {
+    evaluate() {
+      return Promise.resolve({
+        external_change: false,
+        destroys_outside_repo: false,
+        destroys_history_or_secrets: false
+      });
+    }
+  };
+}
+var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean}
+Default all three to true when unsure.
+
+external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
+destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
+destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
+
+Command/code:
+`;
+function createOllamaJudge(model = "gemma4:e2b", baseUrl = "http://127.0.0.1:11434") {
+  return {
+    async evaluate(input) {
+      const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
+      if (prescan?.destroys_history_or_secrets) {
+        return prescan;
+      }
+      const body = `${TIER1_PROMPT}${input.innerCode ?? input.command}`;
+      try {
+        const response = await fetch(`${baseUrl}/api/generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model,
+            prompt: body,
+            stream: false,
+            format: "json"
+          })
+        });
+        if (!response.ok) {
+          return {
+            external_change: true,
+            destroys_outside_repo: true,
+            destroys_history_or_secrets: true
+          };
+        }
+        const payload = await response.json();
+        const parsed = JSON.parse(payload.response ?? "{}");
+        return {
+          external_change: parsed.external_change !== false,
+          destroys_outside_repo: parsed.destroys_outside_repo !== false,
+          destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false
+        };
+      } catch {
+        return {
+          external_change: true,
+          destroys_outside_repo: true,
+          destroys_history_or_secrets: true
+        };
+      }
+    }
+  };
+}
+function tier1RequiresAsk(verdict2) {
+  return verdict2.external_change || verdict2.destroys_outside_repo || verdict2.destroys_history_or_secrets;
+}
+
+// src/core/v2/verdict.ts
+import path10 from "node:path";
+
+// src/core/v2/containment.ts
+import path7 from "node:path";
+function expandHome(token) {
+  if (token === "~" || token.startsWith("~/")) {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    if (!home) {
+      return token;
+    }
+    return token === "~" ? home : path7.join(home, token.slice(2));
+  }
+  return token;
+}
+function resolveTrustedPath(token, trustedCwd, trusted) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return null;
+  }
+  if (!trusted || !trustedCwd) {
+    return null;
+  }
+  const expanded = expandHome(token);
+  if (path7.isAbsolute(expanded)) {
+    return canonicalPath(expanded);
+  }
+  return canonicalPath(path7.resolve(trustedCwd, expanded));
+}
+function locationForPath(resolvedPath, repoRoot) {
+  if (!resolvedPath) {
+    return "unknown";
+  }
+  if (pathWithinRoot(repoRoot, resolvedPath)) {
+    return "repo_local";
+  }
+  return "repo_outside";
+}
+function isGitPath(resolvedPath, repoRoot) {
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  if (!relative) {
+    return false;
+  }
+  const normalized = relative.replaceAll("\\", "/");
+  return normalized === ".git" || normalized.startsWith(".git/");
+}
+function isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, protectedRoots = []) {
+  if (isGitPath(resolvedPath, repoRoot)) {
+    return true;
+  }
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  const checkPath = relative ?? resolvedPath;
+  if (matchesSensitivePath(checkPath.replaceAll("\\", "/"), sensitivePaths)) {
+    return true;
+  }
+  return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath));
+}
+function analyzePathTargets(params) {
+  const signals = [];
+  if (!params.trustedCwd || !params.cwd) {
+    return {
+      location: "unknown",
+      isHighStakes: false,
+      signals: ["missing_trusted_cwd"]
+    };
+  }
+  const locations = /* @__PURE__ */ new Set();
+  let isHighStakes = false;
+  for (const target of params.targets) {
+    const resolved = resolveTrustedPath(target, params.cwd, params.trustedCwd) ?? resolveMutationTarget(target, params.cwd);
+    const location2 = locationForPath(resolved, params.repoRoot);
+    locations.add(location2);
+    if (resolved && isHighStakesPath(
+      resolved,
+      params.repoRoot,
+      params.sensitivePaths,
+      params.protectedArtifactRoots
+    )) {
+      isHighStakes = true;
+      signals.push("high_stakes_path");
+    }
+  }
+  let location = "unknown";
+  if (locations.size === 0) {
+    location = "unknown";
+  } else if (locations.size === 1) {
+    location = [...locations][0] ?? "unknown";
+  } else {
+    location = "mixed";
+  }
+  return { location, isHighStakes, signals };
+}
+function cwdRelative(repoRoot, cwd) {
+  return relativeWithinRepo(repoRoot, cwd) ?? cwd;
+}
+
+// src/core/v2/fingerprint.ts
+function verdictFingerprint(cwdRelative2, commandRedacted) {
+  return hashValue(`v2:${cwdRelative2}:${commandRedacted}`);
+}
+
+// src/core/v2/launcher-resolve.ts
+import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import path8 from "node:path";
+var MAX_RESOLVE_DEPTH = 8;
+function readPackageJson(dir) {
+  const packagePath = path8.join(dir, "package.json");
+  if (!existsSync4(packagePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync2(packagePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function findPackageJson(startDir, stopDir) {
+  let current = path8.resolve(startDir);
+  const stop = path8.resolve(stopDir);
+  while (true) {
+    const packagePath = path8.join(current, "package.json");
+    if (existsSync4(packagePath)) {
+      return packagePath;
+    }
+    if (current === stop || current === path8.dirname(current)) {
+      return existsSync4(packagePath) ? packagePath : null;
+    }
+    const parent = path8.dirname(current);
+    if (!parent.startsWith(stop) && parent !== current) {
+    }
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return null;
+}
+function launcherTokens(tokens) {
+  const dashIndex = tokens.indexOf("--");
+  return dashIndex === -1 ? tokens : tokens.slice(0, dashIndex);
+}
+function forwardedArgs(tokens) {
+  const dashIndex = tokens.indexOf("--");
+  if (dashIndex === -1) {
+    return [];
+  }
+  return tokens.slice(dashIndex + 1);
+}
+function npmScriptName(tokens) {
+  const launcher = launcherTokens(tokens);
+  if (launcher[0] === "npm" && launcher[1] === "test") {
+    return "test";
+  }
+  if (launcher[0] === "npm" && launcher[1] === "run" && launcher[2]) {
+    return launcher[2];
+  }
+  if (launcher[0] === "pnpm" && launcher[1] === "run" && launcher[2]) {
+    return launcher[2];
+  }
+  if (launcher[0] === "npm" && launcher[1] && launcher[1] !== "run" && launcher[1] !== "install") {
+    return null;
+  }
+  return null;
+}
+function applyForwardedArgs(recipe, extra) {
+  if (extra.length === 0) {
+    return recipe.trim();
+  }
+  return `${recipe.trim()} ${extra.join(" ")}`.trim();
+}
+function resolveNpmRecipe(cwd, repoRoot, scriptName, extraArgs) {
+  const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
+  if (!packagePath) {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipes: [], opaque: true, reason: "external_script" };
+    }
+    return { recipes: [], opaque: true, reason: "package_json_missing" };
+  }
+  const pkg = readPackageJson(path8.dirname(packagePath));
+  const scripts = pkg?.scripts;
+  if (!scripts || typeof scripts !== "object") {
+    return { recipes: [], opaque: true, reason: "package_scripts_missing" };
+  }
+  const recipe = scripts[scriptName];
+  if (!recipe || typeof recipe !== "string") {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipes: [], opaque: true, reason: "external_script" };
+    }
+    return { recipes: [], opaque: true, reason: "npm_script_undefined" };
+  }
+  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
+    return { recipes: [], opaque: true, reason: "npm_script_dynamic" };
+  }
+  return {
+    recipes: [applyForwardedArgs(recipe, extraArgs)],
+    opaque: false,
+    reason: "npm_script_resolved"
+  };
+}
+function parseMakefileRecipes(makefilePath) {
+  const recipes = /* @__PURE__ */ new Map();
+  try {
+    const content = readFileSync2(makefilePath, "utf8");
+    const lines = content.split("\n");
+    let currentTarget = null;
+    let recipeLines = [];
+    const flush = () => {
+      if (currentTarget && recipeLines.length > 0) {
+        recipes.set(
+          currentTarget,
+          recipeLines.map((line) => line.trim()).filter((line) => line.length > 0)
+        );
+      }
+      currentTarget = null;
+      recipeLines = [];
+    };
+    for (const line of lines) {
+      if (line.trim().startsWith("#")) {
+        continue;
+      }
+      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
+      if (targetMatch) {
+        flush();
+        currentTarget = targetMatch[1] ?? null;
+        const inline = line.slice(targetMatch[0].length).trim();
+        if (inline && !inline.startsWith("#")) {
+          recipeLines.push(inline);
+        }
+        continue;
+      }
+      if (currentTarget && /^\t/.test(line)) {
+        recipeLines.push(line.trim());
+      }
+    }
+    flush();
+  } catch {
+    return recipes;
+  }
+  return recipes;
+}
+function resolveMakeRecipe(cwd, repoRoot, target) {
+  const candidates = ["Makefile", "makefile", "GNUmakefile"];
+  let makefilePath = null;
+  let searchDir = path8.resolve(cwd);
+  const stop = path8.resolve(repoRoot);
+  while (true) {
+    for (const name of candidates) {
+      const candidate = path8.join(searchDir, name);
+      if (existsSync4(candidate)) {
+        makefilePath = candidate;
+        break;
+      }
+    }
+    if (makefilePath || searchDir === stop || searchDir === path8.dirname(searchDir)) {
+      break;
+    }
+    searchDir = path8.dirname(searchDir);
+  }
+  if (!makefilePath) {
+    return { recipes: [], opaque: true, reason: "unknown_local_effect" };
+  }
+  const recipes = parseMakefileRecipes(makefilePath);
+  const recipeLines = recipes.get(target);
+  if (!recipeLines || recipeLines.length === 0) {
+    return { recipes: [], opaque: true, reason: "make_target_undefined" };
+  }
+  for (const line of recipeLines) {
+    if (/\$\(/.test(line) || /\$\{/.test(line)) {
+      return { recipes: [], opaque: true, reason: "make_recipe_dynamic" };
+    }
+  }
+  return { recipes: recipeLines, opaque: false, reason: "make_recipe_resolved" };
+}
+function resolveLauncherRecipe(params) {
+  if (params.depth >= MAX_RESOLVE_DEPTH) {
+    return { recipes: [], opaque: true, reason: "launcher_depth_exceeded" };
+  }
+  const tokens = params.tokens;
+  const scriptName = npmScriptName(tokens);
+  if (scriptName) {
+    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName, forwardedArgs(tokens));
+  }
+  if (tokens[0] === "make" && tokens[1] && !tokens[1].startsWith("-")) {
+    return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1]);
+  }
+  return null;
+}
+function isRoutineLauncher(tokens) {
+  return tokens[0] === "npm" && (tokens[1] === "run" || tokens[1] === "test") || tokens[0] === "pnpm" || tokens[0] === "make";
+}
+
+// src/core/v2/parser.ts
+import path9 from "node:path";
+
+// src/core/shell-substitution.ts
+function findCommandSubstitutions(command) {
+  const results = [];
+  let index = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (char === "`") {
+      const end = findClosingBacktick(command, index + 1);
+      if (end === -1) {
+        break;
+      }
+      const inner = command.slice(index + 1, end).trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      const closed = extractBalancedParenContent(command, index + 2);
+      if (!closed) {
+        index += 1;
+        continue;
+      }
+      const inner = closed.content.trim();
+      if (inner) {
+        results.push(inner);
+      }
+      index = closed.endIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return results;
+}
+function findClosingBacktick(command, start) {
+  let index = start;
+  while (index < command.length) {
+    if (command[index] === "\\" && index + 1 < command.length) {
+      index += 2;
+      continue;
+    }
+    if (command[index] === "`") {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+function extractBalancedParenContent(command, start) {
+  let depth = 1;
+  let index = start;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  while (index < command.length && depth > 0) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      index += 1;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          return {
+            content: command.slice(start, index),
+            endIndex: index + 1
+          };
+        }
+      }
+    }
+    index += 1;
+  }
+  return null;
+}
+
+// src/core/shell-unparseable.ts
+function detectUnparseableShell(command) {
+  if (hasProcessSubstitution(command)) {
+    return true;
+  }
+  if (hasSubshell(command)) {
+    return true;
+  }
+  if (hasBraceGroup(command)) {
+    return true;
+  }
+  if (hasUnclosedQuote(command)) {
+    return true;
+  }
+  if (hasUnbalancedDollarParen(command)) {
+    return true;
+  }
+  return false;
+}
+function hasProcessSubstitution(command) {
+  return /<\s*\(/.test(command);
+}
+function hasSubshell(command) {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("(")) {
+    return true;
+  }
+  return /(?:^|[;&|]\s*)\(/.test(trimmed);
+}
+function hasBraceGroup(command) {
+  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
+  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
+}
+function hasUnclosedQuote(command) {
+  let quote = null;
+  let escaping = false;
+  for (const char of command) {
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    }
+  }
+  return quote !== null;
+}
+function hasUnbalancedDollarParen(command) {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+    }
+  }
+  return depth > 0;
+}
+
+// src/core/v2/parser.ts
+var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
+var TRANSPARENT_WRAPPERS = /* @__PURE__ */ new Set([
+  "sudo",
+  "env",
+  "nohup",
+  "time",
+  "nice",
+  "ionice",
+  "stdbuf",
+  "setsid",
+  "xargs"
+]);
+var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var CODE_INTERPRETERS = /* @__PURE__ */ new Set(["python", "python3", "node", "ruby", "perl", "osascript"]);
+var SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
+var INTERPRETER_SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".py",
+  ".rb",
+  ".pl",
+  ".sh"
+]);
+function normalizeHead(token) {
+  const base = path9.basename(token);
+  if (base && base !== "." && base !== "..") {
+    return base;
+  }
+  return token;
+}
+function peelTransparentWrappers(tokens) {
+  let current = [...tokens];
+  let xargsStdinOpaque = false;
+  while (current.length > 0) {
+    while (current.length > 0 && ENV_PREFIX_PATTERN.test(current[0] ?? "")) {
+      current.shift();
+    }
+    if (current.length === 0) {
+      break;
+    }
+    const head = normalizeHead(current[0] ?? "");
+    if (!TRANSPARENT_WRAPPERS.has(head)) {
+      break;
+    }
+    if (head === "xargs") {
+      let index = 1;
+      while (index < current.length && current[index]?.startsWith("-")) {
+        index += 1;
+      }
+      const rest = current.slice(index);
+      if (rest.length === 0) {
+        xargsStdinOpaque = true;
+        return { tokens: [], xargsStdinOpaque: true };
+      }
+      current = rest;
+      continue;
+    }
+    if (head === "env") {
+      let index = 1;
+      while (index < current.length) {
+        const token = current[index] ?? "";
+        if (ENV_PREFIX_PATTERN.test(token) || token.startsWith("-")) {
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      current = current.slice(index);
+      continue;
+    }
+    current = current.slice(1);
+  }
+  return { tokens: current, xargsStdinOpaque };
+}
+function isVariableIndirectHead(head) {
+  return head.startsWith("$");
+}
+function extractEvalBody(tokens) {
+  const head = normalizeHead(tokens[0] ?? "");
+  if (head !== "eval") {
+    return null;
+  }
+  const body = tokens.slice(1).join(" ").trim();
+  return body || null;
+}
+function extractRecursiveScript(tokens) {
+  const filtered = tokens.filter((token) => token !== "sudo");
+  const head = normalizeHead(filtered[0] ?? "");
+  const second = filtered[1] ?? "";
+  if (head === "eval") {
+    return extractEvalBody(tokens);
+  }
+  if (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) {
+    const flagIndex = filtered.findIndex((token) => SCRIPT_FLAGS.has(token));
+    if (flagIndex !== -1) {
+      const body = filtered.slice(flagIndex + 1).join(" ").replace(/^['"]|['"]$/g, "").trim();
+      return body || null;
+    }
+  }
+  if (head === "bash" && (second === "-lc" || second === "-c")) {
+    const body = filtered.slice(2).join(" ").replace(/^['"]|['"]$/g, "").trim();
+    return body || null;
+  }
+  return null;
+}
+function isBareInterpreter(tokens) {
+  const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque) {
+    return true;
+  }
+  if (peeled.length === 0) {
+    return false;
+  }
+  const head = normalizeHead(peeled[0] ?? "");
+  if (!SHELL_INTERPRETERS.has(head) && !CODE_INTERPRETERS.has(head)) {
+    return false;
+  }
+  const hasScriptFlag = peeled.some((token) => SCRIPT_FLAGS.has(token));
+  if (hasScriptFlag) {
+    return false;
+  }
+  const args = peeled.slice(1);
+  if (args.length === 0) {
+    return true;
+  }
+  if (args.every((token) => token.startsWith("-"))) {
+    return false;
+  }
+  const scriptArg = args.find((token) => !token.startsWith("-"));
+  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path9.extname(scriptArg))) {
+    return false;
+  }
+  if (scriptArg) {
+    return false;
+  }
+  return true;
+}
+function splitTopLevelSegments(command) {
+  const tokens = tokenizeShell(command);
+  const segments = [];
+  let current = [];
+  const flush = () => {
+    if (current.length > 0) {
+      segments.push(current.join(" "));
+      current = [];
+    }
+  };
+  for (const token of tokens) {
+    if (token === "&&" || token === "||" || token === ";" || token === "|" || token === "&") {
+      flush();
+      continue;
+    }
+    current.push(token);
+  }
+  flush();
+  return segments.filter((segment) => segment.trim().length > 0);
+}
+function parseSegment(command) {
+  const tokens = tokenizeShell(command);
+  const { tokens: peeled } = peelTransparentWrappers(tokens);
+  const normalizedTokens = peeled.map((token) => normalizeHead(token));
+  const key = commandKey(peeled.map((token, index) => index === 0 ? normalizeHead(token) : token));
+  return {
+    tokens: peeled,
+    head: normalizeHead(peeled[0] ?? ""),
+    key,
+    normalized: normalizedTokens.join(" ").trim()
+  };
+}
+function segmentOpacity(command) {
+  if (detectUnparseableShell(command)) {
+    return "unparseable";
+  }
+  const tokens = tokenizeShell(command);
+  const { xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque) {
+    return "opaque";
+  }
+  if (isBareInterpreter(tokens)) {
+    return "opaque";
+  }
+  const segment = parseSegment(command);
+  if (isVariableIndirectHead(segment.head)) {
+    return "opaque";
+  }
+  if (extractRecursiveScript(tokens)) {
+    return "recursive";
+  }
+  return "transparent";
+}
+function substitutionInners(command) {
+  return findCommandSubstitutions(command);
+}
+function redactCommand(command) {
+  return command.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/sk-[A-Za-z0-9]{8,}/g, "sk-[REDACTED]").trim();
+}
+
+// src/core/v2/verdict.ts
+var DEFAULT_MAX_DEPTH = 8;
+var TIER0_EXTERNAL_KEYS = /* @__PURE__ */ new Set([
+  "git push",
+  "docker push",
+  "docker run",
+  "npm publish",
+  "pnpm publish",
+  "terraform apply",
+  "aws",
+  "curl",
+  "wget",
+  "gh",
+  "gcloud",
+  "kubectl",
+  "heroku",
+  "vercel",
+  "netlify",
+  "firebase",
+  "fly",
+  "supabase",
+  "scp",
+  "ssh",
+  "rsync"
+]);
+var TIER0_EXTERNAL_HEADS = /* @__PURE__ */ new Set([
+  "dropdb",
+  "createdb",
+  "psql",
+  "mysql",
+  "mongosh",
+  "redis-cli"
+]);
+var READ_ONLY_KEYS = /* @__PURE__ */ new Set([
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+]);
+var LOCAL_MUTATION_KEYS = /* @__PURE__ */ new Set([
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+]);
+var LOCAL_ROUTINE_HEADS = /* @__PURE__ */ new Set([
+  "tsc",
+  "vitest",
+  "vite",
+  "webpack",
+  "esbuild",
+  "rollup",
+  "jest",
+  "mocha",
+  "cargo",
+  "go",
+  "make",
+  "cmake"
+]);
+var FIND_DANGEROUS_FLAGS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
+function isFindDangerous(tokens) {
+  return tokens.some(
+    (token) => FIND_DANGEROUS_FLAGS.has(token) || token.startsWith("-exec") || token.startsWith("-ok")
+  );
+}
+function worsePermission(left, right) {
+  return left === "ask" || right === "ask" ? "ask" : "allow";
+}
+async function evaluateSubstitutions(command, context, depth) {
+  const inners = substitutionInners(command);
+  if (inners.length === 0) {
+    return null;
+  }
+  if (context.unknownLocalEffect === "deny") {
+    return askVerdict({
+      location: "unknown",
+      opacity: "recursive",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "command_substitution",
+      signals: ["command_substitution"]
+    });
+  }
+  let worst = null;
+  for (const inner of inners) {
+    const innerVerdict = await evaluateSegment(inner, context, depth + 1);
+    if (innerVerdict.permission === "ask") {
+      return askVerdict({
+        ...innerVerdict,
+        opacity: "recursive",
+        reason: "command_substitution",
+        signals: [...innerVerdict.signals, "command_substitution"]
+      });
+    }
+    worst = worst ? combineInternal(worst, innerVerdict) : innerVerdict;
+  }
+  if (!worst) {
+    return null;
+  }
+  return {
+    ...worst,
+    permission: "allow",
+    opacity: "recursive",
+    reason: "command_substitution",
+    signals: [...worst.signals, "command_substitution"]
+  };
+}
+function mergeLocation(left, right) {
+  if (left === right) {
+    return left;
+  }
+  if (left === "unknown" || right === "unknown") {
+    return "unknown";
+  }
+  if (left === "mixed" || right === "mixed") {
+    return "mixed";
+  }
+  return "mixed";
+}
+function combineInternal(left, right) {
+  return {
+    permission: worsePermission(left.permission, right.permission),
+    location: mergeLocation(left.location, right.location),
+    opacity: left.opacity === "unparseable" || right.opacity === "unparseable" ? "unparseable" : left.opacity === "opaque" || right.opacity === "opaque" ? "opaque" : left.opacity === "recursive" || right.opacity === "recursive" ? "recursive" : "transparent",
+    effect: left.effect === "remote_mutation" || right.effect === "remote_mutation" ? "remote_mutation" : left.effect === "unknown" || right.effect === "unknown" ? "unknown" : left.effect === "local_mutation" || right.effect === "local_mutation" ? "local_mutation" : "read_only",
+    confidence: left.confidence === "deterministic" || right.confidence === "deterministic" ? "deterministic" : left.confidence,
+    reason: worsePermission(left.permission, right.permission) === "ask" ? right.permission === "ask" ? right.reason : left.reason : right.reason,
+    signals: [.../* @__PURE__ */ new Set([...left.signals, ...right.signals])]
+  };
+}
+function askVerdict(params) {
+  return { ...params, permission: "ask" };
+}
+function allowVerdict(params) {
+  return { ...params, permission: "allow" };
+}
+function extractPathArgs(tokens) {
+  const redirects = extractRedirectTargets(tokens);
+  const args = [...redirects];
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token || token.startsWith("-") || token === ">" || token === ">>" || token === "<") {
+      continue;
+    }
+    if (redirects.includes(token)) {
+      continue;
+    }
+    args.push(token);
+  }
+  return args;
+}
+function tier0ExternalMatch(key, head, tokens) {
+  if (TIER0_EXTERNAL_KEYS.has(key)) {
+    return true;
+  }
+  if (TIER0_EXTERNAL_HEADS.has(head)) {
+    return true;
+  }
+  if (head === "npm" && tokens[1] === "publish") {
+    return true;
+  }
+  if (head === "docker" && tokens[1] === "push") {
+    return true;
+  }
+  if (head === "git" && tokens[1] === "push") {
+    return true;
+  }
+  if (head === "terraform" && tokens[1] === "apply") {
+    return true;
+  }
+  if (head === "aws" && tokens.slice(1).join(" ").includes("s3 rm")) {
+    return true;
+  }
+  return false;
+}
+function tier0HighStakesRm(tokens, context) {
+  const head = tokens[0] ?? "";
+  if (head !== "rm") {
+    return null;
+  }
+  const targets = extractPathArgs(tokens);
+  const analysis = analyzePathTargets({
+    targets,
+    cwd: context.cwd,
+    repoRoot: context.repoRoot,
+    trustedCwd: context.trustedCwd,
+    sensitivePaths: context.sensitivePaths,
+    protectedArtifactRoots: context.protectedArtifactRoots
+  });
+  if (!context.trustedCwd || !context.cwd) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "transparent",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "missing_trusted_cwd",
+      signals: ["missing_trusted_cwd", ...analysis.signals]
+    });
+  }
+  if (analysis.isHighStakes) {
+    return askVerdict({
+      location: analysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "high_stakes_path",
+      signals: ["high_stakes_path", ...analysis.signals]
+    });
+  }
+  for (const target of targets) {
+    if (target === "~" || target.startsWith("~/") || target.startsWith("/")) {
+      const resolved = path10.resolve(
+        target === "~" || target.startsWith("~/") ? process.env.HOME ?? "/" : context.cwd,
+        target
+      );
+      const relative = relativeWithinRepo(context.repoRoot, resolved);
+      if (relative === null) {
+        return askVerdict({
+          location: "repo_outside",
+          opacity: "transparent",
+          effect: "local_mutation",
+          confidence: "deterministic",
+          reason: "repo_outside_mutation",
+          signals: ["repo_outside_mutation"]
+        });
+      }
+    }
+  }
+  return null;
+}
+async function evaluateSegment(command, context, depth) {
+  const maxDepth = context.maxRecursionDepth ?? DEFAULT_MAX_DEPTH;
+  if (depth > maxDepth) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "recursion_depth_exceeded",
+      signals: ["recursion_depth_exceeded"]
+    });
+  }
+  const opacity = segmentOpacity(command);
+  if (opacity === "unparseable") {
+    if (context.unparseableShell === "deny") {
+      return askVerdict({
+        location: "unknown",
+        opacity: "unparseable",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "unparseable_shell",
+        signals: ["unparseable_shell"]
+      });
+    }
+    return allowVerdict({
+      location: "unknown",
+      opacity: "unparseable",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "unparseable_shell",
+      signals: ["unparseable_shell"]
+    });
+  }
+  const substitutionResult = await evaluateSubstitutions(command, context, depth);
+  if (substitutionResult) {
+    return substitutionResult;
+  }
+  const tokens = tokenizeShell(command);
+  const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque || isBareInterpreter(tokens)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "opaque_execution",
+      signals: ["opaque_execution"]
+    });
+  }
+  const segment = parseSegment(command);
+  if (isVariableIndirectHead(segment.head)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "variable_indirect",
+      signals: ["variable_indirect"]
+    });
+  }
+  const recursiveScript = extractRecursiveScript(peeled);
+  if (recursiveScript) {
+    const prescan = prescanInterpreterCode(recursiveScript);
+    if (prescan && tier1RequiresAsk(prescan)) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "recursive",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "interpreter_secret_prescan",
+        signals: ["interpreter_secret_prescan"]
+      });
+    }
+    const innerVerdict = await evaluateSegment(recursiveScript, context, depth + 1);
+    const wrapReason = segment.head === "eval" ? "dynamic_shell_evaluation" : ["bash", "sh", "zsh", "dash", "fish"].includes(segment.head) ? "shell_interpreter_script" : innerVerdict.reason;
+    return {
+      ...innerVerdict,
+      opacity: "recursive",
+      reason: wrapReason,
+      signals: [...innerVerdict.signals, "recursive_wrapper"]
+    };
+  }
+  if (isRoutineLauncher(peeled)) {
+    const resolution = resolveLauncherRecipe({
+      tokens: peeled,
+      cwd: context.cwd,
+      repoRoot: context.repoRoot,
+      depth
+    });
+    if (!resolution) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "opaque",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "launcher_unresolved",
+        signals: ["launcher_unresolved"]
+      });
+    }
+    if (resolution.opaque || resolution.recipes.length === 0) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "opaque",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: resolution.reason,
+        signals: [resolution.reason]
+      });
+    }
+    let innerVerdict = null;
+    for (const recipe of resolution.recipes) {
+      const evaluated = await evaluateSegment(recipe, context, depth + 1);
+      innerVerdict = innerVerdict ? combineInternal(innerVerdict, evaluated) : evaluated;
+    }
+    if (!innerVerdict) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "opaque",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: resolution.reason,
+        signals: [resolution.reason]
+      });
+    }
+    return {
+      ...innerVerdict,
+      opacity: "recursive",
+      signals: [...innerVerdict.signals, resolution.reason]
+    };
+  }
+  if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
+    return askVerdict({
+      location: "external",
+      opacity: "transparent",
+      effect: "remote_mutation",
+      confidence: "deterministic",
+      reason: "tier0_external",
+      signals: ["tier0_external", segment.key]
+    });
+  }
+  const rmVerdict = tier0HighStakesRm(peeled, context);
+  if (rmVerdict) {
+    return rmVerdict;
+  }
+  if (!context.trustedCwd || !context.cwd) {
+    const hasMutation = LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head);
+    if (hasMutation || opacity === "opaque") {
+      return askVerdict({
+        location: "unknown",
+        opacity,
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "missing_trusted_cwd",
+        signals: ["missing_trusted_cwd"]
+      });
+    }
+  }
+  let effect = "unknown";
+  if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
+    effect = "read_only";
+  } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
+    effect = "local_mutation";
+  } else if (LOCAL_ROUTINE_HEADS.has(segment.head)) {
+    effect = "local_mutation";
+  }
+  const pathArgs = extractPathArgs(peeled);
+  const pathAnalysis = analyzePathTargets({
+    targets: pathArgs,
+    cwd: context.cwd,
+    repoRoot: context.repoRoot,
+    trustedCwd: context.trustedCwd,
+    sensitivePaths: context.sensitivePaths,
+    protectedArtifactRoots: context.protectedArtifactRoots
+  });
+  if (pathAnalysis.isHighStakes) {
+    return askVerdict({
+      location: pathAnalysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "high_stakes_path",
+      signals: pathAnalysis.signals
+    });
+  }
+  if (segment.head === "find" && isFindDangerous(peeled)) {
+    return askVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "find_dangerous_action",
+      signals: ["find_dangerous_action"]
+    });
+  }
+  if (pathAnalysis.location === "repo_outside" || pathAnalysis.location === "mixed") {
+    const outsideEffect = effect === "read_only" ? "read_only" : effect === "unknown" ? "local_mutation" : effect;
+    return askVerdict({
+      location: pathAnalysis.location,
+      opacity: "transparent",
+      effect: outsideEffect,
+      confidence: "deterministic",
+      reason: "repo_outside_mutation",
+      signals: ["repo_outside_mutation", ...pathAnalysis.signals]
+    });
+  }
+  if (pathAnalysis.location === "unknown" && pathArgs.length > 0 && LOCAL_MUTATION_KEYS.has(segment.head)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "transparent",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "unknown_location_mutation",
+      signals: ["unknown_location_mutation"]
+    });
+  }
+  const needsTier1 = effect === "unknown" || TIER0_EXTERNAL_HEADS.has(segment.head) || segment.head === "curl" || segment.head === "wget";
+  if (needsTier1) {
+    const tier1 = await context.judge.evaluate({
+      command,
+      innerCode: recursiveScript ?? void 0,
+      head: segment.head
+    });
+    if (tier1RequiresAsk(tier1)) {
+      return askVerdict({
+        location: pathAnalysis.location === "unknown" ? "unknown" : "repo_local",
+        opacity,
+        effect: tier1.external_change ? "remote_mutation" : effect,
+        confidence: "llm",
+        reason: "tier1_catastrophic",
+        signals: ["tier1_catastrophic"]
+      });
+    }
+  }
+  if (pathAnalysis.location === "repo_local" && (effect === "read_only" || effect === "local_mutation") && opacity !== "opaque") {
+    return allowVerdict({
+      location: "repo_local",
+      opacity,
+      effect,
+      confidence: "assumed_repo_local",
+      reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
+      signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
+    });
+  }
+  if (effect === "read_only") {
+    return allowVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity,
+      effect: "read_only",
+      confidence: "assumed_repo_local",
+      reason: "read_only",
+      signals: ["read_only"]
+    });
+  }
+  if (context.unknownLocalEffect === "allow_flagged") {
+    return allowVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity,
+      effect: "unknown",
+      confidence: "assumed_repo_local",
+      reason: "unknown_local_effect",
+      signals: ["unknown_local_effect"]
+    });
+  }
+  return askVerdict({
+    location: pathAnalysis.location,
+    opacity,
+    effect,
+    confidence: "deterministic",
+    reason: "unknown_local_effect",
+    signals: ["unknown_local_effect"]
+  });
+}
+function toVerdictResult(internal, command, context) {
+  const commandRedacted = redactCommand(command);
+  const relative = cwdRelative(context.repoRoot, context.cwd);
+  return {
+    permission: internal.permission,
+    location: internal.location,
+    opacity: internal.opacity,
+    effect: internal.effect,
+    confidence: internal.confidence,
+    reason: internal.reason,
+    commandRedacted,
+    fingerprint: verdictFingerprint(relative, commandRedacted),
+    signals: internal.signals
+  };
+}
+async function verdict(command, context) {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return toVerdictResult(
+      allowVerdict({
+        location: "repo_local",
+        opacity: "transparent",
+        effect: "read_only",
+        confidence: "deterministic",
+        reason: "empty_command",
+        signals: ["empty_command"]
+      }),
+      trimmed,
+      context
+    );
+  }
+  const segments = splitTopLevelSegments(trimmed);
+  let combined = null;
+  for (const segment of segments) {
+    const segmentVerdict = await evaluateSegment(segment, context, 0);
+    combined = combined ? combineInternal(combined, segmentVerdict) : segmentVerdict;
+  }
+  return toVerdictResult(
+    combined ?? askVerdict({
+      location: "unknown",
+      opacity: "unparseable",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "empty_segments",
+      signals: ["empty_segments"]
+    }),
+    trimmed,
+    context
+  );
+}
+
+// src/core/v2/adapter.ts
+function buildVerdictContext(params) {
+  return {
+    cwd: params.cwd,
+    repoRoot: params.repoRoot,
+    trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
+    sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
+    protectedArtifactRoots: params.options?.protectedArtifactRoots,
+    judge: params.judge ?? (params.config.policy.modelAssist.enabled ? createOllamaJudge(params.config.policy.modelAssist.model) : createDeterministicJudgeStub()),
+    mode: params.config.mode,
+    unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
+    unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell
+  };
+}
+async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
+  const context = buildVerdictContext({ cwd, repoRoot, config, options, judge });
+  const result = await verdict(command, context);
+  return verdictToClassifyResult(result);
+}
+function mapLegacyReason(result) {
+  if (result.reason === "repo_outside_mutation") {
+    return result.effect === "read_only" ? "outside_repo_redirect" : "outside_repo_mutation";
+  }
+  if (result.reason === "tier0_external") {
+    return "external_effect";
+  }
+  if (result.reason === "high_stakes_path") {
+    return "protected_artifact";
+  }
+  if (result.reason === "opaque_execution" && /\|\s*(bash|sh|zsh|dash|fish)\b/.test(result.commandRedacted)) {
+    return "pipe_to_shell";
+  }
+  if (result.reason === "launcher_unresolved" || result.reason === "makefile_missing") {
+    return "unknown_local_effect";
+  }
+  if (result.reason === "npm_script_undefined" || result.reason === "package_json_missing") {
+    return "unknown_local_effect";
+  }
+  if (result.reason === "repo_local_mutation") {
+    return "local_mutation";
+  }
+  return result.reason;
+}
+function verdictToClassifyResult(result) {
+  const external = result.location === "external" || result.location === "repo_outside" || result.effect === "remote_mutation";
+  const legacyReason = mapLegacyReason(result);
+  const hookVerdict = result.permission === "ask" ? "deny_pending_approval" : legacyReason === "command_substitution" || legacyReason === "unknown_local_effect" || legacyReason === "unparseable_shell" || result.effect === "local_mutation" ? "allow_flagged" : "allow";
+  const assessment = {
+    reversibility: result.effect === "read_only" ? "reversible" : result.permission === "allow" ? "recoverable_with_cost" : "irreversible",
+    external,
+    blastRadius: result.location,
+    confidence: result.confidence === "deterministic" ? 0.95 : result.confidence === "llm" ? 0.75 : hookVerdict === "allow_flagged" ? 0.75 : 0.7,
+    signals: result.signals
+  };
+  return {
+    verdict: hookVerdict,
+    reason: legacyReason,
+    fingerprint: result.fingerprint,
+    assessment,
+    normalizedCommand: result.commandRedacted,
+    summary: result.commandRedacted,
+    v2: {
+      location: result.location,
+      opacity: result.opacity,
+      effect: result.effect,
+      confidence: result.confidence,
+      would: result.permission,
+      by: "v2",
+      commandRedacted: result.commandRedacted,
+      commandFingerprint: result.fingerprint,
+      signals: result.signals
+    }
+  };
+}
+
 // src/core/classify-tool.ts
 var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
 function scrubPayload(value, options) {
@@ -2706,10 +3012,10 @@ function extractShellCommand(payload) {
   }
   return null;
 }
-function classifyToolUse(payload, repoRoot, cwd, options = {}) {
+async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
   const toolName = String(payload.tool_name ?? "");
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
-  const protectedRoots2 = [
+  const protectedRoots = [
     ...options.protectedArtifactRoots ?? [],
     ...options.controlPlaneDir ? [options.controlPlaneDir] : []
   ];
@@ -2753,7 +3059,7 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
         }
       };
     }
-    const shellResult = classifyShell(command, cwd, repoRoot, options);
+    const shellResult = await classifyShellV2(command, cwd, repoRoot, config, options);
     return {
       ...shellResult,
       summary: command
@@ -2800,8 +3106,8 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path7.isAbsolute(filePath) ? filePath : path7.resolve(cwd, filePath);
-    const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
+    const resolvedPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(cwd, filePath);
+    const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath));
     if (hitsProtectedRoot) {
       signals.push("control_plane_path");
       return {
@@ -2904,79 +3210,21 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
 // src/core/gate-engine.ts
 init_config();
 
-// src/core/model-assist.ts
-var DEFAULT_MODEL = "claude-sonnet-4-20250514";
-async function maybeAssistAssessment(input, config) {
-  if (!config.enabled) {
-    return { assessment: input.heuristicAssessment, assisted: false };
+// src/core/judgment.ts
+function mergeAgentAssessment(independent, agent) {
+  if (!agent) {
+    return { assessment: independent, mismatch: false };
   }
-  const apiKey = process.env[config.apiKeyEnv ?? "ANTHROPIC_API_KEY"];
-  if (!apiKey) {
-    return { assessment: input.heuristicAssessment, assisted: false };
-  }
-  if (input.heuristicAssessment.confidence >= 0.88 || input.heuristicAssessment.confidence < 0.55) {
-    return { assessment: input.heuristicAssessment, assisted: false };
-  }
-  try {
-    const assisted = await callAnthropicAssessment(input, apiKey, config);
-    return {
-      assessment: {
-        ...assisted,
-        signals: [...input.heuristicAssessment.signals, "model_assisted"]
-      },
-      assisted: true
-    };
-  } catch {
-    return {
-      assessment: {
-        ...input.heuristicAssessment,
-        confidence: Math.min(input.heuristicAssessment.confidence, 0.55),
-        signals: [...input.heuristicAssessment.signals, "model_assist_failed"]
-      },
-      assisted: false
-    };
-  }
-}
-async function callAnthropicAssessment(input, apiKey, config) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 3e3);
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: config.model ?? DEFAULT_MODEL,
-        max_tokens: 256,
-        messages: [
-          {
-            role: "user",
-            content: `Classify this shell command for safety. Return JSON only with keys reversibility (reversible|recoverable_with_cost|irreversible), external (boolean), blastRadius (string), confidence (0-1 number).
-Command: ${input.command}`
-          }
-        ]
-      }),
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      throw new Error(`model assist HTTP ${response.status}`);
-    }
-    const payload = await response.json();
-    const text = payload.content?.find((block) => block.type === "text")?.text ?? "";
-    const parsed = JSON.parse(text);
-    return {
-      reversibility: parsed.reversibility ?? input.heuristicAssessment.reversibility,
-      external: parsed.external ?? input.heuristicAssessment.external,
-      blastRadius: parsed.blastRadius ?? input.heuristicAssessment.blastRadius,
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.6,
-      signals: input.heuristicAssessment.signals
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const mismatch = agent.external === false && independent.external === true || agent.reversibility === "reversible" && independent.reversibility === "irreversible";
+  const confidence = mismatch ? Math.min(independent.confidence, 0.55) : Math.min(0.99, independent.confidence + 0.05);
+  return {
+    assessment: {
+      ...independent,
+      confidence,
+      signals: mismatch ? [...independent.signals, "agent_assessment_mismatch"] : [...independent.signals, "agent_assessment_agreement"]
+    },
+    mismatch
+  };
 }
 
 // src/core/gate-engine.ts
@@ -3059,14 +3307,47 @@ function normalizeGatedAction(params) {
     agentAssessment
   };
 }
-function classifyGatedAction(action, config, extraOptions = {}) {
+function applyShellPeripheralPolicy(command, action, result, options) {
+  if (options.demoteL3External && result.verdict === "deny_pending_approval" && (result.reason === "external_effect" || result.assessment.external)) {
+    return {
+      ...result,
+      verdict: "allow_flagged",
+      reason: "l3_external_hint",
+      assessment: {
+        ...result.assessment,
+        signals: [...result.assessment.signals, "l3_external_hint", "egress_boundary_expected"]
+      }
+    };
+  }
+  if (options.brokerFsScope && result.verdict === "deny_pending_approval" && (result.reason === "outside_repo_mutation" || result.reason === "outside_repo_redirect" || result.reason === "repo_outside_mutation" || result.v2?.location === "repo_outside")) {
+    const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot);
+    if (outsideRepoPaths.length > 0 && options.fsScopeAllowlist && allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)) {
+      return {
+        ...result,
+        verdict: "allow_flagged",
+        reason: "capability_fs_hint",
+        assessment: {
+          ...result.assessment,
+          signals: [
+            ...result.assessment.signals,
+            "capability_fs_hint",
+            "sandbox_boundary_expected"
+          ]
+        }
+      };
+    }
+  }
+  return result;
+}
+async function classifyGatedAction(action, config, extraOptions = {}) {
   const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
   if (action.kind === "shell") {
     const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
     if (!command) {
       throw new GateNormalizationError("Shell gated action requires a command.");
     }
-    const result = classifyShell(command, action.cwd, action.repoRoot, options);
+    let result = await classifyShellV2(command, action.cwd, action.repoRoot, config, options);
+    result = applyShellPeripheralPolicy(command, action, result, options);
     if (!action.agentAssessment) {
       return result;
     }
@@ -3084,70 +3365,10 @@ function classifyGatedAction(action, config, extraOptions = {}) {
   if (action.kind === "subagent") {
     return classifySubagent(action.payload ?? {}, action.repoRoot, options);
   }
-  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
-}
-function applyModelAssistToResult(result, assistedAssessment, options) {
-  if (result.reason !== "unknown_local_effect" && result.reason !== "unparseable_shell") {
-    return { ...result, assessment: assistedAssessment };
-  }
-  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
-  const unknownLocalEffect = options.unknownLocalEffect ?? "allow_flagged";
-  const unparseableShell = options.unparseableShell ?? "allow_flagged";
-  if (result.reason === "unparseable_shell") {
-    return {
-      ...result,
-      assessment: assistedAssessment,
-      verdict: unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged"
-    };
-  }
-  return {
-    ...result,
-    assessment: assistedAssessment,
-    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect)
-  };
+  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, config, options);
 }
 async function classifyGatedActionAsync(action, config, extraOptions = {}) {
-  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
-  const result = classifyGatedAction(action, config, extraOptions);
-  if (action.kind !== "shell" || !config.policy.modelAssist.enabled) {
-    return result;
-  }
-  const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
-  if (!command) {
-    return result;
-  }
-  const assisted = await maybeAssistAssessment(
-    {
-      command,
-      attributes: {
-        commandKey: "",
-        normalizedCommand: command,
-        cwdRelative: "",
-        flags: [],
-        targetScope: "repo",
-        redirectKind: "none",
-        signals: result.assessment.signals,
-        isUnparseable: result.reason === "unparseable_shell",
-        isDynamicEval: false,
-        hasPipeToShell: false,
-        hitsProtectedArtifact: false,
-        hitsOutsideRepo: false,
-        isCustomAllow: false,
-        isCustomExternal: false,
-        isReadOnlyKey: false,
-        isFlaggedKey: false,
-        isExternalKey: false,
-        hasCredentialHeader: false,
-        findDangerous: false
-      },
-      heuristicAssessment: result.assessment
-    },
-    config.policy.modelAssist
-  );
-  if (!assisted.assisted) {
-    return result;
-  }
-  return applyModelAssistToResult(result, assisted.assessment, options);
+  return classifyGatedAction(action, config, extraOptions);
 }
 function gateEnabledForAction(config, action) {
   if (action.kind === "shell") {
@@ -3171,19 +3392,202 @@ function gateEnabledForAction(config, action) {
 
 // src/core/index.ts
 init_approval();
+
+// src/core/classify-shell.ts
+init_config();
+
+// src/core/policy/command-keys.ts
+var READ_ONLY_COMMAND_KEYS = [
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+];
+var FLAGGED_COMMAND_KEYS = [
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+];
+var EXTERNAL_COMMAND_KEYS = [
+  "aws",
+  "curl",
+  "docker push",
+  "docker run",
+  "firebase deploy",
+  "fly deploy",
+  "gh",
+  "git push",
+  "gcloud",
+  "heroku",
+  "kubectl",
+  "netlify",
+  "npm publish",
+  "pnpm publish",
+  "rsync",
+  "scp",
+  "ssh",
+  "supabase",
+  "terraform apply",
+  "vercel",
+  "wget"
+];
+var READ_ONLY_KEYS2 = new Set(READ_ONLY_COMMAND_KEYS);
+var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
+var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
+
+// src/core/policy/default-rules.ts
+var DEFAULT_POLICY_RULES = [
+  {
+    id: "unparseable_shell",
+    priority: 1e3,
+    nonOverridable: true,
+    match: { unparseable: true },
+    action: "threshold",
+    reason: "unparseable_shell"
+  },
+  {
+    id: "protected_artifact",
+    priority: 950,
+    nonOverridable: true,
+    match: { protectedArtifact: true },
+    action: "escalate",
+    reason: "control_plane_mutation"
+  },
+  {
+    id: "outside_repo_redirect",
+    priority: 940,
+    nonOverridable: true,
+    match: { redirectKind: "outside" },
+    action: "escalate",
+    reason: "outside_repo_redirect"
+  },
+  {
+    id: "outside_repo_mutation",
+    priority: 938,
+    nonOverridable: true,
+    match: { outsideRepo: true },
+    action: "escalate",
+    reason: "outside_repo_mutation"
+  },
+  {
+    id: "dynamic_shell",
+    priority: 930,
+    nonOverridable: true,
+    match: { signal: "dynamic_shell_evaluation" },
+    action: "escalate",
+    reason: "dynamic_shell_evaluation"
+  },
+  {
+    id: "pipe_to_shell",
+    priority: 920,
+    nonOverridable: true,
+    match: { signal: "pipe_to_shell" },
+    action: "escalate",
+    reason: "pipe_to_shell"
+  },
+  {
+    id: "find_dangerous",
+    priority: 900,
+    nonOverridable: true,
+    match: { signal: "find_dangerous_action" },
+    action: "escalate",
+    reason: "find_dangerous_action"
+  },
+  {
+    id: "custom_external",
+    priority: 850,
+    match: { customExternal: true },
+    action: "escalate",
+    reason: "custom_external"
+  },
+  {
+    id: "external_effect",
+    priority: 800,
+    nonOverridable: true,
+    match: { targetScope: "external" },
+    action: "escalate",
+    reason: "external_effect"
+  },
+  {
+    id: "external_script",
+    priority: 790,
+    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
+    action: "escalate",
+    reason: "external_script"
+  },
+  {
+    id: "custom_allow",
+    priority: 600,
+    match: { customAllow: true },
+    action: "allow",
+    reason: "custom_allow"
+  },
+  {
+    id: "read_only",
+    priority: 500,
+    match: {
+      commandKey: [...READ_ONLY_COMMAND_KEYS],
+      redirectKind: "none"
+    },
+    action: "allow",
+    reason: "read_only"
+  },
+  {
+    id: "local_mutation",
+    priority: 400,
+    match: {
+      commandKey: [...FLAGGED_COMMAND_KEYS]
+    },
+    action: "flag",
+    reason: "local_mutation"
+  },
+  {
+    id: "unknown_local",
+    priority: 100,
+    match: {},
+    action: "threshold",
+    reason: "unknown_local_effect"
+  }
+];
+
+// src/core/index.ts
 init_config();
 
 // src/core/control-plane-spike.ts
 init_config();
-import { existsSync as existsSync4 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import path8 from "node:path";
+import path12 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path8.join(
+  const outputPath = path12.join(
     controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
     "oq3-spike-last.json"
   );
-  await mkdir2(path8.dirname(outputPath), { recursive: true });
+  await mkdir2(path12.dirname(outputPath), { recursive: true });
   await writeFile2(
     outputPath,
     `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -3194,7 +3598,7 @@ async function persistControlPlaneSpikeResult(result, env = process.env, homedir
 }
 async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
   const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path8.join(controlPlaneDir, "oq3-spike.json");
+  const testFile = path12.join(controlPlaneDir, "oq3-spike.json");
   const payload = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     cwd,
@@ -3219,7 +3623,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
     await rm(testFile, { force: true });
     return {
       ...base,
-      ok: parsed.cwd === cwd && existsSync4(controlPlaneDir),
+      ok: parsed.cwd === cwd && existsSync5(controlPlaneDir),
       wrote: true,
       readBack: readBack.trim()
     };
@@ -3232,9 +3636,9 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
 }
 
 // src/core/transactional/diff-evaluator.ts
-import path9 from "node:path";
+import path13 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = canonicalPath(path9.join(ctx.repoRoot, change.relativePath));
+  const absolutePath = canonicalPath(path13.join(ctx.repoRoot, change.relativePath));
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -3365,10 +3769,10 @@ var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
 // src/core/transactional/git-worktree.ts
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { copyFile, mkdir as mkdir3, mkdtemp, rm as rm2 } from "node:fs/promises";
 import os from "node:os";
-import path10 from "node:path";
+import path14 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repoRoot, ...args], {
@@ -3409,7 +3813,7 @@ async function isDirtyWorktree(repoRoot) {
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
-  const worktreePath = path10.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  const worktreePath = path14.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
   await mkdir3(stateDir, { recursive: true });
   await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
   return {
@@ -3429,14 +3833,14 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
   const resolvedCwd = canonicalPath(cwd);
-  const relative = path10.relative(canonicalPath(repoRoot), resolvedCwd);
-  if (relative.startsWith("..") || path10.isAbsolute(relative)) {
+  const relative = path14.relative(canonicalPath(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path14.isAbsolute(relative)) {
     return worktreePath;
   }
   if (relative === "") {
     return worktreePath;
   }
-  return path10.join(worktreePath, relative);
+  return path14.join(worktreePath, relative);
 }
 function runShellCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
@@ -3506,7 +3910,7 @@ async function rollbackAppliedChanges(actions) {
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === "restore") {
-        await mkdir3(path10.dirname(action.target), { recursive: true });
+        await mkdir3(path14.dirname(action.target), { recursive: true });
         await copyFile(action.backupPath, action.target);
       } else {
         await rm2(action.target, { force: true });
@@ -3516,14 +3920,14 @@ async function rollbackAppliedChanges(actions) {
   }
 }
 async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-  const backupRoot = await mkdtemp(path10.join(os.tmpdir(), "belay-tx-rollback-"));
+  const backupRoot = await mkdtemp(path14.join(os.tmpdir(), "belay-tx-rollback-"));
   const rollbackActions = [];
   try {
     for (const change of changes) {
-      const target = path10.join(repoRoot, change.relativePath);
-      if (existsSync5(target)) {
-        const backupPath = path10.join(backupRoot, change.relativePath);
-        await mkdir3(path10.dirname(backupPath), { recursive: true });
+      const target = path14.join(repoRoot, change.relativePath);
+      if (existsSync6(target)) {
+        const backupPath = path14.join(backupRoot, change.relativePath);
+        await mkdir3(path14.dirname(backupPath), { recursive: true });
         await copyFile(target, backupPath);
         rollbackActions.push({ type: "restore", target, backupPath });
       } else if (change.kind !== "deleted") {
@@ -3533,8 +3937,8 @@ async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
         await rm2(target, { force: true });
         continue;
       }
-      const source = path10.join(worktreePath, change.relativePath);
-      await mkdir3(path10.dirname(target), { recursive: true });
+      const source = path14.join(worktreePath, change.relativePath);
+      await mkdir3(path14.dirname(target), { recursive: true });
       await copyFile(source, target);
     }
   } catch (error) {
@@ -3696,8 +4100,8 @@ async function notifyDeny(config, event) {
 }
 
 // src/services/egress-service.ts
-import { existsSync as existsSync6, readFileSync as readFileSync2 } from "node:fs";
-import path11 from "node:path";
+import { existsSync as existsSync7, readFileSync as readFileSync3 } from "node:fs";
+import path15 from "node:path";
 init_config_io();
 init_config();
 
@@ -3713,18 +4117,18 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
     belayStateDir(config, repoLocalStateDir),
     configuredControlPlaneDir(config)
   ]);
-  const resolvedRepoRoot = path11.resolve(repoRoot);
+  const resolvedRepoRoot = path15.resolve(repoRoot);
   for (const stateDir of stateDirs) {
-    const statusPath = path11.join(stateDir, "egress-proxy.json");
-    if (!existsSync6(statusPath)) {
+    const statusPath = path15.join(stateDir, "egress-proxy.json");
+    if (!existsSync7(statusPath)) {
       continue;
     }
     try {
-      const raw = JSON.parse(readFileSync2(statusPath, "utf8"));
+      const raw = JSON.parse(readFileSync3(statusPath, "utf8"));
       if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
         continue;
       }
-      if (raw.repoRoot && path11.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+      if (raw.repoRoot && path15.resolve(raw.repoRoot) !== resolvedRepoRoot) {
         continue;
       }
       return true;
@@ -3743,7 +4147,7 @@ function isProcessAlive(pid) {
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path12 from "node:path";
+import path16 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -3755,7 +4159,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path12.resolve(entry));
+  return roots.map((entry) => path16.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -3777,8 +4181,8 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path13.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir4(path13.dirname(auditPath), { recursive: true });
+      const auditPath = path17.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir4(path17.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
@@ -3803,7 +4207,7 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir4(path13.dirname(filePath), { recursive: true });
+      await mkdir4(path17.dirname(filePath), { recursive: true });
       await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
@@ -3813,7 +4217,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync7(teamPath)) {
+  if (existsSync8(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -3895,7 +4299,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       agentAssessment: extractAgentAssessment(params.payload)
     });
   } catch {
-    const verdict = unnormalizedGateVerdict({
+    const verdict2 = unnormalizedGateVerdict({
       reason: "normalization_failed",
       mode: ctx.config.mode,
       user_message: "agent-belay could not normalize this gated action. Run agent-belay doctor, then retry.",
@@ -3904,13 +4308,13 @@ async function evaluateGatedAction(ctx, deps, params) {
     await deps.appendAudit(ctx, {
       event: gateAuditEventName(params.kind),
       kind: params.kind,
-      verdict: verdict.verdict,
-      reason: verdict.reason,
+      verdict: verdict2.verdict,
+      reason: verdict2.reason,
       mode: ctx.config.mode,
       wouldBlock: true,
       permission: "deny"
     });
-    return verdict;
+    return verdict2;
   }
   if (!gateEnabledForAction(ctx.config, action)) {
     return classifyResultToGateVerdict({
@@ -3943,7 +4347,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       command: params.command,
       cwd: params.cwd,
       repoRoot: ctx.repoRoot,
-      stateDir: path13.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
+      stateDir: path17.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
       timeoutMs: transactional.timeoutMs,
       predicted,
       diffContext: {
@@ -3987,6 +4391,8 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
     predictedAssessment: auditExtras.predictedAssessment,
     observedAssessment: auditExtras.observedAssessment,
     mode: ctx.config.mode,
+    schemaVersion: result.v2 ? 2 : 1,
+    ...result.v2 ?? {},
     ...auditExtras.transactionalLayer
   };
   if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {
@@ -4166,11 +4572,11 @@ async function maybeRunControlPlaneSpike(ctx, deps, envEnabled) {
     permission: "allow"
   });
 }
-function gateVerdictToCursorResponse(verdict) {
+function gateVerdictToCursorResponse(verdict2) {
   return {
-    permission: verdict.permission,
-    user_message: verdict.user_message,
-    agent_message: verdict.agent_message
+    permission: verdict2.permission,
+    user_message: verdict2.user_message,
+    agent_message: verdict2.agent_message
   };
 }
 async function appendObservedAudit(ctx, deps, eventName, payload) {
@@ -4184,19 +4590,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync8 } from "node:fs";
-import path14 from "node:path";
+import { existsSync as existsSync9 } from "node:fs";
+import path18 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path14.resolve(startPath);
+  let current = path18.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync8(path14.join(current, marker))) {
+      if (existsSync9(path18.join(current, marker))) {
         return current;
       }
     }
-    const parent = path14.dirname(current);
+    const parent = path18.dirname(current);
     if (parent === current) {
-      return path14.resolve(startPath);
+      return path18.resolve(startPath);
     }
     current = parent;
   }
@@ -4261,12 +4667,12 @@ async function runShellGateHook() {
     const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
     const ctx = await loadRuntimeContext(cwd);
     const deps = createDefaultGateRuntimeDeps();
-    const verdict = await evaluateGatedAction(ctx, deps, {
+    const verdict2 = await evaluateGatedAction(ctx, deps, {
       kind: "shell",
       cwd,
       command
     });
-    jsonResponse(gateVerdictToCursorResponse(verdict));
+    jsonResponse(gateVerdictToCursorResponse(verdict2));
   } catch {
     jsonResponse({
       permission: "deny",
@@ -4282,41 +4688,41 @@ async function runToolGateHook(eventName) {
     const deps = createDefaultGateRuntimeDeps();
     const toolName = String(payload.tool_name ?? "");
     if (isSubagentEvent(payload, eventName)) {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
         cwd,
         payload
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (toolName === "Shell") {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "shell",
         cwd,
         payload,
         toolName
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (isFileMutationTool(toolName)) {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "tool",
         cwd,
         payload,
         toolName
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (payload.tool_name === "Task") {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
         cwd,
         payload
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     jsonResponse({ permission: "allow" });

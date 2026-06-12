@@ -248,6 +248,8 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
         predictedAssessment: auditExtras.predictedAssessment,
         observedAssessment: auditExtras.observedAssessment,
         mode: ctx.config.mode,
+        schemaVersion: result.v2 ? 2 : 1,
+        ...(result.v2 ?? {}),
         ...auditExtras.transactionalLayer,
     };
     if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {

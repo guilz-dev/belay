@@ -11,5 +11,5 @@ export interface ReclassifyDiff {
     nextVerdict: string;
     nextReason: string;
 }
-export declare function reclassifyAuditRecord(record: AuditRecord, config: BelayConfigV3, repoRoot: string): ClassifyResult | null;
-export declare function diffReclassification(record: AuditRecord, config: BelayConfigV3, repoRoot: string): ReclassifyDiff | null;
+export declare function reclassifyAuditRecord(record: AuditRecord, config: BelayConfigV3, repoRoot: string): Promise<ClassifyResult | null>;
+export declare function diffReclassification(record: AuditRecord, config: BelayConfigV3, repoRoot: string): Promise<ReclassifyDiff | null>;

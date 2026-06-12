@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { metricsProject } from './commands/metrics.js';
 import { loadConfigFile } from './config-io.js';
 import { configuredControlPlaneDir, defaultControlPlaneDir, } from './core/config.js';
-import { metricsProject } from './commands/metrics.js';
 export function isDogfoodConfig(config) {
     return config.mode === 'audit' && config.policy.unknownLocalEffect === 'deny';
 }

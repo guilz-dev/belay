@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-
+import { doctorProject } from '../../commands/doctor.js'
 import {
   approvedApprovalsPath,
   mergeAndWriteConfig,
@@ -9,7 +9,6 @@ import {
 } from '../../config-io.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js'
 import { EMPTY_APPROVALS } from '../../defaults.js'
-import { doctorProject } from '../../commands/doctor.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js'
 import {
   renderAuditHook,

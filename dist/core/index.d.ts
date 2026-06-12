@@ -18,3 +18,4 @@ export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substi
 export type { TransactionalDiffEvaluation, TransactionalExecutionResult, } from './transactional/index.js';
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js';
 export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifierOptions, ClassifyResult, HookVerdict, Reversibility, ScrubOptions, UnknownLocalEffectPolicy, } from './types.js';
+export { buildVerdictContext, classifyShellV2, verdict, verdictToClassifyResult, } from './v2/index.js';

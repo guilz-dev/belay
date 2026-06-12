@@ -11,6 +11,10 @@ export interface AuditOptions {
     kind?: string;
     fingerprint?: string;
     event?: string;
+    location?: string;
+    opacity?: string;
+    effect?: string;
+    confidence?: string;
     limit?: number;
     configPath?: string;
 }

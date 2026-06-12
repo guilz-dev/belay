@@ -50,6 +50,36 @@ describe('audit-metrics', () => {
     expect(report.dogfood.notes.join(' ')).toContain('Dogfood config detected')
   })
 
+  it('aggregates v2 audit axes when present', () => {
+    const report = computeAuditMetrics([
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'high_stakes_path',
+        location: 'repo_local',
+        opacity: 'transparent',
+        effect: 'local_mutation',
+        confidence: 'deterministic',
+      },
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'read_only',
+        location: 'repo_local',
+        opacity: 'transparent',
+        effect: 'read_only',
+        confidence: 'deterministic',
+      },
+    ])
+
+    expect(report.byLocation).toEqual({ repo_local: 2 })
+    expect(report.byOpacity).toEqual({ transparent: 2 })
+    expect(report.byEffect).toEqual({ local_mutation: 1, read_only: 1 })
+    expect(report.byConfidence).toEqual({ deterministic: 2 })
+  })
+
   it('requires minimum gate events before readyForEnforce with zero would-block rate', () => {
     const fewEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () => ({
       event: 'beforeShellExecution',

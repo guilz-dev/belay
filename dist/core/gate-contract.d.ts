@@ -28,6 +28,7 @@ export interface GateVerdict extends GatePermissionResponse {
     approvalId?: string;
     wouldBlock: boolean;
     mode: 'enforce' | 'audit';
+    v2?: ClassifyResult['v2'];
 }
 export declare function isGatedAction(value: unknown): value is GatedAction;
 export declare function classifyResultToGateVerdict(params: {

@@ -25,6 +25,7 @@ export function classifyResultToGateVerdict(params) {
         approvalId,
         user_message,
         agent_message,
+        v2: result.v2,
     };
 }
 export function unnormalizedGateVerdict(params) {
