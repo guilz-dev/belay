@@ -108,18 +108,22 @@ interface VerdictResult {
 
 - `verdict(command, context): VerdictResult`
 - `context` は最低限 `cwd`, `repoRoot`, `trustedCwd`, `sensitivePaths`,
-  `approvalCache`, `judge`, `mode`
+  `judge`, `mode`
+  - `judge` は DI(既定は実 LLM、テストで決定論スタブを注入)
 
 ## 4. 目標アーキテクチャ
 
 ### v2 engine の責務
 
-1. shell を構造解析する
+1. shell を構造解析する(透過ラッパー剥がし・eval・$var・basename・素インタプリタ
+   opaque を含む。R5.1)
 2. trusted `cwd` + `realpath` で path containment を確定する
 3. `location`, `opacity`, `effect`, `confidence` を組み立てる
-4. Tier1 judge を「repo 外 / remote change があるか」に限定して使う
-5. `permission = allow | ask` を合成する
-6. approval cache の hit/miss を反映する
+4. routine launcher は定義(`package.json`/`Makefile`)を読んで recipe を再帰判定する
+5. Tier1 judge を **3 boolean**(`external_change` / `destroys_outside_repo` /
+   `destroys_history_or_secrets`)で使う。場所軸は Tier0 が所有
+6. `permission = allow | ask` を合成する(Tier0 / Tier1 / fallback のどれかが
+   catastrophic なら `ask`)
 
 ### 外周の責務
 
@@ -131,31 +135,20 @@ interface VerdictResult {
 
 ## 5. 実装フェーズ
 
-### Phase 0: 仕様固定のための spike
+### Phase 0: 仕様固定のための spike(**完了済み**)
 
-目的:
+`~/.belay-spike/verdict.mjs` が v2 contract の検証済み参照実装。Phase 1 はこれを
+`src/core/v2/` へ移植する。
 
-- `SPEC-v2.0` の contract をコードで叩く
-- false positive / false negative の両端を早く炙る
+達成済み:
 
-作業:
-
-1. `~/.belay-spike/verdict.mjs` に v2 contract を実装
-2. corpus を追加
-3. 次のケースを固定
-   - `npm test` / `npm run build` / `make test`
-   - `rm -rf .git`
-   - `.env` / `credentials` 破壊
-   - `bash -lc 'git status'`
-   - `bash -lc 'rm ../other/x'`
-   - `python -c 'open("/tmp/x","w")'`
-   - `echo $(aws s3 rm ...)`
-
-完了条件:
-
-- contract 上の既知ケースが spike で通る
-- `npm test` が毎回 ask にならない設計が見える
-- `.git` / `sensitivePaths` が allow にならない
+- 構造スイート 272 MUST-ASK で **FN=0**、16 routine で **FP=0**
+- LLM スイート 26 ケースで **致命的見逃し 0**
+- 確定した contract: 透過ラッパー剥がし・`eval`・`$var`・basename・素インタプリタ
+  opaque(R5.1)、`docker push`→Tier0(R5.2)、3 軸 Tier1(R7)、recipe 解決(R6.2)、
+  interpreter コードの secret プリスキャン
+- 固定ケース: `npm test`/`npm run build` は allow、`rm -rf .git`/`.env`破壊は ask、
+  wrapper 族・`$(...)`・base64`|sh`/`|python` は ask
 
 ### Phase 1: v2 core の新設
 
@@ -170,21 +163,24 @@ interface VerdictResult {
 最初に置くもの:
 
 - `types.ts`
-- `verdict.ts`
 - `parser.ts`
 - `containment.ts`
+- `launcher-resolve.ts`
+- `verdict.ts`
 - `judge.ts`
 - `fingerprint.ts`
-- `approval-cache.ts`
 
 実装順:
 
 1. `types.ts`: verdict の内部型
-2. `parser.ts`: segment / substitution / wrapper 再帰
-3. `containment.ts`: trusted cwd + realpath + repo 内/外判定
-4. `verdict.ts`: Tier0 合成
-5. `judge.ts`: Tier1 質問の最小実装
-6. `approval-cache.ts`: routine launcher の一度きり化
+2. `parser.ts`: segment / substitution / wrapper 再帰 + 透過ラッパー剥がし
+   (`sudo`/`env`/`nohup`/`xargs`/`FOO=`)・`eval` 展開・`$var`→ask・basename 正規化・
+   素インタプリタ→opaque(R5.1)
+3. `containment.ts`: trusted cwd + realpath + repo 内/外判定 + `.git`/sensitivePaths
+4. `launcher-resolve.ts`: `npm run`/`make` の定義(`package.json`/`Makefile`)を読んで
+   recipe を返す(再帰深度上限つき。読めなければ opaque)
+5. `verdict.ts`: Tier0 合成(`docker push` 等の構造的に確実な外部は Tier0)
+6. `judge.ts`: Tier1 の 3 boolean 質問 + interpreter コードの secret プリスキャン
 
 完了条件:
 
@@ -246,41 +242,47 @@ interface VerdictResult {
 - 製品コードが v1 semantics を参照しない
 - docs と実装の主語が v2 に揃う
 
-## 6. テスト戦略
+## 6. テスト戦略(2 スイート、SPEC R13)
 
-### 最優先 corpus
+判定は Tier0(決定論)と Tier1(LLM)で性質が違うので、テストも分ける。
 
-- catastrophic false negative
-  - `rm -rf .git`
-  - `git push --force`
-  - `dropdb prod`
-  - `npm publish`
-  - `bash -lc 'rm ../other/x'`
-- catastrophic hidden by wrapper
-  - `echo $(aws s3 rm ...)`
-  - `python -c 'open("/tmp/x","w")'`
-  - `find . -delete`
-- routine false positive
-  - `npm test`
-  - `npm run build`
-  - `make test`
-  - `bash -lc 'git status'`
+### 構造スイート(決定論・CI ハードゲート・Ollama 不要)
+
+judge を DI スタブにし、Tier0 を 2B 非依存で検証。**バイパス等価**で破滅 core ×
+構文ラッパーを機械生成し、MUST-ASK の **false negative が 1 件でも出たら CI 失敗**。
+MUST-ALLOW の false positive は計測・報告。
+
+- catastrophic core: `rm -rf .git` / `git push --force` / `dropdb prod` /
+  `npm publish` / `aws s3 rm` / `terraform apply` / `rm -rf ~`
+- wrapper 族: `bash -c` / `env FOO=` / `nohup` / `sudo` / `eval` / `$cmd` /
+  `$(...)` / base64`|sh`/`|python` / `xargs` / サブシェル / here-doc / 絶対パス
+- routine(allow であるべき): `npm test` / `npm run build` / `bash -lc 'git status'`
+
+### LLM スイート(実 2B・計測のみ・CI ゲートにしない)
+
+実 `gemma4:e2b` の精度を別管理で計測。Tier1 へ届くケース(DB/クラウド/ネットワーク +
+interpreter コード内の `.git`/secret/外部破壊)で、致命的見逃しと偽陽性を分けて報告。
+見逃しが構造的に確実なら Tier0 へ昇格(測定駆動)。
 
 ### テスト配置
 
 - `src/__tests__/v2/`
-  - `verdict-core.test.ts`
+  - `structural-suite.test.ts`(バイパス等価, FN=0 ハードゲート, judge スタブ)
   - `containment.test.ts`
-  - `approval-cache.test.ts`
+  - `launcher-resolve.test.ts`
   - `gate-runtime-v2.test.ts`
   - `audit-schema-v2.test.ts`
+- `src/__tests__/v2/llm/`(Ollama 必要, CI からは除外 / `describe.skipIf`)
+  - `judge-accuracy.test.ts`
 
 ### 受け入れ基準
 
-1. catastrophic corpus で false allow 0
-2. routine launcher は cache 後に再 ask しない
+1. 構造スイートの catastrophic で false allow 0(CI hard gate)
+2. routine launcher は定義を読んで判定(`npm test`/`npm run build` は allow、
+   deploy script は ask)。毎回 ask にならない
 3. `cwd` 欠落や symlink escape で false allow しない
 4. secret-bearing trace が平文で残らない
+5. LLM スイートで致命的見逃し 0(偽陽性は計測値として記録)
 
 ## 7. 削るもの
 
@@ -296,10 +298,12 @@ v2 初期でやらない:
 ### リスク1: opaque routine のノイズ
 
 `npm run` / `make` を全部 ask にすると製品価値が死ぬ。
-対策:
+対策(spike で検証済み):
 
-- approval cache を v2 初期から必須にする
-- cache fingerprint に定義ファイル変更を含める
+- 定義ファイル(`package.json`/`Makefile`)を読んで recipe を再帰判定する
+  (推測 allow でも毎回 ask でもない。deploy script は読んで ask、ローカル build は allow)
+- 定義を静的に読めない opaque(`docker exec`/`xargs` 等)だけ ask
+- approval cache は launcher 判定の前提にしない(毎回最新の定義を読むため)
 
 ### リスク2: location 判定の甘さ
 
@@ -319,11 +323,15 @@ v2 初期でやらない:
 
 ## 9. 最初の 1 週間
 
-1. spike verdict を実装
-2. corpus を追加
-3. `src/core/v2/types.ts` と `src/core/v2/verdict.ts` を作る
-4. `gate-runtime` から呼べる最小 adapter を作る
-5. `npm test` と `.git` 破壊の両端ケースを CI に固定する
+(Phase 0 spike は完了済み。`~/.belay-spike/verdict.mjs` を移植する)
+
+1. `~/.belay-spike/verdict.mjs` を `src/core/v2/`(types/parser/containment/
+   launcher-resolve/verdict/judge)へ移植
+2. 構造スイート(バイパス等価, judge スタブ)を `src/__tests__/v2/` の vitest 化し、
+   **FN=0 を CI ハードゲートに**(Ollama 不要)
+3. LLM スイートを `src/__tests__/v2/llm/`(CI 除外)に置く
+4. `gate-runtime` から呼べる最小 adapter を作る(audit デフォルト維持)
+5. `npm test`(allow)と `.git` 破壊・wrapper 族(ask)の両端ケースを CI に固定する
 
 ## 10. 完了条件
 
