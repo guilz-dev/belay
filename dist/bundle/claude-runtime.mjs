@@ -3697,7 +3697,7 @@ async function notifyDeny(config, event) {
   }
 }
 
-// src/egress-service.ts
+// src/services/egress-service.ts
 import { existsSync as existsSync6, readFileSync as readFileSync2 } from "node:fs";
 import path11 from "node:path";
 init_config_io();
@@ -3706,7 +3706,7 @@ init_config();
 // src/core/egress/allowlist.ts
 init_config();
 
-// src/egress-service.ts
+// src/services/egress-service.ts
 function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
   if (!config.egress.enabled || !config.egress.demoteL3External) {
     return false;

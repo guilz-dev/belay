@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import { approvePending } from './approve.js';
-import { auditProject, formatAuditReport } from './audit.js';
-import { doctorProject, formatDoctorReport } from './doctor.js';
-import { dogfoodProject, formatDogfoodResult } from './dogfood.js';
-import { egressEnv, egressStatus, formatEgressStatusReport, startEgressProxy, stopEgressProxy, } from './egress-service.js';
-import { explainCommand, formatExplainReport } from './explain.js';
+import { approvePending } from './commands/approve.js';
+import { auditProject, formatAuditReport } from './commands/audit.js';
+import { doctorProject, formatDoctorReport } from './commands/doctor.js';
+import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js';
+import { egressEnv, egressStatus, formatEgressStatusReport, startEgressProxy, stopEgressProxy, } from './services/egress-service.js';
+import { explainCommand, formatExplainReport } from './commands/explain.js';
 import { initProject, upgradeProject } from './installer.js';
-import { formatMetricsReport, metricsProject } from './metrics.js';
-import { revokeApproval } from './revoke.js';
-import { formatSandboxStatusReport, sandboxStatus } from './sandbox-service.js';
-import { formatSimulateReport, simulateProject } from './simulate.js';
-import { formatStatusReport, statusProject } from './status.js';
+import { formatMetricsReport, metricsProject } from './commands/metrics.js';
+import { revokeApproval } from './commands/revoke.js';
+import { formatSandboxStatusReport, sandboxStatus } from './services/sandbox-service.js';
+import { formatSimulateReport, simulateProject } from './commands/simulate.js';
+import { formatStatusReport, statusProject } from './commands/status.js';
 function parseArgs(argv) {
     const [command, ...rest] = argv;
     const options = {};

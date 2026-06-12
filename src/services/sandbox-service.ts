@@ -1,10 +1,13 @@
 import path from 'node:path'
 
-import { loadConfigFile, repoLocalStateDirFor } from './config-io.js'
-import { fsScopeAllowlistPath, loadFsScopeAllowlist } from './core/capability/allowlist.js'
-import { evaluateL1FullStatus, isCapabilityBrokerDemotionActive } from './core/capability/broker.js'
-import { configuredControlPlaneDir } from './core/config.js'
-import { verifyControlPlaneIsolation } from './core/control-plane-isolation.js'
+import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
+import { fsScopeAllowlistPath, loadFsScopeAllowlist } from '../core/capability/allowlist.js'
+import {
+  evaluateL1FullStatus,
+  isCapabilityBrokerDemotionActive,
+} from '../core/capability/broker.js'
+import { configuredControlPlaneDir } from '../core/config.js'
+import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
 import { egressStatus } from './egress-service.js'
 
 export interface SandboxServiceOptions {
@@ -86,7 +89,7 @@ export function createCapabilityApprovalStore(
   return {
     allowlistPath: fsScopeAllowlistPath(config, repoLocalDir),
     async loadPending() {
-      const { loadApprovalState, pendingApprovalsPath } = await import('./config-io.js')
+      const { loadApprovalState, pendingApprovalsPath } = await import('../config-io.js')
       const filePath = pendingApprovalsPath(repoRoot, config)
       return {
         filePath,
@@ -94,19 +97,19 @@ export function createCapabilityApprovalStore(
       }
     },
     async loadApproved() {
-      const { loadApprovalState, approvedApprovalsPath } = await import('./config-io.js')
+      const { loadApprovalState, approvedApprovalsPath } = await import('../config-io.js')
       const filePath = approvedApprovalsPath(repoRoot, config)
       return {
         filePath,
         state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
       }
     },
-    async writePending(_filePath: string, state: import('./core/types.js').ApprovalStateFile) {
-      const { saveApprovalState } = await import('./config-io.js')
+    async writePending(_filePath: string, state: import('../core/types.js').ApprovalStateFile) {
+      const { saveApprovalState } = await import('../config-io.js')
       await saveApprovalState(repoRoot, 'pending-approvals.json', state, config)
     },
-    async writeApproved(_filePath: string, state: import('./core/types.js').ApprovalStateFile) {
-      const { saveApprovalState } = await import('./config-io.js')
+    async writeApproved(_filePath: string, state: import('../core/types.js').ApprovalStateFile) {
+      const { saveApprovalState } = await import('../config-io.js')
       await saveApprovalState(repoRoot, 'approved-approvals.json', state, config)
     },
   }

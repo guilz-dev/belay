@@ -6,14 +6,14 @@ import {
   loadConfigFile,
   pendingApprovalsPath,
   saveApprovalState,
-} from './config-io.js'
-import { recordApproval } from './core/approval-service.js'
-import type { CapabilityApprovalScope } from './core/capability/types.js'
-import { recordCapabilityApproval } from './core/capability-approval.js'
-import type { EgressApprovalScope } from './core/egress/types.js'
-import { recordEgressApproval } from './core/egress-approval.js'
-import { createEgressApprovalStore } from './egress-service.js'
-import { createCapabilityApprovalStore } from './sandbox-service.js'
+} from '../config-io.js'
+import { recordApproval } from '../core/approval-service.js'
+import type { CapabilityApprovalScope } from '../core/capability/types.js'
+import { recordCapabilityApproval } from '../core/capability-approval.js'
+import type { EgressApprovalScope } from '../core/egress/types.js'
+import { recordEgressApproval } from '../core/egress-approval.js'
+import { createEgressApprovalStore } from '../services/egress-service.js'
+import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 
 export type ApproveScope = EgressApprovalScope | CapabilityApprovalScope
 

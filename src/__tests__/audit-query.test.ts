@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { auditProject } from '../audit.js'
+import { auditProject } from '../commands/audit.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   buildApprovalRoundTrips,

@@ -1,8 +1,8 @@
 import path from 'node:path'
 
-import { loadApprovalState, loadConfigFile, saveApprovalState } from './config-io.js'
-import { compactApprovals } from './core/approval.js'
-import type { RevokeOptions } from './types.js'
+import { loadApprovalState, loadConfigFile, saveApprovalState } from '../config-io.js'
+import { compactApprovals } from '../core/approval.js'
+import type { RevokeOptions } from '../types.js'
 
 export async function revokeApproval(
   options: RevokeOptions,

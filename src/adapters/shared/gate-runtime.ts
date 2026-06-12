@@ -52,7 +52,7 @@ import {
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
 import type { Assessment } from '../../core/types.js'
-import { isEgressProxyActiveForRepo } from '../../egress-service.js'
+import { isEgressProxyActiveForRepo } from '../../services/egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 

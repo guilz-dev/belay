@@ -1,18 +1,18 @@
 import path from 'node:path'
 
-import { loadConfigFile } from './config-io.js'
-import { isCapabilityBrokerDemotionActive } from './core/capability/broker.js'
+import { loadConfigFile } from '../config-io.js'
+import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
 import {
   classifierOptionsFromConfig,
   classifyShell,
   classifySubagent,
   classifyToolUse,
-} from './core/index.js'
-import { isTransactionalEligible } from './core/transactional/index.js'
-import type { ClassifyResult } from './core/types.js'
-import { egressStatus } from './egress-service.js'
-import { sandboxStatus } from './sandbox-service.js'
-import type { ExplainOptions, ExplainReport } from './types.js'
+} from '../core/index.js'
+import { isTransactionalEligible } from '../core/transactional/index.js'
+import type { ClassifyResult } from '../core/types.js'
+import { egressStatus } from '../services/egress-service.js'
+import { sandboxStatus } from '../services/sandbox-service.js'
+import type { ExplainOptions, ExplainReport } from '../types.js'
 
 function classifyExplainTarget(
   options: ExplainOptions,

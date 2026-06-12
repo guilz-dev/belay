@@ -4,7 +4,7 @@ import { belayStateDir, loadApprovalState, loadConfigFile, repoLocalStateDirFor,
 import { scrubOptionsFromConfig } from './core/config.js';
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js';
 import { scrubValue } from './core/scrub.js';
-import { clearEgressDaemonState, createEgressApprovalStore, writeEgressDaemonState, } from './egress-service.js';
+import { clearEgressDaemonState, createEgressApprovalStore, writeEgressDaemonState, } from './services/egress-service.js';
 async function main() {
     const repoRoot = process.env.BELAY_EGRESS_REPO_ROOT;
     if (!repoRoot) {

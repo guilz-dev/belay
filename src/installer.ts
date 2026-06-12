@@ -16,7 +16,7 @@ import {
 import { mergeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
 import { EMPTY_APPROVALS, getManagedHookEntries } from './defaults.js'
-import { dogfoodProject } from './dogfood.js'
+import { dogfoodProject } from './commands/dogfood.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from './node-resolution.js'
 import { applyConfigPreset } from './presets.js'
 import {

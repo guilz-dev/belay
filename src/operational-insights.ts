@@ -8,7 +8,7 @@ import {
   configuredControlPlaneDir,
   defaultControlPlaneDir,
 } from './core/config.js'
-import { metricsProject } from './metrics.js'
+import { metricsProject } from './commands/metrics.js'
 
 export interface Oq3SpikeStatus {
   path: string

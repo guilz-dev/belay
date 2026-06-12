@@ -7,10 +7,10 @@ import {
   loadConfigFile,
   pendingApprovalsPath,
   repoLocalStateDirFor,
-} from './config-io.js'
-import { compactApprovals } from './core/approval.js'
-import { loadOperationalInsights } from './operational-insights.js'
-import type { StatusOptions, StatusReport } from './types.js'
+} from '../config-io.js'
+import { compactApprovals } from '../core/approval.js'
+import { loadOperationalInsights } from '../operational-insights.js'
+import type { StatusOptions, StatusReport } from '../types.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())

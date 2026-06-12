@@ -5,10 +5,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
-import { explainCommand } from '../explain.js'
+import { explainCommand } from '../commands/explain.js'
 import { initProject, upgradeProject } from '../installer.js'
-import { revokeApproval } from '../revoke.js'
-import { statusProject } from '../status.js'
+import { revokeApproval } from '../commands/revoke.js'
+import { statusProject } from '../commands/status.js'
 
 const tempDirs: string[] = []
 

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { initProject } from '../installer.js'
-import { simulateProject } from '../simulate.js'
+import { simulateProject } from '../commands/simulate.js'
 
 const tempDirs: string[] = []
 

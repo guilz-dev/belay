@@ -12,11 +12,11 @@ import {
   loadConfigFile,
   pendingApprovalsPath,
   repoLocalStateDirFor,
-} from './config-io.js'
-import { type BelayConfigV3, configuredControlPlaneDir } from './core/config.js'
-import { egressAllowlistPath } from './core/egress/allowlist.js'
-import { formatProxyEnv, recommendedProxyEnv } from './core/egress/env.js'
-import type { ApprovalStateFile } from './core/types.js'
+} from '../config-io.js'
+import { type BelayConfigV3, configuredControlPlaneDir } from '../core/config.js'
+import { egressAllowlistPath } from '../core/egress/allowlist.js'
+import { formatProxyEnv, recommendedProxyEnv } from '../core/egress/env.js'
+import type { ApprovalStateFile } from '../core/types.js'
 
 export interface EgressServiceOptions {
   targetDir?: string
@@ -47,7 +47,7 @@ function egressStatePaths(repoRoot: string, config: Awaited<ReturnType<typeof lo
 }
 
 function daemonScriptPath(): string {
-  return fileURLToPath(new URL('./egress-daemon.js', import.meta.url))
+  return fileURLToPath(new URL('../egress-daemon.js', import.meta.url))
 }
 
 async function readStatusFile(statusPath: string): Promise<{
@@ -401,11 +401,11 @@ export function createEgressApprovalStore(
       }
     },
     async writePending(_filePath: string, state: ApprovalStateFile) {
-      const { saveApprovalState } = await import('./config-io.js')
+      const { saveApprovalState } = await import('../config-io.js')
       await saveApprovalState(repoRoot, 'pending-approvals.json', state, config)
     },
     async writeApproved(_filePath: string, state: ApprovalStateFile) {
-      const { saveApprovalState } = await import('./config-io.js')
+      const { saveApprovalState } = await import('../config-io.js')
       await saveApprovalState(repoRoot, 'approved-approvals.json', state, config)
     },
   }

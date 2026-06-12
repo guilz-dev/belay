@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { loadConfigFile } from './config-io.js'
-import type { AuditMetricsReport } from './core/audit-metrics.js'
-import { computeAuditMetrics, parseAuditNdjson } from './core/audit-metrics.js'
+import { loadConfigFile } from '../config-io.js'
+import type { AuditMetricsReport } from '../core/audit-metrics.js'
+import { computeAuditMetrics, parseAuditNdjson } from '../core/audit-metrics.js'
 
 export interface MetricsOptions {
   targetDir?: string

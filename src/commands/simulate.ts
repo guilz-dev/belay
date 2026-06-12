@@ -2,10 +2,10 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { loadConfigFile } from './config-io.js'
-import { parseAuditNdjson, toAuditRecord } from './core/audit-metrics.js'
-import { type BelayConfigV3, mergeConfig } from './core/config.js'
-import { diffReclassification } from './core/reclassify.js'
+import { loadConfigFile } from '../config-io.js'
+import { parseAuditNdjson, toAuditRecord } from '../core/audit-metrics.js'
+import { type BelayConfigV3, mergeConfig } from '../core/config.js'
+import { diffReclassification } from '../core/reclassify.js'
 
 export interface SimulateOptions {
   targetDir?: string

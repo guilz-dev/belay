@@ -4,7 +4,7 @@ import path from 'node:path';
 import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath, } from '../../config-io.js';
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js';
 import { EMPTY_APPROVALS } from '../../defaults.js';
-import { doctorProject } from '../../doctor.js';
+import { doctorProject } from '../../commands/doctor.js';
 import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js';
 import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from '../../templates.js';
 import { claudeLayout } from '../layouts/claude.js';

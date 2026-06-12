@@ -11,7 +11,7 @@ import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationErro
 import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, persistControlPlaneSpikeResult, resolveControlPlaneDir, runControlPlaneSpike, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
 import { notifyDeny } from '../../core/notify.js';
 import { isTransactionalEligible, runTransactionalExecution, TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_APPROVAL_BYPASS_REASONS, } from '../../core/transactional/index.js';
-import { isEgressProxyActiveForRepo } from '../../egress-service.js';
+import { isEgressProxyActiveForRepo } from '../../services/egress-service.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
     version: 1,

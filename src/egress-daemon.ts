@@ -14,7 +14,7 @@ import {
   clearEgressDaemonState,
   createEgressApprovalStore,
   writeEgressDaemonState,
-} from './egress-service.js'
+} from './services/egress-service.js'
 
 async function main(): Promise<void> {
   const repoRoot = process.env.BELAY_EGRESS_REPO_ROOT

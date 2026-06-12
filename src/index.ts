@@ -16,13 +16,13 @@ export {
   mergeConfig,
   migrateConfig,
 } from './core/index.js'
-export { doctorProject, formatDoctorReport } from './doctor.js'
-export { explainCommand, formatExplainReport } from './explain.js'
+export { doctorProject, formatDoctorReport } from './commands/doctor.js'
+export { explainCommand, formatExplainReport } from './commands/explain.js'
 export { initProject, upgradeProject } from './installer.js'
 export { resolveNodeBinary } from './node-resolution.js'
 export { applyConfigPreset, CONFIG_PRESETS, type ConfigPresetName } from './presets.js'
-export { revokeApproval } from './revoke.js'
-export { formatStatusReport, statusProject } from './status.js'
+export { revokeApproval } from './commands/revoke.js'
+export { formatStatusReport, statusProject } from './commands/status.js'
 export type {
   ApprovalRecord,
   ApprovalStateFile,

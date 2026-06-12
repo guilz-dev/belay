@@ -9,7 +9,7 @@ import {
 } from '../../config-io.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js'
 import { EMPTY_APPROVALS } from '../../defaults.js'
-import { doctorProject } from '../../doctor.js'
+import { doctorProject } from '../../commands/doctor.js'
 import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js'
 import {
   renderAuditHook,

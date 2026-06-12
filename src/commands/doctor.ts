@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { getAdapter } from './adapters/registry.js'
-import { cleanupOrphanApprovalState } from './cleanup-orphans.js'
+import { getAdapter } from '../adapters/registry.js'
+import { cleanupOrphanApprovalState } from '../cleanup-orphans.js'
 import {
   approvedApprovalsPath,
   belayStateDir,
@@ -12,16 +12,16 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
   runtimeCorePath,
-} from './config-io.js'
-import { configuredControlPlaneDir, defaultControlPlaneDir } from './core/config.js'
-import { verifyControlPlaneIsolation } from './core/control-plane-isolation.js'
-import { verifyIntegrityManifest } from './core/integrity.js'
-import { egressStatus } from './egress-service.js'
-import { resolveNodeBinary } from './node-resolution.js'
-import { loadOperationalInsights } from './operational-insights.js'
-import { sandboxStatus } from './sandbox-service.js'
-import type { AdapterName, DoctorOptions, DoctorReport } from './types.js'
-import { PACKAGE_VERSION } from './version.js'
+} from '../config-io.js'
+import { configuredControlPlaneDir, defaultControlPlaneDir } from '../core/config.js'
+import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
+import { verifyIntegrityManifest } from '../core/integrity.js'
+import { egressStatus } from '../services/egress-service.js'
+import { resolveNodeBinary } from '../node-resolution.js'
+import { loadOperationalInsights } from '../operational-insights.js'
+import { sandboxStatus } from '../services/sandbox-service.js'
+import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
+import { PACKAGE_VERSION } from '../version.js'
 
 async function readRuntimeVersion(corePath: string): Promise<{ stamp?: string; version?: string }> {
   try {
@@ -164,12 +164,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   try {
     const managedEntries = getAdapter(adapterName).hookEvents()
     if (adapterName === 'cursor') {
-      const { loadHooksFile } = await import('./installer.js')
+      const { loadHooksFile } = await import('../installer.js')
       const hooksFile = await loadHooksFile(hooksPath)
       for (const { event, definition } of managedEntries) {
         const entries = hooksFile.hooks[event] ?? []
         const present = entries.some(
-          (entry) => entry.command === definition.command && entry.matcher === definition.matcher,
+          (entry: { command?: string; matcher?: string }) =>
+            entry.command === definition.command && entry.matcher === definition.matcher,
         )
         if (!present) {
           hooksOk = false

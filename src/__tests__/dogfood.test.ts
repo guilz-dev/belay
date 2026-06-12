@@ -4,10 +4,10 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { mergeConfig } from '../core/config.js'
-import { dogfoodProject } from '../dogfood.js'
+import { dogfoodProject } from '../commands/dogfood.js'
 import { initProject } from '../installer.js'
 import { loadOperationalInsights, readOq3SpikeStatus } from '../operational-insights.js'
-import { statusProject } from '../status.js'
+import { statusProject } from '../commands/status.js'
 
 const tempDirs: string[] = []
 

@@ -9,7 +9,7 @@ import { runtimeClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { belayStateDir } from '../config-io.js'
 import { classifyShell } from '../core/classify-shell.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
-import { writeEgressDaemonState } from '../egress-service.js'
+import { writeEgressDaemonState } from '../services/egress-service.js'
 
 const tempDirs: string[] = []
 
