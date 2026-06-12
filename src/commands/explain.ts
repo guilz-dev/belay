@@ -2,24 +2,21 @@ import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
-import {
-  classifierOptionsFromConfig,
-  classifyShell,
-  classifySubagent,
-  classifyToolUse,
-} from '../core/index.js'
+import { classifierOptionsFromConfig, classifySubagent, classifyToolUse } from '../core/index.js'
 import { isTransactionalEligible } from '../core/transactional/index.js'
 import type { ClassifyResult } from '../core/types.js'
+import { classifyShellV2 } from '../core/v2/adapter.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { ExplainOptions, ExplainReport } from '../types.js'
 
-function classifyExplainTarget(
+async function classifyExplainTarget(
   options: ExplainOptions,
   repoRoot: string,
   cwd: string,
   classifierOptions: ReturnType<typeof classifierOptionsFromConfig>,
-): { kind: string; input: string; result: ClassifyResult } {
+  config: Awaited<ReturnType<typeof loadConfigFile>>,
+): Promise<{ kind: string; input: string; result: ClassifyResult }> {
   const kind = options.kind ?? 'shell'
 
   if (kind === 'shell') {
@@ -29,7 +26,7 @@ function classifyExplainTarget(
     return {
       kind: 'shell',
       input: options.command,
-      result: classifyShell(options.command, cwd, repoRoot, classifierOptions),
+      result: await classifyShellV2(options.command, cwd, repoRoot, config, classifierOptions),
     }
   }
 
@@ -89,7 +86,7 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
       !egress.foreignProxy,
     brokerFsScope: isCapabilityBrokerDemotionActive(config),
   }
-  const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions)
+  const classified = await classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config)
 
   const transactionalEligible =
     classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result)
@@ -135,6 +132,17 @@ export function formatExplainReport(report: ExplainReport): string {
     `Verdict: ${result.verdict}`,
     `Reason: ${result.reason}`,
     `Fingerprint: ${result.fingerprint}`,
+    ...(result.v2
+      ? [
+          '',
+          'v2 axes:',
+          `  location: ${result.v2.location}`,
+          `  opacity: ${result.v2.opacity}`,
+          `  effect: ${result.v2.effect}`,
+          `  confidence: ${result.v2.confidence}`,
+          `  would: ${result.v2.would}`,
+        ]
+      : []),
     '',
     'Predicted assessment:',
     `  reversibility: ${result.assessment.reversibility}`,

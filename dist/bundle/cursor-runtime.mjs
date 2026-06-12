@@ -849,9 +849,9 @@ import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path13 from "node:path";
+import path17 from "node:path";
 
 // src/core/approval-service.ts
 init_approval();
@@ -1249,7 +1249,8 @@ function classifyResultToGateVerdict(params) {
     mode,
     approvalId,
     user_message,
-    agent_message
+    agent_message,
+    v2: result.v2
   };
 }
 function unnormalizedGateVerdict(params) {
@@ -1273,9 +1274,6 @@ function unnormalizedGateVerdict(params) {
   };
 }
 
-// src/core/classify-shell.ts
-init_config();
-
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
 function canonicalStringify(value) {
@@ -1293,8 +1291,8 @@ function canonicalStringify(value) {
 function hashValue(value) {
   return createHash("sha256").update(value).digest("hex");
 }
-function shellFingerprint(cwdRelative, normalizedCommand) {
-  return hashValue(`shell:${cwdRelative}:${normalizedCommand}`);
+function shellFingerprint(cwdRelative2, normalizedCommand) {
+  return hashValue(`shell:${cwdRelative2}:${normalizedCommand}`);
 }
 function subagentFingerprint(kind, scrubbed, repoRoot) {
   return hashValue(`subagent:${kind}:${canonicalStringify(scrubbed)}:${repoRoot}`);
@@ -1302,6 +1300,241 @@ function subagentFingerprint(kind, scrubbed, repoRoot) {
 function toolFingerprint(toolName, scrubbed, repoRoot) {
   return hashValue(`tool:${toolName}:${canonicalStringify(scrubbed)}:${repoRoot}`);
 }
+
+// src/core/scrub.ts
+var UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+var TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
+var APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi;
+var TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi;
+var BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi;
+var AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi;
+var KEY_VALUE_SECRET_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi;
+var HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g;
+var DEFAULT_SCRUB_OPTIONS = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+function resolvedScrubOptions(options = {}) {
+  return {
+    maskApprovalIds: options.maskApprovalIds !== false,
+    maskBearerTokens: options.maskBearerTokens !== false,
+    maskAuthHeaders: options.maskAuthHeaders !== false,
+    maskKeyValueSecrets: options.maskKeyValueSecrets !== false,
+    maskHighEntropyStrings: options.maskHighEntropyStrings === true
+  };
+}
+function scrubString(value, options = {}) {
+  const resolved = resolvedScrubOptions(options);
+  let scrubbed = value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>");
+  if (resolved.maskApprovalIds) {
+    scrubbed = scrubbed.replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
+  }
+  if (resolved.maskBearerTokens) {
+    scrubbed = scrubbed.replace(BEARER_PATTERN, "Bearer <redacted>");
+  }
+  if (resolved.maskAuthHeaders) {
+    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>");
+  }
+  if (resolved.maskKeyValueSecrets) {
+    scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
+      const separatorIndex = Math.max(match.indexOf("="), match.indexOf(":"));
+      if (separatorIndex === -1) {
+        return "<secret>";
+      }
+      return `${match.slice(0, separatorIndex + 1)}<redacted>`;
+    });
+  }
+  if (resolved.maskHighEntropyStrings) {
+    scrubbed = scrubbed.replace(HIGH_ENTROPY_PATTERN, "<high-entropy>");
+  }
+  return scrubbed;
+}
+function scrubValue(value, options = DEFAULT_SCRUB_OPTIONS) {
+  if (typeof value === "string") {
+    return scrubString(value, options);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubValue(item, options));
+  }
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const [key, child] of Object.entries(value)) {
+      result[key] = scrubValue(child, options);
+    }
+    return result;
+  }
+  return value;
+}
+
+// src/core/classify-subagent.ts
+var EXTERNAL_PHRASES = [
+  "deploy to production",
+  "deploy to prod",
+  "publish to npm",
+  "publish package",
+  "release to production",
+  "ship to production",
+  "send email",
+  "notify slack",
+  "call external api",
+  "push to production",
+  "push to prod"
+];
+var INVESTIGATION_PHRASES = [
+  "investigate",
+  "debug",
+  "research",
+  "review",
+  "analyze",
+  "analyse",
+  "check",
+  "look into",
+  "understand",
+  "explore"
+];
+var EXTERNAL_TERMS = [
+  "deploy",
+  "production",
+  "publish",
+  "release",
+  "ship",
+  "notify",
+  "email",
+  "prod"
+];
+function extractSubagentText(payload, options) {
+  const toolInput = payload.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    const input = toolInput;
+    const description = typeof input.description === "string" ? input.description : "";
+    const prompt = typeof input.prompt === "string" ? input.prompt : "";
+    return [description, prompt].filter(Boolean).join(" ");
+  }
+  const task = payload.task;
+  if (typeof task === "string") {
+    return task;
+  }
+  if (task && typeof task === "object") {
+    const taskObj = task;
+    const description = typeof taskObj.description === "string" ? taskObj.description : "";
+    const prompt = typeof taskObj.prompt === "string" ? taskObj.prompt : "";
+    return [description, prompt].filter(Boolean).join(" ");
+  }
+  return canonicalStringify(scrubValue(payload, options.scrubOptions));
+}
+function fingerprintSource(payload, options) {
+  const toolInput = payload.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    const input = toolInput;
+    return scrubValue(
+      {
+        description: input.description ?? "",
+        prompt: input.prompt ?? ""
+      },
+      options.scrubOptions
+    );
+  }
+  const task = payload.task;
+  if (typeof task === "string") {
+    return scrubValue({ task }, options.scrubOptions);
+  }
+  if (task && typeof task === "object") {
+    const taskObj = task;
+    return scrubValue(
+      {
+        description: taskObj.description ?? "",
+        prompt: taskObj.prompt ?? ""
+      },
+      options.scrubOptions
+    );
+  }
+  return scrubValue(payload, options.scrubOptions);
+}
+function classifySubagent(payload, repoRoot, options = {}) {
+  const kind = payload.tool_name === "Task" ? "Task" : String(payload.subagent_type ?? "generalPurpose");
+  const scrubbed = fingerprintSource(payload, options);
+  const summary = extractSubagentText(payload, options);
+  const lowered = summary.toLowerCase();
+  const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot);
+  const signals = [];
+  for (const phrase of EXTERNAL_PHRASES) {
+    if (lowered.includes(phrase)) {
+      signals.push("external_phrase", phrase);
+      return {
+        verdict: "deny_pending_approval",
+        reason: "external_subagent_intent",
+        summary,
+        fingerprint,
+        assessment: {
+          reversibility: "irreversible",
+          external: true,
+          blastRadius: "subagent requested external effect",
+          confidence: 0.92,
+          signals
+        }
+      };
+    }
+  }
+  const isInvestigation = INVESTIGATION_PHRASES.some((phrase) => lowered.includes(phrase));
+  const hasExternalTerm = EXTERNAL_TERMS.some((term) => {
+    const pattern = new RegExp(`\\b${term}\\b`, "i");
+    return pattern.test(lowered);
+  });
+  if (hasExternalTerm && !isInvestigation) {
+    signals.push("external_term");
+    return {
+      verdict: "deny_pending_approval",
+      reason: "external_subagent_intent",
+      summary,
+      fingerprint,
+      assessment: {
+        reversibility: "irreversible",
+        external: true,
+        blastRadius: "subagent requested external effect",
+        confidence: 0.85,
+        signals
+      }
+    };
+  }
+  if (hasExternalTerm && isInvestigation) {
+    signals.push("external_term_investigation_context");
+    return {
+      verdict: "allow_flagged",
+      reason: "subagent_review",
+      summary,
+      fingerprint,
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: false,
+        blastRadius: "subagent task scope",
+        confidence: 0.7,
+        signals
+      }
+    };
+  }
+  return {
+    verdict: "allow_flagged",
+    reason: "subagent_review",
+    summary,
+    fingerprint,
+    assessment: {
+      reversibility: "recoverable_with_cost",
+      external: false,
+      blastRadius: "subagent task scope",
+      confidence: 0.67,
+      signals: ["subagent_default_review"]
+    }
+  };
+}
+
+// src/core/classify-tool.ts
+import path7 from "node:path";
+
+// src/core/classify-shell.ts
+init_config();
 
 // src/core/judgment.ts
 var SCOPE_BLAST_RADIUS = {
@@ -1687,7 +1920,7 @@ function segmentHasForce(command) {
   return tokens.some((token) => FORCE_FLAGS.has(token));
 }
 function analyzeShellSegment(params) {
-  const { segmentTokens, cwd, repoRoot, normalizedCommand, cwdRelative, options, separator } = params;
+  const { segmentTokens, cwd, repoRoot, normalizedCommand, cwdRelative: cwdRelative2, options, separator } = params;
   const key = commandKey(segmentTokens);
   const flags = segmentTokens.filter((token) => token.startsWith("-"));
   const redirects = extractRedirectTargets(segmentTokens);
@@ -1754,7 +1987,7 @@ function analyzeShellSegment(params) {
   return {
     commandKey: key,
     normalizedCommand,
-    cwdRelative,
+    cwdRelative: cwdRelative2,
     flags,
     targetScope: inferTargetScope(segmentTokens, cwd, repoRoot, key),
     redirectKind: redirect,
@@ -1979,19 +2212,19 @@ function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
     if (rule.id === "custom_external" && attributes.isCustomAllow && attributes.isCustomExternal) {
       continue;
     }
-    let verdict = actionToVerdict(rule.action, fullCtx);
+    let verdict2 = actionToVerdict(rule.action, fullCtx);
     let reason = rule.reason;
     let resultAssessment = rule.assessment ? { ...assessment, ...rule.assessment } : assessment;
-    if (ctx.demoteL3External && verdict === "deny_pending_approval" && (rule.id === "external_effect" || rule.id === "custom_external" || rule.id === "external_script")) {
-      verdict = "allow_flagged";
+    if (ctx.demoteL3External && verdict2 === "deny_pending_approval" && (rule.id === "external_effect" || rule.id === "custom_external" || rule.id === "external_script")) {
+      verdict2 = "allow_flagged";
       reason = "l3_external_hint";
       resultAssessment = {
         ...resultAssessment,
         signals: [...resultAssessment.signals, "l3_external_hint", "egress_boundary_expected"]
       };
     }
-    if (ctx.brokerFsScope && verdict === "deny_pending_approval" && (rule.id === "outside_repo_mutation" || rule.id === "outside_repo_redirect") && ctx.outsideRepoPaths && ctx.fsScopeAllowlist && allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)) {
-      verdict = "allow_flagged";
+    if (ctx.brokerFsScope && verdict2 === "deny_pending_approval" && (rule.id === "outside_repo_mutation" || rule.id === "outside_repo_redirect") && ctx.outsideRepoPaths && ctx.fsScopeAllowlist && allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)) {
+      verdict2 = "allow_flagged";
       reason = "capability_fs_hint";
       resultAssessment = {
         ...resultAssessment,
@@ -1999,7 +2232,7 @@ function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
       };
     }
     return {
-      verdict,
+      verdict: verdict2,
       reason,
       assessment: resultAssessment,
       matchedRuleId: rule.id
@@ -2198,7 +2431,7 @@ function splitSegmentsWithSeparators(tokens) {
   flush();
   return segments;
 }
-function unparseableShellResult(normalizedCommand, cwdRelative, options) {
+function unparseableShellResult(normalizedCommand, cwdRelative2, options) {
   const assessment = {
     reversibility: "irreversible",
     external: false,
@@ -2210,7 +2443,7 @@ function unparseableShellResult(normalizedCommand, cwdRelative, options) {
     return denyResult({
       reason: "unparseable_shell",
       normalizedCommand,
-      cwdRelative,
+      cwdRelative: cwdRelative2,
       assessment
     });
   }
@@ -2218,7 +2451,7 @@ function unparseableShellResult(normalizedCommand, cwdRelative, options) {
     verdict: "allow_flagged",
     reason: "unparseable_shell",
     normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
     assessment
   };
 }
@@ -2232,7 +2465,7 @@ function classifySubstitutionInners(params) {
     return null;
   }
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+  const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
   let worst = null;
   for (const substitution of substitutions) {
     const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
@@ -2240,7 +2473,7 @@ function classifySubstitutionInners(params) {
       return denyResult({
         reason: "command_substitution",
         normalizedCommand,
-        cwdRelative,
+        cwdRelative: cwdRelative2,
         assessment: {
           reversibility: "irreversible",
           external: inner.assessment.external,
@@ -2253,7 +2486,7 @@ function classifySubstitutionInners(params) {
     const wrapped = wrapInnerVerdict({
       inner,
       normalizedCommand,
-      cwdRelative,
+      cwdRelative: cwdRelative2,
       wrapReason: "command_substitution",
       wrapSignal: "command_substitution"
     });
@@ -2271,13 +2504,13 @@ function extractInterpreterScript(tokens) {
   return null;
 }
 function wrapInnerVerdict(params) {
-  const { inner, normalizedCommand, cwdRelative, wrapReason, wrapSignal } = params;
+  const { inner, normalizedCommand, cwdRelative: cwdRelative2, wrapReason, wrapSignal } = params;
   const signals = [wrapSignal, ...inner.assessment.signals];
   if (inner.verdict === "deny_pending_approval") {
     return {
       ...inner,
       normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
       reason: wrapReason,
       assessment: {
         ...inner.assessment,
@@ -2289,7 +2522,7 @@ function wrapInnerVerdict(params) {
     return {
       ...inner,
       normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
       reason: wrapReason,
       assessment: {
         ...inner.assessment,
@@ -2302,7 +2535,7 @@ function wrapInnerVerdict(params) {
       verdict: "allow_flagged",
       reason: wrapReason,
       normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
       assessment: {
         reversibility: "recoverable_with_cost",
         external: inner.assessment.external,
@@ -2314,7 +2547,7 @@ function wrapInnerVerdict(params) {
   }
   return inner;
 }
-function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative, options, depth) {
+function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative2, options, depth) {
   const segmentTokens = segment.tokens;
   const key = commandKey(segmentTokens);
   if (depth < 2) {
@@ -2326,7 +2559,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
       return wrapInnerVerdict({
         inner,
         normalizedCommand,
-        cwdRelative,
+        cwdRelative: cwdRelative2,
         wrapReason,
         wrapSignal
       });
@@ -2337,7 +2570,7 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
     cwd,
     repoRoot,
     normalizedCommand,
-    cwdRelative,
+    cwdRelative: cwdRelative2,
     options,
     separator: segment.separator
   });
@@ -2355,9 +2588,9 @@ function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative,
 }
 function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative = relativeWithinRepo(repoRoot, cwd) ?? cwd;
+  const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
   if (depth === 0 && detectUnparseableShell(command)) {
-    return unparseableShellResult(normalizedCommand, cwdRelative, options);
+    return unparseableShellResult(normalizedCommand, cwdRelative2, options);
   }
   const substitutionResult = classifySubstitutionInners({
     command,
@@ -2372,7 +2605,7 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
     verdict: "allow",
     reason: "read_only",
     normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative, normalizedCommand),
+    fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
     assessment: {
       reversibility: "reversible",
       external: false,
@@ -2387,7 +2620,7 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
       cwd,
       repoRoot,
       normalizedCommand,
-      cwdRelative,
+      cwdRelative2,
       options,
       depth
     );
@@ -2401,238 +2634,6 @@ function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
   }
   return effective;
 }
-
-// src/core/scrub.ts
-var UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
-var TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
-var APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi;
-var TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi;
-var BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi;
-var AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi;
-var KEY_VALUE_SECRET_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi;
-var HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g;
-var DEFAULT_SCRUB_OPTIONS = {
-  maskApprovalIds: true,
-  maskBearerTokens: true,
-  maskAuthHeaders: true,
-  maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false
-};
-function resolvedScrubOptions(options = {}) {
-  return {
-    maskApprovalIds: options.maskApprovalIds !== false,
-    maskBearerTokens: options.maskBearerTokens !== false,
-    maskAuthHeaders: options.maskAuthHeaders !== false,
-    maskKeyValueSecrets: options.maskKeyValueSecrets !== false,
-    maskHighEntropyStrings: options.maskHighEntropyStrings === true
-  };
-}
-function scrubString(value, options = {}) {
-  const resolved = resolvedScrubOptions(options);
-  let scrubbed = value.replace(UUID_PATTERN, "<uuid>").replace(TIMESTAMP_PATTERN, "<timestamp>");
-  if (resolved.maskApprovalIds) {
-    scrubbed = scrubbed.replace(APPROVAL_ID_PATTERN, "<approval-id>").replace(TOKEN_PREFIX_PATTERN, "/belay-approve <approval-id>");
-  }
-  if (resolved.maskBearerTokens) {
-    scrubbed = scrubbed.replace(BEARER_PATTERN, "Bearer <redacted>");
-  }
-  if (resolved.maskAuthHeaders) {
-    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>");
-  }
-  if (resolved.maskKeyValueSecrets) {
-    scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
-      const separatorIndex = Math.max(match.indexOf("="), match.indexOf(":"));
-      if (separatorIndex === -1) {
-        return "<secret>";
-      }
-      return `${match.slice(0, separatorIndex + 1)}<redacted>`;
-    });
-  }
-  if (resolved.maskHighEntropyStrings) {
-    scrubbed = scrubbed.replace(HIGH_ENTROPY_PATTERN, "<high-entropy>");
-  }
-  return scrubbed;
-}
-function scrubValue(value, options = DEFAULT_SCRUB_OPTIONS) {
-  if (typeof value === "string") {
-    return scrubString(value, options);
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => scrubValue(item, options));
-  }
-  if (value && typeof value === "object") {
-    const result = {};
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = scrubValue(child, options);
-    }
-    return result;
-  }
-  return value;
-}
-
-// src/core/classify-subagent.ts
-var EXTERNAL_PHRASES = [
-  "deploy to production",
-  "deploy to prod",
-  "publish to npm",
-  "publish package",
-  "release to production",
-  "ship to production",
-  "send email",
-  "notify slack",
-  "call external api",
-  "push to production",
-  "push to prod"
-];
-var INVESTIGATION_PHRASES = [
-  "investigate",
-  "debug",
-  "research",
-  "review",
-  "analyze",
-  "analyse",
-  "check",
-  "look into",
-  "understand",
-  "explore"
-];
-var EXTERNAL_TERMS = [
-  "deploy",
-  "production",
-  "publish",
-  "release",
-  "ship",
-  "notify",
-  "email",
-  "prod"
-];
-function extractSubagentText(payload, options) {
-  const toolInput = payload.tool_input;
-  if (toolInput && typeof toolInput === "object") {
-    const input = toolInput;
-    const description = typeof input.description === "string" ? input.description : "";
-    const prompt = typeof input.prompt === "string" ? input.prompt : "";
-    return [description, prompt].filter(Boolean).join(" ");
-  }
-  const task = payload.task;
-  if (typeof task === "string") {
-    return task;
-  }
-  if (task && typeof task === "object") {
-    const taskObj = task;
-    const description = typeof taskObj.description === "string" ? taskObj.description : "";
-    const prompt = typeof taskObj.prompt === "string" ? taskObj.prompt : "";
-    return [description, prompt].filter(Boolean).join(" ");
-  }
-  return canonicalStringify(scrubValue(payload, options.scrubOptions));
-}
-function fingerprintSource(payload, options) {
-  const toolInput = payload.tool_input;
-  if (toolInput && typeof toolInput === "object") {
-    const input = toolInput;
-    return scrubValue(
-      {
-        description: input.description ?? "",
-        prompt: input.prompt ?? ""
-      },
-      options.scrubOptions
-    );
-  }
-  const task = payload.task;
-  if (typeof task === "string") {
-    return scrubValue({ task }, options.scrubOptions);
-  }
-  if (task && typeof task === "object") {
-    const taskObj = task;
-    return scrubValue(
-      {
-        description: taskObj.description ?? "",
-        prompt: taskObj.prompt ?? ""
-      },
-      options.scrubOptions
-    );
-  }
-  return scrubValue(payload, options.scrubOptions);
-}
-function classifySubagent(payload, repoRoot, options = {}) {
-  const kind = payload.tool_name === "Task" ? "Task" : String(payload.subagent_type ?? "generalPurpose");
-  const scrubbed = fingerprintSource(payload, options);
-  const summary = extractSubagentText(payload, options);
-  const lowered = summary.toLowerCase();
-  const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot);
-  const signals = [];
-  for (const phrase of EXTERNAL_PHRASES) {
-    if (lowered.includes(phrase)) {
-      signals.push("external_phrase", phrase);
-      return {
-        verdict: "deny_pending_approval",
-        reason: "external_subagent_intent",
-        summary,
-        fingerprint,
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: "subagent requested external effect",
-          confidence: 0.92,
-          signals
-        }
-      };
-    }
-  }
-  const isInvestigation = INVESTIGATION_PHRASES.some((phrase) => lowered.includes(phrase));
-  const hasExternalTerm = EXTERNAL_TERMS.some((term) => {
-    const pattern = new RegExp(`\\b${term}\\b`, "i");
-    return pattern.test(lowered);
-  });
-  if (hasExternalTerm && !isInvestigation) {
-    signals.push("external_term");
-    return {
-      verdict: "deny_pending_approval",
-      reason: "external_subagent_intent",
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "subagent requested external effect",
-        confidence: 0.85,
-        signals
-      }
-    };
-  }
-  if (hasExternalTerm && isInvestigation) {
-    signals.push("external_term_investigation_context");
-    return {
-      verdict: "allow_flagged",
-      reason: "subagent_review",
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "subagent task scope",
-        confidence: 0.7,
-        signals
-      }
-    };
-  }
-  return {
-    verdict: "allow_flagged",
-    reason: "subagent_review",
-    summary,
-    fingerprint,
-    assessment: {
-      reversibility: "recoverable_with_cost",
-      external: false,
-      blastRadius: "subagent task scope",
-      confidence: 0.67,
-      signals: ["subagent_default_review"]
-    }
-  };
-}
-
-// src/core/classify-tool.ts
-import path7 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -2904,79 +2905,1082 @@ function classifyToolUse(payload, repoRoot, cwd, options = {}) {
 // src/core/gate-engine.ts
 init_config();
 
-// src/core/model-assist.ts
-var DEFAULT_MODEL = "claude-sonnet-4-20250514";
-async function maybeAssistAssessment(input, config) {
-  if (!config.enabled) {
-    return { assessment: input.heuristicAssessment, assisted: false };
+// src/core/v2/judge.ts
+var SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i];
+var DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i;
+var GIT_PATTERNS = /\.git\b/i;
+function prescanInterpreterCode(code) {
+  const normalized = code.replaceAll("\\", "/");
+  const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized));
+  const hitsGit = GIT_PATTERNS.test(normalized);
+  const hitsDestructive = DESTRUCTIVE_VERBS.test(normalized);
+  if ((hitsSecret || hitsGit) && hitsDestructive) {
+    return {
+      external_change: false,
+      destroys_outside_repo: false,
+      destroys_history_or_secrets: true
+    };
   }
-  const apiKey = process.env[config.apiKeyEnv ?? "ANTHROPIC_API_KEY"];
-  if (!apiKey) {
-    return { assessment: input.heuristicAssessment, assisted: false };
+  return null;
+}
+function createDeterministicJudgeStub() {
+  return {
+    evaluate() {
+      return Promise.resolve({
+        external_change: false,
+        destroys_outside_repo: false,
+        destroys_history_or_secrets: false
+      });
+    }
+  };
+}
+var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean}
+Default all three to true when unsure.
+
+external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
+destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
+destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
+
+Command/code:
+`;
+function createOllamaJudge(model = "gemma4:e2b", baseUrl = "http://127.0.0.1:11434") {
+  return {
+    async evaluate(input) {
+      const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
+      if (prescan?.destroys_history_or_secrets) {
+        return prescan;
+      }
+      const body = `${TIER1_PROMPT}${input.innerCode ?? input.command}`;
+      try {
+        const response = await fetch(`${baseUrl}/api/generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model,
+            prompt: body,
+            stream: false,
+            format: "json"
+          })
+        });
+        if (!response.ok) {
+          return {
+            external_change: true,
+            destroys_outside_repo: true,
+            destroys_history_or_secrets: true
+          };
+        }
+        const payload = await response.json();
+        const parsed = JSON.parse(payload.response ?? "{}");
+        return {
+          external_change: parsed.external_change !== false,
+          destroys_outside_repo: parsed.destroys_outside_repo !== false,
+          destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false
+        };
+      } catch {
+        return {
+          external_change: true,
+          destroys_outside_repo: true,
+          destroys_history_or_secrets: true
+        };
+      }
+    }
+  };
+}
+function tier1RequiresAsk(verdict2) {
+  return verdict2.external_change || verdict2.destroys_outside_repo || verdict2.destroys_history_or_secrets;
+}
+
+// src/core/v2/verdict.ts
+import path11 from "node:path";
+
+// src/core/v2/containment.ts
+import path8 from "node:path";
+function expandHome(token) {
+  if (token === "~" || token.startsWith("~/")) {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    if (!home) {
+      return token;
+    }
+    return token === "~" ? home : path8.join(home, token.slice(2));
   }
-  if (input.heuristicAssessment.confidence >= 0.88 || input.heuristicAssessment.confidence < 0.55) {
-    return { assessment: input.heuristicAssessment, assisted: false };
+  return token;
+}
+function resolveTrustedPath(token, trustedCwd, trusted) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return null;
+  }
+  if (!trusted || !trustedCwd) {
+    return null;
+  }
+  const expanded = expandHome(token);
+  if (path8.isAbsolute(expanded)) {
+    return canonicalPath(expanded);
+  }
+  return canonicalPath(path8.resolve(trustedCwd, expanded));
+}
+function locationForPath(resolvedPath, repoRoot) {
+  if (!resolvedPath) {
+    return "unknown";
+  }
+  if (pathWithinRoot(repoRoot, resolvedPath)) {
+    return "repo_local";
+  }
+  return "repo_outside";
+}
+function isGitPath(resolvedPath, repoRoot) {
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  if (!relative) {
+    return false;
+  }
+  const normalized = relative.replaceAll("\\", "/");
+  return normalized === ".git" || normalized.startsWith(".git/");
+}
+function isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, protectedRoots2 = []) {
+  if (isGitPath(resolvedPath, repoRoot)) {
+    return true;
+  }
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  const checkPath = relative ?? resolvedPath;
+  if (matchesSensitivePath(checkPath.replaceAll("\\", "/"), sensitivePaths)) {
+    return true;
+  }
+  return protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
+}
+function analyzePathTargets(params) {
+  const signals = [];
+  if (!params.trustedCwd || !params.cwd) {
+    return {
+      location: "unknown",
+      isHighStakes: false,
+      signals: ["missing_trusted_cwd"]
+    };
+  }
+  const locations = /* @__PURE__ */ new Set();
+  let isHighStakes = false;
+  for (const target of params.targets) {
+    const resolved = resolveTrustedPath(target, params.cwd, params.trustedCwd) ?? resolveMutationTarget(target, params.cwd);
+    const location2 = locationForPath(resolved, params.repoRoot);
+    locations.add(location2);
+    if (resolved && isHighStakesPath(
+      resolved,
+      params.repoRoot,
+      params.sensitivePaths,
+      params.protectedArtifactRoots
+    )) {
+      isHighStakes = true;
+      signals.push("high_stakes_path");
+    }
+  }
+  let location = "unknown";
+  if (locations.size === 0) {
+    location = "unknown";
+  } else if (locations.size === 1) {
+    location = [...locations][0] ?? "unknown";
+  } else {
+    location = "mixed";
+  }
+  return { location, isHighStakes, signals };
+}
+function cwdRelative(repoRoot, cwd) {
+  return relativeWithinRepo(repoRoot, cwd) ?? cwd;
+}
+
+// src/core/v2/fingerprint.ts
+function verdictFingerprint(cwdRelative2, commandRedacted) {
+  return hashValue(`v2:${cwdRelative2}:${commandRedacted}`);
+}
+
+// src/core/v2/launcher-resolve.ts
+import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import path9 from "node:path";
+var MAX_RESOLVE_DEPTH = 8;
+function readPackageJson(dir) {
+  const packagePath = path9.join(dir, "package.json");
+  if (!existsSync4(packagePath)) {
+    return null;
   }
   try {
-    const assisted = await callAnthropicAssessment(input, apiKey, config);
-    return {
-      assessment: {
-        ...assisted,
-        signals: [...input.heuristicAssessment.signals, "model_assisted"]
-      },
-      assisted: true
-    };
+    return JSON.parse(readFileSync2(packagePath, "utf8"));
   } catch {
-    return {
-      assessment: {
-        ...input.heuristicAssessment,
-        confidence: Math.min(input.heuristicAssessment.confidence, 0.55),
-        signals: [...input.heuristicAssessment.signals, "model_assist_failed"]
-      },
-      assisted: false
-    };
+    return null;
   }
 }
-async function callAnthropicAssessment(input, apiKey, config) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 3e3);
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: config.model ?? DEFAULT_MODEL,
-        max_tokens: 256,
-        messages: [
-          {
-            role: "user",
-            content: `Classify this shell command for safety. Return JSON only with keys reversibility (reversible|recoverable_with_cost|irreversible), external (boolean), blastRadius (string), confidence (0-1 number).
-Command: ${input.command}`
-          }
-        ]
-      }),
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      throw new Error(`model assist HTTP ${response.status}`);
+function findPackageJson(startDir, stopDir) {
+  let current = path9.resolve(startDir);
+  const stop = path9.resolve(stopDir);
+  while (true) {
+    const packagePath = path9.join(current, "package.json");
+    if (existsSync4(packagePath)) {
+      return packagePath;
     }
-    const payload = await response.json();
-    const text = payload.content?.find((block) => block.type === "text")?.text ?? "";
-    const parsed = JSON.parse(text);
-    return {
-      reversibility: parsed.reversibility ?? input.heuristicAssessment.reversibility,
-      external: parsed.external ?? input.heuristicAssessment.external,
-      blastRadius: parsed.blastRadius ?? input.heuristicAssessment.blastRadius,
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.6,
-      signals: input.heuristicAssessment.signals
-    };
-  } finally {
-    clearTimeout(timeout);
+    if (current === stop || current === path9.dirname(current)) {
+      return existsSync4(packagePath) ? packagePath : null;
+    }
+    const parent = path9.dirname(current);
+    if (!parent.startsWith(stop) && parent !== current) {
+    }
+    if (parent === current) {
+      break;
+    }
+    current = parent;
   }
+  return null;
+}
+function npmScriptName(tokens) {
+  if (tokens[0] === "npm" && tokens[1] === "test") {
+    return "test";
+  }
+  if (tokens[0] === "npm" && tokens[1] === "run" && tokens[2]) {
+    return tokens[2];
+  }
+  if (tokens[0] === "pnpm" && tokens[1] === "run" && tokens[2]) {
+    return tokens[2];
+  }
+  if (tokens[0] === "npm" && tokens[1] && tokens[1] !== "run" && tokens[1] !== "install") {
+    return null;
+  }
+  return null;
+}
+function resolveNpmRecipe(cwd, repoRoot, scriptName) {
+  const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
+  if (!packagePath) {
+    return { recipe: null, opaque: true, reason: "package_json_missing" };
+  }
+  const pkg = readPackageJson(path9.dirname(packagePath));
+  const scripts = pkg?.scripts;
+  if (!scripts || typeof scripts !== "object") {
+    return { recipe: null, opaque: true, reason: "package_scripts_missing" };
+  }
+  const recipe = scripts[scriptName];
+  if (!recipe || typeof recipe !== "string") {
+    return { recipe: null, opaque: true, reason: "npm_script_undefined" };
+  }
+  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
+    return { recipe: null, opaque: true, reason: "npm_script_dynamic" };
+  }
+  return { recipe: recipe.trim(), opaque: false, reason: "npm_script_resolved" };
+}
+function parseMakefileRecipes(makefilePath) {
+  const recipes = /* @__PURE__ */ new Map();
+  try {
+    const content = readFileSync2(makefilePath, "utf8");
+    const lines = content.split("\n");
+    let currentTarget = null;
+    let recipeLines = [];
+    const flush = () => {
+      if (currentTarget && recipeLines.length > 0) {
+        recipes.set(currentTarget, recipeLines.join(" ").trim());
+      }
+      currentTarget = null;
+      recipeLines = [];
+    };
+    for (const line of lines) {
+      if (line.trim().startsWith("#")) {
+        continue;
+      }
+      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
+      if (targetMatch) {
+        flush();
+        currentTarget = targetMatch[1] ?? null;
+        const inline = line.slice(targetMatch[0].length).trim();
+        if (inline && !inline.startsWith("#")) {
+          recipeLines.push(inline);
+        }
+        continue;
+      }
+      if (currentTarget && /^\t/.test(line)) {
+        recipeLines.push(line.trim());
+      }
+    }
+    flush();
+  } catch {
+    return recipes;
+  }
+  return recipes;
+}
+function resolveMakeRecipe(cwd, repoRoot, target) {
+  const candidates = ["Makefile", "makefile", "GNUmakefile"];
+  let makefilePath = null;
+  let searchDir = path9.resolve(cwd);
+  const stop = path9.resolve(repoRoot);
+  while (true) {
+    for (const name of candidates) {
+      const candidate = path9.join(searchDir, name);
+      if (existsSync4(candidate)) {
+        makefilePath = candidate;
+        break;
+      }
+    }
+    if (makefilePath || searchDir === stop || searchDir === path9.dirname(searchDir)) {
+      break;
+    }
+    searchDir = path9.dirname(searchDir);
+  }
+  if (!makefilePath) {
+    return { recipe: null, opaque: true, reason: "makefile_missing" };
+  }
+  const recipes = parseMakefileRecipes(makefilePath);
+  const recipe = recipes.get(target);
+  if (!recipe) {
+    return { recipe: null, opaque: true, reason: "make_target_undefined" };
+  }
+  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
+    return { recipe: null, opaque: true, reason: "make_recipe_dynamic" };
+  }
+  return { recipe: recipe.trim(), opaque: false, reason: "make_recipe_resolved" };
+}
+function resolveLauncherRecipe(params) {
+  if (params.depth >= MAX_RESOLVE_DEPTH) {
+    return { recipe: null, opaque: true, reason: "launcher_depth_exceeded" };
+  }
+  const tokens = params.tokens;
+  const scriptName = npmScriptName(tokens);
+  if (scriptName) {
+    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName);
+  }
+  if (tokens[0] === "make" && tokens[1] && !tokens[1].startsWith("-")) {
+    return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1]);
+  }
+  return null;
+}
+function isRoutineLauncher(tokens) {
+  return tokens[0] === "npm" && (tokens[1] === "run" || tokens[1] === "test") || tokens[0] === "pnpm" || tokens[0] === "make";
+}
+
+// src/core/v2/parser.ts
+import path10 from "node:path";
+var ENV_PREFIX_PATTERN2 = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
+var TRANSPARENT_WRAPPERS = /* @__PURE__ */ new Set([
+  "sudo",
+  "env",
+  "nohup",
+  "time",
+  "nice",
+  "ionice",
+  "stdbuf",
+  "setsid"
+]);
+var SHELL_INTERPRETERS3 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var CODE_INTERPRETERS = /* @__PURE__ */ new Set(["python", "python3", "node", "ruby", "perl", "osascript"]);
+var SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
+var INTERPRETER_SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".py",
+  ".rb",
+  ".pl",
+  ".sh"
+]);
+function normalizeHead(token) {
+  const base = path10.basename(token);
+  if (base && base !== "." && base !== "..") {
+    return base;
+  }
+  return token;
+}
+function peelTransparentWrappers(tokens) {
+  let current = [...tokens];
+  let xargsStdinOpaque = false;
+  while (current.length > 0) {
+    while (current.length > 0 && ENV_PREFIX_PATTERN2.test(current[0] ?? "")) {
+      current.shift();
+    }
+    if (current.length === 0) {
+      break;
+    }
+    const head = normalizeHead(current[0] ?? "");
+    if (!TRANSPARENT_WRAPPERS.has(head)) {
+      break;
+    }
+    if (head === "xargs") {
+      let index = 1;
+      while (index < current.length && current[index]?.startsWith("-")) {
+        index += 1;
+      }
+      const rest = current.slice(index);
+      if (rest.length === 0) {
+        xargsStdinOpaque = true;
+        return { tokens: [], xargsStdinOpaque: true };
+      }
+      current = rest;
+      continue;
+    }
+    if (head === "env") {
+      let index = 1;
+      while (index < current.length) {
+        const token = current[index] ?? "";
+        if (ENV_PREFIX_PATTERN2.test(token) || token.startsWith("-")) {
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      current = current.slice(index);
+      continue;
+    }
+    current = current.slice(1);
+  }
+  return { tokens: current, xargsStdinOpaque };
+}
+function isVariableIndirectHead(head) {
+  return head.startsWith("$");
+}
+function extractEvalBody(tokens) {
+  const head = normalizeHead(tokens[0] ?? "");
+  if (head !== "eval") {
+    return null;
+  }
+  const body = tokens.slice(1).join(" ").trim();
+  return body || null;
+}
+function extractRecursiveScript(tokens) {
+  const filtered = tokens.filter((token) => token !== "sudo");
+  const head = normalizeHead(filtered[0] ?? "");
+  const second = filtered[1] ?? "";
+  if (head === "eval") {
+    return extractEvalBody(tokens);
+  }
+  if (SHELL_INTERPRETERS3.has(head) || CODE_INTERPRETERS.has(head)) {
+    const flagIndex = filtered.findIndex((token) => SCRIPT_FLAGS.has(token));
+    if (flagIndex !== -1) {
+      const body = filtered.slice(flagIndex + 1).join(" ").replace(/^['"]|['"]$/g, "").trim();
+      return body || null;
+    }
+  }
+  if (head === "bash" && (second === "-lc" || second === "-c")) {
+    const body = filtered.slice(2).join(" ").replace(/^['"]|['"]$/g, "").trim();
+    return body || null;
+  }
+  return null;
+}
+function isBareInterpreter(tokens) {
+  const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque) {
+    return true;
+  }
+  if (peeled.length === 0) {
+    return false;
+  }
+  const head = normalizeHead(peeled[0] ?? "");
+  if (!SHELL_INTERPRETERS3.has(head) && !CODE_INTERPRETERS.has(head)) {
+    return false;
+  }
+  const hasScriptFlag = peeled.some((token) => SCRIPT_FLAGS.has(token));
+  if (hasScriptFlag) {
+    return false;
+  }
+  const scriptArg = peeled[1];
+  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path10.extname(scriptArg))) {
+    return false;
+  }
+  if (scriptArg && !scriptArg.startsWith("-")) {
+    return false;
+  }
+  return true;
+}
+function splitTopLevelSegments(command) {
+  const tokens = tokenizeShell(command);
+  const segments = [];
+  let current = [];
+  const flush = () => {
+    if (current.length > 0) {
+      segments.push(current.join(" "));
+      current = [];
+    }
+  };
+  for (const token of tokens) {
+    if (token === "&&" || token === "||" || token === ";" || token === "|" || token === "&") {
+      flush();
+      continue;
+    }
+    current.push(token);
+  }
+  flush();
+  return segments.filter((segment) => segment.trim().length > 0);
+}
+function parseSegment(command) {
+  const tokens = tokenizeShell(command);
+  const { tokens: peeled } = peelTransparentWrappers(tokens);
+  const normalizedTokens = peeled.map((token) => normalizeHead(token));
+  const key = commandKey(peeled.map((token, index) => index === 0 ? normalizeHead(token) : token));
+  return {
+    tokens: peeled,
+    head: normalizeHead(peeled[0] ?? ""),
+    key,
+    normalized: normalizedTokens.join(" ").trim()
+  };
+}
+function segmentOpacity(command) {
+  if (detectUnparseableShell(command)) {
+    return "unparseable";
+  }
+  const tokens = tokenizeShell(command);
+  const { xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque) {
+    return "opaque";
+  }
+  if (isBareInterpreter(tokens)) {
+    return "opaque";
+  }
+  const segment = parseSegment(command);
+  if (isVariableIndirectHead(segment.head)) {
+    return "opaque";
+  }
+  if (extractRecursiveScript(tokens)) {
+    return "recursive";
+  }
+  return "transparent";
+}
+function substitutionInners(command) {
+  return findCommandSubstitutions(command);
+}
+function redactCommand(command) {
+  return command.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]").replace(/sk-[A-Za-z0-9]{8,}/g, "sk-[REDACTED]").trim();
+}
+
+// src/core/v2/verdict.ts
+var DEFAULT_MAX_DEPTH = 8;
+var TIER0_EXTERNAL_KEYS = /* @__PURE__ */ new Set([
+  "git push",
+  "docker push",
+  "npm publish",
+  "pnpm publish",
+  "terraform apply",
+  "aws",
+  "curl",
+  "wget",
+  "gh",
+  "gcloud",
+  "kubectl",
+  "heroku",
+  "vercel",
+  "netlify",
+  "firebase",
+  "fly",
+  "supabase",
+  "scp",
+  "ssh",
+  "rsync"
+]);
+var TIER0_EXTERNAL_HEADS = /* @__PURE__ */ new Set([
+  "dropdb",
+  "createdb",
+  "psql",
+  "mysql",
+  "mongosh",
+  "redis-cli"
+]);
+var READ_ONLY_KEYS2 = /* @__PURE__ */ new Set([
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+]);
+var LOCAL_MUTATION_KEYS = /* @__PURE__ */ new Set([
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+]);
+var LOCAL_ROUTINE_HEADS = /* @__PURE__ */ new Set([
+  "tsc",
+  "vitest",
+  "vite",
+  "webpack",
+  "esbuild",
+  "rollup",
+  "jest",
+  "mocha",
+  "cargo",
+  "go",
+  "make",
+  "cmake",
+  "pnpm",
+  "npm",
+  "node"
+]);
+function worsePermission(left, right) {
+  return left === "ask" || right === "ask" ? "ask" : "allow";
+}
+function mergeLocation(left, right) {
+  if (left === right) {
+    return left;
+  }
+  if (left === "unknown" || right === "unknown") {
+    return "unknown";
+  }
+  if (left === "mixed" || right === "mixed") {
+    return "mixed";
+  }
+  return "mixed";
+}
+function combineInternal(left, right) {
+  return {
+    permission: worsePermission(left.permission, right.permission),
+    location: mergeLocation(left.location, right.location),
+    opacity: left.opacity === "unparseable" || right.opacity === "unparseable" ? "unparseable" : left.opacity === "opaque" || right.opacity === "opaque" ? "opaque" : left.opacity === "recursive" || right.opacity === "recursive" ? "recursive" : "transparent",
+    effect: left.effect === "remote_mutation" || right.effect === "remote_mutation" ? "remote_mutation" : left.effect === "unknown" || right.effect === "unknown" ? "unknown" : left.effect === "local_mutation" || right.effect === "local_mutation" ? "local_mutation" : "read_only",
+    confidence: left.confidence === "deterministic" || right.confidence === "deterministic" ? "deterministic" : left.confidence,
+    reason: worsePermission(left.permission, right.permission) === "ask" ? left.reason : right.reason,
+    signals: [.../* @__PURE__ */ new Set([...left.signals, ...right.signals])]
+  };
+}
+function askVerdict(params) {
+  return { ...params, permission: "ask" };
+}
+function allowVerdict(params) {
+  return { ...params, permission: "allow" };
+}
+function extractPathArgs(tokens) {
+  const redirects = extractRedirectTargets(tokens);
+  const args = [...redirects];
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token || token.startsWith("-") || token === ">" || token === ">>" || token === "<") {
+      continue;
+    }
+    if (redirects.includes(token)) {
+      continue;
+    }
+    args.push(token);
+  }
+  return args;
+}
+function tier0ExternalMatch(key, head, tokens) {
+  if (TIER0_EXTERNAL_KEYS.has(key)) {
+    return true;
+  }
+  if (TIER0_EXTERNAL_HEADS.has(head)) {
+    return true;
+  }
+  if (head === "npm" && tokens[1] === "publish") {
+    return true;
+  }
+  if (head === "docker" && tokens[1] === "push") {
+    return true;
+  }
+  if (head === "git" && tokens[1] === "push") {
+    return true;
+  }
+  if (head === "terraform" && tokens[1] === "apply") {
+    return true;
+  }
+  if (head === "aws" && tokens.slice(1).join(" ").includes("s3 rm")) {
+    return true;
+  }
+  return false;
+}
+function tier0HighStakesRm(tokens, context) {
+  const head = tokens[0] ?? "";
+  if (head !== "rm") {
+    return null;
+  }
+  const targets = extractPathArgs(tokens);
+  const analysis = analyzePathTargets({
+    targets,
+    cwd: context.cwd,
+    repoRoot: context.repoRoot,
+    trustedCwd: context.trustedCwd,
+    sensitivePaths: context.sensitivePaths,
+    protectedArtifactRoots: context.protectedArtifactRoots
+  });
+  if (!context.trustedCwd || !context.cwd) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "transparent",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "missing_trusted_cwd",
+      signals: ["missing_trusted_cwd", ...analysis.signals]
+    });
+  }
+  if (analysis.isHighStakes) {
+    return askVerdict({
+      location: analysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "high_stakes_path",
+      signals: ["high_stakes_path", ...analysis.signals]
+    });
+  }
+  for (const target of targets) {
+    if (target === "~" || target.startsWith("~/") || target.startsWith("/")) {
+      const resolved = path11.resolve(
+        target === "~" || target.startsWith("~/") ? process.env.HOME ?? "/" : context.cwd,
+        target
+      );
+      const relative = relativeWithinRepo(context.repoRoot, resolved);
+      if (relative === null) {
+        return askVerdict({
+          location: "repo_outside",
+          opacity: "transparent",
+          effect: "local_mutation",
+          confidence: "deterministic",
+          reason: "repo_outside_mutation",
+          signals: ["repo_outside_mutation"]
+        });
+      }
+    }
+  }
+  return null;
+}
+async function evaluateSegment(command, context, depth) {
+  const maxDepth = context.maxRecursionDepth ?? DEFAULT_MAX_DEPTH;
+  if (depth > maxDepth) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "recursion_depth_exceeded",
+      signals: ["recursion_depth_exceeded"]
+    });
+  }
+  const opacity = segmentOpacity(command);
+  if (opacity === "unparseable") {
+    return askVerdict({
+      location: "unknown",
+      opacity: "unparseable",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "unparseable_shell",
+      signals: ["unparseable_shell"]
+    });
+  }
+  for (const inner of substitutionInners(command)) {
+    const innerVerdict = await evaluateSegment(inner, context, depth + 1);
+    if (innerVerdict.permission === "ask") {
+      return askVerdict({
+        ...innerVerdict,
+        opacity: "recursive",
+        reason: "command_substitution",
+        signals: [...innerVerdict.signals, "command_substitution"]
+      });
+    }
+  }
+  const tokens = tokenizeShell(command);
+  const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens);
+  if (xargsStdinOpaque || isBareInterpreter(tokens)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "opaque_execution",
+      signals: ["opaque_execution"]
+    });
+  }
+  const segment = parseSegment(command);
+  if (isVariableIndirectHead(segment.head)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "opaque",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "variable_indirect",
+      signals: ["variable_indirect"]
+    });
+  }
+  const recursiveScript = extractRecursiveScript(peeled);
+  if (recursiveScript) {
+    const prescan = prescanInterpreterCode(recursiveScript);
+    if (prescan && tier1RequiresAsk(prescan)) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "recursive",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "interpreter_secret_prescan",
+        signals: ["interpreter_secret_prescan"]
+      });
+    }
+    const innerVerdict = await evaluateSegment(recursiveScript, context, depth + 1);
+    return {
+      ...innerVerdict,
+      opacity: "recursive",
+      signals: [...innerVerdict.signals, "recursive_wrapper"]
+    };
+  }
+  if (isRoutineLauncher(peeled)) {
+    const resolution = resolveLauncherRecipe({
+      tokens: peeled,
+      cwd: context.cwd,
+      repoRoot: context.repoRoot,
+      depth
+    });
+    if (!resolution) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "opaque",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "launcher_unresolved",
+        signals: ["launcher_unresolved"]
+      });
+    }
+    if (resolution.opaque || !resolution.recipe) {
+      return askVerdict({
+        location: "unknown",
+        opacity: "opaque",
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: resolution.reason,
+        signals: [resolution.reason]
+      });
+    }
+    const innerVerdict = await evaluateSegment(resolution.recipe, context, depth + 1);
+    return {
+      ...innerVerdict,
+      opacity: "recursive",
+      signals: [...innerVerdict.signals, resolution.reason]
+    };
+  }
+  if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
+    return askVerdict({
+      location: "external",
+      opacity: "transparent",
+      effect: "remote_mutation",
+      confidence: "deterministic",
+      reason: "tier0_external",
+      signals: ["tier0_external", segment.key]
+    });
+  }
+  const rmVerdict = tier0HighStakesRm(peeled, context);
+  if (rmVerdict) {
+    return rmVerdict;
+  }
+  if (!context.trustedCwd || !context.cwd) {
+    const hasMutation = LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head);
+    if (hasMutation || opacity === "opaque") {
+      return askVerdict({
+        location: "unknown",
+        opacity,
+        effect: "unknown",
+        confidence: "deterministic",
+        reason: "missing_trusted_cwd",
+        signals: ["missing_trusted_cwd"]
+      });
+    }
+  }
+  let effect = "unknown";
+  if (READ_ONLY_KEYS2.has(segment.key) || READ_ONLY_KEYS2.has(segment.head)) {
+    effect = "read_only";
+  } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
+    effect = "local_mutation";
+  } else if (LOCAL_ROUTINE_HEADS.has(segment.head)) {
+    effect = "local_mutation";
+  }
+  const pathArgs = extractPathArgs(peeled);
+  const pathAnalysis = analyzePathTargets({
+    targets: pathArgs,
+    cwd: context.cwd,
+    repoRoot: context.repoRoot,
+    trustedCwd: context.trustedCwd,
+    sensitivePaths: context.sensitivePaths,
+    protectedArtifactRoots: context.protectedArtifactRoots
+  });
+  if (pathAnalysis.isHighStakes) {
+    return askVerdict({
+      location: pathAnalysis.location,
+      opacity: "transparent",
+      effect: "local_mutation",
+      confidence: "deterministic",
+      reason: "high_stakes_path",
+      signals: pathAnalysis.signals
+    });
+  }
+  if (pathAnalysis.location === "repo_outside" || pathAnalysis.location === "mixed") {
+    const outsideEffect = effect === "read_only" ? "read_only" : effect === "unknown" ? "local_mutation" : effect;
+    return askVerdict({
+      location: pathAnalysis.location,
+      opacity: "transparent",
+      effect: outsideEffect,
+      confidence: "deterministic",
+      reason: "repo_outside_mutation",
+      signals: ["repo_outside_mutation", ...pathAnalysis.signals]
+    });
+  }
+  if (pathAnalysis.location === "unknown" && pathArgs.length > 0 && LOCAL_MUTATION_KEYS.has(segment.head)) {
+    return askVerdict({
+      location: "unknown",
+      opacity: "transparent",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "unknown_location_mutation",
+      signals: ["unknown_location_mutation"]
+    });
+  }
+  const needsTier1 = effect === "unknown" || TIER0_EXTERNAL_HEADS.has(segment.head) || segment.head === "curl" || segment.head === "wget";
+  if (needsTier1) {
+    const tier1 = await context.judge.evaluate({
+      command,
+      innerCode: recursiveScript ?? void 0,
+      head: segment.head
+    });
+    if (tier1RequiresAsk(tier1)) {
+      return askVerdict({
+        location: pathAnalysis.location === "unknown" ? "unknown" : "repo_local",
+        opacity,
+        effect: tier1.external_change ? "remote_mutation" : effect,
+        confidence: "llm",
+        reason: "tier1_catastrophic",
+        signals: ["tier1_catastrophic"]
+      });
+    }
+  }
+  if (pathAnalysis.location === "repo_local" && (effect === "read_only" || effect === "local_mutation") && opacity !== "opaque") {
+    return allowVerdict({
+      location: "repo_local",
+      opacity,
+      effect,
+      confidence: "assumed_repo_local",
+      reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
+      signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
+    });
+  }
+  if (effect === "read_only") {
+    return allowVerdict({
+      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+      opacity,
+      effect: "read_only",
+      confidence: "assumed_repo_local",
+      reason: "read_only",
+      signals: ["read_only"]
+    });
+  }
+  return askVerdict({
+    location: pathAnalysis.location,
+    opacity,
+    effect,
+    confidence: "deterministic",
+    reason: "default_ask",
+    signals: ["default_ask"]
+  });
+}
+function toVerdictResult(internal, command, context) {
+  const commandRedacted = redactCommand(command);
+  const relative = cwdRelative(context.repoRoot, context.cwd);
+  return {
+    permission: internal.permission,
+    location: internal.location,
+    opacity: internal.opacity,
+    effect: internal.effect,
+    confidence: internal.confidence,
+    reason: internal.reason,
+    commandRedacted,
+    fingerprint: verdictFingerprint(relative, commandRedacted),
+    signals: internal.signals
+  };
+}
+async function verdict(command, context) {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return toVerdictResult(
+      allowVerdict({
+        location: "repo_local",
+        opacity: "transparent",
+        effect: "read_only",
+        confidence: "deterministic",
+        reason: "empty_command",
+        signals: ["empty_command"]
+      }),
+      trimmed,
+      context
+    );
+  }
+  const segments = splitTopLevelSegments(trimmed);
+  let combined = null;
+  for (const segment of segments) {
+    const segmentVerdict = await evaluateSegment(segment, context, 0);
+    combined = combined ? combineInternal(combined, segmentVerdict) : segmentVerdict;
+  }
+  return toVerdictResult(
+    combined ?? askVerdict({
+      location: "unknown",
+      opacity: "unparseable",
+      effect: "unknown",
+      confidence: "deterministic",
+      reason: "empty_segments",
+      signals: ["empty_segments"]
+    }),
+    trimmed,
+    context
+  );
+}
+
+// src/core/v2/adapter.ts
+function buildVerdictContext(params) {
+  return {
+    cwd: params.cwd,
+    repoRoot: params.repoRoot,
+    trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
+    sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
+    protectedArtifactRoots: params.options?.protectedArtifactRoots,
+    judge: params.judge ?? (params.config.policy.modelAssist.enabled ? createOllamaJudge(params.config.policy.modelAssist.model) : createDeterministicJudgeStub()),
+    mode: params.config.mode
+  };
+}
+async function classifyShellV2(command, cwd, repoRoot, config, options = {}, judge) {
+  const context = buildVerdictContext({ cwd, repoRoot, config, options, judge });
+  const result = await verdict(command, context);
+  return verdictToClassifyResult(result);
+}
+function verdictToClassifyResult(result) {
+  const external = result.location === "external" || result.location === "repo_outside" || result.effect === "remote_mutation";
+  const hookVerdict = result.permission === "allow" ? result.effect === "local_mutation" ? "allow_flagged" : "allow" : "deny_pending_approval";
+  const legacyReason = result.reason === "repo_outside_mutation" ? result.effect === "read_only" ? "outside_repo_redirect" : "outside_repo_mutation" : result.reason === "tier0_external" ? "external_effect" : result.reason === "high_stakes_path" ? "protected_artifact" : result.reason;
+  const assessment = {
+    reversibility: result.effect === "read_only" ? "reversible" : result.permission === "allow" ? "recoverable_with_cost" : "irreversible",
+    external,
+    blastRadius: result.location,
+    confidence: result.confidence === "deterministic" ? 0.95 : result.confidence === "llm" ? 0.75 : hookVerdict === "allow_flagged" ? 0.75 : 0.7,
+    signals: result.signals
+  };
+  return {
+    verdict: hookVerdict,
+    reason: legacyReason,
+    fingerprint: result.fingerprint,
+    assessment,
+    normalizedCommand: result.commandRedacted,
+    summary: result.commandRedacted,
+    v2: {
+      location: result.location,
+      opacity: result.opacity,
+      effect: result.effect,
+      confidence: result.confidence,
+      would: result.permission,
+      by: "v2",
+      commandRedacted: result.commandRedacted,
+      commandFingerprint: result.fingerprint,
+      signals: result.signals
+    }
+  };
 }
 
 // src/core/gate-engine.ts
@@ -3059,14 +4063,47 @@ function normalizeGatedAction(params) {
     agentAssessment
   };
 }
-function classifyGatedAction(action, config, extraOptions = {}) {
+function applyShellPeripheralPolicy(command, action, result, options) {
+  if (options.demoteL3External && result.verdict === "deny_pending_approval" && (result.reason === "external_effect" || result.assessment.external)) {
+    return {
+      ...result,
+      verdict: "allow_flagged",
+      reason: "l3_external_hint",
+      assessment: {
+        ...result.assessment,
+        signals: [...result.assessment.signals, "l3_external_hint", "egress_boundary_expected"]
+      }
+    };
+  }
+  if (options.brokerFsScope && result.verdict === "deny_pending_approval" && (result.reason === "outside_repo_mutation" || result.reason === "outside_repo_redirect" || result.reason === "repo_outside_mutation" || result.v2?.location === "repo_outside")) {
+    const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot);
+    if (outsideRepoPaths.length > 0 && options.fsScopeAllowlist && allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)) {
+      return {
+        ...result,
+        verdict: "allow_flagged",
+        reason: "capability_fs_hint",
+        assessment: {
+          ...result.assessment,
+          signals: [
+            ...result.assessment.signals,
+            "capability_fs_hint",
+            "sandbox_boundary_expected"
+          ]
+        }
+      };
+    }
+  }
+  return result;
+}
+async function classifyGatedAction(action, config, extraOptions = {}) {
   const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
   if (action.kind === "shell") {
     const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
     if (!command) {
       throw new GateNormalizationError("Shell gated action requires a command.");
     }
-    const result = classifyShell(command, action.cwd, action.repoRoot, options);
+    let result = await classifyShellV2(command, action.cwd, action.repoRoot, config, options);
+    result = applyShellPeripheralPolicy(command, action, result, options);
     if (!action.agentAssessment) {
       return result;
     }
@@ -3086,68 +4123,8 @@ function classifyGatedAction(action, config, extraOptions = {}) {
   }
   return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
 }
-function applyModelAssistToResult(result, assistedAssessment, options) {
-  if (result.reason !== "unknown_local_effect" && result.reason !== "unparseable_shell") {
-    return { ...result, assessment: assistedAssessment };
-  }
-  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
-  const unknownLocalEffect = options.unknownLocalEffect ?? "allow_flagged";
-  const unparseableShell = options.unparseableShell ?? "allow_flagged";
-  if (result.reason === "unparseable_shell") {
-    return {
-      ...result,
-      assessment: assistedAssessment,
-      verdict: unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged"
-    };
-  }
-  return {
-    ...result,
-    assessment: assistedAssessment,
-    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect)
-  };
-}
 async function classifyGatedActionAsync(action, config, extraOptions = {}) {
-  const options = { ...classifierOptionsFromConfig(config), ...extraOptions };
-  const result = classifyGatedAction(action, config, extraOptions);
-  if (action.kind !== "shell" || !config.policy.modelAssist.enabled) {
-    return result;
-  }
-  const command = action.command ?? shellCommandFromPayload(action.payload ?? {});
-  if (!command) {
-    return result;
-  }
-  const assisted = await maybeAssistAssessment(
-    {
-      command,
-      attributes: {
-        commandKey: "",
-        normalizedCommand: command,
-        cwdRelative: "",
-        flags: [],
-        targetScope: "repo",
-        redirectKind: "none",
-        signals: result.assessment.signals,
-        isUnparseable: result.reason === "unparseable_shell",
-        isDynamicEval: false,
-        hasPipeToShell: false,
-        hitsProtectedArtifact: false,
-        hitsOutsideRepo: false,
-        isCustomAllow: false,
-        isCustomExternal: false,
-        isReadOnlyKey: false,
-        isFlaggedKey: false,
-        isExternalKey: false,
-        hasCredentialHeader: false,
-        findDangerous: false
-      },
-      heuristicAssessment: result.assessment
-    },
-    config.policy.modelAssist
-  );
-  if (!assisted.assisted) {
-    return result;
-  }
-  return applyModelAssistToResult(result, assisted.assessment, options);
+  return classifyGatedAction(action, config, extraOptions);
 }
 function gateEnabledForAction(config, action) {
   if (action.kind === "shell") {
@@ -3175,15 +4152,15 @@ init_config();
 
 // src/core/control-plane-spike.ts
 init_config();
-import { existsSync as existsSync4 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import path8 from "node:path";
+import path12 from "node:path";
 async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path8.join(
+  const outputPath = path12.join(
     controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
     "oq3-spike-last.json"
   );
-  await mkdir2(path8.dirname(outputPath), { recursive: true });
+  await mkdir2(path12.dirname(outputPath), { recursive: true });
   await writeFile2(
     outputPath,
     `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -3194,7 +4171,7 @@ async function persistControlPlaneSpikeResult(result, env = process.env, homedir
 }
 async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
   const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path8.join(controlPlaneDir, "oq3-spike.json");
+  const testFile = path12.join(controlPlaneDir, "oq3-spike.json");
   const payload = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     cwd,
@@ -3219,7 +4196,7 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
     await rm(testFile, { force: true });
     return {
       ...base,
-      ok: parsed.cwd === cwd && existsSync4(controlPlaneDir),
+      ok: parsed.cwd === cwd && existsSync5(controlPlaneDir),
       wrote: true,
       readBack: readBack.trim()
     };
@@ -3232,9 +4209,9 @@ async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), home
 }
 
 // src/core/transactional/diff-evaluator.ts
-import path9 from "node:path";
+import path13 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = canonicalPath(path9.join(ctx.repoRoot, change.relativePath));
+  const absolutePath = canonicalPath(path13.join(ctx.repoRoot, change.relativePath));
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -3365,10 +4342,10 @@ var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
 // src/core/transactional/git-worktree.ts
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { copyFile, mkdir as mkdir3, mkdtemp, rm as rm2 } from "node:fs/promises";
 import os from "node:os";
-import path10 from "node:path";
+import path14 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repoRoot, ...args], {
@@ -3409,7 +4386,7 @@ async function isDirtyWorktree(repoRoot) {
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
-  const worktreePath = path10.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  const worktreePath = path14.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
   await mkdir3(stateDir, { recursive: true });
   await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
   return {
@@ -3429,14 +4406,14 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
   const resolvedCwd = canonicalPath(cwd);
-  const relative = path10.relative(canonicalPath(repoRoot), resolvedCwd);
-  if (relative.startsWith("..") || path10.isAbsolute(relative)) {
+  const relative = path14.relative(canonicalPath(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path14.isAbsolute(relative)) {
     return worktreePath;
   }
   if (relative === "") {
     return worktreePath;
   }
-  return path10.join(worktreePath, relative);
+  return path14.join(worktreePath, relative);
 }
 function runShellCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
@@ -3506,7 +4483,7 @@ async function rollbackAppliedChanges(actions) {
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === "restore") {
-        await mkdir3(path10.dirname(action.target), { recursive: true });
+        await mkdir3(path14.dirname(action.target), { recursive: true });
         await copyFile(action.backupPath, action.target);
       } else {
         await rm2(action.target, { force: true });
@@ -3516,14 +4493,14 @@ async function rollbackAppliedChanges(actions) {
   }
 }
 async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-  const backupRoot = await mkdtemp(path10.join(os.tmpdir(), "belay-tx-rollback-"));
+  const backupRoot = await mkdtemp(path14.join(os.tmpdir(), "belay-tx-rollback-"));
   const rollbackActions = [];
   try {
     for (const change of changes) {
-      const target = path10.join(repoRoot, change.relativePath);
-      if (existsSync5(target)) {
-        const backupPath = path10.join(backupRoot, change.relativePath);
-        await mkdir3(path10.dirname(backupPath), { recursive: true });
+      const target = path14.join(repoRoot, change.relativePath);
+      if (existsSync6(target)) {
+        const backupPath = path14.join(backupRoot, change.relativePath);
+        await mkdir3(path14.dirname(backupPath), { recursive: true });
         await copyFile(target, backupPath);
         rollbackActions.push({ type: "restore", target, backupPath });
       } else if (change.kind !== "deleted") {
@@ -3533,8 +4510,8 @@ async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
         await rm2(target, { force: true });
         continue;
       }
-      const source = path10.join(worktreePath, change.relativePath);
-      await mkdir3(path10.dirname(target), { recursive: true });
+      const source = path14.join(worktreePath, change.relativePath);
+      await mkdir3(path14.dirname(target), { recursive: true });
       await copyFile(source, target);
     }
   } catch (error) {
@@ -3696,8 +4673,8 @@ async function notifyDeny(config, event) {
 }
 
 // src/services/egress-service.ts
-import { existsSync as existsSync6, readFileSync as readFileSync2 } from "node:fs";
-import path11 from "node:path";
+import { existsSync as existsSync7, readFileSync as readFileSync3 } from "node:fs";
+import path15 from "node:path";
 init_config_io();
 init_config();
 
@@ -3713,18 +4690,18 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
     belayStateDir(config, repoLocalStateDir),
     configuredControlPlaneDir(config)
   ]);
-  const resolvedRepoRoot = path11.resolve(repoRoot);
+  const resolvedRepoRoot = path15.resolve(repoRoot);
   for (const stateDir of stateDirs) {
-    const statusPath = path11.join(stateDir, "egress-proxy.json");
-    if (!existsSync6(statusPath)) {
+    const statusPath = path15.join(stateDir, "egress-proxy.json");
+    if (!existsSync7(statusPath)) {
       continue;
     }
     try {
-      const raw = JSON.parse(readFileSync2(statusPath, "utf8"));
+      const raw = JSON.parse(readFileSync3(statusPath, "utf8"));
       if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
         continue;
       }
-      if (raw.repoRoot && path11.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+      if (raw.repoRoot && path15.resolve(raw.repoRoot) !== resolvedRepoRoot) {
         continue;
       }
       return true;
@@ -3743,7 +4720,7 @@ function isProcessAlive(pid) {
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path12 from "node:path";
+import path16 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -3755,7 +4732,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path12.resolve(entry));
+  return roots.map((entry) => path16.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -3777,8 +4754,8 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path13.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir4(path13.dirname(auditPath), { recursive: true });
+      const auditPath = path17.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir4(path17.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
@@ -3803,7 +4780,7 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir4(path13.dirname(filePath), { recursive: true });
+      await mkdir4(path17.dirname(filePath), { recursive: true });
       await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
@@ -3813,7 +4790,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync7(teamPath)) {
+  if (existsSync8(teamPath)) {
     teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -3895,7 +4872,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       agentAssessment: extractAgentAssessment(params.payload)
     });
   } catch {
-    const verdict = unnormalizedGateVerdict({
+    const verdict2 = unnormalizedGateVerdict({
       reason: "normalization_failed",
       mode: ctx.config.mode,
       user_message: "agent-belay could not normalize this gated action. Run agent-belay doctor, then retry.",
@@ -3904,13 +4881,13 @@ async function evaluateGatedAction(ctx, deps, params) {
     await deps.appendAudit(ctx, {
       event: gateAuditEventName(params.kind),
       kind: params.kind,
-      verdict: verdict.verdict,
-      reason: verdict.reason,
+      verdict: verdict2.verdict,
+      reason: verdict2.reason,
       mode: ctx.config.mode,
       wouldBlock: true,
       permission: "deny"
     });
-    return verdict;
+    return verdict2;
   }
   if (!gateEnabledForAction(ctx.config, action)) {
     return classifyResultToGateVerdict({
@@ -3943,7 +4920,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       command: params.command,
       cwd: params.cwd,
       repoRoot: ctx.repoRoot,
-      stateDir: path13.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
+      stateDir: path17.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
       timeoutMs: transactional.timeoutMs,
       predicted,
       diffContext: {
@@ -3987,6 +4964,8 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
     predictedAssessment: auditExtras.predictedAssessment,
     observedAssessment: auditExtras.observedAssessment,
     mode: ctx.config.mode,
+    schemaVersion: result.v2 ? 2 : 1,
+    ...result.v2 ?? {},
     ...auditExtras.transactionalLayer
   };
   if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {
@@ -4166,11 +5145,11 @@ async function maybeRunControlPlaneSpike(ctx, deps, envEnabled) {
     permission: "allow"
   });
 }
-function gateVerdictToCursorResponse(verdict) {
+function gateVerdictToCursorResponse(verdict2) {
   return {
-    permission: verdict.permission,
-    user_message: verdict.user_message,
-    agent_message: verdict.agent_message
+    permission: verdict2.permission,
+    user_message: verdict2.user_message,
+    agent_message: verdict2.agent_message
   };
 }
 async function appendObservedAudit(ctx, deps, eventName, payload) {
@@ -4184,19 +5163,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync8 } from "node:fs";
-import path14 from "node:path";
+import { existsSync as existsSync9 } from "node:fs";
+import path18 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path14.resolve(startPath);
+  let current = path18.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync8(path14.join(current, marker))) {
+      if (existsSync9(path18.join(current, marker))) {
         return current;
       }
     }
-    const parent = path14.dirname(current);
+    const parent = path18.dirname(current);
     if (parent === current) {
-      return path14.resolve(startPath);
+      return path18.resolve(startPath);
     }
     current = parent;
   }
@@ -4261,12 +5240,12 @@ async function runShellGateHook() {
     const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
     const ctx = await loadRuntimeContext(cwd);
     const deps = createDefaultGateRuntimeDeps();
-    const verdict = await evaluateGatedAction(ctx, deps, {
+    const verdict2 = await evaluateGatedAction(ctx, deps, {
       kind: "shell",
       cwd,
       command
     });
-    jsonResponse(gateVerdictToCursorResponse(verdict));
+    jsonResponse(gateVerdictToCursorResponse(verdict2));
   } catch {
     jsonResponse({
       permission: "deny",
@@ -4282,41 +5261,41 @@ async function runToolGateHook(eventName) {
     const deps = createDefaultGateRuntimeDeps();
     const toolName = String(payload.tool_name ?? "");
     if (isSubagentEvent(payload, eventName)) {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
         cwd,
         payload
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (toolName === "Shell") {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "shell",
         cwd,
         payload,
         toolName
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (isFileMutationTool(toolName)) {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "tool",
         cwd,
         payload,
         toolName
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     if (payload.tool_name === "Task") {
-      const verdict = await evaluateGatedAction(ctx, deps, {
+      const verdict2 = await evaluateGatedAction(ctx, deps, {
         kind: "subagent",
         cwd,
         payload
       });
-      jsonResponse(gateVerdictToCursorResponse(verdict));
+      jsonResponse(gateVerdictToCursorResponse(verdict2));
       return;
     }
     jsonResponse({ permission: "allow" });

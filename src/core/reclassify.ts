@@ -21,11 +21,11 @@ function shellCommandFromSummary(summary: string): string | null {
   return trimmed || null
 }
 
-export function reclassifyAuditRecord(
+export async function reclassifyAuditRecord(
   record: AuditRecord,
   config: BelayConfigV3,
   repoRoot: string,
-): ClassifyResult | null {
+): Promise<ClassifyResult | null> {
   if (!record.event || !GATE_EVENTS.has(record.event)) {
     return null
   }
@@ -45,7 +45,7 @@ export function reclassifyAuditRecord(
         cwd: repoRoot,
         command,
       })
-      return classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+      return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
     }
 
     if (kind === 'subagent') {
@@ -58,7 +58,7 @@ export function reclassifyAuditRecord(
           tool_input: { description: summary },
         },
       })
-      return classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+      return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
     }
 
     const action = normalizeGatedAction({
@@ -71,18 +71,18 @@ export function reclassifyAuditRecord(
         tool_input: { command: summary },
       },
     })
-    return classifyGatedAction(action, config, classifierOptionsFromConfig(config))
+    return await classifyGatedAction(action, config, classifierOptionsFromConfig(config))
   } catch {
     return null
   }
 }
 
-export function diffReclassification(
+export async function diffReclassification(
   record: AuditRecord,
   config: BelayConfigV3,
   repoRoot: string,
-): ReclassifyDiff | null {
-  const next = reclassifyAuditRecord(record, config, repoRoot)
+): Promise<ReclassifyDiff | null> {
+  const next = await reclassifyAuditRecord(record, config, repoRoot)
   if (!next) {
     return null
   }

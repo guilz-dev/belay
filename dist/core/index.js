@@ -14,3 +14,4 @@ export { canonicalPath, hasOutsideRepoPath, normalizeToken, pathWithinRoot, rela
 export { scrubString, scrubValue } from './scrub.js';
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js';
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js';
+export { buildVerdictContext, classifyShellV2, verdict, verdictToClassifyResult, } from './v2/index.js';

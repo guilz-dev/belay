@@ -22,9 +22,7 @@ export async function simulateProject(options) {
         raw = '';
     }
     const records = parseAuditNdjson(raw).map(toAuditRecord);
-    const diffs = records
-        .map((record) => diffReclassification(record, candidateConfig, repoRoot))
-        .filter((diff) => diff !== null);
+    const diffs = (await Promise.all(records.map((record) => diffReclassification(record, candidateConfig, repoRoot)))).filter((diff) => diff !== null);
     const allowToDeny = diffs.filter((diff) => (diff.previousVerdict === 'allow' || diff.previousVerdict === 'allow_flagged') &&
         diff.nextVerdict === 'deny_pending_approval');
     const denyToAllow = diffs.filter((diff) => diff.previousVerdict === 'deny_pending_approval' &&

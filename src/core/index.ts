@@ -96,3 +96,9 @@ export type {
   ScrubOptions,
   UnknownLocalEffectPolicy,
 } from './types.js'
+export {
+  buildVerdictContext,
+  classifyShellV2,
+  verdict,
+  verdictToClassifyResult,
+} from './v2/index.js'

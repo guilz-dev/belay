@@ -89,9 +89,11 @@ export async function auditProject(options: AuditOptions) {
   }
 
   const filtered = filterAuditRecords(records, filter)
-  const diffs = filtered
-    .map((record) => diffReclassification(record, candidateConfig, repoRoot))
-    .filter((diff): diff is NonNullable<typeof diff> => diff !== null)
+  const diffs = (
+    await Promise.all(
+      filtered.map((record) => diffReclassification(record, candidateConfig, repoRoot)),
+    )
+  ).filter((diff): diff is NonNullable<typeof diff> => diff !== null)
 
   return {
     subcommand: 'replay',

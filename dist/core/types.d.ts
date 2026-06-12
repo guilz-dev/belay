@@ -9,6 +9,17 @@ export interface Assessment {
     confidence: number;
     signals: string[];
 }
+export interface V2TraceFields {
+    location: string;
+    opacity: string;
+    effect: string;
+    confidence: string;
+    would: string;
+    by: string;
+    commandRedacted?: string;
+    commandFingerprint?: string;
+    signals?: string[];
+}
 export interface ClassifyResult {
     verdict: HookVerdict;
     reason: string;
@@ -16,6 +27,7 @@ export interface ClassifyResult {
     assessment: Assessment;
     normalizedCommand?: string;
     summary?: string;
+    v2?: V2TraceFields;
 }
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny';
 export type UnparseableShellPolicy = 'allow_flagged' | 'deny';

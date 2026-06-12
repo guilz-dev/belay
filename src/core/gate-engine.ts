@@ -1,13 +1,14 @@
-import { classifyShell } from './classify-shell.js'
+import { allPathsAllowlisted } from './capability/allowlist.js'
+import { collectOutsideRepoPaths } from './capability/paths.js'
 import { classifySubagent } from './classify-subagent.js'
 import { classifyToolUse } from './classify-tool.js'
 import type { BelayConfigV3 } from './config.js'
-import { classifierOptionsFromConfig, DEFAULT_CONFIDENCE_THRESHOLDS } from './config.js'
+import { classifierOptionsFromConfig } from './config.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
-import { mergeAgentAssessment, verdictFromConfidence } from './judgment.js'
-import { maybeAssistAssessment } from './model-assist.js'
+import { mergeAgentAssessment } from './judgment.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
+import { classifyShellV2 } from './v2/adapter.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -119,11 +120,65 @@ export function normalizeGatedAction(params: {
   }
 }
 
-export function classifyGatedAction(
+function applyShellPeripheralPolicy(
+  command: string,
+  action: GatedAction,
+  result: ClassifyResult,
+  options: ClassifierOptions,
+): ClassifyResult {
+  if (
+    options.demoteL3External &&
+    result.verdict === 'deny_pending_approval' &&
+    (result.reason === 'external_effect' || result.assessment.external)
+  ) {
+    return {
+      ...result,
+      verdict: 'allow_flagged',
+      reason: 'l3_external_hint',
+      assessment: {
+        ...result.assessment,
+        signals: [...result.assessment.signals, 'l3_external_hint', 'egress_boundary_expected'],
+      },
+    }
+  }
+
+  if (
+    options.brokerFsScope &&
+    result.verdict === 'deny_pending_approval' &&
+    (result.reason === 'outside_repo_mutation' ||
+      result.reason === 'outside_repo_redirect' ||
+      result.reason === 'repo_outside_mutation' ||
+      result.v2?.location === 'repo_outside')
+  ) {
+    const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+    if (
+      outsideRepoPaths.length > 0 &&
+      options.fsScopeAllowlist &&
+      allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)
+    ) {
+      return {
+        ...result,
+        verdict: 'allow_flagged',
+        reason: 'capability_fs_hint',
+        assessment: {
+          ...result.assessment,
+          signals: [
+            ...result.assessment.signals,
+            'capability_fs_hint',
+            'sandbox_boundary_expected',
+          ],
+        },
+      }
+    }
+  }
+  return result
+}
+
+export async function classifyGatedAction(
   action: GatedAction,
   config: BelayConfigV3,
   extraOptions: ClassifierOptions = {},
-): ClassifyResult {
+): Promise<ClassifyResult> {
   const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
 
   if (action.kind === 'shell') {
@@ -131,7 +186,8 @@ export function classifyGatedAction(
     if (!command) {
       throw new GateNormalizationError('Shell gated action requires a command.')
     }
-    const result = classifyShell(command, action.cwd, action.repoRoot, options)
+    let result = await classifyShellV2(command, action.cwd, action.repoRoot, config, options)
+    result = applyShellPeripheralPolicy(command, action, result, options)
     if (!action.agentAssessment) {
       return result
     }
@@ -154,85 +210,12 @@ export function classifyGatedAction(
   return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options)
 }
 
-function applyModelAssistToResult(
-  result: ClassifyResult,
-  assistedAssessment: Assessment,
-  options: ClassifierOptions,
-): ClassifyResult {
-  if (result.reason !== 'unknown_local_effect' && result.reason !== 'unparseable_shell') {
-    return { ...result, assessment: assistedAssessment }
-  }
-
-  const thresholds = options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS
-  const unknownLocalEffect = options.unknownLocalEffect ?? 'allow_flagged'
-  const unparseableShell = options.unparseableShell ?? 'allow_flagged'
-
-  if (result.reason === 'unparseable_shell') {
-    return {
-      ...result,
-      assessment: assistedAssessment,
-      verdict: unparseableShell === 'deny' ? 'deny_pending_approval' : 'allow_flagged',
-    }
-  }
-
-  return {
-    ...result,
-    assessment: assistedAssessment,
-    verdict: verdictFromConfidence(assistedAssessment, thresholds, unknownLocalEffect),
-  }
-}
-
 export async function classifyGatedActionAsync(
   action: GatedAction,
   config: BelayConfigV3,
   extraOptions: ClassifierOptions = {},
 ): Promise<ClassifyResult> {
-  const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
-  const result = classifyGatedAction(action, config, extraOptions)
-
-  if (action.kind !== 'shell' || !config.policy.modelAssist.enabled) {
-    return result
-  }
-
-  const command = action.command ?? shellCommandFromPayload(action.payload ?? {})
-  if (!command) {
-    return result
-  }
-
-  const assisted = await maybeAssistAssessment(
-    {
-      command,
-      attributes: {
-        commandKey: '',
-        normalizedCommand: command,
-        cwdRelative: '',
-        flags: [],
-        targetScope: 'repo',
-        redirectKind: 'none',
-        signals: result.assessment.signals,
-        isUnparseable: result.reason === 'unparseable_shell',
-        isDynamicEval: false,
-        hasPipeToShell: false,
-        hitsProtectedArtifact: false,
-        hitsOutsideRepo: false,
-        isCustomAllow: false,
-        isCustomExternal: false,
-        isReadOnlyKey: false,
-        isFlaggedKey: false,
-        isExternalKey: false,
-        hasCredentialHeader: false,
-        findDangerous: false,
-      },
-      heuristicAssessment: result.assessment,
-    },
-    config.policy.modelAssist,
-  )
-
-  if (!assisted.assisted) {
-    return result
-  }
-
-  return applyModelAssistToResult(result, assisted.assessment, options)
+  return classifyGatedAction(action, config, extraOptions)
 }
 
 export function gateEnabledForAction(config: BelayConfigV3, action: GatedAction): boolean {

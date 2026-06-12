@@ -33,9 +33,11 @@ export async function simulateProject(options: SimulateOptions) {
   }
 
   const records = parseAuditNdjson(raw).map(toAuditRecord)
-  const diffs = records
-    .map((record) => diffReclassification(record, candidateConfig, repoRoot))
-    .filter((diff): diff is NonNullable<typeof diff> => diff !== null)
+  const diffs = (
+    await Promise.all(
+      records.map((record) => diffReclassification(record, candidateConfig, repoRoot)),
+    )
+  ).filter((diff): diff is NonNullable<typeof diff> => diff !== null)
 
   const allowToDeny = diffs.filter(
     (diff) =>

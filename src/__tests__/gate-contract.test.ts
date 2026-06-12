@@ -43,14 +43,14 @@ describe('gate contract', () => {
     ).toThrow(GateNormalizationError)
   })
 
-  it('classifies normalized shell actions', () => {
+  it('classifies normalized shell actions', async () => {
     const action = normalizeGatedAction({
       kind: 'shell',
       repoRoot: '/repo',
       cwd: '/repo',
       command: 'git status',
     })
-    const result = classifyGatedAction(action, DEFAULT_CONFIG_V3)
+    const result = await classifyGatedAction(action, DEFAULT_CONFIG_V3)
     expect(result.verdict).toBe('allow')
   })
 
@@ -67,7 +67,7 @@ describe('gate contract', () => {
     expect(assessment?.confidence).toBe(0.99)
   })
 
-  it('escalates when agent assessment mismatches independent judgment', () => {
+  it('escalates when agent assessment mismatches independent judgment', async () => {
     const action = normalizeGatedAction({
       kind: 'shell',
       repoRoot: '/repo',
@@ -81,7 +81,7 @@ describe('gate contract', () => {
         signals: [],
       },
     })
-    const result = classifyGatedAction(action, DEFAULT_CONFIG_V3)
+    const result = await classifyGatedAction(action, DEFAULT_CONFIG_V3)
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('agent_assessment_mismatch')
   })

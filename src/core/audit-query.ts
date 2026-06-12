@@ -62,6 +62,18 @@ export function filterAuditRecords(
     if (filter.event && record.event !== filter.event) {
       return false
     }
+    if (filter.location && record.location !== filter.location) {
+      return false
+    }
+    if (filter.opacity && record.opacity !== filter.opacity) {
+      return false
+    }
+    if (filter.effect && record.effect !== filter.effect) {
+      return false
+    }
+    if (filter.confidence && record.confidence !== filter.confidence) {
+      return false
+    }
     return true
   })
 

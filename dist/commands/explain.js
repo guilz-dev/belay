@@ -1,11 +1,12 @@
 import path from 'node:path';
 import { loadConfigFile } from '../config-io.js';
 import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js';
-import { classifierOptionsFromConfig, classifyShell, classifySubagent, classifyToolUse, } from '../core/index.js';
+import { classifierOptionsFromConfig, classifySubagent, classifyToolUse } from '../core/index.js';
 import { isTransactionalEligible } from '../core/transactional/index.js';
+import { classifyShellV2 } from '../core/v2/adapter.js';
 import { egressStatus } from '../services/egress-service.js';
 import { sandboxStatus } from '../services/sandbox-service.js';
-function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
+async function classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config) {
     const kind = options.kind ?? 'shell';
     if (kind === 'shell') {
         if (!options.command) {
@@ -14,7 +15,7 @@ function classifyExplainTarget(options, repoRoot, cwd, classifierOptions) {
         return {
             kind: 'shell',
             input: options.command,
-            result: classifyShell(options.command, cwd, repoRoot, classifierOptions),
+            result: await classifyShellV2(options.command, cwd, repoRoot, config, classifierOptions),
         };
     }
     if (kind === 'subagent') {
@@ -67,7 +68,7 @@ export async function explainCommand(options) {
             !egress.foreignProxy,
         brokerFsScope: isCapabilityBrokerDemotionActive(config),
     };
-    const classified = classifyExplainTarget(options, repoRoot, cwd, classifierOptions);
+    const classified = await classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config);
     const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);
     return {
         repoRoot,
@@ -109,6 +110,17 @@ export function formatExplainReport(report) {
         `Verdict: ${result.verdict}`,
         `Reason: ${result.reason}`,
         `Fingerprint: ${result.fingerprint}`,
+        ...(result.v2
+            ? [
+                '',
+                'v2 axes:',
+                `  location: ${result.v2.location}`,
+                `  opacity: ${result.v2.opacity}`,
+                `  effect: ${result.v2.effect}`,
+                `  confidence: ${result.v2.confidence}`,
+                `  would: ${result.v2.would}`,
+            ]
+            : []),
         '',
         'Predicted assessment:',
         `  reversibility: ${result.assessment.reversibility}`,
