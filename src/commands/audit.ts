@@ -27,6 +27,10 @@ export interface AuditOptions {
   kind?: string
   fingerprint?: string
   event?: string
+  location?: string
+  opacity?: string
+  effect?: string
+  confidence?: string
   limit?: number
   configPath?: string
 }
@@ -54,6 +58,10 @@ export async function auditProject(options: AuditOptions) {
     kind: options.kind,
     fingerprint: options.fingerprint,
     event: options.event,
+    location: options.location,
+    opacity: options.opacity,
+    effect: options.effect,
+    confidence: options.confidence,
     limit: options.limit,
   }
 
@@ -110,8 +118,12 @@ export function formatAuditReport(report: Awaited<ReturnType<typeof auditProject
     const count = report.count ?? records.length
     const lines = [`audit query: ${count} record(s)`]
     for (const record of records.slice(0, 50)) {
+      const v2Axes =
+        typeof record.location === 'string'
+          ? ` location=${record.location} opacity=${record.opacity ?? '?'} effect=${record.effect ?? '?'} confidence=${record.confidence ?? '?'}`
+          : ''
       lines.push(
-        `- ${record.timestamp ?? '?'} [${record.event ?? '?'}] ${record.verdict ?? '?'} (${record.reason ?? '?'}) ${record.summary ?? ''}`,
+        `- ${record.timestamp ?? '?'} [${record.event ?? '?'}] ${record.verdict ?? '?'} (${record.reason ?? '?'})${v2Axes} ${record.summary ?? ''}`,
       )
     }
     if (count > 50) {

@@ -63,7 +63,7 @@ async function classifyExplainTarget(
     return {
       kind: 'tool',
       input: options.command ?? JSON.stringify(payload),
-      result: classifyToolUse(payload, repoRoot, cwd, classifierOptions),
+      result: await classifyToolUse(payload, repoRoot, cwd, config, classifierOptions),
     }
   }
 

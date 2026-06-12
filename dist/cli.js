@@ -107,6 +107,26 @@ function parseArgs(argv) {
             index += 1;
             continue;
         }
+        if (token === '--location') {
+            options.location = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--opacity') {
+            options.opacity = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--effect') {
+            options.effect = rest[index + 1];
+            index += 1;
+            continue;
+        }
+        if (token === '--confidence') {
+            options.confidence = rest[index + 1];
+            index += 1;
+            continue;
+        }
         if (token === '--limit') {
             const next = Number(rest[index + 1]);
             if (!Number.isFinite(next)) {
@@ -242,7 +262,7 @@ Usage:
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
-  agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--config <path>]
+  agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
   agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
@@ -327,6 +347,10 @@ async function main() {
                 kind: options.kind,
                 fingerprint: options.fingerprint,
                 event: options.event,
+                location: options.location,
+                opacity: options.opacity,
+                effect: options.effect,
+                confidence: options.confidence,
                 limit: options.limit,
                 configPath: options.configPath,
             });

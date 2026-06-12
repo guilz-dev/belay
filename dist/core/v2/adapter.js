@@ -31,7 +31,8 @@ function mapLegacyReason(result) {
     if (result.reason === 'high_stakes_path') {
         return 'protected_artifact';
     }
-    if (result.reason === 'opaque_execution' && /\|\s*(bash|sh|zsh|dash|fish)\b/.test(result.commandRedacted)) {
+    if (result.reason === 'opaque_execution' &&
+        /\|\s*(bash|sh|zsh|dash|fish)\b/.test(result.commandRedacted)) {
         return 'pipe_to_shell';
     }
     if (result.reason === 'launcher_unresolved' || result.reason === 'makefile_missing') {

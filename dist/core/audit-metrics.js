@@ -26,6 +26,10 @@ export function computeAuditMetrics(records, options = {}) {
     const auditRecords = records.map(toAuditRecord);
     const byReason = {};
     const byKind = {};
+    const byLocation = {};
+    const byOpacity = {};
+    const byEffect = {};
+    const byConfidence = {};
     const summaryCounts = new Map();
     let gateEvents = 0;
     let wouldBlockCount = 0;
@@ -44,6 +48,18 @@ export function computeAuditMetrics(records, options = {}) {
         const kind = typeof record.kind === 'string' ? record.kind : 'unknown';
         increment(byReason, reason);
         increment(byKind, kind);
+        if (typeof record.location === 'string') {
+            increment(byLocation, record.location);
+        }
+        if (typeof record.opacity === 'string') {
+            increment(byOpacity, record.opacity);
+        }
+        if (typeof record.effect === 'string') {
+            increment(byEffect, record.effect);
+        }
+        if (typeof record.confidence === 'string') {
+            increment(byConfidence, record.confidence);
+        }
         if (inferWouldBlock(record)) {
             wouldBlockCount += 1;
             const summary = typeof record.summary === 'string' ? record.summary : '';
@@ -118,6 +134,10 @@ export function computeAuditMetrics(records, options = {}) {
         byReason,
         byKind,
         byVerdict,
+        byLocation,
+        byOpacity,
+        byEffect,
+        byConfidence,
         approvalRecordedCount,
         topWouldBlockSummaries,
         approvalLatency,

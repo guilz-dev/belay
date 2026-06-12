@@ -70,6 +70,7 @@ export async function doctorProject(options = {}) {
             }
             notes.push(`Adapter: ${adapterName}`);
             notes.push(`Config mode: ${loadedConfig.mode}`);
+            notes.push('Verdict engine: v2 (location × opacity × effect × confidence). Shell gates use the v2 classifier; audit records include schemaVersion 2 axes when available.');
             const repoLocalDir = repoLocalStateDirFor(repoRoot, loadedConfig);
             if (loadedConfig.controlPlane.enabled) {
                 notes.push(`Control plane: ${belayStateDir(loadedConfig, repoLocalDir)}`);
@@ -225,14 +226,14 @@ export async function doctorProject(options = {}) {
             }
         }
         if (loadedConfig.policy.transactional.enabled) {
-            notes.push(`Transactional (partial L2): enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.`);
+            notes.push('Transactional execution: enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.');
             if (!existsSync(path.join(repoRoot, '.git'))) {
-                warnings.push('Transactional execution is enabled but this directory is not a git repository. Transactional L2 will be skipped until git worktree is available.');
+                warnings.push('Transactional execution is enabled but this directory is not a git repository. Transactional worktrees will be skipped until git is available.');
             }
         }
         if (loadedConfig.sandbox.enabled) {
             const sandbox = await sandboxStatus({ targetDir: repoRoot });
-            notes.push(`Sandbox capability broker: enabled (runtime=${loadedConfig.sandbox.runtime}, fs-scope entries=${sandbox.fsScopeAllowlistCount}, L1-full=${sandbox.l1FullActive}).`);
+            notes.push(`Sandbox capability broker: enabled (runtime=${loadedConfig.sandbox.runtime}, fs-scope entries=${sandbox.fsScopeAllowlistCount}, full-isolation=${sandbox.l1FullActive}).`);
             if (loadedConfig.sandbox.runtime === 'none') {
                 warnings.push('sandbox.enabled is true but sandbox.runtime is none.');
             }
@@ -249,12 +250,12 @@ export async function doctorProject(options = {}) {
                 }
             }
             if (!loadedConfig.approvalSigning.required) {
-                warnings.push('controlPlane.isolation is enabled but approvalSigning.required is false. L1-full adversarial claims require signed approvals.');
+                warnings.push('controlPlane.isolation is enabled but approvalSigning.required is false. Isolation mode requires signed approvals for adversarial claims.');
             }
         }
         if (loadedConfig.egress.enabled) {
             const egress = await egressStatus({ targetDir: repoRoot });
-            notes.push(`Egress (partial L1): enabled — L3 demotion active only while proxy runs (demoteL3External=${loadedConfig.egress.demoteL3External}), listen ${egress.host}:${egress.port}.`);
+            notes.push(`Egress proxy: enabled — external-effect demotion active only while proxy runs (demoteL3External=${loadedConfig.egress.demoteL3External}), listen ${egress.host}:${egress.port}.`);
             if (!egress.running) {
                 warnings.push('Egress is enabled in config but the local proxy is not running. Run agent-belay egress start.');
             }

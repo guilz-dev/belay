@@ -1056,13 +1056,6 @@ function relativeWithinRepo(repoRoot, targetPath) {
   }
   return relativePath;
 }
-function normalizeToken(token, repoRoot) {
-  if (!path4.isAbsolute(token)) {
-    return token;
-  }
-  const relativePath = relativeWithinRepo(repoRoot, token);
-  return relativePath ?? token;
-}
 function resolveMutationTarget(token, cwd) {
   if (!token || token === "--" || token.startsWith("-")) {
     return null;
@@ -1080,30 +1073,6 @@ function resolveMutationTarget(token, cwd) {
     return canonicalPath(path4.resolve(cwd, token));
   }
   return canonicalPath(path4.resolve(cwd, token));
-}
-function looksLikePathToken(token) {
-  if (!token || token === "--" || token.startsWith("-")) {
-    return false;
-  }
-  if (path4.isAbsolute(token)) {
-    return true;
-  }
-  if (token.startsWith("./") || token.startsWith("../")) {
-    return true;
-  }
-  return token.includes("/") || token.includes("\\");
-}
-function hasOutsideRepoPath(tokens, cwd, repoRoot) {
-  return tokens.some((token) => {
-    if (!looksLikePathToken(token)) {
-      return false;
-    }
-    const resolved = resolveMutationTarget(token, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return relativeWithinRepo(repoRoot, resolved) === null;
-  });
 }
 
 // src/core/capability/allowlist.ts
@@ -1143,7 +1112,6 @@ function isCapabilityBrokerDemotionActive(config) {
 }
 
 // src/core/shell-tokenizer.ts
-var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
 function tokenizeShell(input) {
   const tokens = [];
   let buffer = "";
@@ -1216,14 +1184,6 @@ function tokenizeShell(input) {
   flush();
   return tokens;
 }
-function normalizeShellCommand(command, repoRoot, normalizeToken2) {
-  const tokens = tokenizeShell(command);
-  while (tokens.length > 0 && ENV_PREFIX_PATTERN.test(tokens[0] ?? "")) {
-    tokens.shift();
-  }
-  const normalized = tokens.map((token) => normalizeToken2(token, repoRoot));
-  return normalized.join(" ").trim();
-}
 function commandKey(tokens) {
   const filtered = tokens.filter((token) => token !== "sudo");
   const first = filtered[0] ?? "";
@@ -1292,9 +1252,6 @@ function canonicalStringify(value) {
 }
 function hashValue(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-function shellFingerprint(cwdRelative2, normalizedCommand) {
-  return hashValue(`shell:${cwdRelative2}:${normalizedCommand}`);
 }
 function subagentFingerprint(kind, scrubbed, repoRoot) {
   return hashValue(`subagent:${kind}:${canonicalStringify(scrubbed)}:${repoRoot}`);
@@ -1533,732 +1490,403 @@ function classifySubagent(payload, repoRoot, options = {}) {
 }
 
 // src/core/classify-tool.ts
-import path7 from "node:path";
+import path11 from "node:path";
 
-// src/core/classify-shell.ts
-init_config();
-
-// src/core/judgment.ts
-var SCOPE_BLAST_RADIUS = {
-  none: "none",
-  file: "single file",
-  dir: "directory tree",
-  repo: "this repository",
-  outside: "outside the repository",
-  external: "external system"
-};
-function blastRadiusLabel(scope) {
-  return SCOPE_BLAST_RADIUS[scope];
-}
-function computeAssessmentFromAttributes(attributes) {
-  const signals = [...attributes.signals];
-  if (attributes.isExternalKey || attributes.targetScope === "external") {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: blastRadiusLabel(attributes.targetScope),
-      confidence: calibrateConfidence(attributes, 0.92),
-      signals: [...signals, "external_command", attributes.commandKey]
-    };
-  }
-  if (attributes.hitsProtectedArtifact) {
-    return {
-      reversibility: "irreversible",
-      external: false,
-      blastRadius: "agent-belay control plane",
-      confidence: calibrateConfidence(attributes, 0.97),
-      signals
-    };
-  }
-  if (attributes.hitsOutsideRepo || attributes.redirectKind === "outside") {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "outside the repository",
-      confidence: calibrateConfidence(attributes, 0.9),
-      signals
-    };
-  }
-  if (attributes.isDynamicEval || attributes.hasPipeToShell) {
-    return {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "dynamic shell evaluation",
-      confidence: calibrateConfidence(attributes, 0.93),
-      signals
-    };
-  }
-  if (attributes.isReadOnlyKey && attributes.redirectKind === "none") {
-    return {
-      reversibility: "reversible",
-      external: false,
-      blastRadius: blastRadiusLabel("repo"),
-      confidence: calibrateConfidence(attributes, 0.95),
-      signals: [...signals, "read_only_command"]
-    };
-  }
-  if (attributes.isFlaggedKey || attributes.redirectKind === "truncate" || attributes.redirectKind === "append") {
-    const reversibility = attributes.flags.includes("-rf") || attributes.flags.includes("-fr") ? "irreversible" : attributes.redirectKind === "append" ? "recoverable_with_cost" : "recoverable_with_cost";
-    return {
-      reversibility,
-      external: false,
-      blastRadius: blastRadiusLabel(attributes.targetScope),
-      confidence: calibrateConfidence(attributes, 0.72),
-      signals: [...signals, "local_mutation"]
-    };
-  }
-  return {
-    reversibility: "recoverable_with_cost",
-    external: false,
-    blastRadius: blastRadiusLabel(attributes.targetScope),
-    confidence: calibrateConfidence(attributes, 0.61),
-    signals: [...signals, "unknown_local_effect"]
-  };
-}
-function calibrateConfidence(attributes, base) {
-  let confidence = base;
-  if (attributes.signals.length >= 2) {
-    confidence = Math.min(0.99, confidence + 0.02);
-  }
-  if (attributes.isCustomAllow && !attributes.isCustomExternal) {
-    confidence = Math.max(confidence, 0.99);
-  }
-  if (attributes.isUnparseable) {
-    confidence = Math.max(confidence, 0.9);
-  }
-  if (attributes.commandKey === "node" || attributes.commandKey === "sed") {
-    confidence = Math.min(confidence, 0.64);
-  }
-  return Math.round(confidence * 1e3) / 1e3;
-}
-function verdictFromConfidence(assessment, thresholds, unknownLocalEffect) {
-  if (assessment.external || assessment.reversibility === "irreversible") {
-    if (assessment.confidence >= thresholds.allow && !assessment.external) {
-      return "allow_flagged";
+// src/core/glob.ts
+function matchesSensitivePath(filePath, patterns) {
+  const normalized = filePath.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  const baseName = segments.at(-1) ?? normalized;
+  for (const pattern of patterns) {
+    const normalizedPattern = pattern.replaceAll("\\", "/");
+    if (normalizedPattern.includes("**")) {
+      const parts = normalizedPattern.split("**").map((part) => part.replace(/^\/+|\/+$/g, ""));
+      const prefix = parts[0]?.replace(/\/+$/, "") ?? "";
+      const suffix = parts[1]?.replace(/^\/+/, "") ?? "";
+      if (prefix && !normalized.startsWith(prefix)) {
+        continue;
+      }
+      if (suffix && !normalized.includes(suffix)) {
+        continue;
+      }
+      if (prefix || suffix) {
+        return true;
+      }
     }
-    return "deny_pending_approval";
-  }
-  if (assessment.confidence >= thresholds.allow) {
-    return "allow";
-  }
-  if (assessment.confidence >= thresholds.flag) {
-    return "allow_flagged";
-  }
-  if (unknownLocalEffect === "deny") {
-    return "deny_pending_approval";
-  }
-  return "allow_flagged";
-}
-function mergeAgentAssessment(independent, agent) {
-  if (!agent) {
-    return { assessment: independent, mismatch: false };
-  }
-  const mismatch = agent.external === false && independent.external === true || agent.reversibility === "reversible" && independent.reversibility === "irreversible";
-  const confidence = mismatch ? Math.min(independent.confidence, 0.55) : Math.min(0.99, independent.confidence + 0.05);
-  return {
-    assessment: {
-      ...independent,
-      confidence,
-      signals: mismatch ? [...independent.signals, "agent_assessment_mismatch"] : [...independent.signals, "agent_assessment_agreement"]
-    },
-    mismatch
-  };
-}
-
-// src/core/custom-command-match.ts
-function matchesCustomCommand(normalizedCommand, key, pattern) {
-  const trimmed = pattern.trim();
-  if (!trimmed) {
-    return false;
-  }
-  return normalizedCommand === trimmed || key === trimmed;
-}
-
-// src/core/policy/command-keys.ts
-var READ_ONLY_COMMAND_KEYS = [
-  "cat",
-  "cd",
-  "echo",
-  "git diff",
-  "git log",
-  "git rev-parse",
-  "git show",
-  "git status",
-  "head",
-  "ls",
-  "pwd",
-  "rg",
-  "sort",
-  "tail",
-  "wc",
-  "which",
-  "find"
-];
-var FLAGGED_COMMAND_KEYS = [
-  "chmod",
-  "cp",
-  "git add",
-  "git clean",
-  "git commit",
-  "git mv",
-  "git reset",
-  "mkdir",
-  "mv",
-  "rm",
-  "sed",
-  "tee",
-  "touch",
-  "truncate"
-];
-var EXTERNAL_COMMAND_KEYS = [
-  "aws",
-  "curl",
-  "docker push",
-  "docker run",
-  "firebase deploy",
-  "fly deploy",
-  "gh",
-  "git push",
-  "gcloud",
-  "heroku",
-  "kubectl",
-  "netlify",
-  "npm publish",
-  "pnpm publish",
-  "rsync",
-  "scp",
-  "ssh",
-  "supabase",
-  "terraform apply",
-  "vercel",
-  "wget"
-];
-var READ_ONLY_KEYS = new Set(READ_ONLY_COMMAND_KEYS);
-var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
-var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
-
-// src/core/shell-unparseable.ts
-function detectUnparseableShell(command) {
-  if (hasProcessSubstitution(command)) {
-    return true;
-  }
-  if (hasSubshell(command)) {
-    return true;
-  }
-  if (hasBraceGroup(command)) {
-    return true;
-  }
-  if (hasUnclosedQuote(command)) {
-    return true;
-  }
-  if (hasUnbalancedDollarParen(command)) {
-    return true;
-  }
-  return false;
-}
-function hasProcessSubstitution(command) {
-  return /<\s*\(/.test(command);
-}
-function hasSubshell(command) {
-  const trimmed = command.trim();
-  if (trimmed.startsWith("(")) {
-    return true;
-  }
-  return /(?:^|[;&|]\s*)\(/.test(trimmed);
-}
-function hasBraceGroup(command) {
-  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
-  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
-}
-function hasUnclosedQuote(command) {
-  let quote = null;
-  let escaping = false;
-  for (const char of command) {
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
+    if (normalizedPattern.includes("*")) {
+      const regex = new RegExp(
+        `^${normalizedPattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`
+      );
+      if (regex.test(normalized) || regex.test(baseName)) {
+        return true;
       }
       continue;
     }
-    if (char === '"' || char === "'") {
-      quote = char;
+    if (normalized === normalizedPattern || baseName === normalizedPattern) {
+      return true;
+    }
+    if (normalized.endsWith(`/${normalizedPattern}`)) {
+      return true;
+    }
+    if (segments.includes(normalizedPattern)) {
+      return true;
     }
   }
-  return quote !== null;
-}
-function hasUnbalancedDollarParen(command) {
-  let depth = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaping = false;
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index];
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (char === "\\" && (inSingle || inDouble)) {
-      escaping = true;
-      continue;
-    }
-    if (!inDouble && char === "'") {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (inSingle || inDouble) {
-      continue;
-    }
-    if (char === "$" && command[index + 1] === "(") {
-      depth += 1;
-      index += 1;
-      continue;
-    }
-    if (char === ")" && depth > 0) {
-      depth -= 1;
-    }
-  }
-  return depth > 0;
+  return false;
 }
 
-// src/core/shell-analysis.ts
-var DYNAMIC_KEYS = /* @__PURE__ */ new Set(["eval", "source", "exec"]);
-var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
-var FIND_DANGEROUS = /* @__PURE__ */ new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
-var FORCE_FLAGS = /* @__PURE__ */ new Set(["--force", "-f"]);
-var EXTERNAL_SCRIPT_TERMS = ["deploy", "publish", "release", "ship", "prod"];
-function protectedRoots(options) {
-  return [
-    ...options.protectedArtifactRoots ?? [],
-    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
-  ];
+// src/core/v2/judge.ts
+var SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i];
+var DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i;
+var GIT_PATTERNS = /\.git\b/i;
+function prescanInterpreterCode(code) {
+  const normalized = code.replaceAll("\\", "/");
+  const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized));
+  const hitsGit = GIT_PATTERNS.test(normalized);
+  const hitsDestructive = DESTRUCTIVE_VERBS.test(normalized);
+  if ((hitsSecret || hitsGit) && hitsDestructive) {
+    return {
+      external_change: false,
+      destroys_outside_repo: false,
+      destroys_history_or_secrets: true
+    };
+  }
+  return null;
 }
-function hitsProtected(paths, cwd, roots) {
-  if (roots.length === 0) {
+function createDeterministicJudgeStub() {
+  return {
+    evaluate() {
+      return Promise.resolve({
+        external_change: false,
+        destroys_outside_repo: false,
+        destroys_history_or_secrets: false
+      });
+    }
+  };
+}
+var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean}
+Default all three to true when unsure.
+
+external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
+destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
+destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
+
+Command/code:
+`;
+function createOllamaJudge(model = "gemma4:e2b", baseUrl = "http://127.0.0.1:11434") {
+  return {
+    async evaluate(input) {
+      const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
+      if (prescan?.destroys_history_or_secrets) {
+        return prescan;
+      }
+      const body = `${TIER1_PROMPT}${input.innerCode ?? input.command}`;
+      try {
+        const response = await fetch(`${baseUrl}/api/generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model,
+            prompt: body,
+            stream: false,
+            format: "json"
+          })
+        });
+        if (!response.ok) {
+          return {
+            external_change: true,
+            destroys_outside_repo: true,
+            destroys_history_or_secrets: true
+          };
+        }
+        const payload = await response.json();
+        const parsed = JSON.parse(payload.response ?? "{}");
+        return {
+          external_change: parsed.external_change !== false,
+          destroys_outside_repo: parsed.destroys_outside_repo !== false,
+          destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false
+        };
+      } catch {
+        return {
+          external_change: true,
+          destroys_outside_repo: true,
+          destroys_history_or_secrets: true
+        };
+      }
+    }
+  };
+}
+function tier1RequiresAsk(verdict2) {
+  return verdict2.external_change || verdict2.destroys_outside_repo || verdict2.destroys_history_or_secrets;
+}
+
+// src/core/v2/verdict.ts
+import path10 from "node:path";
+
+// src/core/v2/containment.ts
+import path7 from "node:path";
+function expandHome(token) {
+  if (token === "~" || token.startsWith("~/")) {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    if (!home) {
+      return token;
+    }
+    return token === "~" ? home : path7.join(home, token.slice(2));
+  }
+  return token;
+}
+function resolveTrustedPath(token, trustedCwd, trusted) {
+  if (!token || token === "--" || token.startsWith("-")) {
+    return null;
+  }
+  if (!trusted || !trustedCwd) {
+    return null;
+  }
+  const expanded = expandHome(token);
+  if (path7.isAbsolute(expanded)) {
+    return canonicalPath(expanded);
+  }
+  return canonicalPath(path7.resolve(trustedCwd, expanded));
+}
+function locationForPath(resolvedPath, repoRoot) {
+  if (!resolvedPath) {
+    return "unknown";
+  }
+  if (pathWithinRoot(repoRoot, resolvedPath)) {
+    return "repo_local";
+  }
+  return "repo_outside";
+}
+function isGitPath(resolvedPath, repoRoot) {
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  if (!relative) {
     return false;
   }
-  return paths.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    if (!resolved) {
-      return false;
-    }
-    return roots.some((root) => pathWithinRoot(root, resolved));
-  });
+  const normalized = relative.replaceAll("\\", "/");
+  return normalized === ".git" || normalized.startsWith(".git/");
 }
-function redirectKind(redirects, cwd, repoRoot, roots) {
-  if (redirects.length === 0) {
-    return "none";
-  }
-  if (hitsProtected(redirects, cwd, roots)) {
-    return "protected";
-  }
-  const hasOutside = redirects.some((target) => {
-    const resolved = resolveMutationTarget(target, cwd);
-    return resolved !== null && relativeWithinRepo(repoRoot, resolved) === null;
-  });
-  if (hasOutside) {
-    return "outside";
-  }
-  const tokens = redirects.join(" ");
-  if (tokens.includes(">>")) {
-    return "append";
-  }
-  if (redirects.length > 0) {
-    return "truncate";
-  }
-  return "none";
-}
-function inferTargetScope(segmentTokens, cwd, repoRoot, key) {
-  if (EXTERNAL_KEYS.has(key) || key === "curl" || key === "wget") {
-    return "external";
-  }
-  const paths = segmentTokens.slice(1);
-  if (hasOutsideRepoPath(paths, cwd, repoRoot)) {
-    return "outside";
-  }
-  if (key === "find" || key === "chmod" || key === "rm") {
-    const hasRecursive = segmentTokens.some((token) => token === "-R" || token === "-r");
-    if (hasRecursive) {
-      return "dir";
-    }
-  }
-  if (FLAGGED_KEYS.has(key)) {
-    return "file";
-  }
-  if (READ_ONLY_KEYS.has(key)) {
-    return "repo";
-  }
-  return "repo";
-}
-function findDangerousFlags(tokens) {
-  return tokens.some(
-    (token) => FIND_DANGEROUS.has(token) || token.startsWith("-exec") || token.startsWith("-ok")
-  );
-}
-function isExternalKey(key, normalizedCommand, options) {
-  if (EXTERNAL_KEYS.has(key)) {
+function isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, protectedRoots = []) {
+  if (isGitPath(resolvedPath, repoRoot)) {
     return true;
   }
-  if (key === "git push" && segmentHasForce(normalizedCommand)) {
+  const relative = relativeWithinRepo(repoRoot, resolvedPath);
+  const checkPath = relative ?? resolvedPath;
+  if (matchesSensitivePath(checkPath.replaceAll("\\", "/"), sensitivePaths)) {
     return true;
   }
-  return (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
+  return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath));
 }
-function segmentHasForce(command) {
-  const tokens = tokenizeShell(command);
-  return tokens.some((token) => FORCE_FLAGS.has(token));
-}
-function analyzeShellSegment(params) {
-  const { segmentTokens, cwd, repoRoot, normalizedCommand, cwdRelative: cwdRelative2, options, separator } = params;
-  const key = commandKey(segmentTokens);
-  const flags = segmentTokens.filter((token) => token.startsWith("-"));
-  const redirects = extractRedirectTargets(segmentTokens);
-  const roots = protectedRoots(options);
-  const redirect = redirectKind(redirects, cwd, repoRoot, roots);
+function analyzePathTargets(params) {
   const signals = [];
-  const isUnparseable = detectUnparseableShell(normalizedCommand);
-  const isDynamicEval = DYNAMIC_KEYS.has(key) || key === "." && segmentTokens.length > 1;
-  let hasPipeToShell = segmentTokens.includes("|") && segmentTokens.some((token) => SHELL_INTERPRETERS.has(token));
-  if (separator === "|" && SHELL_INTERPRETERS.has(key)) {
-    hasPipeToShell = true;
-  }
-  const hitsProtectedArtifact = hitsProtected(redirects, cwd, roots) || hitsProtected(segmentTokens.slice(1), cwd, roots);
-  const hitsOutsideRepo = hasOutsideRepoPath(segmentTokens.slice(1), cwd, repoRoot) || redirect === "outside";
-  const hasCredentialHeader = segmentTokens.some(
-    (token) => token === "-H" || token === "--header" || /authorization/i.test(token)
-  );
-  const findDangerous = key === "find" && findDangerousFlags(segmentTokens);
-  const isCustomAllow = (options.customAllowCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-  const isCustomExternal = (options.customExternalCommands ?? []).some(
-    (pattern) => matchesCustomCommand(normalizedCommand, key, pattern)
-  );
-  if (isUnparseable) {
-    signals.push("unparseable_shell");
-  }
-  if (isDynamicEval) {
-    signals.push("dynamic_shell_evaluation");
-  }
-  if (hasPipeToShell) {
-    signals.push("pipe_to_shell");
-  }
-  if (hitsProtectedArtifact) {
-    signals.push("control_plane_path");
-  }
-  if (hitsOutsideRepo) {
-    signals.push("outside_repo_mutation");
-  }
-  if (hasCredentialHeader) {
-    signals.push("credential_header");
-  }
-  if (findDangerous) {
-    signals.push("find_dangerous_action");
-  }
-  if (key === "rm" && flags.some((flag) => flag === "-rf" || flag === "-fr")) {
-    signals.push("rm_recursive_force");
-  }
-  if (key === "git push" && segmentHasForce(normalizedCommand)) {
-    signals.push("git_push_force");
-  }
-  if (key === "docker run" && flags.includes("--privileged")) {
-    signals.push("docker_privileged");
-  }
-  if (key === "sed" && flags.some((flag) => flag === "-i" || flag === "--in-place")) {
-    signals.push("sed_in_place");
-  }
-  if ((key === "npm run" || key === "pnpm run") && segmentTokens[2]) {
-    const scriptName = segmentTokens[2].toLowerCase();
-    if (EXTERNAL_SCRIPT_TERMS.some((term) => scriptName.includes(term))) {
-      signals.push("external_script_name", scriptName);
-    }
-  }
-  return {
-    commandKey: key,
-    normalizedCommand,
-    cwdRelative: cwdRelative2,
-    flags,
-    targetScope: inferTargetScope(segmentTokens, cwd, repoRoot, key),
-    redirectKind: redirect,
-    signals,
-    isUnparseable,
-    isDynamicEval,
-    hasPipeToShell,
-    hitsProtectedArtifact,
-    hitsOutsideRepo,
-    isCustomAllow,
-    isCustomExternal,
-    isReadOnlyKey: READ_ONLY_KEYS.has(key) && redirect === "none",
-    isFlaggedKey: FLAGGED_KEYS.has(key),
-    isExternalKey: isExternalKey(key, normalizedCommand, options),
-    hasCredentialHeader,
-    findDangerous
-  };
-}
-function matchesPolicyRule(match, attributes) {
-  if (match.signal && !attributes.signals.includes(match.signal)) {
-    return false;
-  }
-  if (match.commandKey) {
-    const keys = Array.isArray(match.commandKey) ? match.commandKey : [match.commandKey];
-    if (!keys.includes(attributes.commandKey)) {
-      return false;
-    }
-  }
-  if (match.targetScope) {
-    const scopes = Array.isArray(match.targetScope) ? match.targetScope : [match.targetScope];
-    if (!scopes.includes(attributes.targetScope)) {
-      return false;
-    }
-  }
-  if (match.redirectKind) {
-    const kinds = Array.isArray(match.redirectKind) ? match.redirectKind : [match.redirectKind];
-    if (!kinds.includes(attributes.redirectKind)) {
-      return false;
-    }
-  }
-  if (match.flag) {
-    const flags = Array.isArray(match.flag) ? match.flag : [match.flag];
-    if (!flags.some((flag) => attributes.flags.includes(flag))) {
-      return false;
-    }
-  }
-  if (match.customAllow === true && !attributes.isCustomAllow) {
-    return false;
-  }
-  if (match.customExternal === true && !attributes.isCustomExternal) {
-    return false;
-  }
-  if (match.unparseable === true && !attributes.isUnparseable) {
-    return false;
-  }
-  if (match.protectedArtifact === true && !attributes.hitsProtectedArtifact) {
-    return false;
-  }
-  if (match.outsideRepo === true && !attributes.hitsOutsideRepo) {
-    return false;
-  }
-  return true;
-}
-
-// src/core/policy/default-rules.ts
-var DEFAULT_POLICY_RULES = [
-  {
-    id: "unparseable_shell",
-    priority: 1e3,
-    nonOverridable: true,
-    match: { unparseable: true },
-    action: "threshold",
-    reason: "unparseable_shell"
-  },
-  {
-    id: "protected_artifact",
-    priority: 950,
-    nonOverridable: true,
-    match: { protectedArtifact: true },
-    action: "escalate",
-    reason: "control_plane_mutation"
-  },
-  {
-    id: "outside_repo_redirect",
-    priority: 940,
-    nonOverridable: true,
-    match: { redirectKind: "outside" },
-    action: "escalate",
-    reason: "outside_repo_redirect"
-  },
-  {
-    id: "outside_repo_mutation",
-    priority: 938,
-    nonOverridable: true,
-    match: { outsideRepo: true },
-    action: "escalate",
-    reason: "outside_repo_mutation"
-  },
-  {
-    id: "dynamic_shell",
-    priority: 930,
-    nonOverridable: true,
-    match: { signal: "dynamic_shell_evaluation" },
-    action: "escalate",
-    reason: "dynamic_shell_evaluation"
-  },
-  {
-    id: "pipe_to_shell",
-    priority: 920,
-    nonOverridable: true,
-    match: { signal: "pipe_to_shell" },
-    action: "escalate",
-    reason: "pipe_to_shell"
-  },
-  {
-    id: "find_dangerous",
-    priority: 900,
-    nonOverridable: true,
-    match: { signal: "find_dangerous_action" },
-    action: "escalate",
-    reason: "find_dangerous_action"
-  },
-  {
-    id: "custom_external",
-    priority: 850,
-    match: { customExternal: true },
-    action: "escalate",
-    reason: "custom_external"
-  },
-  {
-    id: "external_effect",
-    priority: 800,
-    nonOverridable: true,
-    match: { targetScope: "external" },
-    action: "escalate",
-    reason: "external_effect"
-  },
-  {
-    id: "external_script",
-    priority: 790,
-    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
-    action: "escalate",
-    reason: "external_script"
-  },
-  {
-    id: "custom_allow",
-    priority: 600,
-    match: { customAllow: true },
-    action: "allow",
-    reason: "custom_allow"
-  },
-  {
-    id: "read_only",
-    priority: 500,
-    match: {
-      commandKey: [...READ_ONLY_COMMAND_KEYS],
-      redirectKind: "none"
-    },
-    action: "allow",
-    reason: "read_only"
-  },
-  {
-    id: "local_mutation",
-    priority: 400,
-    match: {
-      commandKey: [...FLAGGED_COMMAND_KEYS]
-    },
-    action: "flag",
-    reason: "local_mutation"
-  },
-  {
-    id: "unknown_local",
-    priority: 100,
-    match: {},
-    action: "threshold",
-    reason: "unknown_local_effect"
-  }
-];
-
-// src/core/policy/evaluator.ts
-function actionToVerdict(action, ctx) {
-  if (action === "allow") {
-    return "allow";
-  }
-  if (action === "flag") {
-    return "allow_flagged";
-  }
-  if (action === "deny" || action === "escalate") {
-    return "deny_pending_approval";
-  }
-  if (action === "threshold") {
-    if (ctx.attributes.isUnparseable) {
-      return ctx.unparseableShell === "deny" ? "deny_pending_approval" : "allow_flagged";
-    }
-    return verdictFromConfidence(ctx.assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect);
-  }
-  return "allow_flagged";
-}
-function evaluatePolicyRules(attributes, ctx, rules = DEFAULT_POLICY_RULES) {
-  const assessment = computeAssessmentFromAttributes(attributes);
-  const fullCtx = { ...ctx, attributes, assessment };
-  const sorted = [...rules].sort((left, right) => right.priority - left.priority);
-  if (attributes.isCustomAllow && attributes.isCustomExternal) {
+  if (!params.trustedCwd || !params.cwd) {
     return {
-      verdict: "allow",
-      reason: "custom_allow",
-      assessment: {
-        ...assessment,
-        confidence: 0.99,
-        signals: [...assessment.signals, "custom_allow_command"]
-      },
-      matchedRuleId: "custom_allow_over_external"
+      location: "unknown",
+      isHighStakes: false,
+      signals: ["missing_trusted_cwd"]
     };
   }
-  for (const rule of sorted) {
-    if (!matchesPolicyRule(rule.match, attributes)) {
-      continue;
+  const locations = /* @__PURE__ */ new Set();
+  let isHighStakes = false;
+  for (const target of params.targets) {
+    const resolved = resolveTrustedPath(target, params.cwd, params.trustedCwd) ?? resolveMutationTarget(target, params.cwd);
+    const location2 = locationForPath(resolved, params.repoRoot);
+    locations.add(location2);
+    if (resolved && isHighStakesPath(
+      resolved,
+      params.repoRoot,
+      params.sensitivePaths,
+      params.protectedArtifactRoots
+    )) {
+      isHighStakes = true;
+      signals.push("high_stakes_path");
     }
-    if (rule.id === "custom_allow" && attributes.isCustomExternal && !rule.nonOverridable) {
-      continue;
-    }
-    if (rule.id === "custom_external" && attributes.isCustomAllow && attributes.isCustomExternal) {
-      continue;
-    }
-    let verdict2 = actionToVerdict(rule.action, fullCtx);
-    let reason = rule.reason;
-    let resultAssessment = rule.assessment ? { ...assessment, ...rule.assessment } : assessment;
-    if (ctx.demoteL3External && verdict2 === "deny_pending_approval" && (rule.id === "external_effect" || rule.id === "custom_external" || rule.id === "external_script")) {
-      verdict2 = "allow_flagged";
-      reason = "l3_external_hint";
-      resultAssessment = {
-        ...resultAssessment,
-        signals: [...resultAssessment.signals, "l3_external_hint", "egress_boundary_expected"]
-      };
-    }
-    if (ctx.brokerFsScope && verdict2 === "deny_pending_approval" && (rule.id === "outside_repo_mutation" || rule.id === "outside_repo_redirect") && ctx.outsideRepoPaths && ctx.fsScopeAllowlist && allPathsAllowlisted(ctx.outsideRepoPaths, ctx.fsScopeAllowlist)) {
-      verdict2 = "allow_flagged";
-      reason = "capability_fs_hint";
-      resultAssessment = {
-        ...resultAssessment,
-        signals: [...resultAssessment.signals, "capability_fs_hint", "sandbox_boundary_expected"]
-      };
-    }
-    return {
-      verdict: verdict2,
-      reason,
-      assessment: resultAssessment,
-      matchedRuleId: rule.id
-    };
   }
-  return {
-    verdict: verdictFromConfidence(assessment, ctx.confidenceThresholds, ctx.unknownLocalEffect),
-    reason: "unknown_local_effect",
-    assessment,
-    matchedRuleId: "fallback"
-  };
+  let location = "unknown";
+  if (locations.size === 0) {
+    location = "unknown";
+  } else if (locations.size === 1) {
+    location = [...locations][0] ?? "unknown";
+  } else {
+    location = "mixed";
+  }
+  return { location, isHighStakes, signals };
 }
-function policyResultToClassifyResult(attributes, result) {
-  return {
-    verdict: result.verdict,
-    reason: result.reason,
-    normalizedCommand: attributes.normalizedCommand,
-    fingerprint: shellFingerprint(attributes.cwdRelative, attributes.normalizedCommand),
-    assessment: result.assessment
-  };
+function cwdRelative(repoRoot, cwd) {
+  return relativeWithinRepo(repoRoot, cwd) ?? cwd;
 }
+
+// src/core/v2/fingerprint.ts
+function verdictFingerprint(cwdRelative2, commandRedacted) {
+  return hashValue(`v2:${cwdRelative2}:${commandRedacted}`);
+}
+
+// src/core/v2/launcher-resolve.ts
+import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
+import path8 from "node:path";
+var MAX_RESOLVE_DEPTH = 8;
+function readPackageJson(dir) {
+  const packagePath = path8.join(dir, "package.json");
+  if (!existsSync4(packagePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync2(packagePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function findPackageJson(startDir, stopDir) {
+  let current = path8.resolve(startDir);
+  const stop = path8.resolve(stopDir);
+  while (true) {
+    const packagePath = path8.join(current, "package.json");
+    if (existsSync4(packagePath)) {
+      return packagePath;
+    }
+    if (current === stop || current === path8.dirname(current)) {
+      return existsSync4(packagePath) ? packagePath : null;
+    }
+    const parent = path8.dirname(current);
+    if (!parent.startsWith(stop) && parent !== current) {
+    }
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return null;
+}
+function npmScriptName(tokens) {
+  if (tokens[0] === "npm" && tokens[1] === "test") {
+    return "test";
+  }
+  if (tokens[0] === "npm" && tokens[1] === "run" && tokens[2]) {
+    return tokens[2];
+  }
+  if (tokens[0] === "pnpm" && tokens[1] === "run" && tokens[2]) {
+    return tokens[2];
+  }
+  if (tokens[0] === "npm" && tokens[1] && tokens[1] !== "run" && tokens[1] !== "install") {
+    return null;
+  }
+  return null;
+}
+function resolveNpmRecipe(cwd, repoRoot, scriptName) {
+  const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
+  if (!packagePath) {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: "external_script" };
+    }
+    return { recipe: null, opaque: true, reason: "package_json_missing" };
+  }
+  const pkg = readPackageJson(path8.dirname(packagePath));
+  const scripts = pkg?.scripts;
+  if (!scripts || typeof scripts !== "object") {
+    return { recipe: null, opaque: true, reason: "package_scripts_missing" };
+  }
+  const recipe = scripts[scriptName];
+  if (!recipe || typeof recipe !== "string") {
+    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
+      return { recipe: null, opaque: true, reason: "external_script" };
+    }
+    return { recipe: null, opaque: true, reason: "npm_script_undefined" };
+  }
+  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
+    return { recipe: null, opaque: true, reason: "npm_script_dynamic" };
+  }
+  return { recipe: recipe.trim(), opaque: false, reason: "npm_script_resolved" };
+}
+function parseMakefileRecipes(makefilePath) {
+  const recipes = /* @__PURE__ */ new Map();
+  try {
+    const content = readFileSync2(makefilePath, "utf8");
+    const lines = content.split("\n");
+    let currentTarget = null;
+    let recipeLines = [];
+    const flush = () => {
+      if (currentTarget && recipeLines.length > 0) {
+        recipes.set(currentTarget, recipeLines.join(" ").trim());
+      }
+      currentTarget = null;
+      recipeLines = [];
+    };
+    for (const line of lines) {
+      if (line.trim().startsWith("#")) {
+        continue;
+      }
+      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
+      if (targetMatch) {
+        flush();
+        currentTarget = targetMatch[1] ?? null;
+        const inline = line.slice(targetMatch[0].length).trim();
+        if (inline && !inline.startsWith("#")) {
+          recipeLines.push(inline);
+        }
+        continue;
+      }
+      if (currentTarget && /^\t/.test(line)) {
+        recipeLines.push(line.trim());
+      }
+    }
+    flush();
+  } catch {
+    return recipes;
+  }
+  return recipes;
+}
+function resolveMakeRecipe(cwd, repoRoot, target) {
+  const candidates = ["Makefile", "makefile", "GNUmakefile"];
+  let makefilePath = null;
+  let searchDir = path8.resolve(cwd);
+  const stop = path8.resolve(repoRoot);
+  while (true) {
+    for (const name of candidates) {
+      const candidate = path8.join(searchDir, name);
+      if (existsSync4(candidate)) {
+        makefilePath = candidate;
+        break;
+      }
+    }
+    if (makefilePath || searchDir === stop || searchDir === path8.dirname(searchDir)) {
+      break;
+    }
+    searchDir = path8.dirname(searchDir);
+  }
+  if (!makefilePath) {
+    return { recipe: null, opaque: true, reason: "unknown_local_effect" };
+  }
+  const recipes = parseMakefileRecipes(makefilePath);
+  const recipe = recipes.get(target);
+  if (!recipe) {
+    return { recipe: null, opaque: true, reason: "make_target_undefined" };
+  }
+  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
+    return { recipe: null, opaque: true, reason: "make_recipe_dynamic" };
+  }
+  return { recipe: recipe.trim(), opaque: false, reason: "make_recipe_resolved" };
+}
+function resolveLauncherRecipe(params) {
+  if (params.depth >= MAX_RESOLVE_DEPTH) {
+    return { recipe: null, opaque: true, reason: "launcher_depth_exceeded" };
+  }
+  const tokens = params.tokens;
+  const scriptName = npmScriptName(tokens);
+  if (scriptName) {
+    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName);
+  }
+  if (tokens[0] === "make" && tokens[1] && !tokens[1].startsWith("-")) {
+    return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1]);
+  }
+  return null;
+}
+function isRoutineLauncher(tokens) {
+  return tokens[0] === "npm" && (tokens[1] === "run" || tokens[1] === "test") || tokens[0] === "pnpm" || tokens[0] === "make";
+}
+
+// src/core/v2/parser.ts
+import path9 from "node:path";
 
 // src/core/shell-substitution.ts
-var MAX_SUBSTITUTION_DEPTH = 8;
 function findCommandSubstitutions(command) {
   const results = [];
   let index = 0;
@@ -2384,880 +2012,103 @@ function extractBalancedParenContent(command, start) {
   return null;
 }
 
-// src/core/classify-shell.ts
-var SHELL_INTERPRETERS2 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
-var INTERPRETER_SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
-var VERDICT_RANK = {
-  allow: 0,
-  allow_flagged: 1,
-  deny_pending_approval: 2
-};
-function worseVerdict(left, right) {
-  const leftRank = VERDICT_RANK[left.verdict] ?? 0;
-  const rightRank = VERDICT_RANK[right.verdict] ?? 0;
-  if (rightRank > leftRank) {
-    return right;
+// src/core/shell-unparseable.ts
+function detectUnparseableShell(command) {
+  if (hasProcessSubstitution(command)) {
+    return true;
   }
-  if (rightRank < leftRank) {
-    return left;
+  if (hasSubshell(command)) {
+    return true;
   }
-  return right;
-}
-function denyResult(params) {
-  return {
-    verdict: "deny_pending_approval",
-    reason: params.reason,
-    normalizedCommand: params.normalizedCommand,
-    fingerprint: shellFingerprint(params.cwdRelative, params.normalizedCommand),
-    assessment: params.assessment
-  };
-}
-function splitSegmentsWithSeparators(tokens) {
-  const segments = [];
-  let current = [];
-  let separator = "start";
-  const flush = () => {
-    if (current.length > 0) {
-      segments.push({ tokens: current, separator });
-      current = [];
-    }
-  };
-  for (const token of tokens) {
-    if (token === "&&" || token === "||" || token === ";" || token === "|") {
-      flush();
-      separator = token;
-      continue;
-    }
-    current.push(token);
+  if (hasBraceGroup(command)) {
+    return true;
   }
-  flush();
-  return segments;
-}
-function unparseableShellResult(normalizedCommand, cwdRelative2, options) {
-  const assessment = {
-    reversibility: "irreversible",
-    external: false,
-    blastRadius: "unparseable shell construct",
-    confidence: 0.9,
-    signals: ["unparseable_shell"]
-  };
-  if (options.unparseableShell === "deny") {
-    return denyResult({
-      reason: "unparseable_shell",
-      normalizedCommand,
-      cwdRelative: cwdRelative2,
-      assessment
-    });
+  if (hasUnclosedQuote(command)) {
+    return true;
   }
-  return {
-    verdict: "allow_flagged",
-    reason: "unparseable_shell",
-    normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
-    assessment
-  };
-}
-function classifySubstitutionInners(params) {
-  const { command, cwd, repoRoot, options, depth } = params;
-  if (depth >= MAX_SUBSTITUTION_DEPTH) {
-    return null;
-  }
-  const substitutions = findCommandSubstitutions(command);
-  if (substitutions.length === 0) {
-    return null;
-  }
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-  let worst = null;
-  for (const substitution of substitutions) {
-    const inner = classifyShell(substitution, cwd, repoRoot, options, depth + 1);
-    if (options.unknownLocalEffect === "deny") {
-      return denyResult({
-        reason: "command_substitution",
-        normalizedCommand,
-        cwdRelative: cwdRelative2,
-        assessment: {
-          reversibility: "irreversible",
-          external: inner.assessment.external,
-          blastRadius: "command substitution",
-          confidence: 0.9,
-          signals: ["command_substitution", ...inner.assessment.signals]
-        }
-      });
-    }
-    const wrapped = wrapInnerVerdict({
-      inner,
-      normalizedCommand,
-      cwdRelative: cwdRelative2,
-      wrapReason: "command_substitution",
-      wrapSignal: "command_substitution"
-    });
-    worst = worst ? worseVerdict(worst, wrapped) : wrapped;
-  }
-  return worst;
-}
-function extractInterpreterScript(tokens) {
-  for (let index = 1; index < tokens.length; index += 1) {
-    const flag = tokens[index];
-    if (INTERPRETER_SCRIPT_FLAGS.has(flag)) {
-      return tokens[index + 1] ?? null;
-    }
-  }
-  return null;
-}
-function wrapInnerVerdict(params) {
-  const { inner, normalizedCommand, cwdRelative: cwdRelative2, wrapReason, wrapSignal } = params;
-  const signals = [wrapSignal, ...inner.assessment.signals];
-  if (inner.verdict === "deny_pending_approval") {
-    return {
-      ...inner,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
-      reason: wrapReason,
-      assessment: {
-        ...inner.assessment,
-        signals
-      }
-    };
-  }
-  if (inner.verdict === "allow_flagged") {
-    return {
-      ...inner,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
-      reason: wrapReason,
-      assessment: {
-        ...inner.assessment,
-        signals
-      }
-    };
-  }
-  if (inner.verdict === "allow") {
-    return {
-      verdict: "allow_flagged",
-      reason: wrapReason,
-      normalizedCommand,
-      fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: inner.assessment.external,
-        blastRadius: inner.assessment.blastRadius,
-        confidence: Math.min(inner.assessment.confidence, 0.7),
-        signals
-      }
-    };
-  }
-  return inner;
-}
-function classifySegment(segment, cwd, repoRoot, normalizedCommand, cwdRelative2, options, depth) {
-  const segmentTokens = segment.tokens;
-  const key = commandKey(segmentTokens);
-  if (depth < 2) {
-    const innerScript = extractInterpreterScript(segmentTokens);
-    if (innerScript && (SHELL_INTERPRETERS2.has(key) || key === "node")) {
-      const inner = classifyShell(innerScript, cwd, repoRoot, options, depth + 1);
-      const wrapReason = key === "node" ? "node_eval" : "shell_interpreter_script";
-      const wrapSignal = key === "node" ? "node_eval" : "shell_interpreter_script";
-      return wrapInnerVerdict({
-        inner,
-        normalizedCommand,
-        cwdRelative: cwdRelative2,
-        wrapReason,
-        wrapSignal
-      });
-    }
-  }
-  const attributes = analyzeShellSegment({
-    segmentTokens,
-    cwd,
-    repoRoot,
-    normalizedCommand,
-    cwdRelative: cwdRelative2,
-    options,
-    separator: segment.separator
-  });
-  const outsideRepoPaths = attributes.hitsOutsideRepo ? collectOutsideRepoPaths(normalizedCommand, cwd, repoRoot) : [];
-  const policyResult = evaluatePolicyRules(attributes, {
-    unknownLocalEffect: options.unknownLocalEffect ?? "allow_flagged",
-    unparseableShell: options.unparseableShell ?? "allow_flagged",
-    confidenceThresholds: options.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
-    demoteL3External: options.demoteL3External === true,
-    brokerFsScope: options.brokerFsScope === true,
-    fsScopeAllowlist: options.fsScopeAllowlist,
-    outsideRepoPaths
-  });
-  return policyResultToClassifyResult(attributes, policyResult);
-}
-function classifyShell(command, cwd, repoRoot, options = {}, depth = 0) {
-  const normalizedCommand = normalizeShellCommand(command, repoRoot, normalizeToken);
-  const cwdRelative2 = relativeWithinRepo(repoRoot, cwd) ?? cwd;
-  if (depth === 0 && detectUnparseableShell(command)) {
-    return unparseableShellResult(normalizedCommand, cwdRelative2, options);
-  }
-  const substitutionResult = classifySubstitutionInners({
-    command,
-    cwd,
-    repoRoot,
-    options,
-    depth
-  });
-  const tokens = tokenizeShell(command);
-  const segments = splitSegmentsWithSeparators(tokens);
-  let effective = {
-    verdict: "allow",
-    reason: "read_only",
-    normalizedCommand,
-    fingerprint: shellFingerprint(cwdRelative2, normalizedCommand),
-    assessment: {
-      reversibility: "reversible",
-      external: false,
-      blastRadius: "this repository",
-      confidence: 0.95,
-      signals: ["read_only"]
-    }
-  };
-  for (let index = 0; index < segments.length; index += 1) {
-    const result = classifySegment(
-      segments[index],
-      cwd,
-      repoRoot,
-      normalizedCommand,
-      cwdRelative2,
-      options,
-      depth
-    );
-    effective = worseVerdict(effective, result);
-    if (result.verdict === "deny_pending_approval" && options.strictChains !== true) {
-      break;
-    }
-  }
-  if (substitutionResult) {
-    effective = worseVerdict(effective, substitutionResult);
-  }
-  return effective;
-}
-
-// src/core/glob.ts
-function matchesSensitivePath(filePath, patterns) {
-  const normalized = filePath.replaceAll("\\", "/");
-  const segments = normalized.split("/");
-  const baseName = segments.at(-1) ?? normalized;
-  for (const pattern of patterns) {
-    const normalizedPattern = pattern.replaceAll("\\", "/");
-    if (normalizedPattern.includes("**")) {
-      const parts = normalizedPattern.split("**").map((part) => part.replace(/^\/+|\/+$/g, ""));
-      const prefix = parts[0]?.replace(/\/+$/, "") ?? "";
-      const suffix = parts[1]?.replace(/^\/+/, "") ?? "";
-      if (prefix && !normalized.startsWith(prefix)) {
-        continue;
-      }
-      if (suffix && !normalized.includes(suffix)) {
-        continue;
-      }
-      if (prefix || suffix) {
-        return true;
-      }
-    }
-    if (normalizedPattern.includes("*")) {
-      const regex = new RegExp(
-        `^${normalizedPattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`
-      );
-      if (regex.test(normalized) || regex.test(baseName)) {
-        return true;
-      }
-      continue;
-    }
-    if (normalized === normalizedPattern || baseName === normalizedPattern) {
-      return true;
-    }
-    if (normalized.endsWith(`/${normalizedPattern}`)) {
-      return true;
-    }
-    if (segments.includes(normalizedPattern)) {
-      return true;
-    }
+  if (hasUnbalancedDollarParen(command)) {
+    return true;
   }
   return false;
 }
-
-// src/core/classify-tool.ts
-var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
-function scrubPayload(value, options) {
-  return scrubValue(value, options.scrubOptions);
+function hasProcessSubstitution(command) {
+  return /<\s*\(/.test(command);
 }
-function extractFilePath(payload) {
-  const toolInput = payload.tool_input;
-  if (!toolInput || typeof toolInput !== "object") {
-    return null;
-  }
-  const input = toolInput;
-  for (const key of ["path", "file_path", "target_file", "filePath"]) {
-    if (typeof input[key] === "string") {
-      return input[key];
-    }
-  }
-  return null;
-}
-function extractShellCommand(payload) {
-  const toolInput = payload.tool_input;
-  if (!toolInput || typeof toolInput !== "object") {
-    return null;
-  }
-  const input = toolInput;
-  if (typeof input.command === "string") {
-    return input.command;
-  }
-  return null;
-}
-function classifyToolUse(payload, repoRoot, cwd, options = {}) {
-  const toolName = String(payload.tool_name ?? "");
-  const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
-  const protectedRoots2 = [
-    ...options.protectedArtifactRoots ?? [],
-    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
-  ];
-  if (toolName === "Shell") {
-    const command = extractShellCommand(payload);
-    if (!command) {
-      if (options.unknownLocalEffect === "deny") {
-        return {
-          verdict: "deny_pending_approval",
-          reason: "tool_shell_missing_command",
-          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-          fingerprint: toolFingerprint(
-            toolName,
-            scrubPayload(payload.tool_input ?? {}, options),
-            repoRoot
-          ),
-          assessment: {
-            reversibility: "irreversible",
-            external: false,
-            blastRadius: "tool shell",
-            confidence: 0.85,
-            signals: ["missing_command"]
-          }
-        };
-      }
-      return {
-        verdict: "allow_flagged",
-        reason: "tool_shell_missing_command",
-        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-        fingerprint: toolFingerprint(
-          toolName,
-          scrubPayload(payload.tool_input ?? {}, options),
-          repoRoot
-        ),
-        assessment: {
-          reversibility: "recoverable_with_cost",
-          external: false,
-          blastRadius: "tool shell",
-          confidence: 0.5,
-          signals: ["missing_command"]
-        }
-      };
-    }
-    const shellResult = classifyShell(command, cwd, repoRoot, options);
-    return {
-      ...shellResult,
-      summary: command
-    };
-  }
-  if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
-    const filePath = extractFilePath(payload);
-    if (!filePath) {
-      if (options.unknownLocalEffect === "deny") {
-        return {
-          verdict: "deny_pending_approval",
-          reason: "file_mutation_missing_path",
-          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-          fingerprint: toolFingerprint(
-            toolName,
-            scrubPayload(payload.tool_input ?? {}, options),
-            repoRoot
-          ),
-          assessment: {
-            reversibility: "irreversible",
-            external: false,
-            blastRadius: "file mutation",
-            confidence: 0.85,
-            signals: ["missing_path"]
-          }
-        };
-      }
-      return {
-        verdict: "allow_flagged",
-        reason: "file_mutation_missing_path",
-        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-        fingerprint: toolFingerprint(
-          toolName,
-          scrubPayload(payload.tool_input ?? {}, options),
-          repoRoot
-        ),
-        assessment: {
-          reversibility: "recoverable_with_cost",
-          external: false,
-          blastRadius: "file mutation",
-          confidence: 0.55,
-          signals: ["missing_path"]
-        }
-      };
-    }
-    const signals = [];
-    const resolvedPath = path7.isAbsolute(filePath) ? filePath : path7.resolve(cwd, filePath);
-    const hitsProtectedRoot = protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
-    if (hitsProtectedRoot) {
-      signals.push("control_plane_path");
-      return {
-        verdict: "deny_pending_approval",
-        reason: "control_plane_mutation",
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: "irreversible",
-          external: false,
-          blastRadius: "agent-belay control plane",
-          confidence: 0.97,
-          signals
-        }
-      };
-    }
-    const relativePath = relativeWithinRepo(repoRoot, resolvedPath);
-    if (relativePath === null) {
-      signals.push("outside_repo_path");
-      return {
-        verdict: "deny_pending_approval",
-        reason: "outside_repo_file_mutation",
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: "outside the repository",
-          confidence: 0.9,
-          signals
-        }
-      };
-    }
-    if (matchesSensitivePath(relativePath, sensitivePaths)) {
-      signals.push("sensitive_path");
-      return {
-        verdict: "deny_pending_approval",
-        reason: "sensitive_file_mutation",
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: "irreversible",
-          external: false,
-          blastRadius: "sensitive repository file",
-          confidence: 0.88,
-          signals
-        }
-      };
-    }
-    if (toolName === "Delete") {
-      signals.push("file_delete");
-      return {
-        verdict: "allow_flagged",
-        reason: "file_delete",
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: "recoverable_with_cost",
-          external: false,
-          blastRadius: "this repository",
-          confidence: 0.7,
-          signals
-        }
-      };
-    }
-    signals.push("file_mutation");
-    return {
-      verdict: "allow_flagged",
-      reason: "file_mutation",
-      summary: filePath,
-      fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "this repository",
-        confidence: 0.68,
-        signals
-      }
-    };
-  }
-  return {
-    verdict: "allow",
-    reason: "unclassified_tool",
-    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-    fingerprint: toolFingerprint(
-      toolName,
-      scrubPayload(payload.tool_input ?? {}, options),
-      repoRoot
-    ),
-    assessment: {
-      reversibility: "reversible",
-      external: false,
-      blastRadius: "tool scope",
-      confidence: 0.5,
-      signals: ["unclassified_tool"]
-    }
-  };
-}
-
-// src/core/gate-engine.ts
-init_config();
-
-// src/core/v2/judge.ts
-var SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i];
-var DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i;
-var GIT_PATTERNS = /\.git\b/i;
-function prescanInterpreterCode(code) {
-  const normalized = code.replaceAll("\\", "/");
-  const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized));
-  const hitsGit = GIT_PATTERNS.test(normalized);
-  const hitsDestructive = DESTRUCTIVE_VERBS.test(normalized);
-  if ((hitsSecret || hitsGit) && hitsDestructive) {
-    return {
-      external_change: false,
-      destroys_outside_repo: false,
-      destroys_history_or_secrets: true
-    };
-  }
-  return null;
-}
-function createDeterministicJudgeStub() {
-  return {
-    evaluate() {
-      return Promise.resolve({
-        external_change: false,
-        destroys_outside_repo: false,
-        destroys_history_or_secrets: false
-      });
-    }
-  };
-}
-var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean}
-Default all three to true when unsure.
-
-external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
-destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
-destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
-
-Command/code:
-`;
-function createOllamaJudge(model = "gemma4:e2b", baseUrl = "http://127.0.0.1:11434") {
-  return {
-    async evaluate(input) {
-      const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
-      if (prescan?.destroys_history_or_secrets) {
-        return prescan;
-      }
-      const body = `${TIER1_PROMPT}${input.innerCode ?? input.command}`;
-      try {
-        const response = await fetch(`${baseUrl}/api/generate`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            model,
-            prompt: body,
-            stream: false,
-            format: "json"
-          })
-        });
-        if (!response.ok) {
-          return {
-            external_change: true,
-            destroys_outside_repo: true,
-            destroys_history_or_secrets: true
-          };
-        }
-        const payload = await response.json();
-        const parsed = JSON.parse(payload.response ?? "{}");
-        return {
-          external_change: parsed.external_change !== false,
-          destroys_outside_repo: parsed.destroys_outside_repo !== false,
-          destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false
-        };
-      } catch {
-        return {
-          external_change: true,
-          destroys_outside_repo: true,
-          destroys_history_or_secrets: true
-        };
-      }
-    }
-  };
-}
-function tier1RequiresAsk(verdict2) {
-  return verdict2.external_change || verdict2.destroys_outside_repo || verdict2.destroys_history_or_secrets;
-}
-
-// src/core/v2/verdict.ts
-import path11 from "node:path";
-
-// src/core/v2/containment.ts
-import path8 from "node:path";
-function expandHome(token) {
-  if (token === "~" || token.startsWith("~/")) {
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-    if (!home) {
-      return token;
-    }
-    return token === "~" ? home : path8.join(home, token.slice(2));
-  }
-  return token;
-}
-function resolveTrustedPath(token, trustedCwd, trusted) {
-  if (!token || token === "--" || token.startsWith("-")) {
-    return null;
-  }
-  if (!trusted || !trustedCwd) {
-    return null;
-  }
-  const expanded = expandHome(token);
-  if (path8.isAbsolute(expanded)) {
-    return canonicalPath(expanded);
-  }
-  return canonicalPath(path8.resolve(trustedCwd, expanded));
-}
-function locationForPath(resolvedPath, repoRoot) {
-  if (!resolvedPath) {
-    return "unknown";
-  }
-  if (pathWithinRoot(repoRoot, resolvedPath)) {
-    return "repo_local";
-  }
-  return "repo_outside";
-}
-function isGitPath(resolvedPath, repoRoot) {
-  const relative = relativeWithinRepo(repoRoot, resolvedPath);
-  if (!relative) {
-    return false;
-  }
-  const normalized = relative.replaceAll("\\", "/");
-  return normalized === ".git" || normalized.startsWith(".git/");
-}
-function isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, protectedRoots2 = []) {
-  if (isGitPath(resolvedPath, repoRoot)) {
+function hasSubshell(command) {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("(")) {
     return true;
   }
-  const relative = relativeWithinRepo(repoRoot, resolvedPath);
-  const checkPath = relative ?? resolvedPath;
-  if (matchesSensitivePath(checkPath.replaceAll("\\", "/"), sensitivePaths)) {
-    return true;
-  }
-  return protectedRoots2.some((root) => pathWithinRoot(root, resolvedPath));
+  return /(?:^|[;&|]\s*)\(/.test(trimmed);
 }
-function analyzePathTargets(params) {
-  const signals = [];
-  if (!params.trustedCwd || !params.cwd) {
-    return {
-      location: "unknown",
-      isHighStakes: false,
-      signals: ["missing_trusted_cwd"]
-    };
-  }
-  const locations = /* @__PURE__ */ new Set();
-  let isHighStakes = false;
-  for (const target of params.targets) {
-    const resolved = resolveTrustedPath(target, params.cwd, params.trustedCwd) ?? resolveMutationTarget(target, params.cwd);
-    const location2 = locationForPath(resolved, params.repoRoot);
-    locations.add(location2);
-    if (resolved && isHighStakesPath(
-      resolved,
-      params.repoRoot,
-      params.sensitivePaths,
-      params.protectedArtifactRoots
-    )) {
-      isHighStakes = true;
-      signals.push("high_stakes_path");
+function hasBraceGroup(command) {
+  const stripped = command.replace(/'[^']*'|"[^"]*"/g, " ");
+  return /\{\s*[^\s}]/.test(stripped) || /;\s*\}/.test(stripped);
+}
+function hasUnclosedQuote(command) {
+  let quote = null;
+  let escaping = false;
+  for (const char of command) {
+    if (escaping) {
+      escaping = false;
+      continue;
     }
-  }
-  let location = "unknown";
-  if (locations.size === 0) {
-    location = "unknown";
-  } else if (locations.size === 1) {
-    location = [...locations][0] ?? "unknown";
-  } else {
-    location = "mixed";
-  }
-  return { location, isHighStakes, signals };
-}
-function cwdRelative(repoRoot, cwd) {
-  return relativeWithinRepo(repoRoot, cwd) ?? cwd;
-}
-
-// src/core/v2/fingerprint.ts
-function verdictFingerprint(cwdRelative2, commandRedacted) {
-  return hashValue(`v2:${cwdRelative2}:${commandRedacted}`);
-}
-
-// src/core/v2/launcher-resolve.ts
-import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
-import path9 from "node:path";
-var MAX_RESOLVE_DEPTH = 8;
-function readPackageJson(dir) {
-  const packagePath = path9.join(dir, "package.json");
-  if (!existsSync4(packagePath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(readFileSync2(packagePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function findPackageJson(startDir, stopDir) {
-  let current = path9.resolve(startDir);
-  const stop = path9.resolve(stopDir);
-  while (true) {
-    const packagePath = path9.join(current, "package.json");
-    if (existsSync4(packagePath)) {
-      return packagePath;
+    if (char === "\\") {
+      escaping = true;
+      continue;
     }
-    if (current === stop || current === path9.dirname(current)) {
-      return existsSync4(packagePath) ? packagePath : null;
-    }
-    const parent = path9.dirname(current);
-    if (!parent.startsWith(stop) && parent !== current) {
-    }
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-  return null;
-}
-function npmScriptName(tokens) {
-  if (tokens[0] === "npm" && tokens[1] === "test") {
-    return "test";
-  }
-  if (tokens[0] === "npm" && tokens[1] === "run" && tokens[2]) {
-    return tokens[2];
-  }
-  if (tokens[0] === "pnpm" && tokens[1] === "run" && tokens[2]) {
-    return tokens[2];
-  }
-  if (tokens[0] === "npm" && tokens[1] && tokens[1] !== "run" && tokens[1] !== "install") {
-    return null;
-  }
-  return null;
-}
-function resolveNpmRecipe(cwd, repoRoot, scriptName) {
-  const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd);
-  if (!packagePath) {
-    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
-      return { recipe: null, opaque: true, reason: "external_script" };
-    }
-    return { recipe: null, opaque: true, reason: "package_json_missing" };
-  }
-  const pkg = readPackageJson(path9.dirname(packagePath));
-  const scripts = pkg?.scripts;
-  if (!scripts || typeof scripts !== "object") {
-    return { recipe: null, opaque: true, reason: "package_scripts_missing" };
-  }
-  const recipe = scripts[scriptName];
-  if (!recipe || typeof recipe !== "string") {
-    if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
-      return { recipe: null, opaque: true, reason: "external_script" };
-    }
-    return { recipe: null, opaque: true, reason: "npm_script_undefined" };
-  }
-  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
-    return { recipe: null, opaque: true, reason: "npm_script_dynamic" };
-  }
-  return { recipe: recipe.trim(), opaque: false, reason: "npm_script_resolved" };
-}
-function parseMakefileRecipes(makefilePath) {
-  const recipes = /* @__PURE__ */ new Map();
-  try {
-    const content = readFileSync2(makefilePath, "utf8");
-    const lines = content.split("\n");
-    let currentTarget = null;
-    let recipeLines = [];
-    const flush = () => {
-      if (currentTarget && recipeLines.length > 0) {
-        recipes.set(currentTarget, recipeLines.join(" ").trim());
+    if (quote) {
+      if (char === quote) {
+        quote = null;
       }
-      currentTarget = null;
-      recipeLines = [];
-    };
-    for (const line of lines) {
-      if (line.trim().startsWith("#")) {
-        continue;
-      }
-      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
-      if (targetMatch) {
-        flush();
-        currentTarget = targetMatch[1] ?? null;
-        const inline = line.slice(targetMatch[0].length).trim();
-        if (inline && !inline.startsWith("#")) {
-          recipeLines.push(inline);
-        }
-        continue;
-      }
-      if (currentTarget && /^\t/.test(line)) {
-        recipeLines.push(line.trim());
-      }
+      continue;
     }
-    flush();
-  } catch {
-    return recipes;
-  }
-  return recipes;
-}
-function resolveMakeRecipe(cwd, repoRoot, target) {
-  const candidates = ["Makefile", "makefile", "GNUmakefile"];
-  let makefilePath = null;
-  let searchDir = path9.resolve(cwd);
-  const stop = path9.resolve(repoRoot);
-  while (true) {
-    for (const name of candidates) {
-      const candidate = path9.join(searchDir, name);
-      if (existsSync4(candidate)) {
-        makefilePath = candidate;
-        break;
-      }
+    if (char === '"' || char === "'") {
+      quote = char;
     }
-    if (makefilePath || searchDir === stop || searchDir === path9.dirname(searchDir)) {
-      break;
+  }
+  return quote !== null;
+}
+function hasUnbalancedDollarParen(command) {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaping) {
+      escaping = false;
+      continue;
     }
-    searchDir = path9.dirname(searchDir);
+    if (char === "\\" && (inSingle || inDouble)) {
+      escaping = true;
+      continue;
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+    }
   }
-  if (!makefilePath) {
-    return { recipe: null, opaque: true, reason: "unknown_local_effect" };
-  }
-  const recipes = parseMakefileRecipes(makefilePath);
-  const recipe = recipes.get(target);
-  if (!recipe) {
-    return { recipe: null, opaque: true, reason: "make_target_undefined" };
-  }
-  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
-    return { recipe: null, opaque: true, reason: "make_recipe_dynamic" };
-  }
-  return { recipe: recipe.trim(), opaque: false, reason: "make_recipe_resolved" };
-}
-function resolveLauncherRecipe(params) {
-  if (params.depth >= MAX_RESOLVE_DEPTH) {
-    return { recipe: null, opaque: true, reason: "launcher_depth_exceeded" };
-  }
-  const tokens = params.tokens;
-  const scriptName = npmScriptName(tokens);
-  if (scriptName) {
-    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName);
-  }
-  if (tokens[0] === "make" && tokens[1] && !tokens[1].startsWith("-")) {
-    return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1]);
-  }
-  return null;
-}
-function isRoutineLauncher(tokens) {
-  return tokens[0] === "npm" && (tokens[1] === "run" || tokens[1] === "test") || tokens[0] === "pnpm" || tokens[0] === "make";
+  return depth > 0;
 }
 
 // src/core/v2/parser.ts
-import path10 from "node:path";
-var ENV_PREFIX_PATTERN2 = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
+var ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/;
 var TRANSPARENT_WRAPPERS = /* @__PURE__ */ new Set([
   "sudo",
   "env",
@@ -3268,7 +2119,7 @@ var TRANSPARENT_WRAPPERS = /* @__PURE__ */ new Set([
   "stdbuf",
   "setsid"
 ]);
-var SHELL_INTERPRETERS3 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
+var SHELL_INTERPRETERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "fish"]);
 var CODE_INTERPRETERS = /* @__PURE__ */ new Set(["python", "python3", "node", "ruby", "perl", "osascript"]);
 var SCRIPT_FLAGS = /* @__PURE__ */ new Set(["-c", "-lc", "-e", "--eval"]);
 var INTERPRETER_SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
@@ -3282,7 +2133,7 @@ var INTERPRETER_SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
   ".sh"
 ]);
 function normalizeHead(token) {
-  const base = path10.basename(token);
+  const base = path9.basename(token);
   if (base && base !== "." && base !== "..") {
     return base;
   }
@@ -3292,7 +2143,7 @@ function peelTransparentWrappers(tokens) {
   let current = [...tokens];
   let xargsStdinOpaque = false;
   while (current.length > 0) {
-    while (current.length > 0 && ENV_PREFIX_PATTERN2.test(current[0] ?? "")) {
+    while (current.length > 0 && ENV_PREFIX_PATTERN.test(current[0] ?? "")) {
       current.shift();
     }
     if (current.length === 0) {
@@ -3319,7 +2170,7 @@ function peelTransparentWrappers(tokens) {
       let index = 1;
       while (index < current.length) {
         const token = current[index] ?? "";
-        if (ENV_PREFIX_PATTERN2.test(token) || token.startsWith("-")) {
+        if (ENV_PREFIX_PATTERN.test(token) || token.startsWith("-")) {
           index += 1;
           continue;
         }
@@ -3350,7 +2201,7 @@ function extractRecursiveScript(tokens) {
   if (head === "eval") {
     return extractEvalBody(tokens);
   }
-  if (SHELL_INTERPRETERS3.has(head) || CODE_INTERPRETERS.has(head)) {
+  if (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) {
     const flagIndex = filtered.findIndex((token) => SCRIPT_FLAGS.has(token));
     if (flagIndex !== -1) {
       const body = filtered.slice(flagIndex + 1).join(" ").replace(/^['"]|['"]$/g, "").trim();
@@ -3372,7 +2223,7 @@ function isBareInterpreter(tokens) {
     return false;
   }
   const head = normalizeHead(peeled[0] ?? "");
-  if (!SHELL_INTERPRETERS3.has(head) && !CODE_INTERPRETERS.has(head)) {
+  if (!SHELL_INTERPRETERS.has(head) && !CODE_INTERPRETERS.has(head)) {
     return false;
   }
   const hasScriptFlag = peeled.some((token) => SCRIPT_FLAGS.has(token));
@@ -3387,7 +2238,7 @@ function isBareInterpreter(tokens) {
     return false;
   }
   const scriptArg = args.find((token) => !token.startsWith("-"));
-  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path10.extname(scriptArg))) {
+  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path9.extname(scriptArg))) {
     return false;
   }
   if (scriptArg) {
@@ -3488,7 +2339,7 @@ var TIER0_EXTERNAL_HEADS = /* @__PURE__ */ new Set([
   "mongosh",
   "redis-cli"
 ]);
-var READ_ONLY_KEYS2 = /* @__PURE__ */ new Set([
+var READ_ONLY_KEYS = /* @__PURE__ */ new Set([
   "cat",
   "cd",
   "echo",
@@ -3689,7 +2540,7 @@ function tier0HighStakesRm(tokens, context) {
   }
   for (const target of targets) {
     if (target === "~" || target.startsWith("~/") || target.startsWith("/")) {
-      const resolved = path11.resolve(
+      const resolved = path10.resolve(
         target === "~" || target.startsWith("~/") ? process.env.HOME ?? "/" : context.cwd,
         target
       );
@@ -3852,7 +2703,7 @@ async function evaluateSegment(command, context, depth) {
     }
   }
   let effect = "unknown";
-  if (READ_ONLY_KEYS2.has(segment.key) || READ_ONLY_KEYS2.has(segment.head)) {
+  if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
     effect = "read_only";
   } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
     effect = "local_mutation";
@@ -4092,6 +2943,250 @@ function verdictToClassifyResult(result) {
   };
 }
 
+// src/core/classify-tool.ts
+var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
+function scrubPayload(value, options) {
+  return scrubValue(value, options.scrubOptions);
+}
+function extractFilePath(payload) {
+  const toolInput = payload.tool_input;
+  if (!toolInput || typeof toolInput !== "object") {
+    return null;
+  }
+  const input = toolInput;
+  for (const key of ["path", "file_path", "target_file", "filePath"]) {
+    if (typeof input[key] === "string") {
+      return input[key];
+    }
+  }
+  return null;
+}
+function extractShellCommand(payload) {
+  const toolInput = payload.tool_input;
+  if (!toolInput || typeof toolInput !== "object") {
+    return null;
+  }
+  const input = toolInput;
+  if (typeof input.command === "string") {
+    return input.command;
+  }
+  return null;
+}
+async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
+  const toolName = String(payload.tool_name ?? "");
+  const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
+  const protectedRoots = [
+    ...options.protectedArtifactRoots ?? [],
+    ...options.controlPlaneDir ? [options.controlPlaneDir] : []
+  ];
+  if (toolName === "Shell") {
+    const command = extractShellCommand(payload);
+    if (!command) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "tool_shell_missing_command",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "tool shell",
+            confidence: 0.85,
+            signals: ["missing_command"]
+          }
+        };
+      }
+      return {
+        verdict: "allow_flagged",
+        reason: "tool_shell_missing_command",
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
+        assessment: {
+          reversibility: "recoverable_with_cost",
+          external: false,
+          blastRadius: "tool shell",
+          confidence: 0.5,
+          signals: ["missing_command"]
+        }
+      };
+    }
+    const shellResult = await classifyShellV2(command, cwd, repoRoot, config, options);
+    return {
+      ...shellResult,
+      summary: command
+    };
+  }
+  if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
+    const filePath = extractFilePath(payload);
+    if (!filePath) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "file_mutation_missing_path",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "file mutation",
+            confidence: 0.85,
+            signals: ["missing_path"]
+          }
+        };
+      }
+      return {
+        verdict: "allow_flagged",
+        reason: "file_mutation_missing_path",
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
+        assessment: {
+          reversibility: "recoverable_with_cost",
+          external: false,
+          blastRadius: "file mutation",
+          confidence: 0.55,
+          signals: ["missing_path"]
+        }
+      };
+    }
+    const signals = [];
+    const resolvedPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(cwd, filePath);
+    const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath));
+    if (hitsProtectedRoot) {
+      signals.push("control_plane_path");
+      return {
+        verdict: "deny_pending_approval",
+        reason: "control_plane_mutation",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "irreversible",
+          external: false,
+          blastRadius: "agent-belay control plane",
+          confidence: 0.97,
+          signals
+        }
+      };
+    }
+    const relativePath = relativeWithinRepo(repoRoot, resolvedPath);
+    if (relativePath === null) {
+      signals.push("outside_repo_path");
+      return {
+        verdict: "deny_pending_approval",
+        reason: "outside_repo_file_mutation",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "irreversible",
+          external: true,
+          blastRadius: "outside the repository",
+          confidence: 0.9,
+          signals
+        }
+      };
+    }
+    if (matchesSensitivePath(relativePath, sensitivePaths)) {
+      signals.push("sensitive_path");
+      return {
+        verdict: "deny_pending_approval",
+        reason: "sensitive_file_mutation",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "irreversible",
+          external: false,
+          blastRadius: "sensitive repository file",
+          confidence: 0.88,
+          signals
+        }
+      };
+    }
+    if (toolName === "Delete") {
+      signals.push("file_delete");
+      return {
+        verdict: "allow_flagged",
+        reason: "file_delete",
+        summary: filePath,
+        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+        assessment: {
+          reversibility: "recoverable_with_cost",
+          external: false,
+          blastRadius: "this repository",
+          confidence: 0.7,
+          signals
+        }
+      };
+    }
+    signals.push("file_mutation");
+    return {
+      verdict: "allow_flagged",
+      reason: "file_mutation",
+      summary: filePath,
+      fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: false,
+        blastRadius: "this repository",
+        confidence: 0.68,
+        signals
+      }
+    };
+  }
+  return {
+    verdict: "allow",
+    reason: "unclassified_tool",
+    summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    fingerprint: toolFingerprint(
+      toolName,
+      scrubPayload(payload.tool_input ?? {}, options),
+      repoRoot
+    ),
+    assessment: {
+      reversibility: "reversible",
+      external: false,
+      blastRadius: "tool scope",
+      confidence: 0.5,
+      signals: ["unclassified_tool"]
+    }
+  };
+}
+
+// src/core/gate-engine.ts
+init_config();
+
+// src/core/judgment.ts
+function mergeAgentAssessment(independent, agent) {
+  if (!agent) {
+    return { assessment: independent, mismatch: false };
+  }
+  const mismatch = agent.external === false && independent.external === true || agent.reversibility === "reversible" && independent.reversibility === "irreversible";
+  const confidence = mismatch ? Math.min(independent.confidence, 0.55) : Math.min(0.99, independent.confidence + 0.05);
+  return {
+    assessment: {
+      ...independent,
+      confidence,
+      signals: mismatch ? [...independent.signals, "agent_assessment_mismatch"] : [...independent.signals, "agent_assessment_agreement"]
+    },
+    mismatch
+  };
+}
+
 // src/core/gate-engine.ts
 var GateNormalizationError = class extends Error {
   reason = "normalization_failed";
@@ -4230,7 +3325,7 @@ async function classifyGatedAction(action, config, extraOptions = {}) {
   if (action.kind === "subagent") {
     return classifySubagent(action.payload ?? {}, action.repoRoot, options);
   }
-  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options);
+  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, config, options);
 }
 async function classifyGatedActionAsync(action, config, extraOptions = {}) {
   return classifyGatedAction(action, config, extraOptions);
@@ -4257,6 +3352,189 @@ function gateEnabledForAction(config, action) {
 
 // src/core/index.ts
 init_approval();
+
+// src/core/classify-shell.ts
+init_config();
+
+// src/core/policy/command-keys.ts
+var READ_ONLY_COMMAND_KEYS = [
+  "cat",
+  "cd",
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "head",
+  "ls",
+  "pwd",
+  "rg",
+  "sort",
+  "tail",
+  "wc",
+  "which",
+  "find"
+];
+var FLAGGED_COMMAND_KEYS = [
+  "chmod",
+  "cp",
+  "git add",
+  "git clean",
+  "git commit",
+  "git mv",
+  "git reset",
+  "mkdir",
+  "mv",
+  "rm",
+  "sed",
+  "tee",
+  "touch",
+  "truncate"
+];
+var EXTERNAL_COMMAND_KEYS = [
+  "aws",
+  "curl",
+  "docker push",
+  "docker run",
+  "firebase deploy",
+  "fly deploy",
+  "gh",
+  "git push",
+  "gcloud",
+  "heroku",
+  "kubectl",
+  "netlify",
+  "npm publish",
+  "pnpm publish",
+  "rsync",
+  "scp",
+  "ssh",
+  "supabase",
+  "terraform apply",
+  "vercel",
+  "wget"
+];
+var READ_ONLY_KEYS2 = new Set(READ_ONLY_COMMAND_KEYS);
+var FLAGGED_KEYS = new Set(FLAGGED_COMMAND_KEYS);
+var EXTERNAL_KEYS = new Set(EXTERNAL_COMMAND_KEYS);
+
+// src/core/policy/default-rules.ts
+var DEFAULT_POLICY_RULES = [
+  {
+    id: "unparseable_shell",
+    priority: 1e3,
+    nonOverridable: true,
+    match: { unparseable: true },
+    action: "threshold",
+    reason: "unparseable_shell"
+  },
+  {
+    id: "protected_artifact",
+    priority: 950,
+    nonOverridable: true,
+    match: { protectedArtifact: true },
+    action: "escalate",
+    reason: "control_plane_mutation"
+  },
+  {
+    id: "outside_repo_redirect",
+    priority: 940,
+    nonOverridable: true,
+    match: { redirectKind: "outside" },
+    action: "escalate",
+    reason: "outside_repo_redirect"
+  },
+  {
+    id: "outside_repo_mutation",
+    priority: 938,
+    nonOverridable: true,
+    match: { outsideRepo: true },
+    action: "escalate",
+    reason: "outside_repo_mutation"
+  },
+  {
+    id: "dynamic_shell",
+    priority: 930,
+    nonOverridable: true,
+    match: { signal: "dynamic_shell_evaluation" },
+    action: "escalate",
+    reason: "dynamic_shell_evaluation"
+  },
+  {
+    id: "pipe_to_shell",
+    priority: 920,
+    nonOverridable: true,
+    match: { signal: "pipe_to_shell" },
+    action: "escalate",
+    reason: "pipe_to_shell"
+  },
+  {
+    id: "find_dangerous",
+    priority: 900,
+    nonOverridable: true,
+    match: { signal: "find_dangerous_action" },
+    action: "escalate",
+    reason: "find_dangerous_action"
+  },
+  {
+    id: "custom_external",
+    priority: 850,
+    match: { customExternal: true },
+    action: "escalate",
+    reason: "custom_external"
+  },
+  {
+    id: "external_effect",
+    priority: 800,
+    nonOverridable: true,
+    match: { targetScope: "external" },
+    action: "escalate",
+    reason: "external_effect"
+  },
+  {
+    id: "external_script",
+    priority: 790,
+    match: { commandKey: ["npm run", "pnpm run"], signal: "external_script_name" },
+    action: "escalate",
+    reason: "external_script"
+  },
+  {
+    id: "custom_allow",
+    priority: 600,
+    match: { customAllow: true },
+    action: "allow",
+    reason: "custom_allow"
+  },
+  {
+    id: "read_only",
+    priority: 500,
+    match: {
+      commandKey: [...READ_ONLY_COMMAND_KEYS],
+      redirectKind: "none"
+    },
+    action: "allow",
+    reason: "read_only"
+  },
+  {
+    id: "local_mutation",
+    priority: 400,
+    match: {
+      commandKey: [...FLAGGED_COMMAND_KEYS]
+    },
+    action: "flag",
+    reason: "local_mutation"
+  },
+  {
+    id: "unknown_local",
+    priority: 100,
+    match: {},
+    action: "threshold",
+    reason: "unknown_local_effect"
+  }
+];
+
+// src/core/index.ts
 init_config();
 
 // src/core/control-plane-spike.ts

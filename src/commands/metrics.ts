@@ -54,6 +54,21 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     }
   }
 
+  const v2Buckets: Array<[string, Record<string, number>]> = [
+    ['location', report.byLocation],
+    ['opacity', report.byOpacity],
+    ['effect', report.byEffect],
+    ['confidence', report.byConfidence],
+  ]
+  for (const [axis, bucket] of v2Buckets) {
+    if (Object.keys(bucket).length > 0) {
+      lines.push('', `By ${axis}:`)
+      for (const [value, count] of Object.entries(bucket).sort((a, b) => b[1] - a[1])) {
+        lines.push(`- ${value}: ${count}`)
+      }
+    }
+  }
+
   if (Object.keys(report.gateEventsByDay).length > 0) {
     lines.push('', 'Gate events by day:')
     for (const [day, count] of Object.entries(report.gateEventsByDay).sort()) {

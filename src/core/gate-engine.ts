@@ -207,7 +207,7 @@ export async function classifyGatedAction(
     return classifySubagent(action.payload ?? {}, action.repoRoot, options)
   }
 
-  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, options)
+  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, config, options)
 }
 
 export async function classifyGatedActionAsync(

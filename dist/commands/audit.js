@@ -30,6 +30,10 @@ export async function auditProject(options) {
         kind: options.kind,
         fingerprint: options.fingerprint,
         event: options.event,
+        location: options.location,
+        opacity: options.opacity,
+        effect: options.effect,
+        confidence: options.confidence,
         limit: options.limit,
     };
     if (options.subcommand === 'query') {
@@ -77,7 +81,10 @@ export function formatAuditReport(report) {
         const count = report.count ?? records.length;
         const lines = [`audit query: ${count} record(s)`];
         for (const record of records.slice(0, 50)) {
-            lines.push(`- ${record.timestamp ?? '?'} [${record.event ?? '?'}] ${record.verdict ?? '?'} (${record.reason ?? '?'}) ${record.summary ?? ''}`);
+            const v2Axes = typeof record.location === 'string'
+                ? ` location=${record.location} opacity=${record.opacity ?? '?'} effect=${record.effect ?? '?'} confidence=${record.confidence ?? '?'}`
+                : '';
+            lines.push(`- ${record.timestamp ?? '?'} [${record.event ?? '?'}] ${record.verdict ?? '?'} (${record.reason ?? '?'})${v2Axes} ${record.summary ?? ''}`);
         }
         if (count > 50) {
             lines.push(`... ${count - 50} more`);
