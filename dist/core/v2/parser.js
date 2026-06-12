@@ -12,6 +12,7 @@ const TRANSPARENT_WRAPPERS = new Set([
     'ionice',
     'stdbuf',
     'setsid',
+    'xargs',
 ]);
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish']);
 const CODE_INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'osascript']);

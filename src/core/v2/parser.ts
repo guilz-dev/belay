@@ -15,6 +15,7 @@ const TRANSPARENT_WRAPPERS = new Set([
   'ionice',
   'stdbuf',
   'setsid',
+  'xargs',
 ])
 
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])

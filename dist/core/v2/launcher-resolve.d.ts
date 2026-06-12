@@ -1,5 +1,5 @@
 export interface LauncherResolution {
-    recipe: string | null;
+    recipes: string[];
     opaque: boolean;
     reason: string;
 }

@@ -4,7 +4,7 @@ import path from 'node:path'
 const MAX_RESOLVE_DEPTH = 8
 
 export interface LauncherResolution {
-  recipe: string | null
+  recipes: string[]
   opaque: boolean
   reason: string
 }
@@ -44,50 +44,80 @@ function findPackageJson(startDir: string, stopDir: string): string | null {
   return null
 }
 
+function launcherTokens(tokens: string[]): string[] {
+  const dashIndex = tokens.indexOf('--')
+  return dashIndex === -1 ? tokens : tokens.slice(0, dashIndex)
+}
+
+function forwardedArgs(tokens: string[]): string[] {
+  const dashIndex = tokens.indexOf('--')
+  if (dashIndex === -1) {
+    return []
+  }
+  return tokens.slice(dashIndex + 1)
+}
+
 function npmScriptName(tokens: string[]): string | null {
-  if (tokens[0] === 'npm' && tokens[1] === 'test') {
+  const launcher = launcherTokens(tokens)
+  if (launcher[0] === 'npm' && launcher[1] === 'test') {
     return 'test'
   }
-  if (tokens[0] === 'npm' && tokens[1] === 'run' && tokens[2]) {
-    return tokens[2]
+  if (launcher[0] === 'npm' && launcher[1] === 'run' && launcher[2]) {
+    return launcher[2]
   }
-  if (tokens[0] === 'pnpm' && tokens[1] === 'run' && tokens[2]) {
-    return tokens[2]
+  if (launcher[0] === 'pnpm' && launcher[1] === 'run' && launcher[2]) {
+    return launcher[2]
   }
-  if (tokens[0] === 'npm' && tokens[1] && tokens[1] !== 'run' && tokens[1] !== 'install') {
+  if (launcher[0] === 'npm' && launcher[1] && launcher[1] !== 'run' && launcher[1] !== 'install') {
     return null
   }
   return null
 }
 
-function resolveNpmRecipe(cwd: string, repoRoot: string, scriptName: string): LauncherResolution {
+function applyForwardedArgs(recipe: string, extra: string[]): string {
+  if (extra.length === 0) {
+    return recipe.trim()
+  }
+  return `${recipe.trim()} ${extra.join(' ')}`.trim()
+}
+
+function resolveNpmRecipe(
+  cwd: string,
+  repoRoot: string,
+  scriptName: string,
+  extraArgs: string[],
+): LauncherResolution {
   const packagePath = findPackageJson(cwd, repoRoot) ?? findPackageJson(cwd, cwd)
   if (!packagePath) {
     if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
-      return { recipe: null, opaque: true, reason: 'external_script' }
+      return { recipes: [], opaque: true, reason: 'external_script' }
     }
-    return { recipe: null, opaque: true, reason: 'package_json_missing' }
+    return { recipes: [], opaque: true, reason: 'package_json_missing' }
   }
   const pkg = readPackageJson(path.dirname(packagePath))
   const scripts = pkg?.scripts
   if (!scripts || typeof scripts !== 'object') {
-    return { recipe: null, opaque: true, reason: 'package_scripts_missing' }
+    return { recipes: [], opaque: true, reason: 'package_scripts_missing' }
   }
   const recipe = (scripts as Record<string, string>)[scriptName]
   if (!recipe || typeof recipe !== 'string') {
     if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
-      return { recipe: null, opaque: true, reason: 'external_script' }
+      return { recipes: [], opaque: true, reason: 'external_script' }
     }
-    return { recipe: null, opaque: true, reason: 'npm_script_undefined' }
+    return { recipes: [], opaque: true, reason: 'npm_script_undefined' }
   }
   if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
-    return { recipe: null, opaque: true, reason: 'npm_script_dynamic' }
+    return { recipes: [], opaque: true, reason: 'npm_script_dynamic' }
   }
-  return { recipe: recipe.trim(), opaque: false, reason: 'npm_script_resolved' }
+  return {
+    recipes: [applyForwardedArgs(recipe, extraArgs)],
+    opaque: false,
+    reason: 'npm_script_resolved',
+  }
 }
 
-function parseMakefileRecipes(makefilePath: string): Map<string, string> {
-  const recipes = new Map<string, string>()
+function parseMakefileRecipes(makefilePath: string): Map<string, string[]> {
+  const recipes = new Map<string, string[]>()
   try {
     const content = readFileSync(makefilePath, 'utf8')
     const lines = content.split('\n')
@@ -96,7 +126,10 @@ function parseMakefileRecipes(makefilePath: string): Map<string, string> {
 
     const flush = () => {
       if (currentTarget && recipeLines.length > 0) {
-        recipes.set(currentTarget, recipeLines.join(' ').trim())
+        recipes.set(
+          currentTarget,
+          recipeLines.map((line) => line.trim()).filter((line) => line.length > 0),
+        )
       }
       currentTarget = null
       recipeLines = []
@@ -146,17 +179,19 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
     searchDir = path.dirname(searchDir)
   }
   if (!makefilePath) {
-    return { recipe: null, opaque: true, reason: 'unknown_local_effect' }
+    return { recipes: [], opaque: true, reason: 'unknown_local_effect' }
   }
   const recipes = parseMakefileRecipes(makefilePath)
-  const recipe = recipes.get(target)
-  if (!recipe) {
-    return { recipe: null, opaque: true, reason: 'make_target_undefined' }
+  const recipeLines = recipes.get(target)
+  if (!recipeLines || recipeLines.length === 0) {
+    return { recipes: [], opaque: true, reason: 'make_target_undefined' }
   }
-  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
-    return { recipe: null, opaque: true, reason: 'make_recipe_dynamic' }
+  for (const line of recipeLines) {
+    if (/\$\(/.test(line) || /\$\{/.test(line)) {
+      return { recipes: [], opaque: true, reason: 'make_recipe_dynamic' }
+    }
   }
-  return { recipe: recipe.trim(), opaque: false, reason: 'make_recipe_resolved' }
+  return { recipes: recipeLines, opaque: false, reason: 'make_recipe_resolved' }
 }
 
 export function resolveLauncherRecipe(params: {
@@ -166,13 +201,13 @@ export function resolveLauncherRecipe(params: {
   depth: number
 }): LauncherResolution | null {
   if (params.depth >= MAX_RESOLVE_DEPTH) {
-    return { recipe: null, opaque: true, reason: 'launcher_depth_exceeded' }
+    return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
   }
 
   const tokens = params.tokens
   const scriptName = npmScriptName(tokens)
   if (scriptName) {
-    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName)
+    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName, forwardedArgs(tokens))
   }
 
   if (tokens[0] === 'make' && tokens[1] && !tokens[1].startsWith('-')) {

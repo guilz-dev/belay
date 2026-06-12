@@ -446,7 +446,7 @@ async function evaluateSegment(
         signals: ['launcher_unresolved'],
       })
     }
-    if (resolution.opaque || !resolution.recipe) {
+    if (resolution.opaque || resolution.recipes.length === 0) {
       return askVerdict({
         location: 'unknown',
         opacity: 'opaque',
@@ -456,7 +456,21 @@ async function evaluateSegment(
         signals: [resolution.reason],
       })
     }
-    const innerVerdict = await evaluateSegment(resolution.recipe, context, depth + 1)
+    let innerVerdict: InternalSegmentVerdict | null = null
+    for (const recipe of resolution.recipes) {
+      const evaluated = await evaluateSegment(recipe, context, depth + 1)
+      innerVerdict = innerVerdict ? combineInternal(innerVerdict, evaluated) : evaluated
+    }
+    if (!innerVerdict) {
+      return askVerdict({
+        location: 'unknown',
+        opacity: 'opaque',
+        effect: 'unknown',
+        confidence: 'deterministic',
+        reason: resolution.reason,
+        signals: [resolution.reason],
+      })
+    }
     return {
       ...innerVerdict,
       opacity: 'recursive',
