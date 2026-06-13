@@ -59,6 +59,83 @@ describe('classifyToolUse', () => {
     expect(result.verdict).toBe('allow_flagged')
   })
 
+  it('treats Edit as an in-repo mutation tool', async () => {
+    const result = await classifyToolUse(
+      { tool_name: 'Edit', tool_input: { path: path.join(repoRoot, 'notes.txt') } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('allow_flagged')
+  })
+
+  it('classifies apply_patch against the paths it touches', async () => {
+    const result = await classifyToolUse(
+      {
+        tool_name: 'ApplyPatch',
+        tool_input: {
+          patch: [
+            '*** Begin Patch',
+            '*** Update File: notes.txt',
+            '@@',
+            '+hello',
+            '*** End Patch',
+          ].join('\n'),
+        },
+      },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('file_mutation')
+  })
+
+  it('denies apply_patch when it touches sensitive paths', async () => {
+    const result = await classifyToolUse(
+      {
+        tool_name: 'ApplyPatch',
+        tool_input: {
+          patch: [
+            '*** Begin Patch',
+            '*** Update File: .env',
+            '@@',
+            '+SECRET=1',
+            '*** End Patch',
+          ].join('\n'),
+        },
+      },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('sensitive_file_mutation')
+  })
+
+  it('denies apply_patch moves into sensitive paths', async () => {
+    const result = await classifyToolUse(
+      {
+        tool_name: 'ApplyPatch',
+        tool_input: {
+          patch: [
+            '*** Begin Patch',
+            '*** Update File: notes.txt',
+            '*** Move to: .env',
+            '@@',
+            '+SECRET=1',
+            '*** End Patch',
+          ].join('\n'),
+        },
+      },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('sensitive_file_mutation')
+  })
+
   it('denies writes to the control plane directory (R8)', async () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
     const result = await classifyToolUse(

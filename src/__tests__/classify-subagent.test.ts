@@ -5,7 +5,7 @@ import { classifySubagent } from '../core/classify-subagent.js'
 const repoRoot = '/workspace/project'
 
 describe('classifySubagent', () => {
-  it('denies deploy to production phrasing', () => {
+  it('flags deploy to production phrasing without denying the launch', () => {
     const result = classifySubagent(
       {
         tool_name: 'Task',
@@ -13,7 +13,8 @@ describe('classifySubagent', () => {
       },
       repoRoot,
     )
-    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.assessment.signals).toContain('subagent_external_intent_hint')
   })
 
   it('allows investigation tasks that mention production', () => {
@@ -25,7 +26,7 @@ describe('classifySubagent', () => {
       repoRoot,
     )
     expect(result.verdict).toBe('allow_flagged')
-    expect(result.assessment.signals).toContain('external_term_investigation_context')
+    expect(result.assessment.signals).toContain('subagent_external_intent_hint')
   })
 
   it('fingerprints description and prompt separately from noise', () => {

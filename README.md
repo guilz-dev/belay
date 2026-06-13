@@ -59,7 +59,7 @@ Based on that judgment, Belay assigns one of three verdicts:
 - `allow_flagged` — Local mutation or unknown-but-local effect; allowed, but
   recorded for audit (fresh installs default to deny for unknown/unparseable shell;
   use `agent-belay explain` and `overrides.allow` to tune)
-- `deny_pending_approval` — High-risk or ambiguous (external effects,
+- `deny_pending_approval` — High-risk or ambiguous (destructive external effects,
   irreversible-looking mutations, writes outside the repo); blocks execution and
   issues an approval ID
 

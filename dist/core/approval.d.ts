@@ -14,4 +14,6 @@ export declare function createApprovalRecord(params: {
     summary: string;
     approvalTtlMinutes: number;
     approvalId: string;
+    input?: string;
+    inputKind?: 'shell' | 'tool' | 'subagent';
 }): ApprovalRecord;

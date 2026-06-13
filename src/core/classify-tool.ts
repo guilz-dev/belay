@@ -8,6 +8,17 @@ import type { ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell } from './v2/adapter.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
+const FILE_WRITE_TOOL_NAMES = new Set(['write'])
+const FILE_EDIT_TOOL_NAMES = new Set([
+  'edit',
+  'multiedit',
+  'multi_edit',
+  'patch',
+  'strreplace',
+  'str_replace',
+])
+const FILE_DELETE_TOOL_NAMES = new Set(['delete'])
+const APPLY_PATCH_TOOL_NAMES = new Set(['apply_patch', 'applypatch'])
 
 function scrubPayload(value: unknown, options: ClassifierOptions): unknown {
   return scrubValue(value, options.scrubOptions)
@@ -39,6 +50,41 @@ function extractShellCommand(payload: Record<string, unknown>): string | null {
   return null
 }
 
+function extractPatch(payload: Record<string, unknown>): string | null {
+  const toolInput = payload.tool_input
+  if (!toolInput || typeof toolInput !== 'object') {
+    return null
+  }
+  const input = toolInput as Record<string, unknown>
+  for (const key of ['patch', 'input', 'text']) {
+    if (typeof input[key] === 'string' && input[key].trim()) {
+      return input[key] as string
+    }
+  }
+  return null
+}
+
+function applyPatchTargets(patch: string): Array<{ path: string; delete: boolean }> {
+  const targets: Array<{ path: string; delete: boolean }> = []
+  for (const line of patch.split('\n')) {
+    const match = line.match(/^\*\*\* (Add|Delete|Update) File: (.+)$/)
+    if (match?.[1] && match[2]) {
+      targets.push({ path: match[2], delete: match[1] === 'Delete' })
+      continue
+    }
+
+    const moveMatch = line.match(/^\*\*\* Move to: (.+)$/)
+    if (moveMatch?.[1]) {
+      targets.push({ path: moveMatch[1], delete: false })
+    }
+  }
+  return targets
+}
+
+function normalizedToolName(toolName: string): string {
+  return toolName.trim().toLowerCase()
+}
+
 export async function classifyToolUse(
   payload: Record<string, unknown>,
   repoRoot: string,
@@ -47,6 +93,7 @@ export async function classifyToolUse(
   options: ClassifierOptions = {},
 ): Promise<ClassifyResult> {
   const toolName = String(payload.tool_name ?? '')
+  const toolKind = normalizedToolName(toolName)
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...(options.sensitivePaths ?? [])]
 
   const protectedRoots = [
@@ -54,7 +101,7 @@ export async function classifyToolUse(
     ...(options.controlPlaneDir ? [options.controlPlaneDir] : []),
   ]
 
-  if (toolName === 'Shell') {
+  if (toolKind === 'shell') {
     const command = extractShellCommand(payload)
     if (!command) {
       if (options.unknownLocalEffect === 'deny') {
@@ -101,7 +148,11 @@ export async function classifyToolUse(
     }
   }
 
-  if (toolName === 'Write' || toolName === 'StrReplace' || toolName === 'Delete') {
+  if (
+    FILE_WRITE_TOOL_NAMES.has(toolKind) ||
+    FILE_EDIT_TOOL_NAMES.has(toolKind) ||
+    FILE_DELETE_TOOL_NAMES.has(toolKind)
+  ) {
     const filePath = extractFilePath(payload)
     if (!filePath) {
       if (options.unknownLocalEffect === 'deny') {
@@ -198,7 +249,7 @@ export async function classifyToolUse(
       }
     }
 
-    if (toolName === 'Delete') {
+    if (FILE_DELETE_TOOL_NAMES.has(toolKind)) {
       signals.push('file_delete')
       return {
         verdict: 'allow_flagged',
@@ -227,6 +278,85 @@ export async function classifyToolUse(
         blastRadius: 'this repository',
         confidence: 0.68,
         signals,
+      },
+    }
+  }
+
+  if (APPLY_PATCH_TOOL_NAMES.has(toolKind)) {
+    const patch = extractPatch(payload)
+    const targets = patch ? applyPatchTargets(patch) : []
+    if (targets.length === 0) {
+      if (options.unknownLocalEffect === 'deny') {
+        return {
+          verdict: 'deny_pending_approval',
+          reason: 'apply_patch_missing_path',
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot,
+          ),
+          assessment: {
+            reversibility: 'irreversible',
+            external: false,
+            blastRadius: 'file mutation',
+            confidence: 0.85,
+            signals: ['missing_path'],
+          },
+        }
+      }
+      return {
+        verdict: 'allow_flagged',
+        reason: 'apply_patch_missing_path',
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot,
+        ),
+        assessment: {
+          reversibility: 'recoverable_with_cost',
+          external: false,
+          blastRadius: 'file mutation',
+          confidence: 0.55,
+          signals: ['missing_path'],
+        },
+      }
+    }
+
+    let sawDelete = false
+    for (const target of targets) {
+      const result = await classifyToolUse(
+        {
+          tool_name: target.delete ? 'Delete' : 'Write',
+          tool_input: { path: target.path },
+        },
+        repoRoot,
+        cwd,
+        config,
+        options,
+      )
+      if (result.verdict === 'deny_pending_approval') {
+        return result
+      }
+      sawDelete ||= target.delete
+    }
+
+    return {
+      verdict: 'allow_flagged',
+      reason: sawDelete ? 'file_delete' : 'file_mutation',
+      summary: targets.map((target) => target.path).join(', '),
+      fingerprint: toolFingerprint(
+        toolName,
+        scrubPayload(payload.tool_input ?? {}, options),
+        repoRoot,
+      ),
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: false,
+        blastRadius: 'this repository',
+        confidence: sawDelete ? 0.7 : 0.68,
+        signals: [sawDelete ? 'file_delete' : 'file_mutation', 'apply_patch'],
       },
     }
   }

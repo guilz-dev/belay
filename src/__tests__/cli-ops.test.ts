@@ -31,7 +31,8 @@ describe('v0.2 operational commands', () => {
       kind: 'subagent',
       command: 'deploy to production after tests pass',
     })
-    expect(report.result.verdict).toBe('deny_pending_approval')
+    expect(report.result.verdict).toBe('allow_flagged')
+    expect(report.result.assessment.signals).toContain('subagent_external_intent_hint')
   })
 
   it('explain respects --kind for tool classification', async () => {
@@ -58,6 +59,24 @@ describe('v0.2 operational commands', () => {
     })
     expect(report.result.verdict).toBe('deny_pending_approval')
     expect(report.result.assessment.signals.length).toBeGreaterThan(0)
+    expect(report.permission).toBe('ask')
+    expect(report.tier).toBeTruthy()
+  })
+
+  it('T22: explain --command outputs verdict axes via formatExplainReport', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const { formatExplainReport } = await import('../commands/explain.js')
+    const report = await explainCommand({
+      targetDir: repoRoot,
+      command: 'git push origin main',
+    })
+    const formatted = formatExplainReport(report)
+    expect(formatted).toContain('Permission:')
+    expect(formatted).toContain('Reason:')
+    expect(formatted).toContain('location:')
+    expect(formatted).toContain('effect:')
   })
 
   it('upgrade refreshes runtime while preserving merged config', async () => {

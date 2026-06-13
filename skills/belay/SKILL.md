@@ -1,28 +1,48 @@
 ---
 name: belay
 description: >-
-  Belay approval helper for Cursor. Use when a shell command or subagent launch
-  is denied as high-risk and needs a one-shot approval.
+  Guides approval when agent-belay blocks a high-risk shell command, subagent launch,
+  or tool action. Use when an action is denied, blocked, or needs belay-approve, or when
+  installing or checking belay hook health in a repository.
+disable-model-invocation: true
 ---
 
 # Belay
 
-Belay installs repo-local hooks that gate high-risk shell commands and subagent
-launches. Enforcement lives in hooks; this Skill only explains the flow.
+Belay installs repo-local hooks that gate high-risk shell commands, tool actions, and
+subagent launches. Enforcement lives in hooks; this skill only explains the flow and
+routes you to the CLI. It does not classify commands itself.
 
 ## Prerequisites
 
-Run `npx agent-belay init` in the project root before relying on this skill.
-If you only installed this skill via `npx skills add`, the approval instructions
-are available, but the runtime gate is not installed yet.
+Run `npx agent-belay init` in the project root before relying on enforcement.
+If you only installed this skill via `npx skills add`, approval instructions are
+available, but the runtime gate is not installed yet. Run `agent-belay doctor` to
+check whether hooks are present.
 
-## Approval flow
+## When belay blocks an action
 
-If Belay blocks an action, it returns an approval ID. Approve the next matching
-action once by sending:
+1. Read the approval ID in the deny message.
+2. Approve once with `/belay-approve <approval-id>` or `agent-belay approve <approval-id>`.
+3. Retry the original action unchanged.
 
-```text
-/belay-approve <approval-id>
-```
+For why it was blocked, use `/belay why <command>` or `agent-belay explain --command "<command>"`.
+For the latest pending ask, use `/belay explain` or `agent-belay explain`.
+For install health, use `/belay status` or `agent-belay status`.
 
-Then retry the original action unchanged. Approvals are one-shot.
+## Install or repair
+
+- Full install: `npx agent-belay init --with-skill`
+- Interactive wizard: `npx agent-belay init-wizard`
+- Health check: `agent-belay doctor`
+
+Do not run init or doctor implicitly from this skill — only when the user asks.
+
+## CLI mapping
+
+| User intent | Command |
+| --- | --- |
+| Why was this blocked? | `agent-belay explain --command "..."` |
+| Explain latest pending ask | `agent-belay explain` |
+| Status / dogfood | `agent-belay status` |
+| Approve once | `agent-belay approve <id>` |

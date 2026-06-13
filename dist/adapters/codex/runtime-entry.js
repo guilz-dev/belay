@@ -1,7 +1,6 @@
 import process from 'node:process';
-import { unnormalizedGateVerdict } from '../../core/gate-contract.js';
 import { codexLayout } from '../layouts/codex.js';
-import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToCodexPreToolUseResponse, gateVerdictToCodexUserPromptResponse, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
+import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateUnmappedToolVerdict, gateVerdictToCodexPreToolUseResponse, gateVerdictToCodexUserPromptResponse, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
 import { findRepoRoot } from '../shared/repo-root.js';
 async function readStdinJson() {
     const chunks = [];
@@ -31,7 +30,7 @@ async function loadRuntimeContext(cwd) {
 }
 // shell is confirmed as tool_name:"Bash" / tool_input:{command} (TUI smoke, SPEC-v2.2 R-X1/R-X3).
 // Non-shell names (apply_patch / read-family / subagent variants) are still best-guess pending
-// the belay-adapter TUI smoke (G-B2). Unknown names are denied in runToolGateHook (fail-closed).
+// the belay-adapter TUI smoke (G-B2). Unknown names ask with pending approval (R39).
 function mapCodexToolName(toolName) {
     const name = toolName.toLowerCase();
     if (name === 'shell' ||
@@ -44,9 +43,16 @@ function mapCodexToolName(toolName) {
     if (name === 'task' || name === 'spawn' || name === 'subagent') {
         return 'subagent';
     }
-    if (name === 'apply_patch' ||
+    if (name === 'read' ||
+        name === 'grep' ||
+        name === 'glob' ||
+        name === 'ls' ||
+        name === 'view' ||
+        name === 'search' ||
+        name === 'apply_patch' ||
         name === 'write' ||
         name === 'edit' ||
+        name === 'multiedit' ||
         name === 'patch' ||
         name === 'delete' ||
         name === 'strreplace' ||
@@ -61,15 +67,6 @@ function resolveCodexGateKind(eventName, toolName) {
     }
     return mapCodexToolName(toolName);
 }
-export function codexUnmappedToolDenyResponse(mode) {
-    const verdict = unnormalizedGateVerdict({
-        reason: 'unmapped_tool',
-        mode,
-        user_message: 'agent-belay does not recognize this Codex tool action yet. Run agent-belay doctor, then retry.',
-        agent_message: 'Belay denied this action because the Codex tool/event could not be normalized.',
-    });
-    return gateVerdictToCodexPreToolUseResponse(verdict);
-}
 function extractString(value, ...keys) {
     if (!value || typeof value !== 'object') {
         return '';
@@ -82,8 +79,6 @@ function extractString(value, ...keys) {
     }
     return '';
 }
-// TODO-verify: Codex tool_input shapes (command for shell, file path for edits, patch body
-// for apply_patch). Normalize into the shapes belay's classifier already understands.
 function normalizeCodexToolPayload(kind, payload) {
     const toolInput = payload.tool_input;
     if (kind === 'shell') {
@@ -93,9 +88,47 @@ function normalizeCodexToolPayload(kind, payload) {
         };
     }
     if (kind === 'tool') {
+        const toolName = String(payload.tool_name ?? payload.toolName ?? '');
+        const lowered = toolName.toLowerCase();
+        if (lowered === 'write') {
+            return {
+                tool_name: 'Write',
+                tool_input: {
+                    path: extractString(toolInput, 'path', 'file_path', 'filename'),
+                },
+            };
+        }
+        if (lowered === 'delete') {
+            return {
+                tool_name: 'Delete',
+                tool_input: {
+                    path: extractString(toolInput, 'path', 'file_path', 'filename'),
+                },
+            };
+        }
+        if (lowered === 'edit' ||
+            lowered === 'multiedit' ||
+            lowered === 'patch' ||
+            lowered === 'strreplace' ||
+            lowered === 'str_replace') {
+            return {
+                tool_name: 'StrReplace',
+                tool_input: {
+                    path: extractString(toolInput, 'path', 'file_path', 'filename'),
+                },
+            };
+        }
+        if (lowered === 'apply_patch') {
+            return {
+                tool_name: 'ApplyPatch',
+                tool_input: {
+                    patch: extractString(toolInput, 'patch', 'input', 'text'),
+                },
+            };
+        }
         return {
-            tool_name: 'Write',
-            tool_input: { path: extractString(toolInput, 'path', 'file_path', 'filename') },
+            tool_name: toolName,
+            tool_input: typeof toolInput === 'object' && toolInput ? toolInput : {},
         };
     }
     return payload;
@@ -118,7 +151,7 @@ export async function runBeforeSubmitPromptHook() {
 }
 // Codex routes all PreToolUse through this unified handler (matcher ".*"), since the exact
 // shell tool name is not yet confirmed. SubagentStart is also routed to this handler.
-// Unmapped tools/events are denied (fail-closed) to avoid a silent false floor.
+// Unmapped tools/events ask with pending approval (R39) to avoid silent bypass without hard block.
 export async function runToolGateHook(eventName) {
     try {
         const payload = await readStdinJson();
@@ -128,17 +161,16 @@ export async function runToolGateHook(eventName) {
         const ctx = await loadRuntimeContext(cwd);
         const deps = createDefaultGateRuntimeDeps();
         if (!kind) {
-            // Unmapped Codex tool. Policy-driven (SPEC-v2.2 R-X1): default 'deny' is the fail-closed
-            // floor — an unmapped tool must not silently bypass the gate (FN=0). 'allow' is the
-            // opt-out: pass the tool but record it to audit for vocabulary learning, for users who
-            // hit over-blocking on read-only/MCP tools.
+            // Unmapped Codex tool. Policy-driven: default 'deny' asks with pending approval (R39).
+            // 'allow' is the opt-out — pass the tool but record it to audit for vocabulary learning.
             const policy = ctx.config.policy?.codexUnmappedTool ?? 'deny';
             if (policy === 'allow') {
                 await appendObservedAudit(ctx, deps, eventName, payload);
                 jsonResponse({});
                 return;
             }
-            jsonResponse(codexUnmappedToolDenyResponse(ctx.config.mode));
+            const verdict = await gateUnmappedToolVerdict(ctx, deps, toolName, payload);
+            jsonResponse(gateVerdictToCodexPreToolUseResponse(verdict));
             return;
         }
         const normalizedPayload = normalizeCodexToolPayload(kind, payload);

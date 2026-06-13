@@ -2,6 +2,7 @@ import path from 'node:path';
 import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, } from '../config-io.js';
 import { compactApprovals } from '../core/approval.js';
 import { loadOperationalInsights } from '../operational-insights.js';
+import { collectHealthSnapshot } from './health-snapshot.js';
 export async function statusProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const config = await loadConfigFile(repoRoot);
@@ -9,6 +10,7 @@ export async function statusProject(options = {}) {
     const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config);
     const expiredPendingCount = countExpiredPending(pendingRaw);
     const operational = await loadOperationalInsights({ targetDir: repoRoot });
+    const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter });
     return {
         repoRoot,
         approvalStateDir: belayStateDir(config, repoLocalStateDirFor(repoRoot, config)),
@@ -16,11 +18,21 @@ export async function statusProject(options = {}) {
         approved: compactApprovals(approvedRaw).approvals,
         expiredPendingCount,
         dogfood: operational.dogfood,
+        health,
     };
 }
 export function formatStatusReport(report) {
+    const { health } = report;
     const lines = [
         `agent-belay status for ${report.repoRoot}`,
+        `Adapter: ${health.adapter} (scope=${health.installScope})`,
+        `Floor installed: ${health.floorInstalled ? 'yes' : 'no'}`,
+        `Skill installed: ${health.skillInstalled ? 'yes' : 'no'}`,
+        ...(health.skillOnly
+            ? [
+                'Skill-only mode: yes — hooks are missing or incomplete. Run `npx agent-belay init` to install the enforcement floor.',
+            ]
+            : []),
         `Approval state: ${report.approvalStateDir}`,
         `Pending: ${report.pending.length}`,
         `Approved (awaiting use): ${report.approved.length}`,

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-
+import type { ScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterLayout } from '../adapters/layouts/types.js'
 
 export interface IntegrityManifest {
@@ -20,12 +20,16 @@ export function integrityManifestPath(layout: AdapterLayout, repoRoot: string): 
   return path.join(layout.repoLocalStateDir(repoRoot), 'integrity-manifest.json')
 }
 
-export function runtimeIntegrityFiles(layout: AdapterLayout, repoRoot: string): string[] {
-  const hooksDir = layout.hooksDir(repoRoot)
-  const runtimeDir = layout.runtimeDir(repoRoot)
+export function runtimeIntegrityFiles(_layout: AdapterLayout, paths: ScopedPaths): string[] {
+  const files = [paths.configPath]
+  if (paths.scope !== 'project') {
+    return files
+  }
+  const hooksDir = paths.hooksDir
+  const runtimeDir = paths.runtimeDir
   return [
-    layout.configPath(repoRoot),
-    layout.hooksSettingsPath(repoRoot),
+    ...files,
+    paths.hooksSettingsPath,
     path.join(hooksDir, 'belay-before-submit.mjs'),
     path.join(hooksDir, 'belay-shell-gate.mjs'),
     path.join(hooksDir, 'belay-tool-gate.mjs'),

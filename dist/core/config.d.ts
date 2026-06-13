@@ -126,6 +126,8 @@ export interface BelayEgressConfig {
 export interface BelayConfigV4 {
     version: 4;
     adapter?: 'cursor' | 'claude' | 'codex';
+    /** Where hooks/runtime/skill artifacts are installed. Defaults to project. */
+    installScope?: 'project' | 'global';
     mode: BelayMode;
     approvalTtlMinutes: number;
     tokenPrefix: string;
@@ -195,6 +197,7 @@ type RawConfigInput = Partial<{
     egress: Partial<BelayEgressConfig>;
     sandbox: Partial<BelaySandboxConfig>;
     audit: Partial<BelayConfigV2['audit']>;
+    installScope: 'project' | 'global';
 }>;
 export declare function migrateConfig(loaded: unknown): BelayConfigV4;
 export declare function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2;

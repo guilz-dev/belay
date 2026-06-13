@@ -1,103 +1,97 @@
 import path from 'node:path';
-import { getAdapter } from '../adapters/registry.js';
-import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js';
-import { detectAdapterName, loadConfigFile } from '../config-io.js';
-import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js';
-import { classifySubagent, classifyToolUse } from '../core/index.js';
-import { isTransactionalEligible } from '../core/transactional/index.js';
-import { classifyShell } from '../core/v2/adapter.js';
-import { egressStatus } from '../services/egress-service.js';
-import { sandboxStatus } from '../services/sandbox-service.js';
-async function classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config) {
-    const kind = options.kind ?? 'shell';
-    if (kind === 'shell') {
-        if (!options.command) {
-            throw new Error('explain requires a command for shell classification.');
-        }
-        return {
-            kind: 'shell',
-            input: options.command,
-            result: await classifyShell(options.command, cwd, repoRoot, config, classifierOptions),
-        };
-    }
-    if (kind === 'subagent') {
-        const payload = options.payload ?? {
-            tool_name: 'Task',
-            tool_input: {
-                description: options.command ?? '',
-            },
-        };
-        if (!options.command && !options.payload) {
-            throw new Error('explain requires --command or --payload-json for subagent classification.');
-        }
-        return {
-            kind: 'subagent',
-            input: options.command ?? JSON.stringify(payload),
-            result: classifySubagent(payload, repoRoot, classifierOptions),
-        };
-    }
-    if (kind === 'tool') {
-        const payload = options.payload ??
-            {
-                tool_name: options.toolName ?? 'Shell',
-                tool_input: options.toolName === 'Shell'
-                    ? { command: options.command ?? '' }
-                    : { path: options.command ?? '' },
-            };
-        if (!options.command && !options.payload) {
-            throw new Error('explain requires --command or --payload-json for tool classification.');
-        }
-        return {
-            kind: 'tool',
-            input: options.command ?? JSON.stringify(payload),
-            result: await classifyToolUse(payload, repoRoot, cwd, config, classifierOptions),
-        };
-    }
-    throw new Error(`Unknown explain kind: ${kind}`);
-}
+import { loadApprovalState, loadConfigFile } from '../config-io.js';
+import { compactApprovals } from '../core/approval.js';
+import { classifyForReport } from './classify-for-report.js';
 export async function explainCommand(options) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
-    const cwd = options.cwd ? path.resolve(options.cwd) : repoRoot;
-    const config = await loadConfigFile(repoRoot);
-    const egress = await egressStatus({ targetDir: repoRoot });
-    const sandbox = await sandboxStatus({ targetDir: repoRoot });
-    const adapter = getAdapter(config.adapter ?? detectAdapterName(repoRoot));
-    const classifierOptions = repoShellClassifierOptions(config, repoRoot, adapter.layout, {
-        demoteL3External: config.egress.enabled &&
-            config.egress.demoteL3External &&
-            egress.running &&
-            !egress.repoRootMismatch &&
-            !egress.foreignProxy,
-        brokerFsScope: isCapabilityBrokerDemotionActive(config),
+    if (!options.command && !options.payload && options.explainLastPending !== false) {
+        const config = await loadConfigFile(repoRoot);
+        const pending = compactApprovals(await loadApprovalState(repoRoot, 'pending-approvals.json', config));
+        if (pending.approvals.length > 0) {
+            const latest = [...pending.approvals].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+            const inputKind = latest.inputKind ??
+                (latest.kind === 'egress' || latest.kind === 'capability' ? 'shell' : latest.kind);
+            const classified = await classifyForReport({
+                targetDir: repoRoot,
+                cwd: options.cwd,
+                kind: inputKind,
+                command: latest.input ?? latest.summary,
+            });
+            return {
+                repoRoot: classified.repoRoot,
+                kind: classified.kind,
+                command: classified.input,
+                cwd: classified.cwd,
+                policy: classified.policy,
+                overrides: classified.overrides,
+                egress: classified.egress,
+                egressProxyRunning: classified.egressProxyRunning,
+                egressL3DemotionActive: false,
+                sandbox: classified.sandbox,
+                sandboxBrokerActive: classified.sandboxBrokerActive,
+                l1FullActive: classified.l1FullActive,
+                transactionalEligible: classified.transactionalEligible,
+                permission: classified.permission,
+                tier: classified.tier,
+                approvalId: latest.approvalId,
+                result: classified.result,
+            };
+        }
+    }
+    if (!options.command && !options.payload) {
+        throw new Error('explain requires --command, --payload-json, or a pending approval to explain.');
+    }
+    const classified = await classifyForReport({
+        targetDir: repoRoot,
+        cwd: options.cwd,
+        kind: options.kind,
+        command: options.command,
+        toolName: options.toolName,
+        payload: options.payload,
     });
-    const classified = await classifyExplainTarget(options, repoRoot, cwd, classifierOptions, config);
-    const transactionalEligible = classified.kind === 'shell' && isTransactionalEligible(config, 'shell', classified.result);
     return {
-        repoRoot,
+        repoRoot: classified.repoRoot,
         kind: classified.kind,
         command: classified.input,
-        cwd,
-        policy: config.policy,
-        overrides: config.overrides,
-        egress: config.egress,
-        egressProxyRunning: egress.running && !egress.foreignProxy && !egress.repoRootMismatch,
-        egressL3DemotionActive: classifierOptions.demoteL3External === true,
-        sandbox: config.sandbox,
-        sandboxBrokerActive: classifierOptions.brokerFsScope === true,
-        l1FullActive: sandbox.l1FullActive,
-        transactionalEligible,
+        cwd: classified.cwd,
+        policy: classified.policy,
+        overrides: classified.overrides,
+        egress: classified.egress,
+        egressProxyRunning: classified.egressProxyRunning,
+        egressL3DemotionActive: false,
+        sandbox: classified.sandbox,
+        sandboxBrokerActive: classified.sandboxBrokerActive,
+        l1FullActive: classified.l1FullActive,
+        transactionalEligible: classified.transactionalEligible,
+        permission: classified.permission,
+        tier: classified.tier,
         result: classified.result,
     };
 }
 export function formatExplainReport(report) {
     const { result } = report;
+    const judgeFields = result.v2
+        ? [
+            result.v2.judgeProvider ? `  judgeProvider: ${result.v2.judgeProvider}` : null,
+            result.v2.judgeModelResolved ? `  judgeModel: ${result.v2.judgeModelResolved}` : null,
+            result.v2.judgeLatencyMs !== undefined
+                ? `  judgeLatencyMs: ${result.v2.judgeLatencyMs}`
+                : null,
+            result.v2.judgeFallbackReason
+                ? `  judgeFallbackReason: ${result.v2.judgeFallbackReason}`
+                : null,
+        ].filter((line) => line !== null)
+        : [];
     const lines = [
         `agent-belay explain for ${report.repoRoot}`,
+        ...(report.approvalId ? [`Pending approval: ${report.approvalId}`] : []),
         `Kind: ${report.kind}`,
         `Input: ${report.command}`,
         `CWD: ${report.cwd}`,
+        `Permission: ${report.permission}`,
+        `Tier: ${report.tier}`,
         `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
-        `Egress (partial L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (proxy running=${report.egressProxyRunning}, L3 demotion active=${report.egressL3DemotionActive})`,
+        `Egress (partial L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (proxy running=${report.egressProxyRunning}; shell L3 demotion inactive — read/mutate enforced at proxy layer per R36)`,
         report.egress.enabled
             ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`
             : 'Egress proxy: not configured',
@@ -121,6 +115,7 @@ export function formatExplainReport(report) {
                 `  effect: ${result.v2.effect}`,
                 `  confidence: ${result.v2.confidence}`,
                 `  would: ${result.v2.would}`,
+                ...(judgeFields.length > 0 ? ['judgeTrace:', ...judgeFields] : []),
             ]
             : []),
         '',

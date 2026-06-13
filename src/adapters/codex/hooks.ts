@@ -1,4 +1,6 @@
-import { codexLayout } from '../layouts/codex.js'
+import path from 'node:path'
+
+import { buildRunnerInvocation } from '../layouts/scope.js'
 
 export const CODEX_HOOKS_BEGIN =
   '# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---'
@@ -26,16 +28,32 @@ function tomlString(value: string): string {
   return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
 }
 
+function runnerCommand(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+  hookName: string,
+  ...args: string[]
+): string {
+  return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args)
+}
+
 /**
  * Render belay's Codex lifecycle hooks as a marker-delimited TOML block for `.codex/config.toml`.
  * The block is replaced wholesale on re-init/upgrade (see mergeCodexHooksToml), so we avoid a
  * full TOML parser while staying idempotent.
  */
-export function renderCodexHooksToml(platform: NodeJS.Platform = process.platform): string {
+export function renderCodexHooksToml(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): string {
   const lines: string[] = [CODEX_HOOKS_BEGIN]
   for (const spec of CODEX_HOOK_SPECS) {
-    const command = codexLayout.runnerCommand(
+    const command = runnerCommand(
       platform,
+      hooksDir,
+      repoRoot,
       spec.runnerArgs[0],
       ...spec.runnerArgs.slice(1),
     )
@@ -60,9 +78,11 @@ export function renderCodexHooksToml(platform: NodeJS.Platform = process.platfor
  */
 export function mergeCodexHooksToml(
   existing: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
 ): string {
-  const block = renderCodexHooksToml(platform)
+  const block = renderCodexHooksToml(platform, hooksDir, repoRoot)
   const stripped = stripManagedBlock(existing)
   const base = stripped.replace(/\s*$/, '')
   if (base.length === 0) {
@@ -85,14 +105,26 @@ function stripManagedBlock(content: string): string {
 }
 
 // Used by adapter.hookEvents() for diagnostics/parity with other adapters.
-export function getCodexManagedHookEntries(platform: NodeJS.Platform = process.platform): Array<{
+export function getCodexManagedHookEntries(
+  platform: NodeJS.Platform = process.platform,
+  hooksDir?: string,
+  repoRoot?: string,
+): Array<{
   event: string
   definition: { command: string; placement: 'prepend'; matcher?: string }
 }> {
+  const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
+  const resolvedHooksDir = hooksDir ?? path.join(resolvedRepo, '.codex', 'hooks')
   return CODEX_HOOK_SPECS.map((spec) => ({
     event: spec.event,
     definition: {
-      command: codexLayout.runnerCommand(platform, spec.runnerArgs[0], ...spec.runnerArgs.slice(1)),
+      command: runnerCommand(
+        platform,
+        resolvedHooksDir,
+        resolvedRepo,
+        spec.runnerArgs[0],
+        ...spec.runnerArgs.slice(1),
+      ),
       placement: 'prepend' as const,
       matcher: spec.matcher,
     },

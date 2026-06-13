@@ -30,6 +30,8 @@ export declare function evaluateGatedAction(ctx: GateRuntimeContext, deps: GateR
     payload?: Record<string, unknown>;
     toolName?: string;
 }): Promise<GateVerdict>;
+/** R39: unmapped Codex tools ask via pending approval — not hard deny without approval path. */
+export declare function gateUnmappedToolVerdict(ctx: GateRuntimeContext, deps: GateRuntimeDeps, toolName: string, payload: Record<string, unknown>): Promise<GateVerdict>;
 export declare function processApprovalPrompt(ctx: GateRuntimeContext, deps: GateRuntimeDeps, prompt: string): Promise<{
     continue: boolean;
     user_message?: string;

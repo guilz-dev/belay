@@ -444,6 +444,9 @@ export function normalizeConfig(config) {
     const v4 = config;
     return {
         version: 4,
+        ...(v4.installScope === 'global' || v4.installScope === 'project'
+            ? { installScope: v4.installScope }
+            : {}),
         mode: v4.mode === 'audit' ? 'audit' : 'enforce',
         approvalTtlMinutes: typeof v4.approvalTtlMinutes === 'number' && v4.approvalTtlMinutes > 0
             ? v4.approvalTtlMinutes
@@ -652,6 +655,7 @@ export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V4) {
             ...defaults.audit,
             ...migrated.audit,
         },
+        ...(migrated.installScope ? { installScope: migrated.installScope } : {}),
     });
 }
 export function scrubOptionsFromConfig(config) {

@@ -2,6 +2,7 @@ export interface EgressConnectRequest {
     host: string;
     port: number;
     method: 'CONNECT' | 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD' | 'PATCH' | 'OPTIONS';
+    hasPayload?: boolean;
     repoRoot: string;
 }
 export type EgressDecision = 'allow' | 'deny_pending';

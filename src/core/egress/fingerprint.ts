@@ -1,7 +1,16 @@
 import { hashValue } from '../fingerprint.js'
 
-export function egressFingerprint(repoRoot: string, host: string, port: number): string {
-  return hashValue(`egress:${repoRoot}:${host.toLowerCase()}:${port}`)
+export function egressFingerprint(
+  repoRoot: string,
+  host: string,
+  port: number,
+  method: string,
+  hasPayload = false,
+): string {
+  const payloadTag = hasPayload ? ':payload' : ''
+  return hashValue(
+    `egress:${repoRoot}:${host.toLowerCase()}:${port}:${method.toUpperCase()}${payloadTag}`,
+  )
 }
 
 function formatHostPort(host: string, port: number): string {
@@ -10,13 +19,20 @@ function formatHostPort(host: string, port: number): string {
   return `${hostLabel}:${port}`
 }
 
-export function egressSummary(host: string, port: number, method = 'CONNECT'): string {
-  return `${method} ${formatHostPort(host, port)}`
+export function egressSummary(
+  host: string,
+  port: number,
+  method = 'CONNECT',
+  hasPayload = false,
+): string {
+  return `${method} ${formatHostPort(host, port)}${hasPayload ? ' (payload)' : ''}`
 }
 
 export function parseHostFromSummary(summary: string): string | null {
   const trimmed = summary.trim()
-  const methodMatch = trimmed.match(/^(CONNECT|GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS)\s+(.+)$/i)
+  const methodMatch = trimmed.match(
+    /^(CONNECT|GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS)\s+(.+?)(?:\s+\(payload\))?$/i,
+  )
   if (!methodMatch?.[2]) {
     try {
       return new URL(trimmed).hostname.toLowerCase()

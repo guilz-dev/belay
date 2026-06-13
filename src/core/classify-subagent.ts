@@ -2,43 +2,7 @@ import { canonicalStringify, subagentFingerprint } from './fingerprint.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 
-const EXTERNAL_PHRASES = [
-  'deploy to production',
-  'deploy to prod',
-  'publish to npm',
-  'publish package',
-  'release to production',
-  'ship to production',
-  'send email',
-  'notify slack',
-  'call external api',
-  'push to production',
-  'push to prod',
-]
-
-const INVESTIGATION_PHRASES = [
-  'investigate',
-  'debug',
-  'research',
-  'review',
-  'analyze',
-  'analyse',
-  'check',
-  'look into',
-  'understand',
-  'explore',
-]
-
-const EXTERNAL_TERMS = [
-  'deploy',
-  'production',
-  'publish',
-  'release',
-  'ship',
-  'notify',
-  'email',
-  'prod',
-]
+const EXTERNAL_TERMS = ['deploy', 'production', 'publish', 'release', 'ship', 'notify', 'email']
 
 function extractSubagentText(payload: Record<string, unknown>, options: ClassifierOptions): string {
   const toolInput = payload.tool_input
@@ -101,66 +65,10 @@ export function classifySubagent(
   const summary = extractSubagentText(payload, options)
   const lowered = summary.toLowerCase()
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot)
-  const signals: string[] = []
-
-  for (const phrase of EXTERNAL_PHRASES) {
-    if (lowered.includes(phrase)) {
-      signals.push('external_phrase', phrase)
-      return {
-        verdict: 'deny_pending_approval',
-        reason: 'external_subagent_intent',
-        summary,
-        fingerprint,
-        assessment: {
-          reversibility: 'irreversible',
-          external: true,
-          blastRadius: 'subagent requested external effect',
-          confidence: 0.92,
-          signals,
-        },
-      }
-    }
-  }
-
-  const isInvestigation = INVESTIGATION_PHRASES.some((phrase) => lowered.includes(phrase))
   const hasExternalTerm = EXTERNAL_TERMS.some((term) => {
     const pattern = new RegExp(`\\b${term}\\b`, 'i')
     return pattern.test(lowered)
   })
-
-  if (hasExternalTerm && !isInvestigation) {
-    signals.push('external_term')
-    return {
-      verdict: 'deny_pending_approval',
-      reason: 'external_subagent_intent',
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: 'irreversible',
-        external: true,
-        blastRadius: 'subagent requested external effect',
-        confidence: 0.85,
-        signals,
-      },
-    }
-  }
-
-  if (hasExternalTerm && isInvestigation) {
-    signals.push('external_term_investigation_context')
-    return {
-      verdict: 'allow_flagged',
-      reason: 'subagent_review',
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: 'recoverable_with_cost',
-        external: false,
-        blastRadius: 'subagent task scope',
-        confidence: 0.7,
-        signals,
-      },
-    }
-  }
 
   return {
     verdict: 'allow_flagged',
@@ -171,8 +79,8 @@ export function classifySubagent(
       reversibility: 'recoverable_with_cost',
       external: false,
       blastRadius: 'subagent task scope',
-      confidence: 0.67,
-      signals: ['subagent_default_review'],
+      confidence: hasExternalTerm ? 0.7 : 0.67,
+      signals: hasExternalTerm ? ['subagent_external_intent_hint'] : ['subagent_default_review'],
     },
   }
 }

@@ -11,6 +11,7 @@ import {
 import { compactApprovals } from '../core/approval.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
+import { collectHealthSnapshot } from './health-snapshot.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
@@ -19,6 +20,7 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
   const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config)
   const expiredPendingCount = countExpiredPending(pendingRaw)
   const operational = await loadOperationalInsights({ targetDir: repoRoot })
+  const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
 
   return {
     repoRoot,
@@ -27,12 +29,22 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
     approved: compactApprovals(approvedRaw).approvals,
     expiredPendingCount,
     dogfood: operational.dogfood,
+    health,
   }
 }
 
 export function formatStatusReport(report: StatusReport): string {
+  const { health } = report
   const lines = [
     `agent-belay status for ${report.repoRoot}`,
+    `Adapter: ${health.adapter} (scope=${health.installScope})`,
+    `Floor installed: ${health.floorInstalled ? 'yes' : 'no'}`,
+    `Skill installed: ${health.skillInstalled ? 'yes' : 'no'}`,
+    ...(health.skillOnly
+      ? [
+          'Skill-only mode: yes — hooks are missing or incomplete. Run `npx agent-belay init` to install the enforcement floor.',
+        ]
+      : []),
     `Approval state: ${report.approvalStateDir}`,
     `Pending: ${report.pending.length}`,
     `Approved (awaiting use): ${report.approved.length}`,

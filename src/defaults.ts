@@ -1,3 +1,7 @@
+import path from 'node:path'
+
+import { cursorLayout } from './adapters/layouts/cursor.js'
+import { buildRunnerInvocation } from './adapters/layouts/scope.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from './core/config.js'
 
 export const PACKAGE_NAME = 'agent-belay'
@@ -10,30 +14,50 @@ export type ManagedHookDefinition = {
   matcher?: string
 }
 
-function runnerCommand(platform: NodeJS.Platform, hookName: string, ...args: string[]): string {
-  const base =
-    platform === 'win32' ? '.\\.cursor\\hooks\\belay-runner.cmd' : './.cursor/hooks/belay-runner'
-  return [base, hookName, ...args].join(' ')
+function runnerCommand(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+  hookScript: string,
+  ...args: string[]
+): string {
+  return buildRunnerInvocation(platform, hooksDir, repoRoot, hookScript, ...args)
 }
 
 export function getManagedHookEntries(
   platform: NodeJS.Platform = process.platform,
+  hooksDir?: string,
+  repoRoot?: string,
 ): Array<{ event: string; definition: ManagedHookDefinition }> {
-  const toolGate = runnerCommand(platform, 'belay-tool-gate', 'preToolUse')
-  const subagentGate = runnerCommand(platform, 'belay-tool-gate', 'subagentStart')
+  const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
+  const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)
+  const toolGate = runnerCommand(
+    platform,
+    resolvedHooksDir,
+    resolvedRepo,
+    'belay-tool-gate',
+    'preToolUse',
+  )
+  const subagentGate = runnerCommand(
+    platform,
+    resolvedHooksDir,
+    resolvedRepo,
+    'belay-tool-gate',
+    'subagentStart',
+  )
 
   return [
     {
       event: 'beforeSubmitPrompt',
       definition: {
-        command: runnerCommand(platform, 'belay-before-submit'),
+        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-before-submit'),
         placement: 'prepend',
       },
     },
     {
       event: 'beforeShellExecution',
       definition: {
-        command: runnerCommand(platform, 'belay-shell-gate'),
+        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-shell-gate'),
         placement: 'prepend',
       },
     },
@@ -128,21 +152,33 @@ export function getManagedHookEntries(
     {
       event: 'postToolUse',
       definition: {
-        command: runnerCommand(platform, 'belay-audit', 'postToolUse'),
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-audit',
+          'postToolUse',
+        ),
         placement: 'append',
       },
     },
     {
       event: 'stop',
       definition: {
-        command: runnerCommand(platform, 'belay-audit', 'stop'),
+        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-audit', 'stop'),
         placement: 'append',
       },
     },
     {
       event: 'sessionEnd',
       definition: {
-        command: runnerCommand(platform, 'belay-audit', 'sessionEnd'),
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-audit',
+          'sessionEnd',
+        ),
         placement: 'append',
       },
     },

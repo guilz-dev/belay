@@ -5,7 +5,7 @@ import { GUARANTEE_SCENARIOS, GUARANTEE_TABLE_ROWS } from '../../conformance/gua
 import type { LayerProfileId } from '../../conformance/types.js'
 import { DEFAULT_CONFIG_V3 } from '../../core/config.js'
 import { isTransactionalEligible } from '../../core/transactional/index.js'
-import { classifyShellCore, classifyShellGated } from '../helpers/shell-classify.js'
+import { classifyShellCore } from '../helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
@@ -28,26 +28,18 @@ describe('guarantee table conformance', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('demotes external rules only when egress proxy demotion is active', async () => {
-    const demoted = await classifyShellGated(
-      'git push origin main',
-      cwd,
-      repoRoot,
-      DEFAULT_CONFIG_V3,
-      {
-        demoteL3External: true,
-        unknownLocalEffect: 'allow_flagged',
-      },
-    )
-    expect(demoted.verdict).toBe('allow_flagged')
-    expect(demoted.reason).toBe('l3_external_hint')
-
-    const denied = await classifyShellCore('git push origin main', cwd, repoRoot, {
-      demoteL3External: false,
-      unknownLocalEffect: 'allow_flagged',
-    })
-    expect(denied.verdict).toBe('deny_pending_approval')
-    expect(denied.reason).toBe('external_effect')
+  it('keeps machine-readable scenarios aligned with the shell classifier', async () => {
+    for (const scenarios of Object.values(GUARANTEE_SCENARIOS)) {
+      for (const scenario of scenarios) {
+        const result = await classifyShellCore(scenario.command, cwd, repoRoot)
+        expect(result.verdict === 'deny_pending_approval' ? 'deny' : 'allow').toBe(
+          scenario.permission,
+        )
+        if (scenario.reason) {
+          expect(result.reason).toBe(scenario.reason)
+        }
+      }
+    }
   })
 
   it('enables transactional eligibility under the transactional profile config', async () => {

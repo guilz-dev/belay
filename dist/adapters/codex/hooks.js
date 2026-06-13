@@ -1,4 +1,5 @@
-import { codexLayout } from '../layouts/codex.js';
+import path from 'node:path';
+import { buildRunnerInvocation } from '../layouts/scope.js';
 export const CODEX_HOOKS_BEGIN = '# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---';
 export const CODEX_HOOKS_END = '# --- BELAY MANAGED HOOKS END ---';
 const HOOK_TIMEOUT_SECONDS = 30;
@@ -11,15 +12,18 @@ const CODEX_HOOK_SPECS = [
 function tomlString(value) {
     return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
+function runnerCommand(platform, hooksDir, repoRoot, hookName, ...args) {
+    return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args);
+}
 /**
  * Render belay's Codex lifecycle hooks as a marker-delimited TOML block for `.codex/config.toml`.
  * The block is replaced wholesale on re-init/upgrade (see mergeCodexHooksToml), so we avoid a
  * full TOML parser while staying idempotent.
  */
-export function renderCodexHooksToml(platform = process.platform) {
+export function renderCodexHooksToml(platform, hooksDir, repoRoot) {
     const lines = [CODEX_HOOKS_BEGIN];
     for (const spec of CODEX_HOOK_SPECS) {
-        const command = codexLayout.runnerCommand(platform, spec.runnerArgs[0], ...spec.runnerArgs.slice(1));
+        const command = runnerCommand(platform, hooksDir, repoRoot, spec.runnerArgs[0], ...spec.runnerArgs.slice(1));
         lines.push('');
         lines.push(`[[hooks.${spec.event}]]`);
         if (spec.matcher !== undefined) {
@@ -38,8 +42,8 @@ export function renderCodexHooksToml(platform = process.platform) {
  * Merge belay's managed hooks block into an existing `.codex/config.toml` body idempotently:
  * strip any prior BELAY MANAGED HOOKS block, then append the freshly rendered one.
  */
-export function mergeCodexHooksToml(existing, platform = process.platform) {
-    const block = renderCodexHooksToml(platform);
+export function mergeCodexHooksToml(existing, platform, hooksDir, repoRoot) {
+    const block = renderCodexHooksToml(platform, hooksDir, repoRoot);
     const stripped = stripManagedBlock(existing);
     const base = stripped.replace(/\s*$/, '');
     if (base.length === 0) {
@@ -60,11 +64,13 @@ function stripManagedBlock(content) {
     return content.slice(0, begin) + content.slice(endMarker + CODEX_HOOKS_END.length);
 }
 // Used by adapter.hookEvents() for diagnostics/parity with other adapters.
-export function getCodexManagedHookEntries(platform = process.platform) {
+export function getCodexManagedHookEntries(platform = process.platform, hooksDir, repoRoot) {
+    const resolvedRepo = path.resolve(repoRoot ?? process.cwd());
+    const resolvedHooksDir = hooksDir ?? path.join(resolvedRepo, '.codex', 'hooks');
     return CODEX_HOOK_SPECS.map((spec) => ({
         event: spec.event,
         definition: {
-            command: codexLayout.runnerCommand(platform, spec.runnerArgs[0], ...spec.runnerArgs.slice(1)),
+            command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, spec.runnerArgs[0], ...spec.runnerArgs.slice(1)),
             placement: 'prepend',
             matcher: spec.matcher,
         },

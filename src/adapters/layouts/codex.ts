@@ -1,12 +1,17 @@
 import path from 'node:path'
 
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
+import { buildRunnerInvocation } from './scope.js'
 import type { AdapterLayout } from './types.js'
 
-function runnerCommand(platform: NodeJS.Platform, hookName: string, ...args: string[]): string {
-  const base =
-    platform === 'win32' ? '.\\.codex\\hooks\\belay-runner.cmd' : './.codex/hooks/belay-runner'
-  return [base, hookName, ...args].join(' ')
+function runnerCommand(
+  platform: NodeJS.Platform,
+  repoRoot: string,
+  hookName: string,
+  ...args: string[]
+): string {
+  const hooksDir = path.join(path.resolve(repoRoot), '.codex', 'hooks')
+  return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args)
 }
 
 // Codex hook config lives in `.codex/config.toml` (TOML `[[hooks.*]]`), distinct from

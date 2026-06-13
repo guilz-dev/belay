@@ -8,10 +8,9 @@ import { fsScopeAllowlistPath, isCapabilityBrokerDemotionActive, loadFsScopeAllo
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js';
 import { classifyResultToGateVerdict, unnormalizedGateVerdict, } from '../../core/gate-contract.js';
 import { classifyGatedActionAsync, extractAgentAssessment, GateNormalizationError, gateEnabledForAction, normalizeGatedAction, } from '../../core/gate-engine.js';
-import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, scrubValue, } from '../../core/index.js';
+import { approvalCommandMatch, approvedApprovalsFile, buildRetryInstruction, canonicalStringify, classifierOptionsFromConfig, compactApprovals, configuredControlPlaneDir, createApprovalRecord, pendingApprovalsFile, resolveControlPlaneDir, scrubOptionsFromConfig, scrubValue, toolFingerprint, } from '../../core/index.js';
 import { notifyDeny } from '../../core/notify.js';
 import { isTransactionalEligible, runTransactionalExecution, TRANSACTIONAL_ALREADY_APPLIED, TRANSACTIONAL_APPROVAL_BYPASS_REASONS, } from '../../core/transactional/index.js';
-import { isEgressProxyActiveForRepo } from '../../services/egress-service.js';
 import { protectedArtifactRoots } from '../layouts/protected-paths.js';
 const EMPTY_APPROVALS = {
     version: 1,
@@ -53,7 +52,7 @@ export function createDefaultGateRuntimeDeps() {
             return {
                 filePath,
                 state: {
-                    version: 1,
+                    version: loaded.version === 2 ? 2 : 1,
                     approvals: Array.isArray(loaded.approvals) ? loaded.approvals : [],
                 },
             };
@@ -92,7 +91,6 @@ export function runtimeClassifierOptions(ctx, config) {
     const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
     const brokerFsScope = isCapabilityBrokerDemotionActive(config);
     return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
-        demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
         brokerFsScope,
         fsScopeAllowlist: brokerFsScope
             ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
@@ -108,7 +106,7 @@ function gateAuditEventName(kind) {
     }
     return 'subagentGate';
 }
-async function ensurePendingApproval(ctx, deps, kind, result) {
+async function ensurePendingApproval(ctx, deps, kind, result, approvalInput) {
     const pending = await deps.loadApprovals(ctx, 'pending-approvals.json');
     pending.state = compactApprovals(pending.state);
     const existing = pending.state.approvals.find((approval) => approval.kind === kind &&
@@ -126,7 +124,10 @@ async function ensurePendingApproval(ctx, deps, kind, result) {
         summary: result.normalizedCommand ?? result.summary ?? '',
         approvalTtlMinutes: ctx.config.approvalTtlMinutes,
         approvalId: `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+        input: approvalInput?.input,
+        inputKind: approvalInput?.inputKind,
     });
+    pending.state.version = 2;
     pending.state.approvals.push(approval);
     await deps.writeApprovals(pending.filePath, pending.state);
     return approval;
@@ -242,6 +243,41 @@ export async function evaluateGatedAction(ctx, deps, params) {
         predictedAssessment,
         observedAssessment,
         transactionalLayer,
+        approvalInput: params.kind === 'shell'
+            ? {
+                input: params.command ?? result.normalizedCommand ?? result.summary ?? '',
+                inputKind: 'shell',
+            }
+            : {
+                input: params.command ??
+                    result.normalizedCommand ??
+                    result.summary ??
+                    canonicalStringify(params.payload ?? {}),
+                inputKind: params.kind,
+            },
+    });
+}
+/** R39: unmapped Codex tools ask via pending approval — not hard deny without approval path. */
+export async function gateUnmappedToolVerdict(ctx, deps, toolName, payload) {
+    const scrubbed = scrubValue(payload, scrubOptionsFromConfig(ctx.config));
+    const result = {
+        verdict: 'deny_pending_approval',
+        reason: 'unmapped_tool',
+        summary: toolName,
+        fingerprint: toolFingerprint(toolName, scrubbed, ctx.repoRoot),
+        assessment: {
+            reversibility: 'irreversible',
+            external: false,
+            blastRadius: 'unknown Codex tool action',
+            confidence: 0.5,
+            signals: ['unmapped_tool'],
+        },
+    };
+    return gateDecisionToVerdict(ctx, deps, 'tool', result, {
+        approvalInput: {
+            input: toolName,
+            inputKind: 'tool',
+        },
     });
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) {
@@ -329,7 +365,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
             wouldBlock: true,
         });
     }
-    const approval = await ensurePendingApproval(ctx, deps, kind, result);
+    const approval = await ensurePendingApproval(ctx, deps, kind, result, auditExtras.approvalInput);
     let approvalToken;
     try {
         approvalToken = await issueApprovalToken({
@@ -367,7 +403,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
         permission: 'deny',
         wouldBlock: true,
         approvalId: approval.approvalId,
-        user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)}`,
+        user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run agent-belay explain or /belay why.`,
         agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
     });
 }

@@ -1,13 +1,14 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { doctorProject } from '../../commands/doctor.js';
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath, } from '../../config-io.js';
+import { mergeAndWriteConfig } from '../../config-io.js';
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js';
-import { EMPTY_APPROVALS } from '../../defaults.js';
-import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js';
-import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from '../../templates.js';
+import { bootstrapStateFiles, writeSkillArtifacts } from '../../installer/bootstrap.js';
+import { writeRuntimeArtifacts } from '../../installer/runtime-artifacts.js';
+import { applyInstallScope, resolveOperationScope } from '../../installer/scope-config.js';
 import { claudeLayout } from '../layouts/claude.js';
+import { resolveScopedPaths } from '../layouts/scope.js';
 import { getClaudeManagedHookGroups } from './hooks.js';
 function hookCommandMatches(existing, expectedCommand) {
     if (!existing || typeof existing !== 'object') {
@@ -35,8 +36,8 @@ async function loadClaudeSettings(settingsPath) {
     const raw = await readFile(settingsPath, 'utf8');
     return JSON.parse(raw);
 }
-function mergeClaudeSettings(current) {
-    const managed = getClaudeManagedHookGroups(process.platform);
+function mergeClaudeSettings(current, platform, hooksDir, repoRoot) {
+    const managed = getClaudeManagedHookGroups(platform, hooksDir, repoRoot);
     const hooks = { ...(current.hooks ?? {}) };
     for (const [event, groups] of Object.entries(managed)) {
         let eventHooks = Array.isArray(hooks[event]) ? [...hooks[event]] : [];
@@ -50,72 +51,50 @@ function mergeClaudeSettings(current) {
         hooks,
     };
 }
-async function writeRuntimeArtifacts(repoRoot) {
-    const hooksDir = claudeLayout.hooksDir(repoRoot);
-    const runtimeDir = claudeLayout.runtimeDir(repoRoot);
-    await mkdir(hooksDir, { recursive: true });
-    await mkdir(runtimeDir, { recursive: true });
-    const write = async (filePath, content, executable = false) => {
-        await writeFile(filePath, content, 'utf8');
-        if (executable) {
-            await chmod(filePath, 0o755);
-        }
-    };
-    await write(path.join(hooksDir, 'belay-before-submit.mjs'), renderBeforeSubmitHook());
-    await write(path.join(hooksDir, 'belay-shell-gate.mjs'), renderShellGateHook());
-    await write(path.join(hooksDir, 'belay-tool-gate.mjs'), renderToolGateHook());
-    await write(path.join(hooksDir, 'belay-audit.mjs'), renderAuditHook());
-    await write(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore('claude'));
-    await write(path.join(hooksDir, 'belay-runner'), buildRunnerScript(process.execPath), true);
-    await write(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath));
-}
-async function writeClaudeIntegrityManifest(repoRoot) {
-    await writeIntegrityManifest(repoRoot, claudeLayout, runtimeIntegrityFiles(claudeLayout, repoRoot));
-}
-async function installClaudeBase(repoRoot) {
-    const settingsPath = claudeLayout.hooksSettingsPath(repoRoot);
-    const belayDir = claudeLayout.repoLocalStateDir(repoRoot);
-    const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath));
+async function installClaudeBase(repoRoot, options) {
+    const scope = await resolveOperationScope(repoRoot, 'claude', options);
+    const paths = resolveScopedPaths(claudeLayout, scope, repoRoot);
+    const settingsPath = paths.hooksSettingsPath;
+    const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath), process.platform, paths.hooksDir, repoRoot);
     const config = await mergeAndWriteConfig(repoRoot, 'claude');
-    await mkdir(belayDir, { recursive: true });
-    await writeRuntimeArtifacts(repoRoot);
-    const writeJsonIfMissing = async (filePath, value) => {
-        if (!existsSync(filePath)) {
-            await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-        }
-    };
-    await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
-    await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
-    const auditPath = path.join(repoRoot, config.audit.logPath);
-    if (!existsSync(auditPath)) {
-        await mkdir(path.dirname(auditPath), { recursive: true });
-        await writeFile(auditPath, '', 'utf8');
+    await applyInstallScope(repoRoot, 'claude', scope, config);
+    await writeRuntimeArtifacts('claude', paths);
+    await bootstrapStateFiles(repoRoot, config, paths);
+    if (options.withSkill) {
+        await writeSkillArtifacts('claude', paths);
     }
     await mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-    await writeClaudeIntegrityManifest(repoRoot);
+    await writeIntegrityManifest(repoRoot, claudeLayout, runtimeIntegrityFiles(claudeLayout, paths));
 }
 export const claudeAdapter = {
     name: 'claude',
     layout: claudeLayout,
-    async install(repoRoot, _options = {}) {
-        await installClaudeBase(repoRoot);
-        return { repoRoot, withSkill: false };
+    async install(repoRoot, options = {}) {
+        await installClaudeBase(repoRoot, options);
+        return { repoRoot, withSkill: options.withSkill === true };
     },
-    async upgrade(repoRoot, _options = {}) {
-        await mergeAndWriteConfig(repoRoot, 'claude');
-        await writeRuntimeArtifacts(repoRoot);
-        const settingsPath = claudeLayout.hooksSettingsPath(repoRoot);
-        const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath));
+    async upgrade(repoRoot, options = {}) {
+        const scope = await resolveOperationScope(repoRoot, 'claude', options);
+        const paths = resolveScopedPaths(claudeLayout, scope, repoRoot);
+        const config = await mergeAndWriteConfig(repoRoot, 'claude');
+        await applyInstallScope(repoRoot, 'claude', scope, config);
+        await writeRuntimeArtifacts('claude', paths);
+        const settingsPath = paths.hooksSettingsPath;
+        const settings = mergeClaudeSettings(await loadClaudeSettings(settingsPath), process.platform, paths.hooksDir, repoRoot);
+        await mkdir(path.dirname(settingsPath), { recursive: true });
         await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-        await writeClaudeIntegrityManifest(repoRoot);
+        if (options.withSkill) {
+            await writeSkillArtifacts('claude', paths);
+        }
+        await writeIntegrityManifest(repoRoot, claudeLayout, runtimeIntegrityFiles(claudeLayout, paths));
         return { repoRoot };
     },
     async doctor(options = {}) {
         return doctorProject({ ...options, adapter: 'claude' });
     },
     hookEvents() {
-        return getClaudeManagedHookGroups(process.platform).PreToolUse.map((group) => ({
+        return getClaudeManagedHookGroups(process.platform, claudeLayout.hooksDir(process.cwd()), process.cwd()).PreToolUse.map((group) => ({
             event: 'PreToolUse',
             definition: {
                 command: group.hooks[0]?.command ?? '',

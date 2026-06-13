@@ -9,12 +9,16 @@ export async function sha256File(filePath) {
 export function integrityManifestPath(layout, repoRoot) {
     return path.join(layout.repoLocalStateDir(repoRoot), 'integrity-manifest.json');
 }
-export function runtimeIntegrityFiles(layout, repoRoot) {
-    const hooksDir = layout.hooksDir(repoRoot);
-    const runtimeDir = layout.runtimeDir(repoRoot);
+export function runtimeIntegrityFiles(_layout, paths) {
+    const files = [paths.configPath];
+    if (paths.scope !== 'project') {
+        return files;
+    }
+    const hooksDir = paths.hooksDir;
+    const runtimeDir = paths.runtimeDir;
     return [
-        layout.configPath(repoRoot),
-        layout.hooksSettingsPath(repoRoot),
+        ...files,
+        paths.hooksSettingsPath,
         path.join(hooksDir, 'belay-before-submit.mjs'),
         path.join(hooksDir, 'belay-shell-gate.mjs'),
         path.join(hooksDir, 'belay-tool-gate.mjs'),

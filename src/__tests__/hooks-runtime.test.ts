@@ -173,7 +173,7 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(denied.stdout).permission).toBe('deny')
   })
 
-  it('denies high-risk subagent payloads and fingerprints payload changes separately', async () => {
+  it('allows subagent payloads through but fingerprints payload changes separately', async () => {
     const repoRoot = await initIsolatedRepo()
 
     const first = await runRunner(
@@ -187,7 +187,7 @@ describe('generated hook runtime', () => {
       },
       ['preToolUse'],
     )
-    expect(JSON.parse(first.stdout).permission).toBe('deny')
+    expect(JSON.parse(first.stdout).permission).toBe('allow')
 
     const second = await runRunner(
       repoRoot,
@@ -200,12 +200,44 @@ describe('generated hook runtime', () => {
       },
       ['preToolUse'],
     )
-    expect(JSON.parse(second.stdout).permission).toBe('deny')
+    expect(JSON.parse(second.stdout).permission).toBe('allow')
 
     const config = await loadConfigFile(repoRoot)
-    const pending = await readJson(pendingApprovalsPath(repoRoot, config))
-    expect(pending.approvals).toHaveLength(2)
-    expect(pending.approvals[0].fingerprint).not.toBe(pending.approvals[1].fingerprint)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+    expect(pending.approvals).toHaveLength(0)
+
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
+    expect(auditRaw).toContain('subagent_external_intent_hint')
+  })
+
+  it('R40 TE: subagent deploy phrase allows but inner shell mutations are gated', async () => {
+    const repoRoot = await initIsolatedRepo()
+
+    const subagent = await runRunner(
+      repoRoot,
+      'belay-tool-gate',
+      {
+        tool_name: 'Task',
+        tool_input: {
+          description: 'deploy to production after tests pass',
+        },
+      },
+      ['preToolUse'],
+    )
+    expect(JSON.parse(subagent.stdout).permission).toBe('allow')
+
+    const shell = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(shell.stdout).permission).toBe('deny')
+
+    const config = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+    expect(pending.approvals).toHaveLength(1)
+    expect(pending.approvals[0].kind).toBe('shell')
+    expect(pending.approvals[0].input).toBe('git push origin main')
+    expect(pending.approvals[0].inputKind).toBe('shell')
   })
 
   it('redacts sensitive shell commands in gate audit records', async () => {

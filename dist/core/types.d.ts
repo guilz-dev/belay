@@ -80,8 +80,11 @@ export interface ApprovalRecord {
     createdAt: string;
     expiresAt: string;
     approvedAt?: string;
+    /** Original gated input for explain-last-ask (ApprovalState v2). */
+    input?: string;
+    inputKind?: 'shell' | 'tool' | 'subagent';
 }
 export interface ApprovalStateFile {
-    version: 1;
+    version: 1 | 2;
     approvals: ApprovalRecord[];
 }

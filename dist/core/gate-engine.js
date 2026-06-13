@@ -93,19 +93,6 @@ export function normalizeGatedAction(params) {
     };
 }
 function applyShellPeripheralPolicy(command, action, result, options) {
-    if (options.demoteL3External &&
-        result.verdict === 'deny_pending_approval' &&
-        (result.reason === 'external_effect' || result.assessment.external)) {
-        return {
-            ...result,
-            verdict: 'allow_flagged',
-            reason: 'l3_external_hint',
-            assessment: {
-                ...result.assessment,
-                signals: [...result.assessment.signals, 'l3_external_hint', 'egress_boundary_expected'],
-            },
-        };
-    }
     if (options.brokerFsScope &&
         result.verdict === 'deny_pending_approval' &&
         (result.reason === 'outside_repo_mutation' ||

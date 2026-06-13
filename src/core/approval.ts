@@ -10,7 +10,7 @@ export function isExpired(approval: ApprovalRecord): boolean {
 
 export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
   return {
-    version: 1,
+    version: state.version,
     approvals: state.approvals.filter((approval) => !isExpired(approval)),
   }
 }
@@ -29,7 +29,7 @@ export function mergeApprovalStates(
     }
   }
   return compactApprovals({
-    version: 1,
+    version: target.version === 2 || source.version === 2 ? 2 : 1,
     approvals: [...byId.values()],
   })
 }
@@ -57,10 +57,12 @@ export function createApprovalRecord(params: {
   summary: string
   approvalTtlMinutes: number
   approvalId: string
+  input?: string
+  inputKind?: 'shell' | 'tool' | 'subagent'
 }): ApprovalRecord {
   const createdAt = nowIso()
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString()
-  return {
+  const record: ApprovalRecord = {
     approvalId: params.approvalId,
     kind: params.kind,
     fingerprint: params.fingerprint,
@@ -70,4 +72,9 @@ export function createApprovalRecord(params: {
     createdAt,
     expiresAt,
   }
+  if (params.input) {
+    record.input = params.input
+    record.inputKind = params.inputKind ?? (params.kind as 'shell' | 'tool' | 'subagent')
+  }
+  return record
 }

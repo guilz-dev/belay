@@ -3,6 +3,4 @@ export interface LayerConformanceScenario {
     command: string;
     permission: 'allow' | 'deny';
     reason?: string;
-    /** When true, layer-matrix tests seed a live egress daemon before evaluation. */
-    requiresEgressProxy?: boolean;
 }

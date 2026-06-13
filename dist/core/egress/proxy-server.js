@@ -48,6 +48,24 @@ function parseConnectPort(value) {
     }
     return port;
 }
+function headerValue(headers, name) {
+    const value = headers[name];
+    if (Array.isArray(value)) {
+        return value[0];
+    }
+    return value;
+}
+function requestHasPayload(req) {
+    const contentLength = headerValue(req.headers, 'content-length');
+    if (contentLength) {
+        const parsed = Number(contentLength);
+        if (Number.isFinite(parsed) && parsed > 0) {
+            return true;
+        }
+    }
+    const transferEncoding = headerValue(req.headers, 'transfer-encoding');
+    return typeof transferEncoding === 'string' && transferEncoding.trim().length > 0;
+}
 async function evaluateRequest(ctx, request) {
     const allowlist = await loadEgressAllowlist(ctx.store.allowlistPath);
     const approved = await ctx.loadApproved();
@@ -145,7 +163,7 @@ async function denyEgressRequest(ctx, request, allowlist, result) {
 }
 function denyResponse(res, approvalId, summary) {
     const body = JSON.stringify({
-        error: 'egress_blocked',
+        error: 'egress_requires_approval',
         message: `Belay blocked egress to ${summary}. Approval ID: ${approvalId}.`,
         approvalId,
     });
@@ -186,6 +204,7 @@ export function createEgressProxy(ctx) {
             host: target.host,
             port: target.port,
             method: (req.method ?? 'GET'),
+            hasPayload: requestHasPayload(req),
             repoRoot: ctx.repoRoot,
         });
         if (!evaluation.allowed) {

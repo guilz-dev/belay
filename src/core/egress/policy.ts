@@ -3,6 +3,8 @@ import { isHostAllowlisted } from './allowlist.js'
 import { egressFingerprint, egressSummary } from './fingerprint.js'
 import type { EgressAllowlistFile, EgressConnectRequest, EgressPolicyResult } from './types.js'
 
+const SAFE_READ_METHODS = new Set<EgressConnectRequest['method']>(['GET', 'HEAD', 'OPTIONS'])
+
 export function evaluateEgressConnect(params: {
   request: EgressConnectRequest
   allowlist: EgressAllowlistFile
@@ -11,8 +13,23 @@ export function evaluateEgressConnect(params: {
 }): EgressPolicyResult {
   const { request, allowlist, approved } = params
   const host = request.host.toLowerCase()
-  const fingerprint = egressFingerprint(request.repoRoot, host, request.port)
-  const summary = egressSummary(host, request.port, request.method)
+  const fingerprint = egressFingerprint(
+    request.repoRoot,
+    host,
+    request.port,
+    request.method,
+    request.hasPayload === true,
+  )
+  const summary = egressSummary(host, request.port, request.method, request.hasPayload === true)
+
+  if (SAFE_READ_METHODS.has(request.method) && request.hasPayload !== true) {
+    return {
+      decision: 'allow',
+      fingerprint,
+      summary,
+      reason: 'egress_read',
+    }
+  }
 
   if (isHostAllowlisted(host, allowlist)) {
     return {
@@ -42,7 +59,12 @@ export function evaluateEgressConnect(params: {
     decision: 'deny_pending',
     fingerprint,
     summary,
-    reason: 'egress_blocked',
+    reason:
+      request.method === 'CONNECT'
+        ? 'egress_connect_requires_approval'
+        : SAFE_READ_METHODS.has(request.method) && request.hasPayload === true
+          ? 'egress_read_with_payload_requires_approval'
+          : 'egress_requires_approval',
     approvalId: params.pendingApprovalId,
   }
 }

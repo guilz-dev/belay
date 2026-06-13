@@ -9,6 +9,6 @@ export interface AdapterLayout {
     repoLocalStateDir(repoRoot: string): string;
     defaultAuditLogPath(repoRoot: string): string;
     repoRootMarkers: string[];
-    runnerCommand(platform: NodeJS.Platform, hookName: string, ...args: string[]): string;
+    runnerCommand(platform: NodeJS.Platform, repoRoot: string, hookName: string, ...args: string[]): string;
     defaultConfig(repoRoot: string): Partial<BelayConfigV3>;
 }

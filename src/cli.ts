@@ -59,6 +59,7 @@ function parseArgs(argv: string[]) {
     approveScope?: 'once' | 'domain' | 'path'
     approvePath?: string
     sandboxSubcommand?: 'status'
+    installScope?: 'project' | 'global'
     preset?: ConfigPresetName
     judgeProfile?: 'local-ollama'
     judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
@@ -243,10 +244,19 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--scope') {
       const next = rest[index + 1]
-      if (!next || !['once', 'domain', 'path'].includes(next)) {
-        throw new Error('--scope requires once, domain, or path.')
+      if (command === 'approve') {
+        if (!next || !['once', 'domain', 'path'].includes(next)) {
+          throw new Error('--scope requires once, domain, or path.')
+        }
+        options.approveScope = next as 'once' | 'domain' | 'path'
+      } else if (command === 'init' || command === 'upgrade') {
+        if (!next || !['project', 'global'].includes(next)) {
+          throw new Error('--scope requires project or global.')
+        }
+        options.installScope = next as 'project' | 'global'
+      } else {
+        throw new Error('--scope is only valid for init, upgrade, or approve.')
       }
-      options.approveScope = next as 'once' | 'domain' | 'path'
       index += 1
       continue
     }
@@ -282,6 +292,15 @@ function parseArgs(argv: string[]) {
         throw new Error('--cwd requires a path value.')
       }
       options.explainCwd = next
+      index += 1
+      continue
+    }
+    if (token === '--command') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--command requires a value.')
+      }
+      options.explainCommand = next
       index += 1
       continue
     }
@@ -345,16 +364,17 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude|codex] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
-    (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  agent-belay upgrade [--target <dir>] [--adapter cursor|claude|codex] [--with-skill]
+  agent-belay init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  agent-belay init-wizard [--target <dir>]
+  (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
+  agent-belay upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
   agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
-  agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--json] -- <command>
+  agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
   agent-belay egress <start|stop|status|env> [--target <dir>] [--json]
   agent-belay sandbox status [--target <dir>] [--json]
   agent-belay approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
@@ -370,12 +390,22 @@ async function main() {
       return
     }
 
+    if (command === 'init-wizard') {
+      const { runInitWizard } = await import('./commands/init-wizard.js')
+      const result = await runInitWizard({ targetDir: options.targetDir })
+      process.stdout.write(
+        `Initialized belay in ${result.repoRoot}${result.withSkill ? ' (with skill)' : ''}.\n`,
+      )
+      return
+    }
+
     if (command === 'init') {
       const result = await initProject({
         targetDir: options.targetDir,
         withSkill: options.withSkill,
         dogfood: options.dogfood,
         adapter: options.adapter,
+        scope: options.installScope,
         preset: options.preset,
         judgeProfile: options.judgeProfile,
         judgeProvider: options.judgeProvider,
@@ -411,6 +441,7 @@ async function main() {
         targetDir: options.targetDir,
         withSkill: options.withSkill,
         adapter: options.adapter,
+        scope: options.installScope,
       })
       const upgraded = await loadConfigFile(result.repoRoot, result.adapter)
       if (upgraded.policy.modelAssist.enabled) {
@@ -512,9 +543,6 @@ async function main() {
     }
 
     if (command === 'explain') {
-      if (!options.explainCommand && !options.explainPayload) {
-        throw new Error('explain requires a command after -- or --payload-json')
-      }
       const report = await explainCommand({
         targetDir: options.targetDir,
         command: options.explainCommand,
@@ -523,6 +551,7 @@ async function main() {
         kind: options.explainKind,
         toolName: options.explainToolName,
         payload: options.explainPayload,
+        explainLastPending: !options.explainCommand && !options.explainPayload,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)

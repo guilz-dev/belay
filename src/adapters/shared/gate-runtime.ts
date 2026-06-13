@@ -41,6 +41,7 @@ import {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
   scrubValue,
+  toolFingerprint,
 } from '../../core/index.js'
 import { notifyDeny } from '../../core/notify.js'
 import {
@@ -50,7 +51,6 @@ import {
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
 import type { Assessment, ClassifierOptions } from '../../core/types.js'
-import { isEgressProxyActiveForRepo } from '../../services/egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -116,7 +116,7 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       return {
         filePath,
         state: {
-          version: 1,
+          version: loaded.version === 2 ? 2 : 1,
           approvals: Array.isArray(loaded.approvals) ? loaded.approvals : [],
         },
       }
@@ -166,7 +166,6 @@ export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayC
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
   const brokerFsScope = isCapabilityBrokerDemotionActive(config)
   return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
-    demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
     brokerFsScope,
     fsScopeAllowlist: brokerFsScope
       ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
@@ -189,6 +188,7 @@ async function ensurePendingApproval(
   deps: GateRuntimeDeps,
   kind: GatedActionKind,
   result: ClassifyResult,
+  approvalInput?: { input: string; inputKind: 'shell' | 'tool' | 'subagent' },
 ) {
   const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
@@ -211,7 +211,10 @@ async function ensurePendingApproval(
     summary: result.normalizedCommand ?? result.summary ?? '',
     approvalTtlMinutes: ctx.config.approvalTtlMinutes,
     approvalId: `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+    input: approvalInput?.input,
+    inputKind: approvalInput?.inputKind,
   })
+  pending.state.version = 2
   pending.state.approvals.push(approval)
   await deps.writeApprovals(pending.filePath, pending.state)
   return approval
@@ -354,6 +357,49 @@ export async function evaluateGatedAction(
     predictedAssessment,
     observedAssessment,
     transactionalLayer,
+    approvalInput:
+      params.kind === 'shell'
+        ? {
+            input: params.command ?? result.normalizedCommand ?? result.summary ?? '',
+            inputKind: 'shell',
+          }
+        : {
+            input:
+              params.command ??
+              result.normalizedCommand ??
+              result.summary ??
+              canonicalStringify(params.payload ?? {}),
+            inputKind: params.kind,
+          },
+  })
+}
+
+/** R39: unmapped Codex tools ask via pending approval — not hard deny without approval path. */
+export async function gateUnmappedToolVerdict(
+  ctx: GateRuntimeContext,
+  deps: GateRuntimeDeps,
+  toolName: string,
+  payload: Record<string, unknown>,
+): Promise<GateVerdict> {
+  const scrubbed = scrubValue(payload, scrubOptionsFromConfig(ctx.config))
+  const result: ClassifyResult = {
+    verdict: 'deny_pending_approval',
+    reason: 'unmapped_tool',
+    summary: toolName,
+    fingerprint: toolFingerprint(toolName, scrubbed, ctx.repoRoot),
+    assessment: {
+      reversibility: 'irreversible',
+      external: false,
+      blastRadius: 'unknown Codex tool action',
+      confidence: 0.5,
+      signals: ['unmapped_tool'],
+    },
+  }
+  return gateDecisionToVerdict(ctx, deps, 'tool', result, {
+    approvalInput: {
+      input: toolName,
+      inputKind: 'tool',
+    },
   })
 }
 
@@ -366,6 +412,7 @@ async function gateDecisionToVerdict(
     predictedAssessment?: Assessment
     observedAssessment?: Assessment
     transactionalLayer?: Record<string, unknown>
+    approvalInput?: { input: string; inputKind: 'shell' | 'tool' | 'subagent' }
   } = {},
 ): Promise<GateVerdict> {
   const gateBase = {
@@ -460,7 +507,7 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const approval = await ensurePendingApproval(ctx, deps, kind, result)
+  const approval = await ensurePendingApproval(ctx, deps, kind, result, auditExtras.approvalInput)
   let approvalToken: string | undefined
   try {
     approvalToken = await issueApprovalToken(
@@ -503,7 +550,7 @@ async function gateDecisionToVerdict(
     permission: 'deny',
     wouldBlock: true,
     approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)}`,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run agent-belay explain or /belay why.`,
     agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
   })
 }

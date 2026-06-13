@@ -1,7 +1,8 @@
 import type { AdapterName } from './adapters/layouts/types.js';
 import type { HooksFile, InitOptions, UpgradeOptions } from './types.js';
+export type { InstallScope } from './adapters/layouts/scope.js';
 export declare function loadHooksFile(hooksPath: string): Promise<HooksFile>;
-export declare function mergeHooksFile(current: HooksFile): HooksFile;
+export declare function mergeHooksFile(current: HooksFile, platform?: NodeJS.Platform, hooksDir?: string, repoRoot?: string): HooksFile;
 export declare function initCursorProject(options?: InitOptions): Promise<{
     repoRoot: string;
     withSkill: boolean;

@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js';
-function runnerCommand(platform, hookName, ...args) {
-    const base = platform === 'win32' ? '.\\.claude\\hooks\\belay-runner.cmd' : './.claude/hooks/belay-runner';
-    return [base, hookName, ...args].join(' ');
+import { buildRunnerInvocation } from './scope.js';
+function runnerCommand(platform, repoRoot, hookName, ...args) {
+    const hooksDir = path.join(path.resolve(repoRoot), '.claude', 'hooks');
+    return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args);
 }
 export const claudeLayout = {
     name: 'claude',

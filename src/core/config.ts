@@ -176,6 +176,8 @@ export interface BelayEgressConfig {
 export interface BelayConfigV4 {
   version: 4
   adapter?: 'cursor' | 'claude' | 'codex'
+  /** Where hooks/runtime/skill artifacts are installed. Defaults to project. */
+  installScope?: 'project' | 'global'
   mode: BelayMode
   approvalTtlMinutes: number
   tokenPrefix: string
@@ -495,6 +497,7 @@ type RawConfigInput = Partial<{
   egress: Partial<BelayEgressConfig>
   sandbox: Partial<BelaySandboxConfig>
   audit: Partial<BelayConfigV2['audit']>
+  installScope: 'project' | 'global'
 }>
 
 function hasV3Sections(raw: RawConfigInput): boolean {
@@ -714,6 +717,9 @@ export function normalizeConfig(
   const v4 = config as BelayConfigV4
   return {
     version: 4,
+    ...(v4.installScope === 'global' || v4.installScope === 'project'
+      ? { installScope: v4.installScope }
+      : {}),
     mode: v4.mode === 'audit' ? 'audit' : 'enforce',
     approvalTtlMinutes:
       typeof v4.approvalTtlMinutes === 'number' && v4.approvalTtlMinutes > 0
@@ -948,6 +954,7 @@ export function mergeConfig(
       ...defaults.audit,
       ...migrated.audit,
     },
+    ...(migrated.installScope ? { installScope: migrated.installScope } : {}),
   })
 }
 

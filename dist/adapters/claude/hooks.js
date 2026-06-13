@@ -1,12 +1,11 @@
-function runnerCommand(platform, hookName, ...args) {
-    const base = platform === 'win32' ? '.\\.claude\\hooks\\belay-runner.cmd' : './.claude/hooks/belay-runner';
-    return [base, hookName, ...args].join(' ');
-}
-export function getClaudeManagedHookGroups(platform = process.platform) {
-    const toolGate = runnerCommand(platform, 'belay-tool-gate', 'PreToolUse');
-    const shellGate = runnerCommand(platform, 'belay-shell-gate');
-    const approvalGate = runnerCommand(platform, 'belay-before-submit');
-    const auditHook = runnerCommand(platform, 'belay-audit', 'PostToolUse');
+import path from 'node:path';
+import { buildRunnerInvocation } from '../layouts/scope.js';
+export function getClaudeManagedHookGroups(platform, hooksDir, repoRoot) {
+    const runner = (hookName, ...args) => buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args);
+    const toolGate = runner('belay-tool-gate', 'PreToolUse');
+    const shellGate = runner('belay-shell-gate');
+    const approvalGate = runner('belay-before-submit');
+    const auditHook = runner('belay-audit', 'PostToolUse');
     return {
         PreToolUse: [
             {
@@ -34,8 +33,10 @@ export function getClaudeManagedHookGroups(platform = process.platform) {
         ],
     };
 }
-export function getClaudeManagedHookEntries(platform = process.platform) {
-    const groups = getClaudeManagedHookGroups(platform);
+export function getClaudeManagedHookEntries(platform = process.platform, hooksDir, repoRoot) {
+    const resolvedRepo = path.resolve(repoRoot ?? process.cwd());
+    const resolvedHooksDir = hooksDir ?? path.join(resolvedRepo, '.claude', 'hooks');
+    const groups = getClaudeManagedHookGroups(platform, resolvedHooksDir, resolvedRepo);
     const entries = [];
     for (const [event, groupList] of Object.entries(groups)) {
         for (const group of groupList) {

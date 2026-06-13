@@ -13,12 +13,12 @@ import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 
-describe('egress L3 demotion runtime gating', () => {
+describe('egress runtime classifier options', () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('runtimeClassifierOptions demotes only when proxy status shows a live daemon', async () => {
+  it('runtimeClassifierOptions never loosens shell gating when the proxy is running', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-runtime-demote-'))
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
@@ -34,7 +34,7 @@ describe('egress L3 demotion runtime gating', () => {
     }
 
     const inactive = runtimeClassifierOptions(ctx, config)
-    expect(inactive.demoteL3External).toBe(false)
+    expect(inactive.demoteL3External).toBeUndefined()
 
     const stateDir = belayStateDir(config, cursorAdapter.layout.repoLocalStateDir(repoRoot))
     await writeEgressDaemonState({
@@ -46,15 +46,21 @@ describe('egress L3 demotion runtime gating', () => {
     })
 
     const active = runtimeClassifierOptions(ctx, config)
-    expect(active.demoteL3External).toBe(true)
+    expect(active.demoteL3External).toBeUndefined()
 
     const cwd = path.join(repoRoot, 'src')
     await mkdir(cwd, { recursive: true })
     const denied = await classifyShellGated('git push origin main', cwd, repoRoot, config, inactive)
     expect(denied.verdict).toBe('deny_pending_approval')
 
-    const flagged = await classifyShellGated('git push origin main', cwd, repoRoot, config, active)
-    expect(flagged.verdict).toBe('allow_flagged')
-    expect(flagged.reason).toBe('l3_external_hint')
+    const stillDenied = await classifyShellGated(
+      'git push origin main',
+      cwd,
+      repoRoot,
+      config,
+      active,
+    )
+    expect(stillDenied.verdict).toBe('deny_pending_approval')
+    expect(stillDenied.reason).toBe('external_effect')
   })
 })

@@ -6,8 +6,8 @@ export interface ClaudeHookGroup {
         command: string;
     }>;
 }
-export declare function getClaudeManagedHookGroups(platform?: NodeJS.Platform): Record<string, ClaudeHookGroup[]>;
-export declare function getClaudeManagedHookEntries(platform?: NodeJS.Platform): Array<{
+export declare function getClaudeManagedHookGroups(platform: NodeJS.Platform, hooksDir: string, repoRoot: string): Record<string, ClaudeHookGroup[]>;
+export declare function getClaudeManagedHookEntries(platform?: NodeJS.Platform, hooksDir?: string, repoRoot?: string): Array<{
     event: string;
     definition: ManagedHookDefinition;
 }>;

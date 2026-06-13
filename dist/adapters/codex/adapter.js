@@ -1,13 +1,14 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { doctorProject } from '../../commands/doctor.js';
-import { approvedApprovalsPath, mergeAndWriteConfig, pendingApprovalsPath, } from '../../config-io.js';
+import { mergeAndWriteConfig } from '../../config-io.js';
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../../core/integrity.js';
-import { EMPTY_APPROVALS } from '../../defaults.js';
-import { buildRunnerScript, buildWindowsRunnerScript } from '../../node-resolution.js';
-import { renderAuditHook, renderBeforeSubmitHook, renderRuntimeCore, renderShellGateHook, renderToolGateHook, } from '../../templates.js';
+import { bootstrapStateFiles, writeSkillArtifacts } from '../../installer/bootstrap.js';
+import { writeRuntimeArtifacts } from '../../installer/runtime-artifacts.js';
+import { applyInstallScope, resolveOperationScope } from '../../installer/scope-config.js';
 import { codexLayout } from '../layouts/codex.js';
+import { resolveScopedPaths } from '../layouts/scope.js';
 import { getCodexManagedHookEntries, mergeCodexHooksToml } from './hooks.js';
 async function loadCodexConfigToml(configTomlPath) {
     if (!existsSync(configTomlPath)) {
@@ -15,67 +16,44 @@ async function loadCodexConfigToml(configTomlPath) {
     }
     return readFile(configTomlPath, 'utf8');
 }
-async function writeRuntimeArtifacts(repoRoot) {
-    const hooksDir = codexLayout.hooksDir(repoRoot);
-    const runtimeDir = codexLayout.runtimeDir(repoRoot);
-    await mkdir(hooksDir, { recursive: true });
-    await mkdir(runtimeDir, { recursive: true });
-    const write = async (filePath, content, executable = false) => {
-        await writeFile(filePath, content, 'utf8');
-        if (executable) {
-            await chmod(filePath, 0o755);
-        }
-    };
-    await write(path.join(hooksDir, 'belay-before-submit.mjs'), renderBeforeSubmitHook());
-    await write(path.join(hooksDir, 'belay-shell-gate.mjs'), renderShellGateHook());
-    await write(path.join(hooksDir, 'belay-tool-gate.mjs'), renderToolGateHook());
-    await write(path.join(hooksDir, 'belay-audit.mjs'), renderAuditHook());
-    await write(path.join(runtimeDir, 'core.mjs'), await renderRuntimeCore('codex'));
-    await write(path.join(hooksDir, 'belay-runner'), buildRunnerScript(process.execPath), true);
-    await write(path.join(hooksDir, 'belay-runner.cmd'), buildWindowsRunnerScript(process.execPath));
-}
-async function writeCodexIntegrityManifest(repoRoot) {
-    await writeIntegrityManifest(repoRoot, codexLayout, runtimeIntegrityFiles(codexLayout, repoRoot));
-}
-async function writeCodexHooksConfig(repoRoot) {
-    const configTomlPath = codexLayout.hooksSettingsPath(repoRoot);
+async function writeCodexHooksConfig(paths, repoRoot) {
+    const configTomlPath = paths.hooksSettingsPath;
     const existing = await loadCodexConfigToml(configTomlPath);
-    const merged = mergeCodexHooksToml(existing, process.platform);
+    const merged = mergeCodexHooksToml(existing, process.platform, paths.hooksDir, repoRoot);
     await mkdir(path.dirname(configTomlPath), { recursive: true });
     await writeFile(configTomlPath, merged, 'utf8');
 }
-async function installCodexBase(repoRoot) {
-    const belayDir = codexLayout.repoLocalStateDir(repoRoot);
+async function installCodexBase(repoRoot, options) {
+    const scope = await resolveOperationScope(repoRoot, 'codex', options);
+    const paths = resolveScopedPaths(codexLayout, scope, repoRoot);
     const config = await mergeAndWriteConfig(repoRoot, 'codex');
-    await mkdir(belayDir, { recursive: true });
-    await writeRuntimeArtifacts(repoRoot);
-    const writeJsonIfMissing = async (filePath, value) => {
-        if (!existsSync(filePath)) {
-            await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-        }
-    };
-    await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
-    await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS);
-    const auditPath = path.join(repoRoot, config.audit.logPath);
-    if (!existsSync(auditPath)) {
-        await mkdir(path.dirname(auditPath), { recursive: true });
-        await writeFile(auditPath, '', 'utf8');
+    await applyInstallScope(repoRoot, 'codex', scope, config);
+    await writeRuntimeArtifacts('codex', paths);
+    await bootstrapStateFiles(repoRoot, config, paths);
+    if (options.withSkill) {
+        await writeSkillArtifacts('codex', paths);
     }
-    await writeCodexHooksConfig(repoRoot);
-    await writeCodexIntegrityManifest(repoRoot);
+    await writeCodexHooksConfig(paths, repoRoot);
+    await writeIntegrityManifest(repoRoot, codexLayout, runtimeIntegrityFiles(codexLayout, paths));
 }
 export const codexAdapter = {
     name: 'codex',
     layout: codexLayout,
-    async install(repoRoot, _options = {}) {
-        await installCodexBase(repoRoot);
-        return { repoRoot, withSkill: false };
+    async install(repoRoot, options = {}) {
+        await installCodexBase(repoRoot, options);
+        return { repoRoot, withSkill: options.withSkill === true };
     },
-    async upgrade(repoRoot, _options = {}) {
-        await mergeAndWriteConfig(repoRoot, 'codex');
-        await writeRuntimeArtifacts(repoRoot);
-        await writeCodexHooksConfig(repoRoot);
-        await writeCodexIntegrityManifest(repoRoot);
+    async upgrade(repoRoot, options = {}) {
+        const scope = await resolveOperationScope(repoRoot, 'codex', options);
+        const paths = resolveScopedPaths(codexLayout, scope, repoRoot);
+        const config = await mergeAndWriteConfig(repoRoot, 'codex');
+        await applyInstallScope(repoRoot, 'codex', scope, config);
+        await writeRuntimeArtifacts('codex', paths);
+        await writeCodexHooksConfig(paths, repoRoot);
+        if (options.withSkill) {
+            await writeSkillArtifacts('codex', paths);
+        }
+        await writeIntegrityManifest(repoRoot, codexLayout, runtimeIntegrityFiles(codexLayout, paths));
         return { repoRoot };
     },
     async doctor(options = {}) {

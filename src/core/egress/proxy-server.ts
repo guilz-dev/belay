@@ -72,6 +72,27 @@ function parseConnectPort(value: string): number | null {
   return port
 }
 
+function headerValue(headers: IncomingMessage['headers'], name: string): string | undefined {
+  const value = headers[name]
+  if (Array.isArray(value)) {
+    return value[0]
+  }
+  return value
+}
+
+function requestHasPayload(req: IncomingMessage): boolean {
+  const contentLength = headerValue(req.headers, 'content-length')
+  if (contentLength) {
+    const parsed = Number(contentLength)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return true
+    }
+  }
+
+  const transferEncoding = headerValue(req.headers, 'transfer-encoding')
+  return typeof transferEncoding === 'string' && transferEncoding.trim().length > 0
+}
+
 async function evaluateRequest(
   ctx: EgressProxyContext,
   request: EgressConnectRequest,
@@ -196,7 +217,7 @@ async function denyEgressRequest(
 
 function denyResponse(res: ServerResponse, approvalId: string, summary: string): void {
   const body = JSON.stringify({
-    error: 'egress_blocked',
+    error: 'egress_requires_approval',
     message: `Belay blocked egress to ${summary}. Approval ID: ${approvalId}.`,
     approvalId,
   })
@@ -247,6 +268,7 @@ export function createEgressProxy(ctx: EgressProxyContext): http.Server {
       host: target.host,
       port: target.port,
       method: (req.method ?? 'GET') as EgressConnectRequest['method'],
+      hasPayload: requestHasPayload(req),
       repoRoot: ctx.repoRoot,
     })
 

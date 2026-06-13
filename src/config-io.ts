@@ -99,7 +99,7 @@ async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFil
   const raw = await readFile(filePath, 'utf8')
   const parsed = JSON.parse(raw) as ApprovalStateFile
   return {
-    version: 1,
+    version: parsed.version === 2 ? 2 : 1,
     approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
   }
 }

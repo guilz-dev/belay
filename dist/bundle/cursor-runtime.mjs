@@ -9,8 +9,126 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/core/judge-api-key.ts
+var judge_api_key_exports = {};
+__export(judge_api_key_exports, {
+  resolveJudgeApiKey: () => resolveJudgeApiKey
+});
+function resolveJudgeApiKey(env = process.env) {
+  const belay = env.BELAY_JUDGE_API_KEY?.trim();
+  if (belay) {
+    return { key: belay, source: "BELAY_JUDGE_API_KEY" };
+  }
+  const openai = env.OPENAI_API_KEY?.trim();
+  if (openai) {
+    return { key: openai, source: "OPENAI_API_KEY" };
+  }
+  return { key: null, source: null };
+}
+var init_judge_api_key = __esm({
+  "src/core/judge-api-key.ts"() {
+    "use strict";
+  }
+});
+
+// src/adapters/cursor/runtime-entry.ts
+import process2 from "node:process";
+
+// src/adapters/layouts/cursor.ts
+import path3 from "node:path";
+
 // src/core/config.ts
 import path from "node:path";
+var DEFAULT_JUDGE_LOCAL_OLLAMA = {
+  provider: "ollama",
+  model: "gemma4:e2b",
+  endpoint: "http://localhost:11434",
+  timeoutMs: 25e3,
+  keepAlive: "30m"
+};
+var DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
+  provider: "openai-compatible",
+  model: "auto",
+  timeoutMs: 8e3,
+  endpoint: null,
+  keepAlive: null
+};
+var DEFAULT_CONFIDENCE_THRESHOLDS = {
+  allow: 0.88,
+  flag: 0.72
+};
+var DEFAULT_MODEL_ASSIST = {
+  enabled: false,
+  timeoutMs: 3e3
+};
+var DEFAULT_TRANSACTIONAL_V3 = {
+  enabled: false,
+  minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
+  maxConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+  timeoutMs: 3e4,
+  maxDeletionCount: 10,
+  gates: {
+    shell: true
+  }
+};
+var LEGACY_POLICY_V3 = {
+  unknownLocalEffect: "allow_flagged",
+  unparseableShell: "allow_flagged",
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST },
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
+};
+var DEFAULT_POLICY_V3 = {
+  unknownLocalEffect: "deny",
+  unparseableShell: "deny",
+  codexUnmappedTool: "deny",
+  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
+  modelAssist: { ...DEFAULT_MODEL_ASSIST },
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
+};
+var DEFAULT_OVERRIDES_V3 = {
+  allow: [],
+  external: []
+};
+var DEFAULT_REDACTION_V3 = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: false
+};
+var DEFAULT_CONTROL_PLANE_ISOLATION_V3 = {
+  mode: "none",
+  verifyAgentWritable: true
+};
+var LEGACY_CONTROL_PLANE_V3 = {
+  enabled: false,
+  configDir: null,
+  integrity: "none",
+  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
+};
+var DEFAULT_CONTROL_PLANE_V3 = {
+  enabled: true,
+  configDir: null,
+  integrity: "hash-pinned",
+  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
+};
+var DEFAULT_SANDBOX_V3 = {
+  enabled: false,
+  runtime: "none",
+  denyNetworkByDefault: true
+};
+var DEFAULT_NOTIFICATIONS_V3 = {};
+var DEFAULT_APPROVAL_SIGNING_V3 = {
+  required: false
+};
+var DEFAULT_EGRESS_V3 = {
+  enabled: false,
+  listenHost: "127.0.0.1",
+  listenPort: 17831,
+  demoteL3External: true
+};
+var LOOPBACK_EGRESS_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
 function normalizeEgressListenHost(host) {
   const trimmed = host.trim();
   const lowered = trimmed.toLowerCase();
@@ -19,6 +137,50 @@ function normalizeEgressListenHost(host) {
   }
   return DEFAULT_EGRESS_V3.listenHost;
 }
+var DEFAULT_CONFIG_V2 = {
+  version: 2,
+  mode: "enforce",
+  approvalTtlMinutes: 15,
+  tokenPrefix: "/belay-approve",
+  gates: {
+    shell: true,
+    subagent: true,
+    fileMutation: true,
+    toolShell: true
+  },
+  classifier: {
+    strictChains: true,
+    customExternalCommands: [],
+    customAllowCommands: [],
+    sensitivePaths: [".env", ".env.*", "**/credentials/**"]
+  },
+  audit: {
+    logPath: "belay/audit.ndjson",
+    includeAssessment: true
+  }
+};
+var DEFAULT_CONFIG_V4 = {
+  version: 4,
+  mode: DEFAULT_CONFIG_V2.mode,
+  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
+  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
+  gates: { ...DEFAULT_CONFIG_V2.gates },
+  classifier: {
+    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
+    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
+  },
+  policy: { ...DEFAULT_POLICY_V3 },
+  overrides: { ...DEFAULT_OVERRIDES_V3 },
+  redaction: { ...DEFAULT_REDACTION_V3 },
+  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
+  notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
+  approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+  egress: { ...DEFAULT_EGRESS_V3 },
+  sandbox: { ...DEFAULT_SANDBOX_V3 },
+  audit: { ...DEFAULT_CONFIG_V2.audit },
+  judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
+};
+var DEFAULT_CONFIG_V3 = DEFAULT_CONFIG_V4;
 function uniqueStrings(values) {
   return [...new Set(values)];
 }
@@ -269,6 +431,7 @@ function normalizeConfig(config) {
   const v4 = config;
   return {
     version: 4,
+    ...v4.installScope === "global" || v4.installScope === "project" ? { installScope: v4.installScope } : {},
     mode: v4.mode === "audit" ? "audit" : "enforce",
     approvalTtlMinutes: typeof v4.approvalTtlMinutes === "number" && v4.approvalTtlMinutes > 0 ? v4.approvalTtlMinutes : DEFAULT_CONFIG_V4.approvalTtlMinutes,
     tokenPrefix: v4.tokenPrefix || DEFAULT_CONFIG_V4.tokenPrefix,
@@ -420,7 +583,8 @@ function mergeConfig(existing, defaults = DEFAULT_CONFIG_V4) {
     audit: {
       ...defaults.audit,
       ...migrated.audit
-    }
+    },
+    ...migrated.installScope ? { installScope: migrated.installScope } : {}
   });
 }
 function scrubOptionsFromConfig(config) {
@@ -472,193 +636,62 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
-var DEFAULT_JUDGE_LOCAL_OLLAMA, DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE, DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V4, DEFAULT_CONFIG_V3;
-var init_config = __esm({
-  "src/core/config.ts"() {
-    "use strict";
-    DEFAULT_JUDGE_LOCAL_OLLAMA = {
-      provider: "ollama",
-      model: "gemma4:e2b",
-      endpoint: "http://localhost:11434",
-      timeoutMs: 25e3,
-      keepAlive: "30m"
-    };
-    DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
-      provider: "openai-compatible",
-      model: "auto",
-      timeoutMs: 8e3,
-      endpoint: null,
-      keepAlive: null
-    };
-    DEFAULT_CONFIDENCE_THRESHOLDS = {
-      allow: 0.88,
-      flag: 0.72
-    };
-    DEFAULT_MODEL_ASSIST = {
-      enabled: false,
-      timeoutMs: 3e3
-    };
-    DEFAULT_TRANSACTIONAL_V3 = {
-      enabled: false,
-      minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
-      maxConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.allow,
-      timeoutMs: 3e4,
-      maxDeletionCount: 10,
-      gates: {
-        shell: true
-      }
-    };
-    LEGACY_POLICY_V3 = {
-      unknownLocalEffect: "allow_flagged",
-      unparseableShell: "allow_flagged",
-      confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-      modelAssist: { ...DEFAULT_MODEL_ASSIST },
-      transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
-    };
-    DEFAULT_POLICY_V3 = {
-      unknownLocalEffect: "deny",
-      unparseableShell: "deny",
-      codexUnmappedTool: "deny",
-      confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-      modelAssist: { ...DEFAULT_MODEL_ASSIST },
-      transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
-    };
-    DEFAULT_OVERRIDES_V3 = {
-      allow: [],
-      external: []
-    };
-    DEFAULT_REDACTION_V3 = {
-      maskApprovalIds: true,
-      maskBearerTokens: true,
-      maskAuthHeaders: true,
-      maskKeyValueSecrets: true,
-      maskHighEntropyStrings: false
-    };
-    DEFAULT_CONTROL_PLANE_ISOLATION_V3 = {
-      mode: "none",
-      verifyAgentWritable: true
-    };
-    LEGACY_CONTROL_PLANE_V3 = {
-      enabled: false,
-      configDir: null,
-      integrity: "none",
-      isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
-    };
-    DEFAULT_CONTROL_PLANE_V3 = {
-      enabled: true,
-      configDir: null,
-      integrity: "hash-pinned",
-      isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
-    };
-    DEFAULT_SANDBOX_V3 = {
-      enabled: false,
-      runtime: "none",
-      denyNetworkByDefault: true
-    };
-    DEFAULT_NOTIFICATIONS_V3 = {};
-    DEFAULT_APPROVAL_SIGNING_V3 = {
-      required: false
-    };
-    DEFAULT_EGRESS_V3 = {
-      enabled: false,
-      listenHost: "127.0.0.1",
-      listenPort: 17831,
-      demoteL3External: true
-    };
-    LOOPBACK_EGRESS_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
-    DEFAULT_CONFIG_V2 = {
-      version: 2,
-      mode: "enforce",
-      approvalTtlMinutes: 15,
-      tokenPrefix: "/belay-approve",
-      gates: {
-        shell: true,
-        subagent: true,
-        fileMutation: true,
-        toolShell: true
-      },
-      classifier: {
-        strictChains: true,
-        customExternalCommands: [],
-        customAllowCommands: [],
-        sensitivePaths: [".env", ".env.*", "**/credentials/**"]
-      },
-      audit: {
-        logPath: "belay/audit.ndjson",
-        includeAssessment: true
-      }
-    };
-    DEFAULT_CONFIG_V4 = {
-      version: 4,
-      mode: DEFAULT_CONFIG_V2.mode,
-      approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
-      tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
-      gates: { ...DEFAULT_CONFIG_V2.gates },
-      classifier: {
-        strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
-        sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths]
-      },
-      policy: { ...DEFAULT_POLICY_V3 },
-      overrides: { ...DEFAULT_OVERRIDES_V3 },
-      redaction: { ...DEFAULT_REDACTION_V3 },
-      controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
-      notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
-      approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
-      egress: { ...DEFAULT_EGRESS_V3 },
-      sandbox: { ...DEFAULT_SANDBOX_V3 },
-      audit: { ...DEFAULT_CONFIG_V2.audit },
-      judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
-    };
-    DEFAULT_CONFIG_V3 = DEFAULT_CONFIG_V4;
-  }
-});
+
+// src/adapters/layouts/scope.ts
+import path2 from "node:path";
+function buildRunnerInvocation(platform, hooksDir, repoRoot, hookScript, ...args) {
+  const runnerFile = platform === "win32" ? "belay-runner.cmd" : "belay-runner";
+  const runnerAbs = path2.resolve(hooksDir, runnerFile);
+  const relative = path2.relative(path2.resolve(repoRoot), runnerAbs);
+  const useRelative = relative.length > 0 && !relative.startsWith("..") && !path2.isAbsolute(relative);
+  const runnerRef = useRelative ? platform === "win32" ? `.\\${relative.split(path2.sep).join("\\")}` : `./${relative.split(path2.sep).join("/")}` : runnerAbs;
+  return [runnerRef, hookScript, ...args].join(" ");
+}
 
 // src/adapters/layouts/cursor.ts
-import path2 from "node:path";
-function runnerCommand(platform, hookName, ...args) {
-  const base = platform === "win32" ? ".\\.cursor\\hooks\\belay-runner.cmd" : "./.cursor/hooks/belay-runner";
-  return [base, hookName, ...args].join(" ");
+function runnerCommand(platform, repoRoot, hookName, ...args) {
+  const hooksDir = path3.join(path3.resolve(repoRoot), ".cursor", "hooks");
+  return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args);
 }
-var cursorLayout;
-var init_cursor = __esm({
-  "src/adapters/layouts/cursor.ts"() {
-    "use strict";
-    init_config();
-    cursorLayout = {
-      name: "cursor",
-      configPath(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay.config.json");
-      },
-      hooksSettingsPath(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "hooks.json");
-      },
-      hooksDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "hooks");
-      },
-      runtimeDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay", "runtime");
-      },
-      repoLocalStateDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay");
-      },
-      defaultAuditLogPath(_repoRoot) {
-        return path2.join(".cursor", "belay", "audit.ndjson");
-      },
-      repoRootMarkers: [".git", ".cursor"],
-      runnerCommand,
-      defaultConfig(repoRoot) {
-        return {
-          ...DEFAULT_CONFIG_V4,
-          adapter: "cursor",
-          audit: {
-            ...DEFAULT_CONFIG_V4.audit,
-            logPath: cursorLayout.defaultAuditLogPath(repoRoot)
-          }
-        };
+var cursorLayout = {
+  name: "cursor",
+  configPath(repoRoot) {
+    return path3.join(repoRoot, ".cursor", "belay.config.json");
+  },
+  hooksSettingsPath(repoRoot) {
+    return path3.join(repoRoot, ".cursor", "hooks.json");
+  },
+  hooksDir(repoRoot) {
+    return path3.join(repoRoot, ".cursor", "hooks");
+  },
+  runtimeDir(repoRoot) {
+    return path3.join(repoRoot, ".cursor", "belay", "runtime");
+  },
+  repoLocalStateDir(repoRoot) {
+    return path3.join(repoRoot, ".cursor", "belay");
+  },
+  defaultAuditLogPath(_repoRoot) {
+    return path3.join(".cursor", "belay", "audit.ndjson");
+  },
+  repoRootMarkers: [".git", ".cursor"],
+  runnerCommand,
+  defaultConfig(repoRoot) {
+    return {
+      ...DEFAULT_CONFIG_V4,
+      adapter: "cursor",
+      audit: {
+        ...DEFAULT_CONFIG_V4.audit,
+        logPath: cursorLayout.defaultAuditLogPath(repoRoot)
       }
     };
   }
-});
+};
+
+// src/adapters/shared/gate-runtime.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { existsSync as existsSync6 } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import path16 from "node:path";
 
 // src/core/approval.ts
 function nowIso() {
@@ -669,7 +702,7 @@ function isExpired(approval) {
 }
 function compactApprovals(state) {
   return {
-    version: 1,
+    version: state.version,
     approvals: state.approvals.filter((approval) => !isExpired(approval))
   };
 }
@@ -688,7 +721,7 @@ function buildRetryInstruction(tokenPrefix, approvalId) {
 function createApprovalRecord(params) {
   const createdAt = nowIso();
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 6e4).toISOString();
-  return {
+  const record = {
     approvalId: params.approvalId,
     kind: params.kind,
     fingerprint: params.fingerprint,
@@ -698,262 +731,18 @@ function createApprovalRecord(params) {
     createdAt,
     expiresAt
   };
+  if (params.input) {
+    record.input = params.input;
+    record.inputKind = params.inputKind ?? params.kind;
+  }
+  return record;
 }
-var init_approval = __esm({
-  "src/core/approval.ts"() {
-    "use strict";
-  }
-});
-
-// src/presets.ts
-function applyConfigPreset(preset, extra = {}) {
-  const base = CONFIG_PRESETS[preset] ?? CONFIG_PRESETS.standard;
-  return {
-    version: 3,
-    ...base,
-    ...extra,
-    policy: {
-      ...DEFAULT_CONFIG_V3.policy,
-      ...base.policy ?? {},
-      ...extra.policy
-    },
-    sandbox: {
-      ...DEFAULT_CONFIG_V3.sandbox,
-      ...base.sandbox ?? {},
-      ...extra.sandbox
-    },
-    egress: {
-      ...DEFAULT_CONFIG_V3.egress,
-      ...base.egress ?? {},
-      ...extra.egress
-    },
-    approvalSigning: {
-      ...DEFAULT_CONFIG_V3.approvalSigning,
-      ...base.approvalSigning ?? {},
-      ...extra.approvalSigning
-    },
-    controlPlane: {
-      ...DEFAULT_CONFIG_V3.controlPlane,
-      ...base.controlPlane ?? {},
-      ...extra.controlPlane,
-      isolation: {
-        ...DEFAULT_CONFIG_V3.controlPlane.isolation,
-        ...base.controlPlane?.isolation ?? {},
-        ...extra.controlPlane?.isolation ?? {}
-      }
-    }
-  };
-}
-var CONFIG_PRESETS;
-var init_presets = __esm({
-  "src/presets.ts"() {
-    "use strict";
-    init_config();
-    CONFIG_PRESETS = {
-      strict: {
-        mode: "enforce",
-        policy: {
-          unknownLocalEffect: "deny",
-          unparseableShell: "deny",
-          confidenceThresholds: { allow: 0.9, flag: 0.8 },
-          modelAssist: { enabled: false },
-          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
-        },
-        sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
-      },
-      standard: {
-        mode: "enforce"
-      },
-      "audit-first": {
-        mode: "audit",
-        policy: {
-          unknownLocalEffect: "deny",
-          unparseableShell: "deny",
-          confidenceThresholds: { allow: 0.88, flag: 0.72 },
-          modelAssist: { enabled: false },
-          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
-        },
-        sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
-      },
-      "l1-full-recommended": {
-        mode: "enforce",
-        policy: {
-          unknownLocalEffect: "deny",
-          unparseableShell: "deny",
-          confidenceThresholds: { ...DEFAULT_CONFIG_V3.policy.confidenceThresholds },
-          modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist },
-          transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
-        },
-        sandbox: {
-          enabled: true,
-          runtime: "container",
-          denyNetworkByDefault: true
-        },
-        egress: {
-          ...DEFAULT_CONFIG_V3.egress,
-          enabled: true,
-          demoteL3External: true
-        },
-        approvalSigning: {
-          required: true
-        },
-        controlPlane: {
-          ...DEFAULT_CONFIG_V3.controlPlane,
-          isolation: {
-            mode: "separate-user",
-            verifyAgentWritable: true
-          }
-        }
-      }
-    };
-  }
-});
-
-// src/core/config-layers.ts
-import path6 from "node:path";
-function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const base = xdg || path6.join(homedir(), ".config");
-  return path6.join(base, "agent-belay", "team.config.json");
-}
-function applyProtectedLayer(config, builtin) {
-  const controlPlane = { ...config.controlPlane };
-  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
-    controlPlane.enabled = true;
-  }
-  if (builtin.controlPlane.integrity === "hash-pinned" && controlPlane.integrity === "none") {
-    controlPlane.integrity = "hash-pinned";
-  }
-  return {
-    ...config,
-    controlPlane
-  };
-}
-function asV3Layer(raw) {
-  if (!raw || typeof raw !== "object") {
-    return { version: 3 };
-  }
-  return { version: 3, ...raw };
-}
-function mergeConfigLayer(base, layer) {
-  const merged = mergeConfig(layer, base);
-  if (!layer.policy) {
-    return { ...merged, policy: base.policy };
-  }
-  return merged;
-}
-function resolveLayeredConfig(params) {
-  const provenance = [{ path: "(builtin)", source: "builtin" }];
-  let config = mergeConfig({}, params.adapterDefaults);
-  if (params.teamConfig) {
-    const teamFile = params.teamConfig;
-    const teamRaw = teamFile.preset ? applyConfigPreset(teamFile.preset, teamFile.config ?? {}) : teamFile.config ?? params.teamConfig;
-    config = mergeConfigLayer(config, asV3Layer(teamRaw));
-    provenance.push({
-      path: params.teamConfigPath ?? teamConfigPath(),
-      source: "team"
-    });
-  }
-  config = mergeConfigLayer(config, asV3Layer(params.repoConfig));
-  if (params.repoConfigPath) {
-    provenance.push({ path: params.repoConfigPath, source: "repo" });
-  }
-  const protectedConfig = applyProtectedLayer(config, DEFAULT_CONFIG_V3);
-  if (JSON.stringify(protectedConfig) !== JSON.stringify(config)) {
-    provenance.push({ path: "(protected-layer)", source: "protected" });
-    config = protectedConfig;
-  }
-  return { config, provenance };
-}
-var init_config_layers = __esm({
-  "src/core/config-layers.ts"() {
-    "use strict";
-    init_presets();
-    init_config();
-  }
-});
-
-// src/core/judge-api-key.ts
-var judge_api_key_exports = {};
-__export(judge_api_key_exports, {
-  resolveJudgeApiKey: () => resolveJudgeApiKey
-});
-function resolveJudgeApiKey(env = process.env) {
-  const belay = env.BELAY_JUDGE_API_KEY?.trim();
-  if (belay) {
-    return { key: belay, source: "BELAY_JUDGE_API_KEY" };
-  }
-  const openai = env.OPENAI_API_KEY?.trim();
-  if (openai) {
-    return { key: openai, source: "OPENAI_API_KEY" };
-  }
-  return { key: null, source: null };
-}
-var init_judge_api_key = __esm({
-  "src/core/judge-api-key.ts"() {
-    "use strict";
-  }
-});
-
-// src/adapters/layouts/claude.ts
-var init_claude = __esm({
-  "src/adapters/layouts/claude.ts"() {
-    "use strict";
-    init_config();
-  }
-});
-
-// src/adapters/layouts/codex.ts
-var init_codex = __esm({
-  "src/adapters/layouts/codex.ts"() {
-    "use strict";
-    init_config();
-  }
-});
-
-// src/adapters/layouts/index.ts
-var init_layouts = __esm({
-  "src/adapters/layouts/index.ts"() {
-    "use strict";
-    init_claude();
-    init_codex();
-    init_cursor();
-    init_claude();
-    init_codex();
-    init_cursor();
-  }
-});
-
-// src/config-io.ts
-var init_config_io = __esm({
-  "src/config-io.ts"() {
-    "use strict";
-    init_layouts();
-    init_approval();
-    init_config();
-    init_config_layers();
-  }
-});
-
-// src/adapters/cursor/runtime-entry.ts
-init_cursor();
-import process2 from "node:process";
-
-// src/adapters/shared/gate-runtime.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync7 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import path16 from "node:path";
-
-// src/core/approval-service.ts
-init_approval();
 
 // src/core/approval-token.ts
-init_config();
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path3 from "node:path";
+import path4 from "node:path";
 function base64UrlEncode(value) {
   return Buffer.from(value, "utf8").toString("base64url");
 }
@@ -961,7 +750,7 @@ function base64UrlDecode(value) {
   return Buffer.from(value, "base64url").toString("utf8");
 }
 function approvalSigningKeyPath(controlPlaneDir = defaultControlPlaneDir()) {
-  return path3.join(controlPlaneDir, "approval-signing.key");
+  return path4.join(controlPlaneDir, "approval-signing.key");
 }
 async function loadOrCreateApprovalSigningKey(controlPlaneDir = defaultControlPlaneDir()) {
   const keyPath = approvalSigningKeyPath(controlPlaneDir);
@@ -1010,7 +799,6 @@ async function verifyApprovalToken(token, controlPlaneDir = defaultControlPlaneD
 }
 
 // src/core/approval-service.ts
-init_config();
 async function recordApproval(params) {
   const { approvalId, config, store, token, requireSignedToken = false } = params;
   const pending = await store.loadPending();
@@ -1052,33 +840,32 @@ async function recordApproval(params) {
 
 // src/core/capability/allowlist.ts
 import { existsSync as existsSync3, readFileSync } from "node:fs";
-init_config();
-import path5 from "node:path";
+import path6 from "node:path";
 
 // src/core/path-utils.ts
 import { existsSync as existsSync2, realpathSync } from "node:fs";
-import path4 from "node:path";
+import path5 from "node:path";
 function canonicalPath(targetPath) {
-  const resolved = path4.resolve(targetPath);
+  const resolved = path5.resolve(targetPath);
   if (!resolved) {
     return resolved;
   }
-  const parsed = path4.parse(resolved);
+  const parsed = path5.parse(resolved);
   let current = parsed.root;
-  const relativeParts = path4.relative(parsed.root || ".", resolved).split(path4.sep).filter(Boolean);
+  const relativeParts = path5.relative(parsed.root || ".", resolved).split(path5.sep).filter(Boolean);
   for (let i = 0; i < relativeParts.length; i++) {
     const segment = relativeParts[i];
     if (!segment) {
       continue;
     }
-    const candidate = current === "" ? segment : path4.join(current, segment);
+    const candidate = current === "" ? segment : path5.join(current, segment);
     if (!existsSync2(candidate)) {
-      return path4.join(candidate, ...relativeParts.slice(i + 1));
+      return path5.join(candidate, ...relativeParts.slice(i + 1));
     }
     try {
       current = realpathSync.native(candidate);
     } catch {
-      return path4.join(candidate, ...relativeParts.slice(i + 1));
+      return path5.join(candidate, ...relativeParts.slice(i + 1));
     }
   }
   return current;
@@ -1086,16 +873,16 @@ function canonicalPath(targetPath) {
 function pathWithinRoot(root, targetPath) {
   const resolvedRoot = canonicalPath(root);
   const resolvedTarget = canonicalPath(targetPath);
-  const relativePath = path4.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return true;
   }
-  return !relativePath.startsWith("..") && !path4.isAbsolute(relativePath);
+  return !relativePath.startsWith("..") && !path5.isAbsolute(relativePath);
 }
 function relativeWithinRepo(repoRoot, targetPath) {
   const resolvedRoot = canonicalPath(repoRoot);
   const resolvedTarget = canonicalPath(targetPath);
-  const relativePath = path4.relative(resolvedRoot, resolvedTarget);
+  const relativePath = path5.relative(resolvedRoot, resolvedTarget);
   if (relativePath === "") {
     return ".";
   }
@@ -1111,21 +898,21 @@ function resolveMutationTarget(token, cwd) {
   if (token === "2>" || token === "1>" || token === "&>" || token === "1>>" || token === "2>>") {
     return null;
   }
-  if (path4.isAbsolute(token)) {
+  if (path5.isAbsolute(token)) {
     return canonicalPath(token);
   }
   if (token.startsWith("./") || token.startsWith("../")) {
-    return canonicalPath(path4.resolve(cwd, token));
+    return canonicalPath(path5.resolve(cwd, token));
   }
   if (!token.includes("/") && !token.includes("\\")) {
-    return canonicalPath(path4.resolve(cwd, token));
+    return canonicalPath(path5.resolve(cwd, token));
   }
-  return canonicalPath(path4.resolve(cwd, token));
+  return canonicalPath(path5.resolve(cwd, token));
 }
 
 // src/core/capability/allowlist.ts
 function fsScopeAllowlistPath(config, repoLocalStateDir) {
-  return path5.join(belayStateDir(config, repoLocalStateDir), "fs-scope-allowlist.json");
+  return path6.join(belayStateDir(config, repoLocalStateDir), "fs-scope-allowlist.json");
 }
 function loadFsScopeAllowlistSync(filePath) {
   if (!existsSync3(filePath)) {
@@ -1281,8 +1068,161 @@ function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
   return brokerActive && FS_SCOPE_REASONS.has(reason);
 }
 
-// src/adapters/shared/gate-runtime.ts
-init_config_layers();
+// src/core/config-layers.ts
+import path7 from "node:path";
+
+// src/presets.ts
+var CONFIG_PRESETS = {
+  strict: {
+    mode: "enforce",
+    policy: {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { allow: 0.9, flag: 0.8 },
+      modelAssist: { enabled: false },
+      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+    },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
+  },
+  standard: {
+    mode: "enforce"
+  },
+  "audit-first": {
+    mode: "audit",
+    policy: {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { allow: 0.88, flag: 0.72 },
+      modelAssist: { enabled: false },
+      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+    },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
+  },
+  "l1-full-recommended": {
+    mode: "enforce",
+    policy: {
+      unknownLocalEffect: "deny",
+      unparseableShell: "deny",
+      confidenceThresholds: { ...DEFAULT_CONFIG_V3.policy.confidenceThresholds },
+      modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist },
+      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+    },
+    sandbox: {
+      enabled: true,
+      runtime: "container",
+      denyNetworkByDefault: true
+    },
+    egress: {
+      ...DEFAULT_CONFIG_V3.egress,
+      enabled: true,
+      demoteL3External: true
+    },
+    approvalSigning: {
+      required: true
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      isolation: {
+        mode: "separate-user",
+        verifyAgentWritable: true
+      }
+    }
+  }
+};
+function applyConfigPreset(preset, extra = {}) {
+  const base = CONFIG_PRESETS[preset] ?? CONFIG_PRESETS.standard;
+  return {
+    version: 3,
+    ...base,
+    ...extra,
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      ...base.policy ?? {},
+      ...extra.policy
+    },
+    sandbox: {
+      ...DEFAULT_CONFIG_V3.sandbox,
+      ...base.sandbox ?? {},
+      ...extra.sandbox
+    },
+    egress: {
+      ...DEFAULT_CONFIG_V3.egress,
+      ...base.egress ?? {},
+      ...extra.egress
+    },
+    approvalSigning: {
+      ...DEFAULT_CONFIG_V3.approvalSigning,
+      ...base.approvalSigning ?? {},
+      ...extra.approvalSigning
+    },
+    controlPlane: {
+      ...DEFAULT_CONFIG_V3.controlPlane,
+      ...base.controlPlane ?? {},
+      ...extra.controlPlane,
+      isolation: {
+        ...DEFAULT_CONFIG_V3.controlPlane.isolation,
+        ...base.controlPlane?.isolation ?? {},
+        ...extra.controlPlane?.isolation ?? {}
+      }
+    }
+  };
+}
+
+// src/core/config-layers.ts
+function teamConfigPath(homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "") {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  const base = xdg || path7.join(homedir(), ".config");
+  return path7.join(base, "agent-belay", "team.config.json");
+}
+function applyProtectedLayer(config, builtin) {
+  const controlPlane = { ...config.controlPlane };
+  if (builtin.controlPlane.enabled && controlPlane.enabled === false) {
+    controlPlane.enabled = true;
+  }
+  if (builtin.controlPlane.integrity === "hash-pinned" && controlPlane.integrity === "none") {
+    controlPlane.integrity = "hash-pinned";
+  }
+  return {
+    ...config,
+    controlPlane
+  };
+}
+function asV3Layer(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { version: 3 };
+  }
+  return { version: 3, ...raw };
+}
+function mergeConfigLayer(base, layer) {
+  const merged = mergeConfig(layer, base);
+  if (!layer.policy) {
+    return { ...merged, policy: base.policy };
+  }
+  return merged;
+}
+function resolveLayeredConfig(params) {
+  const provenance = [{ path: "(builtin)", source: "builtin" }];
+  let config = mergeConfig({}, params.adapterDefaults);
+  if (params.teamConfig) {
+    const teamFile = params.teamConfig;
+    const teamRaw = teamFile.preset ? applyConfigPreset(teamFile.preset, teamFile.config ?? {}) : teamFile.config ?? params.teamConfig;
+    config = mergeConfigLayer(config, asV3Layer(teamRaw));
+    provenance.push({
+      path: params.teamConfigPath ?? teamConfigPath(),
+      source: "team"
+    });
+  }
+  config = mergeConfigLayer(config, asV3Layer(params.repoConfig));
+  if (params.repoConfigPath) {
+    provenance.push({ path: params.repoConfigPath, source: "repo" });
+  }
+  const protectedConfig = applyProtectedLayer(config, DEFAULT_CONFIG_V3);
+  if (JSON.stringify(protectedConfig) !== JSON.stringify(config)) {
+    provenance.push({ path: "(protected-layer)", source: "protected" });
+    config = protectedConfig;
+  }
+  return { config, provenance };
+}
 
 // src/core/gate-contract.ts
 var GATE_CONTRACT_VERSION = 1;
@@ -1419,41 +1359,7 @@ function scrubValue(value, options = DEFAULT_SCRUB_OPTIONS) {
 }
 
 // src/core/classify-subagent.ts
-var EXTERNAL_PHRASES = [
-  "deploy to production",
-  "deploy to prod",
-  "publish to npm",
-  "publish package",
-  "release to production",
-  "ship to production",
-  "send email",
-  "notify slack",
-  "call external api",
-  "push to production",
-  "push to prod"
-];
-var INVESTIGATION_PHRASES = [
-  "investigate",
-  "debug",
-  "research",
-  "review",
-  "analyze",
-  "analyse",
-  "check",
-  "look into",
-  "understand",
-  "explore"
-];
-var EXTERNAL_TERMS = [
-  "deploy",
-  "production",
-  "publish",
-  "release",
-  "ship",
-  "notify",
-  "email",
-  "prod"
-];
+var EXTERNAL_TERMS = ["deploy", "production", "publish", "release", "ship", "notify", "email"];
 function extractSubagentText(payload, options) {
   const toolInput = payload.tool_input;
   if (toolInput && typeof toolInput === "object") {
@@ -1508,62 +1414,10 @@ function classifySubagent(payload, repoRoot, options = {}) {
   const summary = extractSubagentText(payload, options);
   const lowered = summary.toLowerCase();
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot);
-  const signals = [];
-  for (const phrase of EXTERNAL_PHRASES) {
-    if (lowered.includes(phrase)) {
-      signals.push("external_phrase", phrase);
-      return {
-        verdict: "deny_pending_approval",
-        reason: "external_subagent_intent",
-        summary,
-        fingerprint,
-        assessment: {
-          reversibility: "irreversible",
-          external: true,
-          blastRadius: "subagent requested external effect",
-          confidence: 0.92,
-          signals
-        }
-      };
-    }
-  }
-  const isInvestigation = INVESTIGATION_PHRASES.some((phrase) => lowered.includes(phrase));
   const hasExternalTerm = EXTERNAL_TERMS.some((term) => {
     const pattern = new RegExp(`\\b${term}\\b`, "i");
     return pattern.test(lowered);
   });
-  if (hasExternalTerm && !isInvestigation) {
-    signals.push("external_term");
-    return {
-      verdict: "deny_pending_approval",
-      reason: "external_subagent_intent",
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: "irreversible",
-        external: true,
-        blastRadius: "subagent requested external effect",
-        confidence: 0.85,
-        signals
-      }
-    };
-  }
-  if (hasExternalTerm && isInvestigation) {
-    signals.push("external_term_investigation_context");
-    return {
-      verdict: "allow_flagged",
-      reason: "subagent_review",
-      summary,
-      fingerprint,
-      assessment: {
-        reversibility: "recoverable_with_cost",
-        external: false,
-        blastRadius: "subagent task scope",
-        confidence: 0.7,
-        signals
-      }
-    };
-  }
   return {
     verdict: "allow_flagged",
     reason: "subagent_review",
@@ -1573,14 +1427,14 @@ function classifySubagent(payload, repoRoot, options = {}) {
       reversibility: "recoverable_with_cost",
       external: false,
       blastRadius: "subagent task scope",
-      confidence: 0.67,
-      signals: ["subagent_default_review"]
+      confidence: hasExternalTerm ? 0.7 : 0.67,
+      signals: hasExternalTerm ? ["subagent_external_intent_hint"] : ["subagent_default_review"]
     }
   };
 }
 
 // src/core/classify-tool.ts
-import path11 from "node:path";
+import path12 from "node:path";
 
 // src/core/glob.ts
 function matchesSensitivePath(filePath, patterns) {
@@ -1639,9 +1493,6 @@ function judgeTraceAuditFields(trace) {
     ...trace.fallbackReason ? { judgeFallbackReason: trace.fallbackReason } : {}
   };
 }
-
-// src/core/v2/judge-factory.ts
-init_config();
 
 // src/core/v2/judge-outbound.ts
 var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
@@ -1995,17 +1846,17 @@ function createJudgeFromConfig(config, options = {}) {
 }
 
 // src/core/v2/verdict.ts
-import path10 from "node:path";
+import path11 from "node:path";
 
 // src/core/v2/containment.ts
-import path7 from "node:path";
+import path8 from "node:path";
 function expandHome(token) {
   if (token === "~" || token.startsWith("~/")) {
     const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
     if (!home) {
       return token;
     }
-    return token === "~" ? home : path7.join(home, token.slice(2));
+    return token === "~" ? home : path8.join(home, token.slice(2));
   }
   return token;
 }
@@ -2017,10 +1868,10 @@ function resolveTrustedPath(token, trustedCwd, trusted) {
     return null;
   }
   const expanded = expandHome(token);
-  if (path7.isAbsolute(expanded)) {
+  if (path8.isAbsolute(expanded)) {
     return canonicalPath(expanded);
   }
-  return canonicalPath(path7.resolve(trustedCwd, expanded));
+  return canonicalPath(path8.resolve(trustedCwd, expanded));
 }
 function locationForPath(resolvedPath, repoRoot) {
   if (!resolvedPath) {
@@ -2304,10 +2155,10 @@ function verdictFingerprint(cwdRelative2, commandRedacted) {
 
 // src/core/v2/launcher-resolve.ts
 import { existsSync as existsSync4, readFileSync as readFileSync2 } from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 var MAX_RESOLVE_DEPTH = 8;
 function readPackageJson(dir) {
-  const packagePath = path8.join(dir, "package.json");
+  const packagePath = path9.join(dir, "package.json");
   if (!existsSync4(packagePath)) {
     return null;
   }
@@ -2318,17 +2169,17 @@ function readPackageJson(dir) {
   }
 }
 function findPackageJson(startDir, stopDir) {
-  let current = path8.resolve(startDir);
-  const stop = path8.resolve(stopDir);
+  let current = path9.resolve(startDir);
+  const stop = path9.resolve(stopDir);
   while (true) {
-    const packagePath = path8.join(current, "package.json");
+    const packagePath = path9.join(current, "package.json");
     if (existsSync4(packagePath)) {
       return packagePath;
     }
-    if (current === stop || current === path8.dirname(current)) {
+    if (current === stop || current === path9.dirname(current)) {
       return existsSync4(packagePath) ? packagePath : null;
     }
-    const parent = path8.dirname(current);
+    const parent = path9.dirname(current);
     if (!parent.startsWith(stop) && parent !== current) {
     }
     if (parent === current) {
@@ -2379,7 +2230,7 @@ function resolveNpmRecipe(cwd, repoRoot, scriptName, extraArgs) {
     }
     return { recipes: [], opaque: true, reason: "package_json_missing" };
   }
-  const pkg = readPackageJson(path8.dirname(packagePath));
+  const pkg = readPackageJson(path9.dirname(packagePath));
   const scripts = pkg?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return { recipes: [], opaque: true, reason: "package_scripts_missing" };
@@ -2444,20 +2295,20 @@ function parseMakefileRecipes(makefilePath) {
 function resolveMakeRecipe(cwd, repoRoot, target) {
   const candidates = ["Makefile", "makefile", "GNUmakefile"];
   let makefilePath = null;
-  let searchDir = path8.resolve(cwd);
-  const stop = path8.resolve(repoRoot);
+  let searchDir = path9.resolve(cwd);
+  const stop = path9.resolve(repoRoot);
   while (true) {
     for (const name of candidates) {
-      const candidate = path8.join(searchDir, name);
+      const candidate = path9.join(searchDir, name);
       if (existsSync4(candidate)) {
         makefilePath = candidate;
         break;
       }
     }
-    if (makefilePath || searchDir === stop || searchDir === path8.dirname(searchDir)) {
+    if (makefilePath || searchDir === stop || searchDir === path9.dirname(searchDir)) {
       break;
     }
-    searchDir = path8.dirname(searchDir);
+    searchDir = path9.dirname(searchDir);
   }
   if (!makefilePath) {
     return { recipes: [], opaque: true, reason: "unknown_local_effect" };
@@ -2541,7 +2392,7 @@ function askFromCustomExternal(opacity) {
 }
 
 // src/core/v2/parser.ts
-import path9 from "node:path";
+import path10 from "node:path";
 
 // src/core/shell-substitution.ts
 function findCommandSubstitutions(command) {
@@ -2791,7 +2642,7 @@ var INTERPRETER_SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
   ".sh"
 ]);
 function normalizeHead(token) {
-  const base = path9.basename(token);
+  const base = path10.basename(token);
   if (base && base !== "." && base !== "..") {
     return base;
   }
@@ -2896,7 +2747,7 @@ function isBareInterpreter(tokens) {
     return false;
   }
   const scriptArg = args.find((token) => !token.startsWith("-"));
-  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path9.extname(scriptArg))) {
+  if (scriptArg && INTERPRETER_SCRIPT_EXTENSIONS.has(path10.extname(scriptArg))) {
     return false;
   }
   if (scriptArg) {
@@ -3193,7 +3044,7 @@ function tier0HighStakesRm(tokens, context) {
   }
   for (const target of targets) {
     if (target === "~" || target.startsWith("~/") || target.startsWith("/")) {
-      const resolved = path10.resolve(
+      const resolved = path11.resolve(
         target === "~" || target.startsWith("~/") ? process.env.HOME ?? "/" : context.cwd,
         target
       );
@@ -3671,6 +3522,17 @@ function verdictToClassifyResult(result) {
 
 // src/core/classify-tool.ts
 var DEFAULT_SENSITIVE_PATHS = [".env", ".env.*", "**/credentials/**"];
+var FILE_WRITE_TOOL_NAMES = /* @__PURE__ */ new Set(["write"]);
+var FILE_EDIT_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "edit",
+  "multiedit",
+  "multi_edit",
+  "patch",
+  "strreplace",
+  "str_replace"
+]);
+var FILE_DELETE_TOOL_NAMES = /* @__PURE__ */ new Set(["delete"]);
+var APPLY_PATCH_TOOL_NAMES = /* @__PURE__ */ new Set(["apply_patch", "applypatch"]);
 function scrubPayload(value, options) {
   return scrubValue(value, options.scrubOptions);
 }
@@ -3698,14 +3560,46 @@ function extractShellCommand(payload) {
   }
   return null;
 }
+function extractPatch(payload) {
+  const toolInput = payload.tool_input;
+  if (!toolInput || typeof toolInput !== "object") {
+    return null;
+  }
+  const input = toolInput;
+  for (const key of ["patch", "input", "text"]) {
+    if (typeof input[key] === "string" && input[key].trim()) {
+      return input[key];
+    }
+  }
+  return null;
+}
+function applyPatchTargets(patch) {
+  const targets = [];
+  for (const line of patch.split("\n")) {
+    const match = line.match(/^\*\*\* (Add|Delete|Update) File: (.+)$/);
+    if (match?.[1] && match[2]) {
+      targets.push({ path: match[2], delete: match[1] === "Delete" });
+      continue;
+    }
+    const moveMatch = line.match(/^\*\*\* Move to: (.+)$/);
+    if (moveMatch?.[1]) {
+      targets.push({ path: moveMatch[1], delete: false });
+    }
+  }
+  return targets;
+}
+function normalizedToolName(toolName) {
+  return toolName.trim().toLowerCase();
+}
 async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
   const toolName = String(payload.tool_name ?? "");
+  const toolKind = normalizedToolName(toolName);
   const sensitivePaths = [...DEFAULT_SENSITIVE_PATHS, ...options.sensitivePaths ?? []];
   const protectedRoots = [
     ...options.protectedArtifactRoots ?? [],
     ...options.controlPlaneDir ? [options.controlPlaneDir] : []
   ];
-  if (toolName === "Shell") {
+  if (toolKind === "shell") {
     const command = extractShellCommand(payload);
     if (!command) {
       if (options.unknownLocalEffect === "deny") {
@@ -3751,7 +3645,7 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
       summary: command
     };
   }
-  if (toolName === "Write" || toolName === "StrReplace" || toolName === "Delete") {
+  if (FILE_WRITE_TOOL_NAMES.has(toolKind) || FILE_EDIT_TOOL_NAMES.has(toolKind) || FILE_DELETE_TOOL_NAMES.has(toolKind)) {
     const filePath = extractFilePath(payload);
     if (!filePath) {
       if (options.unknownLocalEffect === "deny") {
@@ -3792,7 +3686,7 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
       };
     }
     const signals = [];
-    const resolvedPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(cwd, filePath);
+    const resolvedPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(cwd, filePath);
     const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath));
     if (hitsProtectedRoot) {
       signals.push("control_plane_path");
@@ -3843,7 +3737,7 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
         }
       };
     }
-    if (toolName === "Delete") {
+    if (FILE_DELETE_TOOL_NAMES.has(toolKind)) {
       signals.push("file_delete");
       return {
         verdict: "allow_flagged",
@@ -3874,6 +3768,82 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
       }
     };
   }
+  if (APPLY_PATCH_TOOL_NAMES.has(toolKind)) {
+    const patch = extractPatch(payload);
+    const targets = patch ? applyPatchTargets(patch) : [];
+    if (targets.length === 0) {
+      if (options.unknownLocalEffect === "deny") {
+        return {
+          verdict: "deny_pending_approval",
+          reason: "apply_patch_missing_path",
+          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          fingerprint: toolFingerprint(
+            toolName,
+            scrubPayload(payload.tool_input ?? {}, options),
+            repoRoot
+          ),
+          assessment: {
+            reversibility: "irreversible",
+            external: false,
+            blastRadius: "file mutation",
+            confidence: 0.85,
+            signals: ["missing_path"]
+          }
+        };
+      }
+      return {
+        verdict: "allow_flagged",
+        reason: "apply_patch_missing_path",
+        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        fingerprint: toolFingerprint(
+          toolName,
+          scrubPayload(payload.tool_input ?? {}, options),
+          repoRoot
+        ),
+        assessment: {
+          reversibility: "recoverable_with_cost",
+          external: false,
+          blastRadius: "file mutation",
+          confidence: 0.55,
+          signals: ["missing_path"]
+        }
+      };
+    }
+    let sawDelete = false;
+    for (const target of targets) {
+      const result = await classifyToolUse(
+        {
+          tool_name: target.delete ? "Delete" : "Write",
+          tool_input: { path: target.path }
+        },
+        repoRoot,
+        cwd,
+        config,
+        options
+      );
+      if (result.verdict === "deny_pending_approval") {
+        return result;
+      }
+      sawDelete ||= target.delete;
+    }
+    return {
+      verdict: "allow_flagged",
+      reason: sawDelete ? "file_delete" : "file_mutation",
+      summary: targets.map((target) => target.path).join(", "),
+      fingerprint: toolFingerprint(
+        toolName,
+        scrubPayload(payload.tool_input ?? {}, options),
+        repoRoot
+      ),
+      assessment: {
+        reversibility: "recoverable_with_cost",
+        external: false,
+        blastRadius: "this repository",
+        confidence: sawDelete ? 0.7 : 0.68,
+        signals: [sawDelete ? "file_delete" : "file_mutation", "apply_patch"]
+      }
+    };
+  }
   return {
     verdict: "allow",
     reason: "unclassified_tool",
@@ -3892,9 +3862,6 @@ async function classifyToolUse(payload, repoRoot, cwd, config, options = {}) {
     }
   };
 }
-
-// src/core/gate-engine.ts
-init_config();
 
 // src/core/judgment.ts
 function mergeAgentAssessment(independent, agent) {
@@ -3994,17 +3961,6 @@ function normalizeGatedAction(params) {
   };
 }
 function applyShellPeripheralPolicy(command, action, result, options) {
-  if (options.demoteL3External && result.verdict === "deny_pending_approval" && (result.reason === "external_effect" || result.assessment.external)) {
-    return {
-      ...result,
-      verdict: "allow_flagged",
-      reason: "l3_external_hint",
-      assessment: {
-        ...result.assessment,
-        signals: [...result.assessment.signals, "l3_external_hint", "egress_boundary_expected"]
-      }
-    };
-  }
   if (options.brokerFsScope && result.verdict === "deny_pending_approval" && (result.reason === "outside_repo_mutation" || result.reason === "outside_repo_redirect" || result.reason === "repo_outside_mutation" || result.v2?.location === "repo_outside")) {
     const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot);
     if (outsideRepoPaths.length > 0 && options.fsScopeAllowlist && allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)) {
@@ -4076,14 +4032,10 @@ function gateEnabledForAction(config, action) {
   return true;
 }
 
-// src/core/index.ts
-init_approval();
-init_config();
-
 // src/core/transactional/diff-evaluator.ts
-import path12 from "node:path";
+import path13 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = canonicalPath(path12.join(ctx.repoRoot, change.relativePath));
+  const absolutePath = canonicalPath(path13.join(ctx.repoRoot, change.relativePath));
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -4217,7 +4169,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync as existsSync5 } from "node:fs";
 import { copyFile, mkdir as mkdir2, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
-import path13 from "node:path";
+import path14 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repoRoot, ...args], {
@@ -4258,7 +4210,7 @@ async function isDirtyWorktree(repoRoot) {
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
-  const worktreePath = path13.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  const worktreePath = path14.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
   await mkdir2(stateDir, { recursive: true });
   await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
   return {
@@ -4278,14 +4230,14 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
   const resolvedCwd = canonicalPath(cwd);
-  const relative = path13.relative(canonicalPath(repoRoot), resolvedCwd);
-  if (relative.startsWith("..") || path13.isAbsolute(relative)) {
+  const relative = path14.relative(canonicalPath(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path14.isAbsolute(relative)) {
     return worktreePath;
   }
   if (relative === "") {
     return worktreePath;
   }
-  return path13.join(worktreePath, relative);
+  return path14.join(worktreePath, relative);
 }
 function runShellCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
@@ -4355,7 +4307,7 @@ async function rollbackAppliedChanges(actions) {
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === "restore") {
-        await mkdir2(path13.dirname(action.target), { recursive: true });
+        await mkdir2(path14.dirname(action.target), { recursive: true });
         await copyFile(action.backupPath, action.target);
       } else {
         await rm(action.target, { force: true });
@@ -4365,14 +4317,14 @@ async function rollbackAppliedChanges(actions) {
   }
 }
 async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-  const backupRoot = await mkdtemp(path13.join(os.tmpdir(), "belay-tx-rollback-"));
+  const backupRoot = await mkdtemp(path14.join(os.tmpdir(), "belay-tx-rollback-"));
   const rollbackActions = [];
   try {
     for (const change of changes) {
-      const target = path13.join(repoRoot, change.relativePath);
+      const target = path14.join(repoRoot, change.relativePath);
       if (existsSync5(target)) {
-        const backupPath = path13.join(backupRoot, change.relativePath);
-        await mkdir2(path13.dirname(backupPath), { recursive: true });
+        const backupPath = path14.join(backupRoot, change.relativePath);
+        await mkdir2(path14.dirname(backupPath), { recursive: true });
         await copyFile(target, backupPath);
         rollbackActions.push({ type: "restore", target, backupPath });
       } else if (change.kind !== "deleted") {
@@ -4382,8 +4334,8 @@ async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
         await rm(target, { force: true });
         continue;
       }
-      const source = path13.join(worktreePath, change.relativePath);
-      await mkdir2(path13.dirname(target), { recursive: true });
+      const source = path14.join(worktreePath, change.relativePath);
+      await mkdir2(path14.dirname(target), { recursive: true });
       await copyFile(source, target);
     }
   } catch (error) {
@@ -4544,53 +4496,6 @@ async function notifyDeny(config, event) {
   }
 }
 
-// src/services/egress-service.ts
-import { existsSync as existsSync6, readFileSync as readFileSync3 } from "node:fs";
-import path14 from "node:path";
-init_config_io();
-init_config();
-
-// src/core/egress/allowlist.ts
-init_config();
-
-// src/services/egress-service.ts
-function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
-  if (!config.egress.enabled || !config.egress.demoteL3External) {
-    return false;
-  }
-  const stateDirs = /* @__PURE__ */ new Set([
-    belayStateDir(config, repoLocalStateDir),
-    configuredControlPlaneDir(config)
-  ]);
-  const resolvedRepoRoot = path14.resolve(repoRoot);
-  for (const stateDir of stateDirs) {
-    const statusPath = path14.join(stateDir, "egress-proxy.json");
-    if (!existsSync6(statusPath)) {
-      continue;
-    }
-    try {
-      const raw = JSON.parse(readFileSync3(statusPath, "utf8"));
-      if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
-        continue;
-      }
-      if (raw.repoRoot && path14.resolve(raw.repoRoot) !== resolvedRepoRoot) {
-        continue;
-      }
-      return true;
-    } catch {
-    }
-  }
-  return false;
-}
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // src/adapters/layouts/protected-paths.ts
 import path15 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
@@ -4646,7 +4551,7 @@ function createDefaultGateRuntimeDeps() {
       return {
         filePath,
         state: {
-          version: 1,
+          version: loaded.version === 2 ? 2 : 1,
           approvals: Array.isArray(loaded.approvals) ? loaded.approvals : []
         }
       };
@@ -4662,7 +4567,7 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync7(teamPath)) {
+  if (existsSync6(teamPath)) {
     teamConfig = JSON.parse(await readFile2(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
@@ -4686,7 +4591,6 @@ function runtimeClassifierOptions(ctx, config) {
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot);
   const brokerFsScope = isCapabilityBrokerDemotionActive(config);
   return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
-    demoteL3External: isEgressProxyActiveForRepo(config, ctx.repoRoot, repoLocalStateDir),
     brokerFsScope,
     fsScopeAllowlist: brokerFsScope ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir)) : void 0
   });
@@ -4700,7 +4604,7 @@ function gateAuditEventName(kind) {
   }
   return "subagentGate";
 }
-async function ensurePendingApproval(ctx, deps, kind, result) {
+async function ensurePendingApproval(ctx, deps, kind, result, approvalInput) {
   const pending = await deps.loadApprovals(ctx, "pending-approvals.json");
   pending.state = compactApprovals(pending.state);
   const existing = pending.state.approvals.find(
@@ -4717,8 +4621,11 @@ async function ensurePendingApproval(ctx, deps, kind, result) {
     reason: result.reason,
     summary: result.normalizedCommand ?? result.summary ?? "",
     approvalTtlMinutes: ctx.config.approvalTtlMinutes,
-    approvalId: `belay_${randomUUID2().replaceAll("-", "").slice(0, 12)}`
+    approvalId: `belay_${randomUUID2().replaceAll("-", "").slice(0, 12)}`,
+    input: approvalInput?.input,
+    inputKind: approvalInput?.inputKind
   });
+  pending.state.version = 2;
   pending.state.approvals.push(approval);
   await deps.writeApprovals(pending.filePath, pending.state);
   return approval;
@@ -4829,7 +4736,14 @@ async function evaluateGatedAction(ctx, deps, params) {
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     predictedAssessment,
     observedAssessment: observedAssessment2,
-    transactionalLayer
+    transactionalLayer,
+    approvalInput: params.kind === "shell" ? {
+      input: params.command ?? result.normalizedCommand ?? result.summary ?? "",
+      inputKind: "shell"
+    } : {
+      input: params.command ?? result.normalizedCommand ?? result.summary ?? canonicalStringify(params.payload ?? {}),
+      inputKind: params.kind
+    }
   });
 }
 async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) {
@@ -4914,7 +4828,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
       wouldBlock: true
     });
   }
-  const approval = await ensurePendingApproval(ctx, deps, kind, result);
+  const approval = await ensurePendingApproval(ctx, deps, kind, result, auditExtras.approvalInput);
   let approvalToken;
   try {
     approvalToken = await issueApprovalToken(
@@ -4954,7 +4868,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
     permission: "deny",
     wouldBlock: true,
     approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)}`,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run agent-belay explain or /belay why.`,
     agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`
   });
 }
@@ -5011,13 +4925,13 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync8 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import path17 from "node:path";
 function findRepoRoot(startPath, layout) {
   let current = path17.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync8(path17.join(current, marker))) {
+      if (existsSync7(path17.join(current, marker))) {
         return current;
       }
     }

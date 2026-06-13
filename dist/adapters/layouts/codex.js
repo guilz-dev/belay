@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js';
-function runnerCommand(platform, hookName, ...args) {
-    const base = platform === 'win32' ? '.\\.codex\\hooks\\belay-runner.cmd' : './.codex/hooks/belay-runner';
-    return [base, hookName, ...args].join(' ');
+import { buildRunnerInvocation } from './scope.js';
+function runnerCommand(platform, repoRoot, hookName, ...args) {
+    const hooksDir = path.join(path.resolve(repoRoot), '.codex', 'hooks');
+    return buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args);
 }
 // Codex hook config lives in `.codex/config.toml` (TOML `[[hooks.*]]`), distinct from
 // Claude's JSON `settings.json`. belay's own config stays JSON at `.codex/belay.config.json`.

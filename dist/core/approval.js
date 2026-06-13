@@ -6,7 +6,7 @@ export function isExpired(approval) {
 }
 export function compactApprovals(state) {
     return {
-        version: 1,
+        version: state.version,
         approvals: state.approvals.filter((approval) => !isExpired(approval)),
     };
 }
@@ -21,7 +21,7 @@ export function mergeApprovalStates(target, source) {
         }
     }
     return compactApprovals({
-        version: 1,
+        version: target.version === 2 || source.version === 2 ? 2 : 1,
         approvals: [...byId.values()],
     });
 }
@@ -40,7 +40,7 @@ export function buildRetryInstruction(tokenPrefix, approvalId) {
 export function createApprovalRecord(params) {
     const createdAt = nowIso();
     const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString();
-    return {
+    const record = {
         approvalId: params.approvalId,
         kind: params.kind,
         fingerprint: params.fingerprint,
@@ -50,4 +50,9 @@ export function createApprovalRecord(params) {
         createdAt,
         expiresAt,
     };
+    if (params.input) {
+        record.input = params.input;
+        record.inputKind = params.inputKind ?? params.kind;
+    }
+    return record;
 }

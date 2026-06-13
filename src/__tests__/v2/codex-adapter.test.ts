@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -11,18 +12,45 @@ import {
   mergeCodexHooksToml,
   renderCodexHooksToml,
 } from '../../adapters/codex/hooks.js'
-import { codexUnmappedToolDenyResponse } from '../../adapters/codex/runtime-entry.js'
 import { codexLayout } from '../../adapters/layouts/codex.js'
 import {
   gateVerdictToCodexPreToolUseResponse,
   gateVerdictToCodexUserPromptResponse,
 } from '../../adapters/shared/gate-runtime.js'
+import { loadConfigFile, pendingApprovalsPath } from '../../config-io.js'
 import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
+
+async function runCodexRunner(
+  repoRoot: string,
+  hookName: string,
+  payload: unknown,
+  extraArgs: string[] = [],
+) {
+  const runnerPath = path.join(repoRoot, '.codex', 'hooks', 'belay-runner')
+  const child = spawn(runnerPath, [hookName, ...extraArgs], {
+    cwd: repoRoot,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const stdout: Buffer[] = []
+  child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
+  child.stdin.write(JSON.stringify(payload))
+  child.stdin.end()
+  const exitCode: number = await new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', resolve)
+  })
+  return {
+    exitCode,
+    stdout: Buffer.concat(stdout).toString('utf8').trim(),
+  }
+}
 
 describe('codex adapter (experimental)', () => {
   describe('TOML hook rendering', () => {
     it('renders a marker-delimited PreToolUse/SubagentStart/UserPromptSubmit/PostToolUse block', () => {
-      const toml = renderCodexHooksToml('darwin')
+      const repoRoot = '/tmp/belay-codex-test'
+      const hooksDir = path.join(repoRoot, '.codex', 'hooks')
+      const toml = renderCodexHooksToml('darwin', hooksDir, repoRoot)
       expect(toml).toContain(CODEX_HOOKS_BEGIN)
       expect(toml).toContain(CODEX_HOOKS_END)
       expect(toml).toContain('[[hooks.PreToolUse]]')
@@ -34,9 +62,11 @@ describe('codex adapter (experimental)', () => {
     })
 
     it('merges idempotently: re-merge keeps exactly one managed block and preserves user content', () => {
+      const repoRoot = '/tmp/belay-codex-test'
+      const hooksDir = path.join(repoRoot, '.codex', 'hooks')
       const userToml = 'model = "gpt-5"\n\n[features]\njs_repl = false\n'
-      const once = mergeCodexHooksToml(userToml, 'darwin')
-      const twice = mergeCodexHooksToml(once, 'darwin')
+      const once = mergeCodexHooksToml(userToml, 'darwin', hooksDir, repoRoot)
+      const twice = mergeCodexHooksToml(once, 'darwin', hooksDir, repoRoot)
       // user content preserved
       expect(twice).toContain('model = "gpt-5"')
       expect(twice).toContain('js_repl = false')
@@ -86,14 +116,33 @@ describe('codex adapter (experimental)', () => {
       expect(gateVerdictToCodexUserPromptResponse({ continue: true })).toEqual({})
     })
 
-    it('unmapped Codex tool response is fail-closed deny', () => {
-      const response = codexUnmappedToolDenyResponse('enforce') as {
+    it('unmapped Codex tool asks with pending approval (R39 TD)', async () => {
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-unmapped-'))
+      await mkdir(path.join(repoRoot, '.git'))
+      await codexAdapter.install(repoRoot, {})
+
+      const result = await runCodexRunner(
+        repoRoot,
+        'belay-tool-gate',
+        {
+          tool_name: 'UnknownMcpTool',
+          tool_input: { query: 'read-only lookup' },
+        },
+        ['PreToolUse'],
+      )
+      const response = JSON.parse(result.stdout) as {
         hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string }
       }
       expect(response.hookSpecificOutput?.permissionDecision).toBe('deny')
-      expect(response.hookSpecificOutput?.permissionDecisionReason).toContain(
-        'does not recognize this Codex tool action yet',
-      )
+      expect(response.hookSpecificOutput?.permissionDecisionReason).toContain('Approval ID:')
+
+      const config = await loadConfigFile(repoRoot)
+      const pending = JSON.parse(
+        await readFile(pendingApprovalsPath(repoRoot, config), 'utf8'),
+      ) as {
+        approvals: unknown[]
+      }
+      expect(pending.approvals).toHaveLength(1)
     })
   })
 
@@ -112,13 +161,13 @@ describe('codex adapter (experimental)', () => {
       expect(existsSync(path.join(codexLayout.hooksDir(repoRoot), 'belay-runner'))).toBe(true)
     })
 
-    it('doctor surfaces Codex residual caveats (shell verified; non-shell fail-closed)', async () => {
+    it('doctor surfaces Codex residual caveats (shell verified; unmapped tools ask)', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-doctor-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
       const report = await codexAdapter.doctor({ targetDir: repoRoot })
       expect(
-        report.warnings.some((w) => w.includes('Codex adapter') && w.includes('fail-closed')),
+        report.warnings.some((w) => w.includes('Codex adapter') && w.includes('pending approval')),
       ).toBe(true)
     })
 
@@ -127,7 +176,7 @@ describe('codex adapter (experimental)', () => {
       expect(events).toContain('SubagentStart')
     })
 
-    it('default belay config sets codexUnmappedTool policy to deny (fail-closed)', async () => {
+    it('default belay config sets codexUnmappedTool policy to deny (asks via approval path)', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-policy-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})

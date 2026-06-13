@@ -1,5 +1,6 @@
 export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, BelayControlPlaneConfig, BelayEgressConfig, BelayMode, BelayOverridesConfig, BelayPolicyConfig, BelayRedactionConfig, BelaySandboxConfig, BelayTransactionalConfig, UnknownLocalEffectPolicy, } from './core/config.js';
 export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifyResult, HookVerdict, } from './core/types.js';
+import type { InstallScope } from './adapters/layouts/scope.js';
 import type { BelayEgressConfig, BelayOverridesConfig, BelayPolicyConfig, BelaySandboxConfig } from './core/config.js';
 import type { ApprovalRecord, ClassifyResult } from './core/types.js';
 export interface HookEntry {
@@ -16,6 +17,7 @@ export interface InitOptions {
     withSkill?: boolean;
     dogfood?: boolean;
     adapter?: AdapterName;
+    scope?: InstallScope;
     preset?: import('./presets.js').ConfigPresetName;
     judgeProfile?: 'local-ollama';
     judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor';
@@ -30,6 +32,7 @@ export interface UpgradeOptions {
     targetDir?: string;
     withSkill?: boolean;
     adapter?: AdapterName;
+    scope?: InstallScope;
 }
 export interface DoctorOptions {
     targetDir?: string;
@@ -71,6 +74,49 @@ export interface StatusOptions {
     targetDir?: string;
     json?: boolean;
 }
+export interface HealthSnapshotOptions {
+    targetDir?: string;
+    adapter?: AdapterName;
+}
+export interface HealthSnapshot {
+    repoRoot: string;
+    adapter: AdapterName;
+    installScope: 'project' | 'global';
+    configPath: string;
+    hooksPath: string;
+    skillPath: string;
+    commandsPath?: string;
+    configPresent: boolean;
+    hooksInstalled: boolean;
+    managedHooksOk: boolean;
+    runtimePresent: boolean;
+    skillInstalled: boolean;
+    skillOnly: boolean;
+    commandsInstalled: boolean;
+    floorInstalled: boolean;
+    missingArtifacts: string[];
+    judgeIssues: string[];
+    judgeWarnings: string[];
+    judgeNotes: string[];
+}
+export interface ClassifyForReportResult {
+    repoRoot: string;
+    kind: ExplainKind;
+    input: string;
+    cwd: string;
+    config: import('./core/config.js').BelayConfigV3;
+    policy: BelayPolicyConfig;
+    overrides: BelayOverridesConfig;
+    egress: BelayEgressConfig;
+    egressProxyRunning: boolean;
+    sandbox: BelaySandboxConfig;
+    sandboxBrokerActive: boolean;
+    l1FullActive: boolean;
+    transactionalEligible: boolean;
+    permission: string;
+    tier: string;
+    result: ClassifyResult;
+}
 export interface StatusReport {
     repoRoot: string;
     approvalStateDir: string;
@@ -78,6 +124,7 @@ export interface StatusReport {
     approved: ApprovalRecord[];
     expiredPendingCount: number;
     dogfood: DogfoodStatus;
+    health: HealthSnapshot;
 }
 export interface DogfoodOptions {
     targetDir?: string;
@@ -108,6 +155,9 @@ export interface ExplainReport {
     sandboxBrokerActive: boolean;
     l1FullActive: boolean;
     transactionalEligible: boolean;
+    permission: string;
+    tier: string;
+    approvalId?: string;
     result: ClassifyResult;
 }
 export interface ExplainOptions {
@@ -118,6 +168,8 @@ export interface ExplainOptions {
     kind?: ExplainKind;
     toolName?: string;
     payload?: Record<string, unknown>;
+    /** Re-classify the latest pending approval when no command is given. */
+    explainLastPending?: boolean;
 }
 export interface RevokeOptions {
     targetDir?: string;

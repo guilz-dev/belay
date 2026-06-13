@@ -6,7 +6,7 @@ export type ManagedHookDefinition = {
     placement: 'prepend' | 'append';
     matcher?: string;
 };
-export declare function getManagedHookEntries(platform?: NodeJS.Platform): Array<{
+export declare function getManagedHookEntries(platform?: NodeJS.Platform, hooksDir?: string, repoRoot?: string): Array<{
     event: string;
     definition: ManagedHookDefinition;
 }>;

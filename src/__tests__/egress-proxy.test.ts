@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
-import http from 'node:http'
+import http, { type RequestListener } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -38,13 +38,14 @@ function memoryStore(
 async function proxyRequest(
   port: number,
   targetUrl: string,
+  method = 'GET',
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
-        method: 'GET',
+        method,
         path: targetUrl,
       },
       (res) => {
@@ -68,12 +69,37 @@ async function listenProxy(
 ): Promise<{ server: ReturnType<typeof createEgressProxy>; port: number }> {
   const server = createEgressProxy(ctx)
   const port = await new Promise<number>((resolve, reject) => {
+    server.once('error', reject)
     server.listen(0, '127.0.0.1', () => {
       const address = server.address()
       if (!address || typeof address === 'string') {
         reject(new Error('failed to bind proxy'))
         return
       }
+      server.removeAllListeners('error')
+      resolve(address.port)
+    })
+  })
+  return { server, port }
+}
+
+function canSkipSocketBind(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EPERM'
+}
+
+async function listenHttpServer(
+  handler: RequestListener,
+): Promise<{ server: http.Server; port: number }> {
+  const server = http.createServer(handler)
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('failed to bind server'))
+        return
+      }
+      server.removeAllListeners('error')
       resolve(address.port)
     })
   })
@@ -85,7 +111,7 @@ describe('egress proxy integration', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('blocks unknown egress, allows once after approval, then blocks again', async () => {
+  it('blocks unknown mutating egress, allows once after approval, then blocks again', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-egress-proxy-'))
     tempDirs.push(dir)
     const repoRoot = dir
@@ -98,17 +124,26 @@ describe('egress proxy integration', () => {
       egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, listenPort: 0 },
     }
 
-    const { server, port } = await listenProxy({
-      config,
-      repoRoot,
-      store,
-      loadApproved: async () => approved,
-    })
+    let server: ReturnType<typeof createEgressProxy> | null = null
+    let port = 0
+    try {
+      ;({ server, port } = await listenProxy({
+        config,
+        repoRoot,
+        store,
+        loadApproved: async () => approved,
+      }))
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        return
+      }
+      throw error
+    }
 
     try {
-      const blocked = await proxyRequest(port, 'http://blocked.example.com/')
+      const blocked = await proxyRequest(port, 'http://blocked.example.com/', 'POST')
       expect(blocked.status).toBe(403)
-      expect(blocked.body).toContain('egress_blocked')
+      expect(blocked.body).toContain('egress_requires_approval')
       expect(pending.approvals).toHaveLength(1)
 
       const approvalId = pending.approvals[0]?.approvalId ?? ''
@@ -121,14 +156,14 @@ describe('egress proxy integration', () => {
       expect(approvalResult.ok).toBe(true)
       expect(approved.approvals).toHaveLength(1)
 
-      const allowed = await proxyRequest(port, 'http://blocked.example.com/')
+      const allowed = await proxyRequest(port, 'http://blocked.example.com/', 'POST')
       expect(allowed.status).not.toBe(403)
       expect(approved.approvals).toHaveLength(0)
 
-      const blockedAgain = await proxyRequest(port, 'http://blocked.example.com/')
+      const blockedAgain = await proxyRequest(port, 'http://blocked.example.com/', 'POST')
       expect(blockedAgain.status).toBe(403)
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await new Promise<void>((resolve) => server?.close(() => resolve()))
     }
   })
 
@@ -144,8 +179,8 @@ describe('egress proxy integration', () => {
           kind: 'egress',
           fingerprint: 'fp-domain',
           repoRoot,
-          reason: 'egress_blocked',
-          summary: 'CONNECT allowed.example.com:443',
+          reason: 'egress_requires_approval',
+          summary: 'POST allowed.example.com:443',
           createdAt: new Date().toISOString(),
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
@@ -171,18 +206,84 @@ describe('egress proxy integration', () => {
     const allowlist = await loadEgressAllowlist(allowlistPath)
     expect(allowlist.domains.some((entry) => entry.host === 'allowed.example.com')).toBe(true)
 
-    const { server, port } = await listenProxy({
-      config,
-      repoRoot,
-      store,
-      loadApproved: async () => approved,
-    })
+    let server: ReturnType<typeof createEgressProxy> | null = null
+    let port = 0
+    try {
+      ;({ server, port } = await listenProxy({
+        config,
+        repoRoot,
+        store,
+        loadApproved: async () => approved,
+      }))
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        return
+      }
+      throw error
+    }
 
     try {
-      const response = await proxyRequest(port, 'http://allowed.example.com/')
+      const response = await proxyRequest(port, 'http://allowed.example.com/', 'POST')
       expect(response.status).not.toBe(403)
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await new Promise<void>((resolve) => server?.close(() => resolve()))
+    }
+  })
+
+  it('lets read-only HTTP requests pass without approval', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-egress-read-'))
+    tempDirs.push(dir)
+    let seenMethod: string | null = null
+    let upstream: { server: http.Server; port: number } | null = null
+    try {
+      upstream = await listenHttpServer((req, res) => {
+        seenMethod = req.method ?? null
+        res.writeHead(200)
+        res.end('ok')
+      })
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        return
+      }
+      throw error
+    }
+
+    const repoRoot = dir
+    const allowlistPath = path.join(dir, 'egress-allowlist.json')
+    const store = memoryStore(
+      { version: 1, approvals: [] },
+      { version: 1, approvals: [] },
+      allowlistPath,
+    )
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, listenPort: 0 },
+    }
+
+    let server: ReturnType<typeof createEgressProxy> | null = null
+    let port = 0
+    try {
+      ;({ server, port } = await listenProxy({
+        config,
+        repoRoot,
+        store,
+        loadApproved: async () => ({ version: 1, approvals: [] }),
+      }))
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        await new Promise<void>((resolve) => upstream?.server.close(() => resolve()))
+        return
+      }
+      throw error
+    }
+
+    try {
+      const response = await proxyRequest(port, `http://127.0.0.1:${upstream.port}/readonly`)
+      expect(response.status).toBe(200)
+      expect(seenMethod).toBe('GET')
+    } finally {
+      await new Promise<void>((resolve) => server?.close(() => resolve()))
+      await new Promise<void>((resolve) => upstream?.server.close(() => resolve()))
     }
   })
 
@@ -191,24 +292,20 @@ describe('egress proxy integration', () => {
     tempDirs.push(dir)
     let seenPath: string | null = null
     let seenHost: string | null = null
-    const upstream = await new Promise<{ port: number; close: () => void }>((resolve) => {
-      const server = http.createServer((req, res) => {
+    let upstream: { server: http.Server; port: number } | null = null
+    try {
+      upstream = await listenHttpServer((req, res) => {
         seenPath = req.url ?? null
         seenHost = req.headers.host ?? null
         res.writeHead(200)
         res.end('ok')
       })
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address()
-        if (!address || typeof address === 'string') {
-          throw new Error('failed to bind upstream')
-        }
-        resolve({
-          port: address.port,
-          close: () => server.close(),
-        })
-      })
-    })
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        return
+      }
+      throw error
+    }
 
     const repoRoot = dir
     const allowlistPath = path.join(dir, 'egress-allowlist.json')
@@ -232,12 +329,22 @@ describe('egress proxy integration', () => {
       }),
     )
 
-    const { server, port } = await listenProxy({
-      config,
-      repoRoot,
-      store,
-      loadApproved: async () => ({ version: 1, approvals: [] }),
-    })
+    let server: ReturnType<typeof createEgressProxy> | null = null
+    let port = 0
+    try {
+      ;({ server, port } = await listenProxy({
+        config,
+        repoRoot,
+        store,
+        loadApproved: async () => ({ version: 1, approvals: [] }),
+      }))
+    } catch (error) {
+      if (canSkipSocketBind(error)) {
+        await new Promise<void>((resolve) => upstream?.server.close(() => resolve()))
+        return
+      }
+      throw error
+    }
 
     try {
       const response = await proxyRequest(port, `http://127.0.0.1:${upstream.port}/hello?x=1`)
@@ -245,8 +352,8 @@ describe('egress proxy integration', () => {
       expect(seenPath).toBe('/hello?x=1')
       expect(seenHost).toBe(`127.0.0.1:${upstream.port}`)
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-      upstream.close()
+      await new Promise<void>((resolve) => server?.close(() => resolve()))
+      await new Promise<void>((resolve) => upstream?.server.close(() => resolve()))
     }
   })
 })

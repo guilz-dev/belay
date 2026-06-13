@@ -1,10 +1,6 @@
+import path from 'node:path'
 import type { ManagedHookDefinition } from '../../defaults.js'
-
-function runnerCommand(platform: NodeJS.Platform, hookName: string, ...args: string[]): string {
-  const base =
-    platform === 'win32' ? '.\\.claude\\hooks\\belay-runner.cmd' : './.claude/hooks/belay-runner'
-  return [base, hookName, ...args].join(' ')
-}
+import { buildRunnerInvocation } from '../layouts/scope.js'
 
 export interface ClaudeHookGroup {
   matcher?: string
@@ -12,12 +8,16 @@ export interface ClaudeHookGroup {
 }
 
 export function getClaudeManagedHookGroups(
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
 ): Record<string, ClaudeHookGroup[]> {
-  const toolGate = runnerCommand(platform, 'belay-tool-gate', 'PreToolUse')
-  const shellGate = runnerCommand(platform, 'belay-shell-gate')
-  const approvalGate = runnerCommand(platform, 'belay-before-submit')
-  const auditHook = runnerCommand(platform, 'belay-audit', 'PostToolUse')
+  const runner = (hookName: string, ...args: string[]) =>
+    buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args)
+  const toolGate = runner('belay-tool-gate', 'PreToolUse')
+  const shellGate = runner('belay-shell-gate')
+  const approvalGate = runner('belay-before-submit')
+  const auditHook = runner('belay-audit', 'PostToolUse')
 
   return {
     PreToolUse: [
@@ -49,8 +49,12 @@ export function getClaudeManagedHookGroups(
 
 export function getClaudeManagedHookEntries(
   platform: NodeJS.Platform = process.platform,
+  hooksDir?: string,
+  repoRoot?: string,
 ): Array<{ event: string; definition: ManagedHookDefinition }> {
-  const groups = getClaudeManagedHookGroups(platform)
+  const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
+  const resolvedHooksDir = hooksDir ?? path.join(resolvedRepo, '.claude', 'hooks')
+  const groups = getClaudeManagedHookGroups(platform, resolvedHooksDir, resolvedRepo)
   const entries: Array<{ event: string; definition: ManagedHookDefinition }> = []
   for (const [event, groupList] of Object.entries(groups)) {
     for (const group of groupList) {

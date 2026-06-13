@@ -1,15 +1,20 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js';
+import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js';
+import { resolveScopedPaths } from '../adapters/layouts/scope.js';
 import { cleanupOrphanApprovalState } from '../cleanup-orphans.js';
-import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredConfig, pendingApprovalsPath, repoLocalStateDirFor, runtimeCorePath, } from '../config-io.js';
+import { approvedApprovalsPath, belayStateDir, detectAdapterName, loadLayeredConfig, pendingApprovalsPath, repoLocalStateDirFor, } from '../config-io.js';
 import { defaultControlPlaneDir } from '../core/config.js';
 import { verifyIntegrityManifest } from '../core/integrity.js';
 import { diagnoseJudge } from '../core/judge-doctor.js';
+import { getManagedHookEntries } from '../defaults.js';
 import { resolveNodeBinary } from '../node-resolution.js';
 import { egressStatus } from '../services/egress-service.js';
 import { sandboxStatus } from '../services/sandbox-service.js';
 import { PACKAGE_VERSION } from '../version.js';
+import { collectHealthSnapshot } from './health-snapshot.js';
 import { metricsProject } from './metrics.js';
 async function readRuntimeVersion(corePath) {
     try {
@@ -49,7 +54,7 @@ export async function doctorProject(options = {}) {
     const layout = adapter.layout;
     let configPath = layout.configPath(repoRoot);
     let hooksPath = layout.hooksSettingsPath(repoRoot);
-    let corePath = runtimeCorePath(repoRoot, adapterName);
+    let corePath = path.join(layout.runtimeDir(repoRoot), 'core.mjs');
     if (!existsSync(configPath)) {
         issues.push(`Missing config: ${configPath}`);
     }
@@ -60,7 +65,7 @@ export async function doctorProject(options = {}) {
             const activeAdapter = getAdapter(adapterName);
             configPath = activeAdapter.layout.configPath(repoRoot);
             hooksPath = activeAdapter.layout.hooksSettingsPath(repoRoot);
-            corePath = runtimeCorePath(repoRoot, adapterName);
+            corePath = path.join(activeAdapter.layout.runtimeDir(repoRoot), 'core.mjs');
             if (rawConfig.version === undefined) {
                 warnings.push('Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.');
             }
@@ -78,6 +83,13 @@ export async function doctorProject(options = {}) {
             warnings.push(...judgeDoctor.warnings);
             notes.push(...judgeDoctor.notes);
             notes.push(`Adapter: ${adapterName}`);
+            const installScope = loadedConfig.installScope === 'global' ? 'global' : 'project';
+            const scopedPaths = resolveScopedPaths(activeAdapter.layout, installScope, repoRoot);
+            hooksPath = scopedPaths.hooksSettingsPath;
+            corePath = path.join(scopedPaths.runtimeDir, 'core.mjs');
+            notes.push(installScope === 'global'
+                ? `Install scope: global (hooks/runtime at ${scopedPaths.hooksDir})`
+                : 'Install scope: project');
             notes.push(`Config mode: ${loadedConfig.mode}`);
             notes.push('Verdict engine: v2 (location × opacity × effect × confidence). Shell gates use the v2 classifier; audit records include schemaVersion 2 axes when available.');
             const repoLocalDir = repoLocalStateDirFor(repoRoot, loadedConfig);
@@ -115,10 +127,14 @@ export async function doctorProject(options = {}) {
         }
     }
     const activeLayout = getAdapter(adapterName).layout;
+    const installScope = loadedConfig?.installScope === 'global' ? 'global' : 'project';
+    const scopedPaths = resolveScopedPaths(activeLayout, installScope, repoRoot);
+    hooksPath = scopedPaths.hooksSettingsPath;
+    corePath = path.join(scopedPaths.runtimeDir, 'core.mjs');
+    const hooksDir = scopedPaths.hooksDir;
     const repoLocalDir = loadedConfig
         ? repoLocalStateDirFor(repoRoot, loadedConfig)
         : activeLayout.repoLocalStateDir(repoRoot);
-    const hooksDir = activeLayout.hooksDir(repoRoot);
     const requiredPaths = [
         path.join(hooksDir, 'belay-runner'),
         path.join(hooksDir, 'belay-runner.cmd'),
@@ -142,7 +158,11 @@ export async function doctorProject(options = {}) {
     }
     let hooksOk = true;
     try {
-        const managedEntries = getAdapter(adapterName).hookEvents();
+        const managedEntries = adapterName === 'cursor'
+            ? getManagedHookEntries(process.platform, hooksDir, repoRoot)
+            : adapterName === 'claude'
+                ? getClaudeManagedHookEntries(process.platform, hooksDir, repoRoot)
+                : getCodexManagedHookEntries(process.platform, hooksDir, repoRoot);
         if (adapterName === 'cursor') {
             const { loadHooksFile } = await import('../installer.js');
             const hooksFile = await loadHooksFile(hooksPath);
@@ -170,13 +190,14 @@ export async function doctorProject(options = {}) {
             // SPEC-v2.2 R-X3 / G-B2). Surface only the residual caveats so users know the boundary.
             warnings.push('Codex adapter: shell gating verified on Codex TUI (PreToolUse deny honored). Residual ' +
                 'caveats — only the shell (Bash) tool is confirmed; non-shell tool names (apply_patch ' +
-                'etc.) are best-guess and fail-closed; managed (pre-trusted) deployment is not yet ' +
-                'available; non-managed hooks require /hooks trust. See docs/SPEC-v2.2.md R-X3.');
+                'etc.) are best-guess mappings; unmapped tools ask with pending approval (R39); managed ' +
+                '(pre-trusted) deployment is not yet available; non-managed hooks require /hooks trust. ' +
+                'See docs/SPEC-v2.2.md R-X3.');
         }
         else {
             const settings = JSON.parse(await readFile(hooksPath, 'utf8'));
-            for (const { definition } of managedEntries) {
-                const eventHooks = settings.hooks?.PreToolUse ?? [];
+            for (const { event, definition } of managedEntries) {
+                const eventHooks = settings.hooks?.[event] ?? [];
                 const present = eventHooks.some((entry) => {
                     if (!entry || typeof entry !== 'object') {
                         return false;
@@ -184,9 +205,9 @@ export async function doctorProject(options = {}) {
                     const hooks = entry.hooks;
                     return hooks?.some((hook) => hook.command === definition.command);
                 });
-                if (!present && definition.matcher) {
+                if (!present) {
                     hooksOk = false;
-                    issues.push(`Missing Claude managed hook command: ${definition.command}`);
+                    issues.push(`Missing Claude managed hook for ${event}: ${definition.command}`);
                 }
             }
         }
@@ -265,7 +286,7 @@ export async function doctorProject(options = {}) {
         }
         if (loadedConfig.egress.enabled) {
             const egress = await egressStatus({ targetDir: repoRoot });
-            notes.push(`Egress proxy: enabled — external-effect demotion active only while proxy runs (demoteL3External=${loadedConfig.egress.demoteL3External}), listen ${egress.host}:${egress.port}.`);
+            notes.push(`Egress proxy: enabled — read/mutate action class enforced at proxy layer (listen ${egress.host}:${egress.port}; demoteL3External config is legacy and not applied to shell classifier).`);
             if (!egress.running) {
                 warnings.push('Egress is enabled in config but the local proxy is not running. Run agent-belay egress start.');
             }
@@ -279,6 +300,16 @@ export async function doctorProject(options = {}) {
                 }
             }
         }
+    }
+    const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: adapterName });
+    if (health.skillOnly) {
+        warnings.push('Skill-only install detected: belay SKILL.md is present but hook floor is missing or incomplete. ' +
+            'This is advisory only — enforcement requires hooks. Run `npx agent-belay init` (or `agent-belay init-wizard`) ' +
+            'then `agent-belay doctor` to verify the floor.');
+        notes.push(`Skill path: ${health.skillPath}`);
+    }
+    if (health.skillInstalled && !health.commandsInstalled && adapterName === 'cursor') {
+        notes.push('Optional: install Cursor slash commands with `agent-belay init --with-skill` for /belay-approve routing.');
     }
     const report = {
         ok: issues.length === 0 && hooksOk,

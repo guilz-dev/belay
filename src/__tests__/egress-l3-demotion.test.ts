@@ -7,8 +7,8 @@ import { classifyShellCore, classifyShellGated } from './helpers/shell-classify.
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
 
-describe('egress external demotion with peripheral policy', () => {
-  it('flags external commands instead of denying when demoteL3External is set', async () => {
+describe('egress proxy does not loosen the restorability floor', () => {
+  it('keeps remote mutations denied even when demoteL3External is set', async () => {
     const result = await classifyShellGated(
       'git push origin main',
       cwd,
@@ -18,9 +18,8 @@ describe('egress external demotion with peripheral policy', () => {
         demoteL3External: true,
       },
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('l3_external_hint')
-    expect(result.assessment.signals).toContain('egress_boundary_expected')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
   })
 
   it('still denies external commands when demoteL3External is false', async () => {
@@ -43,7 +42,7 @@ describe('egress external demotion with peripheral policy', () => {
     expect(result.reason).not.toBe('l3_external_hint')
   })
 
-  it('demotes resolved external launcher recipes to hints', async () => {
+  it('keeps resolved external launcher recipes denied', async () => {
     const fixtureRoot = path.join(import.meta.dirname, 'v2', 'fixtures')
     const result = await classifyShellGated(
       'npm run deploy',
@@ -54,8 +53,8 @@ describe('egress external demotion with peripheral policy', () => {
         demoteL3External: true,
       },
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('l3_external_hint')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
   })
 
   it('does not demote when egress is disabled in config', async () => {
