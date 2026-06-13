@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js';
-import { assertJudgeEndpoint } from '../judge-config.js';
-import { createDeterministicJudgeStub, createOllamaJudge, createOpenAiCompatibleJudge, } from './judge.js';
+import { createDeterministicJudgeStub, createFailClosedJudge, createOllamaJudge, createOpenAiCompatibleJudge, } from './judge.js';
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url);
 let cachedPinnedModels = null;
 export function resetPinnedJudgeModelsCache() {
@@ -41,11 +40,19 @@ export function createJudgeFromConfig(config, options = {}) {
     const judgeConfig = config.judge;
     const provider = normalizeJudgeProvider(judgeConfig.provider);
     if (provider === 'openai-compatible') {
-        assertJudgeEndpoint(judgeConfig);
+        const endpoint = judgeConfig.endpoint?.trim();
+        if (!endpoint) {
+            return createFailClosedJudge({
+                reason: 'openai_compatible_endpoint_missing',
+                fallbackReason: 'missing_endpoint',
+                modelRequested: judgeConfig.model,
+                modelResolved: judgeConfig.model,
+            });
+        }
         const pinned = options.pinnedModels ?? { autoResolved: 'composer-2.5' };
         const { resolved } = resolveCloudModel(judgeConfig.model, pinned);
         return createOpenAiCompatibleJudge({
-            endpoint: judgeConfig.endpoint,
+            endpoint,
             modelRequested: judgeConfig.model,
             modelResolved: resolved,
             timeoutMs: judgeConfig.timeoutMs,

@@ -90,12 +90,29 @@ export function createDeterministicJudgeStub(): TracedTier1Judge {
 }
 
 /** Fail-closed judge for when Tier1 is required but unavailable. */
-export function createFailClosedJudge(): TracedTier1Judge {
-  return {
+export function createFailClosedJudge(options?: {
+  reason?: string
+  fallbackReason?: string
+  modelRequested?: string
+  modelResolved?: string
+}): TracedTier1Judge {
+  const reason = options?.reason ?? 'fail_closed'
+  const judge: TracedTier1Judge = {
     evaluate() {
-      return Promise.resolve(failClosedVerdict('fail_closed'))
+      const started = Date.now()
+      if (options?.fallbackReason) {
+        judge.lastTrace = {
+          provider: 'fallback',
+          modelRequested: options.modelRequested ?? 'unknown',
+          modelResolved: options.modelResolved ?? 'unknown',
+          latencyMs: Date.now() - started,
+          fallbackReason: options.fallbackReason,
+        }
+      }
+      return Promise.resolve(failClosedVerdict(reason))
     },
   }
+  return judge
 }
 
 export interface OllamaJudgeOptions {

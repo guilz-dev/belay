@@ -1,7 +1,7 @@
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js';
 import { resolveJudgeApiKey } from './judge-api-key.js';
 import { assertJudgeEndpoint } from './judge-config.js';
-import { createOpenAiCompatibleJudge, createOllamaJudge } from './v2/judge.js';
+import { createOllamaJudge, createOpenAiCompatibleJudge } from './v2/judge.js';
 import { loadPinnedJudgeModels, resolveCloudModel } from './v2/judge-factory.js';
 export async function diagnoseJudge(config) {
     const issues = [];
@@ -34,9 +34,9 @@ export async function diagnoseJudge(config) {
         const pinnedModels = await loadPinnedJudgeModels();
         const resolved = resolveCloudModel(judge.model, pinnedModels['openai-compatible']);
         notes.push(`Resolved model: ${resolved.resolved}`);
-        if (keyInfo.key) {
+        if (keyInfo.key && judge.endpoint?.trim()) {
             const traced = createOpenAiCompatibleJudge({
-                endpoint: judge.endpoint,
+                endpoint: judge.endpoint.trim(),
                 modelRequested: judge.model,
                 modelResolved: resolved.resolved,
                 timeoutMs: Math.min(judge.timeoutMs, 5000),

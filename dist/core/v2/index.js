@@ -3,7 +3,7 @@ export { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containme
 export { verdictFingerprint } from './fingerprint.js';
 export { createCursorJudge, createDeterministicJudgeStub, createFailClosedJudge, createOllamaJudge, createOpenAiCompatibleJudge, prescanInterpreterCode, tier1RequiresAsk, } from './judge.js';
 export { judgeTraceAuditFields } from './judge-audit.js';
-export { createJudgeFromConfig, judgeConfigSummary, loadPinnedJudgeModels, resolveCloudModel, resetPinnedJudgeModelsCache, } from './judge-factory.js';
+export { createJudgeFromConfig, judgeConfigSummary, loadPinnedJudgeModels, resetPinnedJudgeModelsCache, resolveCloudModel, } from './judge-factory.js';
 export { scrubOutboundForJudge } from './judge-outbound.js';
 export { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js';
 export { parseSegment, peelTransparentWrappers, segmentOpacity, splitTopLevelSegments, } from './parser.js';

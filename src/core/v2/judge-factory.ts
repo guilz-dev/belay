@@ -3,9 +3,9 @@ import { fileURLToPath } from 'node:url'
 
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
-import { assertJudgeEndpoint } from '../judge-config.js'
 import {
   createDeterministicJudgeStub,
+  createFailClosedJudge,
   createOllamaJudge,
   createOpenAiCompatibleJudge,
   type TracedTier1Judge,
@@ -70,13 +70,17 @@ export function createJudgeFromConfig(
   const provider = normalizeJudgeProvider(judgeConfig.provider)
 
   if (provider === 'openai-compatible') {
-    assertJudgeEndpoint(judgeConfig)
-    const pinned = options.pinnedModels ?? { autoResolved: 'composer-2.5' }
-    const { resolved } = resolveCloudModel(judgeConfig.model, pinned)
     const endpoint = judgeConfig.endpoint?.trim()
     if (!endpoint) {
-      throw new Error('openai-compatible judge requires endpoint')
+      return createFailClosedJudge({
+        reason: 'openai_compatible_endpoint_missing',
+        fallbackReason: 'missing_endpoint',
+        modelRequested: judgeConfig.model,
+        modelResolved: judgeConfig.model,
+      })
     }
+    const pinned = options.pinnedModels ?? { autoResolved: 'composer-2.5' }
+    const { resolved } = resolveCloudModel(judgeConfig.model, pinned)
     return createOpenAiCompatibleJudge({
       endpoint,
       modelRequested: judgeConfig.model,

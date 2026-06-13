@@ -15,7 +15,12 @@ export declare function prescanInterpreterCode(code: string): Tier1Verdict | nul
 /** Conservative stub: Tier1 defers to Tier0; returns safe negatives for structural suite. */
 export declare function createDeterministicJudgeStub(): TracedTier1Judge;
 /** Fail-closed judge for when Tier1 is required but unavailable. */
-export declare function createFailClosedJudge(): TracedTier1Judge;
+export declare function createFailClosedJudge(options?: {
+    reason?: string;
+    fallbackReason?: string;
+    modelRequested?: string;
+    modelResolved?: string;
+}): TracedTier1Judge;
 export interface OllamaJudgeOptions {
     model?: string;
     baseUrl?: string;

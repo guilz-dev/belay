@@ -1631,22 +1631,6 @@ function judgeTraceAuditFields(trace) {
 // src/core/v2/judge-factory.ts
 init_config();
 
-// src/core/judge-config.ts
-init_config();
-var JudgeEndpointRequiredError = class extends Error {
-  constructor() {
-    super(
-      "openai-compatible judge requires --judge-endpoint (or judge.endpoint in config). No default cloud base URL is applied."
-    );
-    this.name = "JudgeEndpointRequiredError";
-  }
-};
-function assertJudgeEndpoint(judge) {
-  if (judge.provider === "openai-compatible" && !judge.endpoint?.trim()) {
-    throw new JudgeEndpointRequiredError();
-  }
-}
-
 // src/core/v2/judge-outbound.ts
 var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
 var REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
@@ -1758,6 +1742,25 @@ function createDeterministicJudgeStub() {
       });
     }
   };
+}
+function createFailClosedJudge(options) {
+  const reason = options?.reason ?? "fail_closed";
+  const judge = {
+    evaluate() {
+      const started = Date.now();
+      if (options?.fallbackReason) {
+        judge.lastTrace = {
+          provider: "fallback",
+          modelRequested: options.modelRequested ?? "unknown",
+          modelResolved: options.modelResolved ?? "unknown",
+          latencyMs: Date.now() - started,
+          fallbackReason: options.fallbackReason
+        };
+      }
+      return Promise.resolve(failClosedVerdict(reason));
+    }
+  };
+  return judge;
 }
 function createOllamaJudge(options = {}) {
   const model = options.model ?? "gemma4:e2b";
@@ -1948,11 +1951,19 @@ function createJudgeFromConfig(config, options = {}) {
   const judgeConfig = config.judge;
   const provider = normalizeJudgeProvider(judgeConfig.provider);
   if (provider === "openai-compatible") {
-    assertJudgeEndpoint(judgeConfig);
+    const endpoint = judgeConfig.endpoint?.trim();
+    if (!endpoint) {
+      return createFailClosedJudge({
+        reason: "openai_compatible_endpoint_missing",
+        fallbackReason: "missing_endpoint",
+        modelRequested: judgeConfig.model,
+        modelResolved: judgeConfig.model
+      });
+    }
     const pinned = options.pinnedModels ?? { autoResolved: "composer-2.5" };
     const { resolved } = resolveCloudModel(judgeConfig.model, pinned);
     return createOpenAiCompatibleJudge({
-      endpoint: judgeConfig.endpoint,
+      endpoint,
       modelRequested: judgeConfig.model,
       modelResolved: resolved,
       timeoutMs: judgeConfig.timeoutMs,

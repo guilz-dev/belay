@@ -67,12 +67,24 @@ export function createDeterministicJudgeStub() {
     };
 }
 /** Fail-closed judge for when Tier1 is required but unavailable. */
-export function createFailClosedJudge() {
-    return {
+export function createFailClosedJudge(options) {
+    const reason = options?.reason ?? 'fail_closed';
+    const judge = {
         evaluate() {
-            return Promise.resolve(failClosedVerdict('fail_closed'));
+            const started = Date.now();
+            if (options?.fallbackReason) {
+                judge.lastTrace = {
+                    provider: 'fallback',
+                    modelRequested: options.modelRequested ?? 'unknown',
+                    modelResolved: options.modelResolved ?? 'unknown',
+                    latencyMs: Date.now() - started,
+                    fallbackReason: options.fallbackReason,
+                };
+            }
+            return Promise.resolve(failClosedVerdict(reason));
         },
     };
+    return judge;
 }
 export function createOllamaJudge(options = {}) {
     const model = options.model ?? 'gemma4:e2b';

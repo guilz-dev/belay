@@ -19,8 +19,15 @@
 ### Removed
 
 - OQ3 `spikeOnPrompt` / control-plane spike wiring (R28)
-- `control-plane-spike.ts` and `--no-spike` CLI flag
+- `control-plane-spike.ts`, `scripts/oq3-control-plane-spike.mjs`, and `--no-spike` CLI flag
 - Default `https://api.cursor.com` cloud base URL (R25)
+
+### Fixed
+
+- CI runs `pnpm test:stable` (vitest x3) per SPEC T18
+- Build cleans `dist/` before compile to drop removed modules
+- Runtime fail-closed judge when `openai-compatible` endpoint is missing (no generic hook deny)
+- README dogfood section updated for v2.1.1
 
 ### Added (v2.1)
 - Judge profiles `cursor-composer` (requires `--accept-cloud-judge`) and `local-ollama` (fresh init default)

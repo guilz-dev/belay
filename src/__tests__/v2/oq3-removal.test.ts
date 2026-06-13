@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -56,5 +57,9 @@ describe('T17 OQ3 / control-plane spike removal', () => {
       } as typeof DEFAULT_CONFIG_V4.controlPlane & { spikeOnPrompt: boolean },
     })
     expect('spikeOnPrompt' in normalized.controlPlane).toBe(false)
+  })
+
+  it('does not ship the OQ3 spike CLI script', () => {
+    expect(existsSync(path.join(process.cwd(), 'scripts/oq3-control-plane-spike.mjs'))).toBe(false)
   })
 })

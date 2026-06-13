@@ -235,9 +235,7 @@ export function normalizeJudgeConfig(judge) {
         model,
         timeoutMs,
         endpoint: typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null,
-        keepAlive: provider === 'ollama' &&
-            typeof judge.keepAlive === 'string' &&
-            judge.keepAlive.trim()
+        keepAlive: provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
             ? judge.keepAlive.trim()
             : provider === 'ollama'
                 ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
