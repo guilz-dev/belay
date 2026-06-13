@@ -109,7 +109,6 @@ export interface DoctorReport {
   warnings: string[]
   configProvenance: ConfigProvenanceNote[]
   dogfood: DogfoodStatus | null
-  oq3Spike: Oq3SpikeStatus | null
 }
 
 export interface StatusOptions {

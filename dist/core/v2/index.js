@@ -2,8 +2,8 @@ export { buildVerdictContext, classifyShell, verdictAuditFields, verdictToClassi
 export { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containment.js';
 export { verdictFingerprint } from './fingerprint.js';
 export { createCursorJudge, createDeterministicJudgeStub, createFailClosedJudge, createOllamaJudge, prescanInterpreterCode, tier1RequiresAsk, } from './judge.js';
-export { createJudgeFromConfig, judgeConfigSummary, loadPinnedJudgeModels, resolveCursorModel, } from './judge-factory.js';
 export { judgeTraceAuditFields } from './judge-audit.js';
+export { createJudgeFromConfig, judgeConfigSummary, loadPinnedJudgeModels, resolveCursorModel, } from './judge-factory.js';
 export { scrubOutboundForJudge } from './judge-outbound.js';
 export { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js';
 export { parseSegment, peelTransparentWrappers, segmentOpacity, splitTopLevelSegments, } from './parser.js';

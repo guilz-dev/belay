@@ -13,16 +13,15 @@ import {
   repoLocalStateDirFor,
   runtimeCorePath,
 } from '../config-io.js'
-import { configuredControlPlaneDir, defaultControlPlaneDir } from '../core/config.js'
-import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
+import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
 import { resolveNodeBinary } from '../node-resolution.js'
-import { loadOperationalInsights } from '../operational-insights.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
 import { PACKAGE_VERSION } from '../version.js'
+import { metricsProject } from './metrics.js'
 
 async function readRuntimeVersion(corePath: string): Promise<{ stamp?: string; version?: string }> {
   try {
@@ -246,11 +245,19 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   }
 
   let dogfood = null
-  let oq3Spike = null
   if (loadedConfig) {
-    const operational = await loadOperationalInsights({ targetDir: repoRoot })
-    dogfood = operational.dogfood
-    oq3Spike = operational.oq3Spike
+    const metrics = await metricsProject({ targetDir: repoRoot })
+    dogfood = {
+      active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
+      mode: loadedConfig.mode,
+      unknownLocalEffect: loadedConfig.policy.unknownLocalEffect,
+      spikeOnPrompt: loadedConfig.controlPlane.spikeOnPrompt === true,
+      readyForEnforce: metrics.dogfood.readyForEnforce,
+      gateEvents: metrics.gateEvents,
+      wouldBlockCount: metrics.wouldBlockCount,
+      wouldBlockRate: metrics.wouldBlockRate,
+      notes: metrics.dogfood.notes,
+    }
 
     if (dogfood.active) {
       notes.push(
@@ -261,20 +268,6 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
     } else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
       notes.push('Fail-closed policy is enabled in enforce mode.')
-    }
-
-    if (loadedConfig.controlPlane.spikeOnPrompt) {
-      if (oq3Spike?.ok) {
-        notes.push(`OQ3 spike passed at ${oq3Spike.path}.`)
-      } else if (oq3Spike) {
-        warnings.push(
-          `OQ3 spike failed at ${oq3Spike.path}${oq3Spike.error ? `: ${oq3Spike.error}` : ''}.`,
-        )
-      } else {
-        warnings.push(
-          'OQ3 spikeOnPrompt is enabled but oq3-spike-last.json is missing. Submit a chat prompt.',
-        )
-      }
     }
 
     if (loadedConfig.policy.transactional.enabled) {
@@ -298,26 +291,6 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
       for (const issue of sandbox.issues) {
         warnings.push(issue)
-      }
-    }
-
-    if (loadedConfig.controlPlane.isolation.mode !== 'none') {
-      const isolation = verifyControlPlaneIsolation(
-        configuredControlPlaneDir(loadedConfig),
-        loadedConfig.controlPlane.isolation,
-      )
-      notes.push(
-        `Control-plane isolation: ${loadedConfig.controlPlane.isolation.mode} (ok=${isolation.ok}).`,
-      )
-      if (!isolation.ok) {
-        for (const issue of isolation.issues) {
-          warnings.push(`Control-plane isolation: ${issue}`)
-        }
-      }
-      if (!loadedConfig.approvalSigning.required) {
-        warnings.push(
-          'controlPlane.isolation is enabled but approvalSigning.required is false. Isolation mode requires signed approvals for adversarial claims.',
-        )
       }
     }
 
@@ -356,7 +329,6 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     warnings,
     configProvenance,
     dogfood,
-    oq3Spike,
   }
   return report
 }
@@ -388,9 +360,6 @@ export function formatDoctorReport(report: DoctorReport): string {
       '',
       `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | enforce ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
     )
-    if (report.oq3Spike) {
-      lines.push(`OQ3 spike: ${report.oq3Spike.ok ? 'ok' : 'failed'} (${report.oq3Spike.path})`)
-    }
   }
 
   if (report.issues.length > 0) {

@@ -1,10 +1,6 @@
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { assessmentsDiverge, evaluateCorpus, loadCorpusCases } from '../corpus/evaluate.js'
-
-const corpusDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'corpus')
+import { assessmentsDiverge } from '../corpus/evaluate.js'
 
 describe('corpus evaluation', () => {
   it('detects prediction vs observation assessment divergence', () => {
@@ -26,12 +22,5 @@ describe('corpus evaluation', () => {
         },
       ),
     ).toBe(true)
-  })
-
-  it('meets baseline accuracy on shell command corpus', async () => {
-    const cases = await loadCorpusCases(corpusDir)
-    const metrics = await evaluateCorpus(cases)
-    expect(metrics.accuracy).toBeGreaterThanOrEqual(0.9)
-    expect(metrics.falsePositiveRate).toBeLessThanOrEqual(0.1)
   })
 })

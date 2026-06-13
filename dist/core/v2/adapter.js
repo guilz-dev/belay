@@ -1,5 +1,5 @@
-import { createJudgeFromConfig } from './judge-factory.js';
 import { judgeTraceAuditFields } from './judge-audit.js';
+import { createJudgeFromConfig } from './judge-factory.js';
 import { verdict } from './verdict.js';
 export function buildVerdictContext(params) {
     const protectedArtifactRoots = [

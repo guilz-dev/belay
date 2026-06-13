@@ -1581,6 +1581,21 @@ function matchesSensitivePath(filePath, patterns) {
   return false;
 }
 
+// src/core/v2/judge-audit.ts
+function judgeTraceAuditFields(trace) {
+  if (!trace) {
+    return {};
+  }
+  return {
+    judgeProvider: trace.provider,
+    judgeModelRequested: trace.modelRequested,
+    judgeModelResolved: trace.modelResolved,
+    judgeLatencyMs: trace.latencyMs,
+    ...trace.outboundRedacted !== void 0 ? { judgeOutboundRedacted: trace.outboundRedacted } : {},
+    ...trace.fallbackReason ? { judgeFallbackReason: trace.fallbackReason } : {}
+  };
+}
+
 // src/core/v2/judge-factory.ts
 init_config();
 
@@ -1903,21 +1918,6 @@ function createJudgeFromConfig(config, options = {}) {
     });
   }
   return createDeterministicJudgeStub();
-}
-
-// src/core/v2/judge-audit.ts
-function judgeTraceAuditFields(trace) {
-  if (!trace) {
-    return {};
-  }
-  return {
-    judgeProvider: trace.provider,
-    judgeModelRequested: trace.modelRequested,
-    judgeModelResolved: trace.modelResolved,
-    judgeLatencyMs: trace.latencyMs,
-    ...trace.outboundRedacted !== void 0 ? { judgeOutboundRedacted: trace.outboundRedacted } : {},
-    ...trace.fallbackReason ? { judgeFallbackReason: trace.fallbackReason } : {}
-  };
 }
 
 // src/core/v2/verdict.ts

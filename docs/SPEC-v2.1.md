@@ -264,7 +264,13 @@ scrub パイプライン**を必ず通す。送信本文と監査記録で適用
 v2 engine は config **`version: 4`** を使用する。`judge` は **top-level** フィールドとし、
 v1 系 `policy.modelAssist` とは別物である。
 
+**fresh `init` が consent 無しで書き込む既定は `local-ollama`**(理念既定)である。
+`cursor-composer`(cloud)は `--accept-cloud-judge` を明示したとき**のみ**書き込まれる
+(M2 サイレント egress 禁止 / R19)。下の JSON は `cursor-composer` プロファイル(consent
+必須)の例であり、consent 無しの fresh 既定ではない。
+
 ```json
+// cursor-composer プロファイル(--accept-cloud-judge 明示時のみ書き込まれる)
 {
   "version": 4,
   "mode": "audit",
@@ -275,30 +281,33 @@ v1 系 `policy.modelAssist` とは別物である。
     "endpoint": null,
     "keepAlive": null
   },
-  "redaction": {
-    "maskApprovalIds": true,
-    "maskBearerTokens": true,
-    "maskAuthHeaders": true,
-    "maskKeyValueSecrets": true,
-    "maskHighEntropyStrings": false
-  }
+  "redaction": { "maskApprovalIds": true, "maskBearerTokens": true, "maskAuthHeaders": true, "maskKeyValueSecrets": true, "maskHighEntropyStrings": false }
+}
+
+// consent 無しの fresh 既定(local-ollama)
+{
+  "version": 4,
+  "mode": "audit",
+  "judge": { "provider": "ollama", "model": "gemma4:e2b", "endpoint": "http://localhost:11434", "timeoutMs": 25000, "keepAlive": "30m" }
 }
 ```
 
-| Field | Type | Default (fresh v2.1) | Notes |
+| Field | Type | Default (fresh `init`, consent 無し) | Notes |
 |-------|------|----------------------|-------|
 | `version` | `4` | `4` | v2.1 以降必須 |
-| `judge.provider` | `"cursor"` \| `"ollama"` | 配布既定 `cursor` | |
-| `judge.model` | string \| `"auto"` | 配布既定 `auto` | `auto` は cursor のみ |
-| `judge.timeoutMs` | number | `8000` / `25000` | provider 別推奨値 |
-| `judge.endpoint` | string \| null | `null` | ollama 用 |
-| `judge.keepAlive` | string \| null | `null` | ollama 用 |
+| `judge.provider` | `"cursor"` \| `"ollama"` | `ollama`(理念既定) | `cursor` は `--accept-cloud-judge` 明示時のみ(M2/R19) |
+| `judge.model` | string \| `"auto"` | `gemma4:e2b` | `auto` は cursor のみ。`cursor-composer` 選択時は `auto` |
+| `judge.timeoutMs` | number | `25000`(ollama)/ `8000`(cursor) | provider 別推奨値 |
+| `judge.endpoint` | string \| null | `http://localhost:11434`(ollama) | cursor は `null`(→ `CURSOR_API_BASE` / 既定 base) |
+| `judge.keepAlive` | string \| null | `30m`(ollama) | cursor は `null`(未使用) |
 
 実装要件:
 
 - `normalizeConfig` / `migrateConfig` は `version: 4` で `judge` を読み込む
 - `judge` 未定義の v2.0 互換読み込み時のみ、理念既定 `ollama` + `gemma4:e2b` を合成してよい
 - runtime は **`policy.modelAssist` を Tier1 judge に使わない**
+- `init` は明示フラグで `cursor` を選んだ場合も `--accept-cloud-judge` 無しでは
+  `CloudJudgeConsentRequiredError` で停止し、`cursor` config を書き込まない(M2/R19)
 
 ---
 
