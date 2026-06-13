@@ -166,6 +166,9 @@ function resolveAdapterName(options, repoRoot) {
     if (options.adapter === 'claude') {
         return 'claude';
     }
+    if (options.adapter === 'codex') {
+        return 'codex';
+    }
     if (options.adapter === 'cursor') {
         return 'cursor';
     }

@@ -1,4 +1,5 @@
 import { claudeAdapter } from './claude/adapter.js'
+import { codexAdapter } from './codex/adapter.js'
 import { cursorAdapter } from './cursor/adapter.js'
 import type { AdapterName } from './layouts/types.js'
 import type { BelayAdapter } from './types.js'
@@ -6,6 +7,7 @@ import type { BelayAdapter } from './types.js'
 const adapters: Record<AdapterName, BelayAdapter> = {
   cursor: cursorAdapter,
   claude: claudeAdapter,
+  codex: codexAdapter,
 }
 
 export function getAdapter(name: AdapterName = 'cursor'): BelayAdapter {

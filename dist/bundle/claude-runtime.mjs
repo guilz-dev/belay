@@ -893,6 +893,14 @@ var init_judge_api_key = __esm({
   }
 });
 
+// src/adapters/layouts/codex.ts
+var init_codex = __esm({
+  "src/adapters/layouts/codex.ts"() {
+    "use strict";
+    init_config();
+  }
+});
+
 // src/adapters/layouts/cursor.ts
 var init_cursor = __esm({
   "src/adapters/layouts/cursor.ts"() {
@@ -906,8 +914,10 @@ var init_layouts = __esm({
   "src/adapters/layouts/index.ts"() {
     "use strict";
     init_claude();
+    init_codex();
     init_cursor();
     init_claude();
+    init_codex();
     init_cursor();
   }
 });

@@ -169,7 +169,7 @@ export interface BelayEgressConfig {
 
 export interface BelayConfigV4 {
   version: 4
-  adapter?: 'cursor' | 'claude'
+  adapter?: 'cursor' | 'claude' | 'codex'
   mode: BelayMode
   approvalTtlMinutes: number
   tokenPrefix: string

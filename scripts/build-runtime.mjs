@@ -10,6 +10,7 @@ const outDir = path.join(rootDir, 'dist', 'bundle')
 const adapters = [
   { name: 'cursor', entry: 'src/adapters/cursor/runtime-entry.ts' },
   { name: 'claude', entry: 'src/adapters/claude/runtime-entry.ts' },
+  { name: 'codex', entry: 'src/adapters/codex/runtime-entry.ts' },
 ]
 
 await mkdir(outDir, { recursive: true })

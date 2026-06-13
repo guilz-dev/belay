@@ -1,4 +1,4 @@
-// agent-belay cursor runtime bundle
+// agent-belay codex runtime bundle
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
@@ -611,46 +611,47 @@ var init_config = __esm({
   }
 });
 
-// src/adapters/layouts/cursor.ts
+// src/adapters/layouts/codex.ts
 import path2 from "node:path";
 function runnerCommand(platform, hookName, ...args) {
-  const base = platform === "win32" ? ".\\.cursor\\hooks\\belay-runner.cmd" : "./.cursor/hooks/belay-runner";
+  const base = platform === "win32" ? ".\\.codex\\hooks\\belay-runner.cmd" : "./.codex/hooks/belay-runner";
   return [base, hookName, ...args].join(" ");
 }
-var cursorLayout;
-var init_cursor = __esm({
-  "src/adapters/layouts/cursor.ts"() {
+var codexLayout;
+var init_codex = __esm({
+  "src/adapters/layouts/codex.ts"() {
     "use strict";
     init_config();
-    cursorLayout = {
-      name: "cursor",
+    codexLayout = {
+      name: "codex",
       configPath(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay.config.json");
+        return path2.join(repoRoot, ".codex", "belay.config.json");
       },
+      // Codex reads lifecycle hooks from `.codex/config.toml` (project layer).
       hooksSettingsPath(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "hooks.json");
+        return path2.join(repoRoot, ".codex", "config.toml");
       },
       hooksDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "hooks");
+        return path2.join(repoRoot, ".codex", "hooks");
       },
       runtimeDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay", "runtime");
+        return path2.join(repoRoot, ".codex", "belay", "runtime");
       },
       repoLocalStateDir(repoRoot) {
-        return path2.join(repoRoot, ".cursor", "belay");
+        return path2.join(repoRoot, ".codex", "belay");
       },
       defaultAuditLogPath(_repoRoot) {
-        return path2.join(".cursor", "belay", "audit.ndjson");
+        return path2.join(".codex", "belay", "audit.ndjson");
       },
-      repoRootMarkers: [".git", ".cursor"],
+      repoRootMarkers: [".git", ".codex"],
       runnerCommand,
       defaultConfig(repoRoot) {
         return {
           ...DEFAULT_CONFIG_V4,
-          adapter: "cursor",
+          adapter: "codex",
           audit: {
             ...DEFAULT_CONFIG_V4.audit,
-            logPath: cursorLayout.defaultAuditLogPath(repoRoot)
+            logPath: codexLayout.defaultAuditLogPath(repoRoot)
           }
         };
       }
@@ -901,9 +902,9 @@ var init_claude = __esm({
   }
 });
 
-// src/adapters/layouts/codex.ts
-var init_codex = __esm({
-  "src/adapters/layouts/codex.ts"() {
+// src/adapters/layouts/cursor.ts
+var init_cursor = __esm({
+  "src/adapters/layouts/cursor.ts"() {
     "use strict";
     init_config();
   }
@@ -933,8 +934,8 @@ var init_config_io = __esm({
   }
 });
 
-// src/adapters/cursor/runtime-entry.ts
-init_cursor();
+// src/adapters/codex/runtime-entry.ts
+init_codex();
 import process2 from "node:process";
 
 // src/adapters/shared/gate-runtime.ts
@@ -4774,11 +4775,28 @@ async function processApprovalPrompt(ctx, deps, prompt) {
     user_message: recorded.message
   };
 }
-function gateVerdictToCursorResponse(verdict2) {
+function gateVerdictToClaudePreToolUseResponse(verdict2) {
+  if (verdict2.permission === "allow") {
+    return {};
+  }
   return {
-    permission: verdict2.permission,
-    user_message: verdict2.user_message,
-    agent_message: verdict2.agent_message
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: verdict2.user_message ?? verdict2.agent_message ?? `Belay denied this action (${verdict2.reason}).`
+    }
+  };
+}
+function gateVerdictToCodexPreToolUseResponse(verdict2) {
+  return gateVerdictToClaudePreToolUseResponse(verdict2);
+}
+function gateVerdictToCodexUserPromptResponse(verdict2) {
+  if (verdict2.continue) {
+    return {};
+  }
+  return {
+    decision: "block",
+    reason: verdict2.user_message
   };
 }
 async function appendObservedAudit(ctx, deps, eventName, payload) {
@@ -4810,7 +4828,7 @@ function findRepoRoot(startPath, layout) {
   }
 }
 
-// src/adapters/cursor/runtime-entry.ts
+// src/adapters/codex/runtime-entry.ts
 async function readStdinJson() {
   const chunks = [];
   for await (const chunk of process2.stdin) {
@@ -4831,106 +4849,121 @@ function jsonResponse(value) {
 `);
 }
 async function loadRuntimeContext(cwd) {
-  const repoRoot = findRepoRoot(cwd, cursorLayout);
-  const configPath = cursorLayout.configPath(repoRoot);
+  const repoRoot = findRepoRoot(cwd, codexLayout);
+  const configPath = codexLayout.configPath(repoRoot);
   const deps = createDefaultGateRuntimeDeps();
-  const config = await resolveGateConfig({ layout: cursorLayout, repoRoot, configPath }, deps);
-  return { layout: cursorLayout, repoRoot, config, configPath };
+  const config = await resolveGateConfig({ layout: codexLayout, repoRoot, configPath }, deps);
+  return { layout: codexLayout, repoRoot, config, configPath };
 }
-function isSubagentEvent(payload, eventName) {
-  return eventName === "subagentStart" || payload.subagent_type !== void 0;
+function mapCodexToolName(toolName) {
+  const name = toolName.toLowerCase();
+  if (name === "shell" || name === "bash" || name === "local_shell" || name === "exec_command" || name === "unified_exec") {
+    return "shell";
+  }
+  if (name === "task" || name === "spawn" || name === "subagent") {
+    return "subagent";
+  }
+  if (name === "apply_patch" || name === "write" || name === "edit" || name === "patch") {
+    return "tool";
+  }
+  return null;
 }
-function isFileMutationTool(toolName) {
-  return toolName === "Write" || toolName === "StrReplace" || toolName === "Delete";
+function extractString(value, ...keys) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const record = value;
+  for (const key of keys) {
+    if (typeof record[key] === "string") {
+      return record[key];
+    }
+  }
+  return "";
+}
+function normalizeCodexToolPayload(kind, payload) {
+  const toolInput = payload.tool_input;
+  if (kind === "shell") {
+    return {
+      tool_name: "Shell",
+      tool_input: { command: extractString(toolInput, "command", "cmd") }
+    };
+  }
+  if (kind === "tool") {
+    return {
+      tool_name: "Write",
+      tool_input: { path: extractString(toolInput, "path", "file_path", "filename") }
+    };
+  }
+  return payload;
 }
 async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson();
-    const prompt = String(payload.prompt ?? "");
+    const prompt = String(payload.prompt ?? payload.user_message ?? "");
     const ctx = await loadRuntimeContext(process2.cwd());
     const deps = createDefaultGateRuntimeDeps();
     const result = await processApprovalPrompt(ctx, deps, prompt);
-    jsonResponse({
-      continue: result.continue,
-      ...result.user_message ? { user_message: result.user_message } : {}
-    });
+    jsonResponse(gateVerdictToCodexUserPromptResponse(result));
   } catch {
     jsonResponse({
-      continue: false,
-      user_message: "agent-belay failed while processing approval state. Run agent-belay doctor, then retry."
+      decision: "block",
+      reason: "agent-belay failed while processing approval state. Run agent-belay doctor, then retry."
+    });
+  }
+}
+async function runToolGateHook(_eventName) {
+  try {
+    const payload = await readStdinJson();
+    const cwd = process2.cwd();
+    const toolName = String(payload.tool_name ?? payload.toolName ?? "");
+    const kind = mapCodexToolName(toolName);
+    if (!kind) {
+      jsonResponse({});
+      return;
+    }
+    const ctx = await loadRuntimeContext(cwd);
+    const deps = createDefaultGateRuntimeDeps();
+    const normalizedPayload = normalizeCodexToolPayload(kind, payload);
+    const verdict2 = await evaluateGatedAction(ctx, deps, {
+      kind,
+      cwd,
+      command: kind === "shell" ? extractString(normalizedPayload.tool_input, "command") : void 0,
+      payload: normalizedPayload,
+      toolName
+    });
+    jsonResponse(gateVerdictToCodexPreToolUseResponse(verdict2));
+  } catch {
+    jsonResponse({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "agent-belay failed while classifying this tool action. Run agent-belay doctor, then retry."
+      }
     });
   }
 }
 async function runShellGateHook() {
   try {
     const payload = await readStdinJson();
-    const command = String(payload.command ?? "").trim();
-    const cwd = String(payload.cwd ?? process2.cwd()).trim() || process2.cwd();
+    const command = extractString(payload.tool_input, "command") || String(payload.command ?? "");
+    const cwd = process2.cwd();
     const ctx = await loadRuntimeContext(cwd);
     const deps = createDefaultGateRuntimeDeps();
     const verdict2 = await evaluateGatedAction(ctx, deps, {
       kind: "shell",
       cwd,
-      command
+      command,
+      payload,
+      toolName: "Shell"
     });
-    jsonResponse(gateVerdictToCursorResponse(verdict2));
+    jsonResponse(gateVerdictToCodexPreToolUseResponse(verdict2));
   } catch {
     jsonResponse({
-      permission: "deny",
-      user_message: "agent-belay failed while classifying this shell command. Run agent-belay doctor, then retry."
-    });
-  }
-}
-async function runToolGateHook(eventName) {
-  try {
-    const payload = await readStdinJson();
-    const cwd = process2.cwd();
-    const ctx = await loadRuntimeContext(cwd);
-    const deps = createDefaultGateRuntimeDeps();
-    const toolName = String(payload.tool_name ?? "");
-    if (isSubagentEvent(payload, eventName)) {
-      const verdict2 = await evaluateGatedAction(ctx, deps, {
-        kind: "subagent",
-        cwd,
-        payload
-      });
-      jsonResponse(gateVerdictToCursorResponse(verdict2));
-      return;
-    }
-    if (toolName === "Shell") {
-      const verdict2 = await evaluateGatedAction(ctx, deps, {
-        kind: "shell",
-        cwd,
-        payload,
-        toolName
-      });
-      jsonResponse(gateVerdictToCursorResponse(verdict2));
-      return;
-    }
-    if (isFileMutationTool(toolName)) {
-      const verdict2 = await evaluateGatedAction(ctx, deps, {
-        kind: "tool",
-        cwd,
-        payload,
-        toolName
-      });
-      jsonResponse(gateVerdictToCursorResponse(verdict2));
-      return;
-    }
-    if (payload.tool_name === "Task") {
-      const verdict2 = await evaluateGatedAction(ctx, deps, {
-        kind: "subagent",
-        cwd,
-        payload
-      });
-      jsonResponse(gateVerdictToCursorResponse(verdict2));
-      return;
-    }
-    jsonResponse({ permission: "allow" });
-  } catch {
-    jsonResponse({
-      permission: "deny",
-      user_message: "agent-belay failed while classifying this tool action. Run agent-belay doctor, then retry."
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "agent-belay failed while classifying this shell command. Run agent-belay doctor, then retry."
+      }
     });
   }
 }

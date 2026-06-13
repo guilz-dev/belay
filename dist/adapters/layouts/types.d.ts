@@ -1,5 +1,5 @@
 import type { BelayConfigV3 } from '../../core/config.js';
-export type AdapterName = 'cursor' | 'claude';
+export type AdapterName = 'cursor' | 'claude' | 'codex';
 export interface AdapterLayout {
     name: AdapterName;
     configPath(repoRoot: string): string;

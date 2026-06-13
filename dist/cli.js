@@ -36,8 +36,8 @@ function parseArgs(argv) {
         }
         if (token === '--adapter') {
             const next = rest[index + 1];
-            if (!next || !['cursor', 'claude'].includes(next)) {
-                throw new Error('--adapter requires cursor or claude.');
+            if (!next || !['cursor', 'claude', 'codex'].includes(next)) {
+                throw new Error('--adapter requires cursor, claude, or codex.');
             }
             options.adapter = next;
             index += 1;

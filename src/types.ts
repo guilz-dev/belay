@@ -39,7 +39,7 @@ export interface HooksFile {
   hooks: Record<string, HookEntry[]>
 }
 
-export type AdapterName = 'cursor' | 'claude'
+export type AdapterName = 'cursor' | 'claude' | 'codex'
 
 export interface InitOptions {
   targetDir?: string

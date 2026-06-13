@@ -439,6 +439,21 @@ export function gateVerdictToClaudeUserPromptResponse(verdict) {
         },
     };
 }
+// Codex PreToolUse deny contract is identical to Claude's
+// (`hookSpecificOutput.permissionDecision: "deny"` / exit 2). Reuse the same shape.
+export function gateVerdictToCodexPreToolUseResponse(verdict) {
+    return gateVerdictToClaudePreToolUseResponse(verdict);
+}
+// Codex UserPromptSubmit blocks via `decision: "block"` (per developers.openai.com/codex/hooks).
+export function gateVerdictToCodexUserPromptResponse(verdict) {
+    if (verdict.continue) {
+        return {};
+    }
+    return {
+        decision: 'block',
+        reason: verdict.user_message,
+    };
+}
 export async function appendObservedAudit(ctx, deps, eventName, payload) {
     await deps.appendAudit(ctx, {
         event: eventName,

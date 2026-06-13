@@ -43,7 +43,7 @@ await runAuditHook(eventName)
 `
 }
 
-async function readRuntimeBundle(adapter: 'cursor' | 'claude' = 'cursor'): Promise<string> {
+async function readRuntimeBundle(adapter: 'cursor' | 'claude' | 'codex' = 'cursor'): Promise<string> {
   const bundlePath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     '..',
@@ -58,7 +58,9 @@ async function readRuntimeBundle(adapter: 'cursor' | 'claude' = 'cursor'): Promi
   }
 }
 
-export async function renderRuntimeCore(adapter: 'cursor' | 'claude' = 'cursor'): Promise<string> {
+export async function renderRuntimeCore(
+  adapter: 'cursor' | 'claude' | 'codex' = 'cursor',
+): Promise<string> {
   const bundle = await readRuntimeBundle(adapter)
   const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(`${PACKAGE_VERSION}@${new Date().toISOString()}`)};\n`
   const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`

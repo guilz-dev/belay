@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { getAdapter } from '../adapters/registry.js'
 import { cleanupOrphanApprovalState } from '../cleanup-orphans.js'
 import {
   approvedApprovalsPath,
@@ -41,10 +40,16 @@ function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterNam
   if (options.adapter) {
     return options.adapter
   }
-  return configAdapter === 'claude' ? 'claude' : 'cursor'
+  if (configAdapter === 'claude' || configAdapter === 'codex') {
+    return configAdapter
+  }
+  return 'cursor'
 }
 
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
+  // Lazy import to break the registry -> adapter -> doctor -> registry import cycle that
+  // otherwise leaves a freshly-imported adapter undefined in the registry record.
+  const { getAdapter } = await import('../adapters/registry.js')
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const issues: string[] = []
   const notes: string[] = []
@@ -185,6 +190,24 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`)
         }
       }
+    } else if (adapterName === 'codex') {
+      // Codex hooks live in TOML (.codex/config.toml). Verify belay's managed command strings
+      // are present in the rendered TOML block.
+      const toml = await readFile(hooksPath, 'utf8')
+      for (const { event, definition } of managedEntries) {
+        if (!toml.includes(definition.command)) {
+          hooksOk = false
+          issues.push(`Missing Codex managed hook for ${event}: ${definition.command}`)
+        }
+      }
+      // EXPERIMENTAL: Codex hook firing was not confirmed in headless `codex exec` (SPEC-v2.2
+      // R-X1). Until a TUI/managed smoke test proves a PreToolUse deny actually blocks, belay
+      // must NOT present itself as an active floor on Codex (no silent false floor).
+      warnings.push(
+        'Codex adapter is EXPERIMENTAL: hook firing is UNVERIFIED. belay may not actually block ' +
+          'actions on Codex until a smoke test confirms a PreToolUse deny is honored. See ' +
+          'docs/SPEC-v2.2-draft.md R-X1.1.',
+      )
     } else {
       const settings = JSON.parse(await readFile(hooksPath, 'utf8')) as {
         hooks?: Record<string, unknown[]>

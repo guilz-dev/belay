@@ -40,5 +40,10 @@ export declare function gateVerdictToClaudeUserPromptResponse(verdict: {
     continue: boolean;
     user_message?: string;
 }): Record<string, unknown>;
+export declare function gateVerdictToCodexPreToolUseResponse(verdict: GateVerdict): Record<string, unknown>;
+export declare function gateVerdictToCodexUserPromptResponse(verdict: {
+    continue: boolean;
+    user_message?: string;
+}): Record<string, unknown>;
 export declare function appendObservedAudit(ctx: GateRuntimeContext, deps: GateRuntimeDeps, eventName: string, payload: Record<string, unknown>): Promise<void>;
 export { GateNormalizationError };

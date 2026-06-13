@@ -6,11 +6,20 @@ import { compactApprovals, isExpired, mergeApprovalStates } from './core/approva
 import { approvedApprovalsFile, belayStateDir, configuredControlPlaneDir, mergeConfig, pendingApprovalsFile, } from './core/config.js';
 import { resolveLayeredConfig, teamConfigPath, } from './core/config-layers.js';
 export function resolveAdapterName(config) {
-    return config.adapter === 'claude' ? 'claude' : 'cursor';
+    if (config.adapter === 'claude') {
+        return 'claude';
+    }
+    if (config.adapter === 'codex') {
+        return 'codex';
+    }
+    return 'cursor';
 }
 export function detectAdapterName(repoRoot) {
     if (existsSync(configPathFor(repoRoot, 'claude'))) {
         return 'claude';
+    }
+    if (existsSync(configPathFor(repoRoot, 'codex'))) {
+        return 'codex';
     }
     return 'cursor';
 }

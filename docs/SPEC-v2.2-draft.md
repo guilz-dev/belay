@@ -215,6 +215,29 @@ Windows は hooks 無効のため対応 OS を明示する。
 > 「Codex hooks ≈ Claude Code hooks」だが、**実機では発火が確認できず**、Codex アダプタを
 > 先に実装していたら不安定な基盤の上に作ることになっていた。
 
+### R-X1.1 — 実装方針の更新（assumed-pass、クレジット枯渇により検証保留）
+
+Codex クレジット枯渇で TUI 実測が一時不能になったため、方針を「**通る前提で先行実装し、
+検証で外れたら修正**」に切り替える。ただし FN=0（非バイパスの床）の核心を守るため、
+次のガードを必須とする:
+
+- **配布モード**: まず **per-repo `.codex/config.toml`**（user hook, trust 必要）を主軸に実装
+  （既存 claude/cursor アダプタと同じ layout 抽象を再利用する機械的差分）。
+  managed 配置（`/etc/codex/managed_config.toml` / `requirements.toml [hooks]`・pre-trusted・
+  sudo）は**後追いの deployment mode** として §3.2 managed 調査に基づき別途。
+- **確実な部分は今ユニット検証**: deny 出力形式（`permissionDecision:"deny"` / exit 2）と
+  verdict→Codex JSON マッピング（`gateVerdictToCodexPreToolUseResponse`）は純関数なので
+  conformance テストで検証する（ライブ発火不要）。
+- **不確実な部分は fail-loud に隔離**:
+  - (a) フックが実際に発火するか → **doctor が `firing-unverified` を赤警告**し、Codex
+    アダプタを **experimental** 扱いにする。スモーク（センチネル deny）が通るまで「保護済み」と
+    名乗らせない（サイレントな偽の床を禁止）。
+  - (c) shell tool の実 matcher 名 → 広めの暫定値 + `TODO-verify` コメントで局所化。
+- **検証手順を残す**: TUI スモーク（実 `~/.codex/config.toml` で trust → センチネル deny 確認）
+  と managed スモークの手順を docs に残し、クレジット復活時に実行。通れば experimental を外す。
+
+> この節は「assumed-pass で建てた」ことの記録。検証結果が出たら R-X1 本体を更新する。
+
 ### 3.3 横展開の限界（正直な注記）
 - skill（SKILL.md）はクロスエージェント標準だが**助言層**。各エージェントの floor は
   それぞれの **hook** に依存する（Cursor hooks / Claude Code hooks / Codex hooks）。

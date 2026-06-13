@@ -39,7 +39,7 @@ function parseArgs(argv: string[]) {
     dogfood?: boolean
     enforce?: boolean
     force?: boolean
-    adapter?: 'cursor' | 'claude'
+    adapter?: 'cursor' | 'claude' | 'codex'
     auditSubcommand?: 'query' | 'summarize' | 'replay'
     since?: string
     until?: string
@@ -87,10 +87,10 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--adapter') {
       const next = rest[index + 1]
-      if (!next || !['cursor', 'claude'].includes(next)) {
-        throw new Error('--adapter requires cursor or claude.')
+      if (!next || !['cursor', 'claude', 'codex'].includes(next)) {
+        throw new Error('--adapter requires cursor, claude, or codex.')
       }
-      options.adapter = next as 'cursor' | 'claude'
+      options.adapter = next as 'cursor' | 'claude' | 'codex'
       index += 1
       continue
     }

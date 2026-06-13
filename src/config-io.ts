@@ -20,12 +20,21 @@ import type { ApprovalStateFile } from './core/types.js'
 
 export type { LayeredConfigResult }
 export function resolveAdapterName(config: BelayConfigV3): AdapterName {
-  return config.adapter === 'claude' ? 'claude' : 'cursor'
+  if (config.adapter === 'claude') {
+    return 'claude'
+  }
+  if (config.adapter === 'codex') {
+    return 'codex'
+  }
+  return 'cursor'
 }
 
 export function detectAdapterName(repoRoot: string): AdapterName {
   if (existsSync(configPathFor(repoRoot, 'claude'))) {
     return 'claude'
+  }
+  if (existsSync(configPathFor(repoRoot, 'codex'))) {
+    return 'codex'
   }
   return 'cursor'
 }
