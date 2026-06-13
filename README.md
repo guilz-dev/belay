@@ -1,5 +1,9 @@
 # Agent Belay
 
+[![npm version](https://img.shields.io/npm/v/agent-belay)](https://www.npmjs.com/package/agent-belay)
+[![CI](https://github.com/guilz-dev/agent-belay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guilz-dev/agent-belay/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 `agent-belay` is a practical Belay-style gate for agent runtimes.
 
 The current integration targets hook-capable agent environments. v0.4+ ships

@@ -7,8 +7,9 @@ const HOOK_TIMEOUT_SECONDS = 30
 
 interface CodexHookSpec {
   event: 'PreToolUse' | 'SubagentStart' | 'UserPromptSubmit' | 'PostToolUse'
-  // TODO-verify: Codex shell tool name is unconfirmed (SPEC-v2.2 R-X1.1). Route all PreToolUse
-  // through a single ".*" matcher into the unified gate, which maps the tool kind at runtime.
+  // Codex shell is `tool_name:"Bash"` (confirmed via TUI smoke, SPEC-v2.2 R-X1/R-X3). Route all
+  // PreToolUse through a single ".*" matcher into the unified gate, which maps the tool kind at
+  // runtime; non-shell tool names (apply_patch etc.) are still pending confirmation (G-B2).
   matcher?: string
   runnerArgs: string[]
 }

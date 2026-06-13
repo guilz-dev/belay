@@ -1,7 +1,7 @@
 # agent-belay v2.2 草案 — Cursor Skill インタフェースとマルチホスト hooks 経路
 
 > ⚠️ **SUPERSEDED（2026-06-13）** — 本書（Composer 調査）の内容は正本
-> [`SPEC-v2.2-draft.md`](./SPEC-v2.2-draft.md) に統合済み（skill frontmatter 契約 §3.1、
+> [`SPEC-v2.2.md`](./SPEC-v2.2.md) に統合済み（skill frontmatter 契約 §3.1、
 > 品質チェックリスト §6、Codex 運用制約 §4.3、WS-J→CLI マッピング §3.3、
 > ホスト横断イベント表 §4.1）。以後の編集は正本側で行うこと。本書は調査の痕跡として保存。
 >

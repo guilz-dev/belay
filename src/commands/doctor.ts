@@ -206,7 +206,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       warnings.push(
         'Codex adapter is EXPERIMENTAL: hook firing is UNVERIFIED. belay may not actually block ' +
           'actions on Codex until a smoke test confirms a PreToolUse deny is honored. See ' +
-          'docs/SPEC-v2.2-draft.md R-X1.1.',
+          'docs/SPEC-v2.2.md R-X3.',
       )
     } else {
       const settings = JSON.parse(await readFile(hooksPath, 'utf8')) as {

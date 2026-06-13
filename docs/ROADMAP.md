@@ -21,6 +21,20 @@
 | **v0.9** | Capability broker, control-plane isolation, layer conformance matrix | Shipped — see [v0.7-v1.0-plan.md](./v0.7-v1.0-plan.md), [guarantee-table.md](./guarantee-table.md) |
 | **v1.0** | Stable Belay — guarantee table tested per config, adapter SDK, semver policy, L1-full preset | Shipped — see [SPEC-v1.0.md](./SPEC-v1.0.md) |
 
+## v2.x — Restorability floor & 配布
+
+| Version | Focus | Status |
+|---------|-------|--------|
+| **v2.0** | Restorability floor — Tier0 決定論 + Tier1 ローカル LLM の2層 verdict engine | Implemented (`src/core/v2`) — see [SPEC-v2.0.md](./SPEC-v2.0.md) |
+| **v2.1** | Judge provider 抽象、config v4 | Implemented — see [SPEC-v2.1.md](./SPEC-v2.1.md) |
+| **v2.1.1** | Cloud provider 正直化（openai-compatible）、v0.3 残渣撤去、テスト隔離、精度計測 | Specced — see [SPEC-v2.1.1.md](./SPEC-v2.1.1.md) |
+| **v2.1.2** | Tier0 偽陰性修正（`docker buildx build --push`） | Specced — see [SPEC-v2.1.2.md](./SPEC-v2.1.2.md) / [dogfood report](./dogfood-docker-tier0-gap.md) |
+| **v2.2** | skill 配布フロントドア + 横展開（Codex アダプタ） | Canonical spec; Codex 実装済み(experimental) — see [SPEC-v2.2.md](./SPEC-v2.2.md) |
+
+v2.2 のワークストリーム別状態: **WS-Codex** = 実装済み・GO（experimental、belay 実適配器の
+TUI smoke=G-B2 で解除）/ **WS-Skill** = 規範化済み・未実装（G-A 決定 + G-B1 Cursor UX 検証が
+着手ゲート）/ **WS-Pkg** = 要件化（plugin / hook-package / skill）。
+
 ## v0.3 (0.3.0)
 
 **Theme:** Harden defaults, move control state out of the repo, prepare for multi-adapter.
