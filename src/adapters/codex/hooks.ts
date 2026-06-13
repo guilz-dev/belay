@@ -6,7 +6,7 @@ export const CODEX_HOOKS_END = '# --- BELAY MANAGED HOOKS END ---'
 const HOOK_TIMEOUT_SECONDS = 30
 
 interface CodexHookSpec {
-  event: 'PreToolUse' | 'UserPromptSubmit' | 'PostToolUse'
+  event: 'PreToolUse' | 'SubagentStart' | 'UserPromptSubmit' | 'PostToolUse'
   // TODO-verify: Codex shell tool name is unconfirmed (SPEC-v2.2 R-X1.1). Route all PreToolUse
   // through a single ".*" matcher into the unified gate, which maps the tool kind at runtime.
   matcher?: string
@@ -15,6 +15,7 @@ interface CodexHookSpec {
 
 const CODEX_HOOK_SPECS: CodexHookSpec[] = [
   { event: 'PreToolUse', matcher: '.*', runnerArgs: ['belay-tool-gate', 'PreToolUse'] },
+  { event: 'SubagentStart', runnerArgs: ['belay-tool-gate', 'SubagentStart'] },
   { event: 'UserPromptSubmit', runnerArgs: ['belay-before-submit'] },
   { event: 'PostToolUse', runnerArgs: ['belay-audit', 'PostToolUse'] },
 ]

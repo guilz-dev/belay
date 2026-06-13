@@ -4,6 +4,7 @@ export const CODEX_HOOKS_END = '# --- BELAY MANAGED HOOKS END ---';
 const HOOK_TIMEOUT_SECONDS = 30;
 const CODEX_HOOK_SPECS = [
     { event: 'PreToolUse', matcher: '.*', runnerArgs: ['belay-tool-gate', 'PreToolUse'] },
+    { event: 'SubagentStart', runnerArgs: ['belay-tool-gate', 'SubagentStart'] },
     { event: 'UserPromptSubmit', runnerArgs: ['belay-before-submit'] },
     { event: 'PostToolUse', runnerArgs: ['belay-audit', 'PostToolUse'] },
 ];

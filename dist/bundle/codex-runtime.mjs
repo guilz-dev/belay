@@ -285,6 +285,7 @@ function normalizeConfig(config) {
     policy: {
       unknownLocalEffect: v4.policy?.unknownLocalEffect === "deny" ? "deny" : v4.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
       unparseableShell: v4.policy?.unparseableShell === "deny" ? "deny" : v4.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
+      codexUnmappedTool: v4.policy?.codexUnmappedTool === "allow" ? "allow" : "deny",
       confidenceThresholds: {
         allow: typeof v4.policy?.confidenceThresholds?.allow === "number" ? v4.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
         flag: typeof v4.policy?.confidenceThresholds?.flag === "number" ? v4.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
@@ -517,6 +518,7 @@ var init_config = __esm({
     DEFAULT_POLICY_V3 = {
       unknownLocalEffect: "deny",
       unparseableShell: "deny",
+      codexUnmappedTool: "deny",
       confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
       modelAssist: { ...DEFAULT_MODEL_ASSIST },
       transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
@@ -935,8 +937,52 @@ var init_config_io = __esm({
 });
 
 // src/adapters/codex/runtime-entry.ts
-init_codex();
 import process2 from "node:process";
+
+// src/core/gate-contract.ts
+var GATE_CONTRACT_VERSION = 1;
+function classifyResultToGateVerdict(params) {
+  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: result.verdict,
+    reason: result.reason,
+    fingerprint: result.fingerprint,
+    assessment: result.assessment,
+    normalizedCommand: result.normalizedCommand,
+    summary: result.summary,
+    permission,
+    wouldBlock,
+    mode,
+    approvalId,
+    user_message,
+    agent_message,
+    v2: result.v2
+  };
+}
+function unnormalizedGateVerdict(params) {
+  return {
+    contractVersion: GATE_CONTRACT_VERSION,
+    verdict: "deny_pending_approval",
+    reason: params.reason,
+    fingerprint: "unnormalized",
+    assessment: {
+      reversibility: "irreversible",
+      external: true,
+      blastRadius: "unknown",
+      confidence: 0,
+      signals: ["normalization_failed"]
+    },
+    permission: "deny",
+    wouldBlock: true,
+    mode: params.mode,
+    user_message: params.user_message,
+    agent_message: params.agent_message
+  };
+}
+
+// src/adapters/codex/runtime-entry.ts
+init_codex();
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -1282,48 +1328,6 @@ function shouldSkipBrokerApprovedOnce(brokerActive, reason) {
 
 // src/adapters/shared/gate-runtime.ts
 init_config_layers();
-
-// src/core/gate-contract.ts
-var GATE_CONTRACT_VERSION = 1;
-function classifyResultToGateVerdict(params) {
-  const { result, mode, permission, wouldBlock, approvalId, user_message, agent_message } = params;
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: result.verdict,
-    reason: result.reason,
-    fingerprint: result.fingerprint,
-    assessment: result.assessment,
-    normalizedCommand: result.normalizedCommand,
-    summary: result.summary,
-    permission,
-    wouldBlock,
-    mode,
-    approvalId,
-    user_message,
-    agent_message,
-    v2: result.v2
-  };
-}
-function unnormalizedGateVerdict(params) {
-  return {
-    contractVersion: GATE_CONTRACT_VERSION,
-    verdict: "deny_pending_approval",
-    reason: params.reason,
-    fingerprint: "unnormalized",
-    assessment: {
-      reversibility: "irreversible",
-      external: true,
-      blastRadius: "unknown",
-      confidence: 0,
-      signals: ["normalization_failed"]
-    },
-    permission: "deny",
-    wouldBlock: true,
-    mode: params.mode,
-    user_message: params.user_message,
-    agent_message: params.agent_message
-  };
-}
 
 // src/core/fingerprint.ts
 import { createHash } from "node:crypto";
@@ -4863,10 +4867,25 @@ function mapCodexToolName(toolName) {
   if (name === "task" || name === "spawn" || name === "subagent") {
     return "subagent";
   }
-  if (name === "apply_patch" || name === "write" || name === "edit" || name === "patch") {
+  if (name === "apply_patch" || name === "write" || name === "edit" || name === "patch" || name === "delete" || name === "strreplace" || name === "str_replace") {
     return "tool";
   }
   return null;
+}
+function resolveCodexGateKind(eventName, toolName) {
+  if (eventName === "SubagentStart") {
+    return "subagent";
+  }
+  return mapCodexToolName(toolName);
+}
+function codexUnmappedToolDenyResponse(mode) {
+  const verdict2 = unnormalizedGateVerdict({
+    reason: "unmapped_tool",
+    mode,
+    user_message: "agent-belay does not recognize this Codex tool action yet. Run agent-belay doctor, then retry.",
+    agent_message: "Belay denied this action because the Codex tool/event could not be normalized."
+  });
+  return gateVerdictToCodexPreToolUseResponse(verdict2);
 }
 function extractString(value, ...keys) {
   if (!value || typeof value !== "object") {
@@ -4911,18 +4930,24 @@ async function runBeforeSubmitPromptHook() {
     });
   }
 }
-async function runToolGateHook(_eventName) {
+async function runToolGateHook(eventName) {
   try {
     const payload = await readStdinJson();
     const cwd = process2.cwd();
     const toolName = String(payload.tool_name ?? payload.toolName ?? "");
-    const kind = mapCodexToolName(toolName);
-    if (!kind) {
-      jsonResponse({});
-      return;
-    }
+    const kind = resolveCodexGateKind(eventName, toolName);
     const ctx = await loadRuntimeContext(cwd);
     const deps = createDefaultGateRuntimeDeps();
+    if (!kind) {
+      const policy = ctx.config.policy?.codexUnmappedTool ?? "deny";
+      if (policy === "allow") {
+        await appendObservedAudit(ctx, deps, eventName, payload);
+        jsonResponse({});
+        return;
+      }
+      jsonResponse(codexUnmappedToolDenyResponse(ctx.config.mode));
+      return;
+    }
     const normalizedPayload = normalizeCodexToolPayload(kind, payload);
     const verdict2 = await evaluateGatedAction(ctx, deps, {
       kind,
@@ -4983,6 +5008,7 @@ async function runAuditHook(eventName) {
   }
 }
 export {
+  codexUnmappedToolDenyResponse,
   runAuditHook,
   runBeforeSubmitPromptHook,
   runShellGateHook,

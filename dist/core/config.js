@@ -45,6 +45,7 @@ export const LEGACY_POLICY_V3 = {
 export const DEFAULT_POLICY_V3 = {
     unknownLocalEffect: 'deny',
     unparseableShell: 'deny',
+    codexUnmappedTool: 'deny',
     confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
     modelAssist: { ...DEFAULT_MODEL_ASSIST },
     transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
@@ -471,6 +472,7 @@ export function normalizeConfig(config) {
                 : v4.policy?.unparseableShell === 'allow_flagged'
                     ? 'allow_flagged'
                     : DEFAULT_POLICY_V3.unparseableShell,
+            codexUnmappedTool: v4.policy?.codexUnmappedTool === 'allow' ? 'allow' : 'deny',
             confidenceThresholds: {
                 allow: typeof v4.policy?.confidenceThresholds?.allow === 'number'
                     ? v4.policy.confidenceThresholds.allow

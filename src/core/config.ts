@@ -77,6 +77,12 @@ export interface BelayPolicyConfig {
   confidenceThresholds: BelayConfidenceThresholds
   modelAssist: BelayModelAssistConfig
   transactional: BelayTransactionalConfig
+  // Codex adapter (experimental): how to treat a PreToolUse tool whose name belay does not yet
+  // map to a known kind. 'deny' (default) is the fail-closed floor — an unmapped tool must not
+  // silently bypass the gate (FN=0). 'allow' is the opt-out: pass the tool but record it to the
+  // audit log for vocabulary learning (use only if fail-closed over-blocks in practice). See
+  // SPEC-v2.2 R-X1. Optional; runtime defaults to 'deny' when absent.
+  codexUnmappedTool?: 'allow' | 'deny'
 }
 
 export interface BelayOverridesConfig {
@@ -226,6 +232,7 @@ export const LEGACY_POLICY_V3: BelayPolicyConfig = {
 export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'deny',
   unparseableShell: 'deny',
+  codexUnmappedTool: 'deny',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
   transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
@@ -738,6 +745,7 @@ export function normalizeConfig(
           : v4.policy?.unparseableShell === 'allow_flagged'
             ? 'allow_flagged'
             : DEFAULT_POLICY_V3.unparseableShell,
+      codexUnmappedTool: v4.policy?.codexUnmappedTool === 'allow' ? 'allow' : 'deny',
       confidenceThresholds: {
         allow:
           typeof v4.policy?.confidenceThresholds?.allow === 'number'

@@ -293,11 +293,11 @@ function printHelp() {
     process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude|codex] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
     (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
-  agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force]
-  agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
+  agent-belay upgrade [--target <dir>] [--adapter cursor|claude|codex] [--with-skill]
+  agent-belay dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
+  agent-belay doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
   agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   agent-belay simulate --config <path> [--target <dir>] [--json]

@@ -12,6 +12,7 @@ import {
   renderCodexHooksToml,
 } from '../../adapters/codex/hooks.js'
 import { codexLayout } from '../../adapters/layouts/codex.js'
+import { codexUnmappedToolDenyResponse } from '../../adapters/codex/runtime-entry.js'
 import {
   gateVerdictToCodexPreToolUseResponse,
   gateVerdictToCodexUserPromptResponse,
@@ -20,11 +21,12 @@ import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
 
 describe('codex adapter (experimental)', () => {
   describe('TOML hook rendering', () => {
-    it('renders a marker-delimited PreToolUse/UserPromptSubmit/PostToolUse block', () => {
+    it('renders a marker-delimited PreToolUse/SubagentStart/UserPromptSubmit/PostToolUse block', () => {
       const toml = renderCodexHooksToml('darwin')
       expect(toml).toContain(CODEX_HOOKS_BEGIN)
       expect(toml).toContain(CODEX_HOOKS_END)
       expect(toml).toContain('[[hooks.PreToolUse]]')
+      expect(toml).toContain('[[hooks.SubagentStart]]')
       expect(toml).toContain('[[hooks.UserPromptSubmit]]')
       expect(toml).toContain('[[hooks.PostToolUse]]')
       expect(toml).toContain('belay-runner')
@@ -79,6 +81,16 @@ describe('codex adapter (experimental)', () => {
       ).toEqual({ decision: 'block', reason: 'pending approval' })
       expect(gateVerdictToCodexUserPromptResponse({ continue: true })).toEqual({})
     })
+
+    it('unmapped Codex tool response is fail-closed deny', () => {
+      const response = codexUnmappedToolDenyResponse('enforce') as {
+        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string }
+      }
+      expect(response.hookSpecificOutput?.permissionDecision).toBe('deny')
+      expect(response.hookSpecificOutput?.permissionDecisionReason).toContain(
+        'does not recognize this Codex tool action yet',
+      )
+    })
   })
 
   describe('install', () => {
@@ -102,6 +114,21 @@ describe('codex adapter (experimental)', () => {
       await codexAdapter.install(repoRoot, {})
       const report = await codexAdapter.doctor({ targetDir: repoRoot })
       expect(report.warnings.some((w) => w.includes('EXPERIMENTAL'))).toBe(true)
+    })
+
+    it('registers SubagentStart in managed hook events', () => {
+      const events = codexAdapter.hookEvents().map((entry) => entry.event)
+      expect(events).toContain('SubagentStart')
+    })
+
+    it('default belay config sets codexUnmappedTool policy to deny (fail-closed)', async () => {
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-policy-'))
+      await mkdir(path.join(repoRoot, '.git'))
+      await codexAdapter.install(repoRoot, {})
+      const config = JSON.parse(await readFile(codexLayout.configPath(repoRoot), 'utf8')) as {
+        policy?: { codexUnmappedTool?: string }
+      }
+      expect(config.policy?.codexUnmappedTool).toBe('deny')
     })
   })
 })

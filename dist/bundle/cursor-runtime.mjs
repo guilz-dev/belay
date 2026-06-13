@@ -285,6 +285,7 @@ function normalizeConfig(config) {
     policy: {
       unknownLocalEffect: v4.policy?.unknownLocalEffect === "deny" ? "deny" : v4.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
       unparseableShell: v4.policy?.unparseableShell === "deny" ? "deny" : v4.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
+      codexUnmappedTool: v4.policy?.codexUnmappedTool === "allow" ? "allow" : "deny",
       confidenceThresholds: {
         allow: typeof v4.policy?.confidenceThresholds?.allow === "number" ? v4.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
         flag: typeof v4.policy?.confidenceThresholds?.flag === "number" ? v4.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
@@ -517,6 +518,7 @@ var init_config = __esm({
     DEFAULT_POLICY_V3 = {
       unknownLocalEffect: "deny",
       unparseableShell: "deny",
+      codexUnmappedTool: "deny",
       confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
       modelAssist: { ...DEFAULT_MODEL_ASSIST },
       transactional: { ...DEFAULT_TRANSACTIONAL_V3 }

@@ -61,6 +61,7 @@ export interface BelayPolicyConfig {
     confidenceThresholds: BelayConfidenceThresholds;
     modelAssist: BelayModelAssistConfig;
     transactional: BelayTransactionalConfig;
+    codexUnmappedTool?: 'allow' | 'deny';
 }
 export interface BelayOverridesConfig {
     allow: string[];
