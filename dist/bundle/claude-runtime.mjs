@@ -2937,7 +2937,7 @@ function tier0ExternalMatch(key, head, tokens) {
   if (head === "npm" && tokens[1] === "publish") {
     return true;
   }
-  if (head === "docker" && tokens[1] === "push") {
+  if (head === "docker" && (tokens[1] === "push" || tokens.some((t) => t === "--push" || t.startsWith("--output=type=registry")))) {
     return true;
   }
   if (head === "git" && tokens[1] === "push") {

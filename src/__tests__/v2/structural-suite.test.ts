@@ -86,6 +86,29 @@ describe('v2 structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
+    it('docker buildx build --push is ask (Tier0)', async () => {
+      const result = await verdict('docker buildx build --push -t r/app .', context)
+      expect(result.permission).toBe('ask')
+    })
+
+    it('docker build --push is ask (Tier0)', async () => {
+      const result = await verdict('docker build --push -t r/app .', context)
+      expect(result.permission).toBe('ask')
+    })
+
+    it('docker buildx build --output=type=registry is ask (Tier0)', async () => {
+      const result = await verdict(
+        'docker buildx build --output=type=registry,ref=r/app:latest .',
+        context,
+      )
+      expect(result.permission).toBe('ask')
+    })
+
+    it('docker build (no push) does NOT floor to Tier0 external', async () => {
+      const result = await verdict('docker buildx build -t myapp .', context)
+      expect(result.signals).not.toContain('tier0_external')
+    })
+
     it('npm run deploy resolves recipe and asks', async () => {
       const result = await verdict('npm run deploy', context)
       expect(result.permission).toBe('ask')
