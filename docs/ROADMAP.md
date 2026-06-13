@@ -33,6 +33,7 @@
 | **v2.1.4** | Concept conformance audit（L1 demote 廃止 / egress read-mutate / guarantee 実行照合 / Codex tool identity / subagent intent） | Implemented — see [SPEC-v2.1.4.md](./SPEC-v2.1.4.md) |
 | **v2.2** | skill 配布フロントドア + scope + 横展開（Codex アダプタ） | Implemented — see [SPEC-v2.2.md](./SPEC-v2.2.md) |
 | **v2.3 (Release)** | **初 OSS リリース** — restorability floor + 命綱 skill 知性層（③可視化 + ①復元）。Codex は experimental 出荷 | Release spec — see [SPEC-v2.3.md](./SPEC-v2.3.md) |
+| **v2.3.1** | 改名 `agent-belay`→**`@guilz-dev/belay`**（bin `belay`）+ **初 npm 公開 `v0.0.1`**（床 + skill front-door。recover/可視化は後送り） | Release engineering — see [SPEC-v2.3.1.md](./SPEC-v2.3.1.md) |
 
 v2.2 のワークストリーム別状態: **WS-Codex** = 実装済み・GO（experimental、belay 実適配器の
 TUI smoke=G-B2 で解除）/ **WS-Skill** = 実装済み（G-B1 実機記録 pending — 機能未実装ではない）
