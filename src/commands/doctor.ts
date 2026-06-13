@@ -16,6 +16,7 @@ import {
 import { configuredControlPlaneDir, defaultControlPlaneDir } from '../core/config.js'
 import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
+import { diagnoseJudge } from '../core/judge-doctor.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import { egressStatus } from '../services/egress-service.js'
@@ -84,11 +85,15 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       for (const entry of layered.provenance) {
         notes.push(`Config layer [${entry.source}]: ${entry.path}`)
       }
-      if (loadedConfig.version !== 3) {
+      if (loadedConfig.version !== 4) {
         warnings.push(
-          `Config version is ${loadedConfig.version}; expected 3. Run agent-belay upgrade to migrate.`,
+          `Config version is ${loadedConfig.version}; expected 4. Run agent-belay upgrade to migrate.`,
         )
       }
+      const judgeDoctor = await diagnoseJudge(loadedConfig)
+      issues.push(...judgeDoctor.issues)
+      warnings.push(...judgeDoctor.warnings)
+      notes.push(...judgeDoctor.notes)
       notes.push(`Adapter: ${adapterName}`)
       notes.push(`Config mode: ${loadedConfig.mode}`)
       notes.push(

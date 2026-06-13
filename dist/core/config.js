@@ -1,4 +1,18 @@
 import path from 'node:path';
+export const DEFAULT_JUDGE_LOCAL_OLLAMA = {
+    provider: 'ollama',
+    model: 'gemma4:e2b',
+    endpoint: 'http://localhost:11434',
+    timeoutMs: 25000,
+    keepAlive: '30m',
+};
+export const DEFAULT_JUDGE_CURSOR_COMPOSER = {
+    provider: 'cursor',
+    model: 'auto',
+    timeoutMs: 8000,
+    endpoint: null,
+    keepAlive: null,
+};
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
 export const DEFAULT_CONFIDENCE_THRESHOLDS = {
     allow: 0.88,
@@ -108,8 +122,8 @@ export const DEFAULT_CONFIG_V2 = {
         includeAssessment: true,
     },
 };
-export const DEFAULT_CONFIG_V3 = {
-    version: 3,
+export const DEFAULT_CONFIG_V4 = {
+    version: 4,
     mode: DEFAULT_CONFIG_V2.mode,
     approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
     tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
@@ -127,7 +141,10 @@ export const DEFAULT_CONFIG_V3 = {
     egress: { ...DEFAULT_EGRESS_V3 },
     sandbox: { ...DEFAULT_SANDBOX_V3 },
     audit: { ...DEFAULT_CONFIG_V2.audit },
+    judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA },
 };
+/** @deprecated Use DEFAULT_CONFIG_V4 */
+export const DEFAULT_CONFIG_V3 = DEFAULT_CONFIG_V4;
 function uniqueStrings(values) {
     return [...new Set(values)];
 }
@@ -145,7 +162,7 @@ export function mapLegacyClassifierToOverrides(classifier) {
 export function migrateV2ToV3(v2, rawOverrides) {
     const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
     return normalizeConfig({
-        version: 3,
+        version: 4,
         mode: v2.mode,
         approvalTtlMinutes: v2.approvalTtlMinutes,
         tokenPrefix: v2.tokenPrefix,
@@ -166,6 +183,7 @@ export function migrateV2ToV3(v2, rawOverrides) {
         egress: { ...DEFAULT_EGRESS_V3 },
         sandbox: { ...DEFAULT_SANDBOX_V3 },
         audit: v2.audit,
+        judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA },
     });
 }
 export function isConfigV1(value) {
@@ -175,7 +193,45 @@ export function isConfigV2(value) {
     return typeof value === 'object' && value !== null && value.version === 2;
 }
 export function isConfigV3(value) {
-    return typeof value === 'object' && value !== null && value.version === 3;
+    if (typeof value !== 'object' || value === null) {
+        return false;
+    }
+    const version = value.version;
+    return version === 3 || version === 4;
+}
+export function isConfigV4(value) {
+    return typeof value === 'object' && value !== null && value.version === 4;
+}
+function synthesizeJudgeFromRaw(raw) {
+    const judge = raw.judge;
+    if (judge?.provider === 'cursor' || judge?.provider === 'ollama') {
+        const base = judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+        return normalizeJudgeConfig({
+            ...base,
+            ...judge,
+            provider: judge.provider,
+        });
+    }
+    return { ...DEFAULT_JUDGE_LOCAL_OLLAMA };
+}
+export function normalizeJudgeConfig(judge) {
+    const base = judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+    const model = typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model;
+    const timeoutMs = typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs;
+    return {
+        provider: judge.provider === 'cursor' ? 'cursor' : 'ollama',
+        model,
+        timeoutMs,
+        endpoint: typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null,
+        keepAlive: typeof judge.keepAlive === 'string' && judge.keepAlive.trim() ? judge.keepAlive.trim() : null,
+    };
+}
+export function migrateV3ToV4(v3, raw) {
+    return normalizeConfig({
+        ...v3,
+        version: 4,
+        judge: synthesizeJudgeFromRaw({ ...(raw ?? {}), judge: raw?.judge ?? v3.judge }),
+    });
 }
 function hasV3Sections(raw) {
     return (raw.policy !== undefined ||
@@ -193,6 +249,7 @@ function looksLikeV2Config(raw) {
 function mergeV3FromRaw(base, raw) {
     return normalizeConfig({
         ...base,
+        judge: raw.judge ? { ...base.judge, ...raw.judge } : base.judge,
         policy: {
             ...base.policy,
             ...(raw.policy ?? {}),
@@ -229,9 +286,10 @@ function mergeV3FromRaw(base, raw) {
 }
 function normalizeV3Raw(raw) {
     return normalizeConfig({
-        ...DEFAULT_CONFIG_V3,
+        ...DEFAULT_CONFIG_V4,
         ...raw,
-        version: 3,
+        version: 4,
+        judge: synthesizeJudgeFromRaw(raw),
         gates: {
             ...DEFAULT_CONFIG_V3.gates,
             ...(raw.gates ?? {}),
@@ -283,9 +341,12 @@ function normalizeV3Raw(raw) {
 }
 export function migrateConfig(loaded) {
     if (typeof loaded !== 'object' || loaded === null) {
-        return { ...DEFAULT_CONFIG_V3 };
+        return { ...DEFAULT_CONFIG_V4 };
     }
     const raw = loaded;
+    if (raw.version === 4) {
+        return normalizeV3Raw(raw);
+    }
     if (raw.version === 3 || (raw.version === undefined && hasV3Sections(raw))) {
         return normalizeV3Raw(raw);
     }
@@ -363,153 +424,154 @@ export function normalizeConfig(config) {
     if (config.version === 2) {
         return normalizeConfigV2(config);
     }
-    const v3 = config;
+    const v4 = config;
     return {
-        version: 3,
-        mode: v3.mode === 'audit' ? 'audit' : 'enforce',
-        approvalTtlMinutes: typeof v3.approvalTtlMinutes === 'number' && v3.approvalTtlMinutes > 0
-            ? v3.approvalTtlMinutes
-            : DEFAULT_CONFIG_V3.approvalTtlMinutes,
-        tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
+        version: 4,
+        mode: v4.mode === 'audit' ? 'audit' : 'enforce',
+        approvalTtlMinutes: typeof v4.approvalTtlMinutes === 'number' && v4.approvalTtlMinutes > 0
+            ? v4.approvalTtlMinutes
+            : DEFAULT_CONFIG_V4.approvalTtlMinutes,
+        tokenPrefix: v4.tokenPrefix || DEFAULT_CONFIG_V4.tokenPrefix,
         gates: {
-            shell: v3.gates.shell !== false,
-            subagent: v3.gates.subagent !== false,
-            fileMutation: v3.gates.fileMutation !== false,
-            toolShell: v3.gates.toolShell !== false,
+            shell: v4.gates.shell !== false,
+            subagent: v4.gates.subagent !== false,
+            fileMutation: v4.gates.fileMutation !== false,
+            toolShell: v4.gates.toolShell !== false,
         },
         classifier: {
-            strictChains: v3.classifier?.strictChains !== false,
-            sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths)
-                ? v3.classifier.sensitivePaths
-                : DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+            strictChains: v4.classifier?.strictChains !== false,
+            sensitivePaths: Array.isArray(v4.classifier?.sensitivePaths)
+                ? v4.classifier.sensitivePaths
+                : DEFAULT_CONFIG_V4.classifier.sensitivePaths,
         },
         policy: {
-            unknownLocalEffect: v3.policy?.unknownLocalEffect === 'deny'
+            unknownLocalEffect: v4.policy?.unknownLocalEffect === 'deny'
                 ? 'deny'
-                : v3.policy?.unknownLocalEffect === 'allow_flagged'
+                : v4.policy?.unknownLocalEffect === 'allow_flagged'
                     ? 'allow_flagged'
                     : DEFAULT_POLICY_V3.unknownLocalEffect,
-            unparseableShell: v3.policy?.unparseableShell === 'deny'
+            unparseableShell: v4.policy?.unparseableShell === 'deny'
                 ? 'deny'
-                : v3.policy?.unparseableShell === 'allow_flagged'
+                : v4.policy?.unparseableShell === 'allow_flagged'
                     ? 'allow_flagged'
                     : DEFAULT_POLICY_V3.unparseableShell,
             confidenceThresholds: {
-                allow: typeof v3.policy?.confidenceThresholds?.allow === 'number'
-                    ? v3.policy.confidenceThresholds.allow
+                allow: typeof v4.policy?.confidenceThresholds?.allow === 'number'
+                    ? v4.policy.confidenceThresholds.allow
                     : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
-                flag: typeof v3.policy?.confidenceThresholds?.flag === 'number'
-                    ? v3.policy.confidenceThresholds.flag
+                flag: typeof v4.policy?.confidenceThresholds?.flag === 'number'
+                    ? v4.policy.confidenceThresholds.flag
                     : DEFAULT_CONFIDENCE_THRESHOLDS.flag,
             },
             modelAssist: {
-                enabled: v3.policy?.modelAssist?.enabled === true,
-                model: v3.policy?.modelAssist?.model,
-                timeoutMs: typeof v3.policy?.modelAssist?.timeoutMs === 'number'
-                    ? v3.policy.modelAssist.timeoutMs
+                enabled: v4.policy?.modelAssist?.enabled === true,
+                model: v4.policy?.modelAssist?.model,
+                timeoutMs: typeof v4.policy?.modelAssist?.timeoutMs === 'number'
+                    ? v4.policy.modelAssist.timeoutMs
                     : DEFAULT_MODEL_ASSIST.timeoutMs,
             },
             transactional: (() => {
-                let minConfidence = typeof v3.policy?.transactional?.minConfidence === 'number'
-                    ? v3.policy.transactional.minConfidence
+                let minConfidence = typeof v4.policy?.transactional?.minConfidence === 'number'
+                    ? v4.policy.transactional.minConfidence
                     : DEFAULT_TRANSACTIONAL_V3.minConfidence;
-                let maxConfidence = typeof v3.policy?.transactional?.maxConfidence === 'number'
-                    ? v3.policy.transactional.maxConfidence
+                let maxConfidence = typeof v4.policy?.transactional?.maxConfidence === 'number'
+                    ? v4.policy.transactional.maxConfidence
                     : DEFAULT_TRANSACTIONAL_V3.maxConfidence;
                 if (minConfidence >= maxConfidence) {
                     minConfidence = DEFAULT_TRANSACTIONAL_V3.minConfidence;
                     maxConfidence = DEFAULT_TRANSACTIONAL_V3.maxConfidence;
                 }
                 return {
-                    enabled: v3.policy?.transactional?.enabled === true,
+                    enabled: v4.policy?.transactional?.enabled === true,
                     minConfidence,
                     maxConfidence,
-                    timeoutMs: typeof v3.policy?.transactional?.timeoutMs === 'number' &&
-                        v3.policy.transactional.timeoutMs > 0
-                        ? v3.policy.transactional.timeoutMs
+                    timeoutMs: typeof v4.policy?.transactional?.timeoutMs === 'number' &&
+                        v4.policy.transactional.timeoutMs > 0
+                        ? v4.policy.transactional.timeoutMs
                         : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
-                    maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === 'number' &&
-                        v3.policy.transactional.maxDeletionCount >= 0
-                        ? v3.policy.transactional.maxDeletionCount
+                    maxDeletionCount: typeof v4.policy?.transactional?.maxDeletionCount === 'number' &&
+                        v4.policy.transactional.maxDeletionCount >= 0
+                        ? v4.policy.transactional.maxDeletionCount
                         : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
                     gates: {
-                        shell: v3.policy?.transactional?.gates?.shell !== false,
+                        shell: v4.policy?.transactional?.gates?.shell !== false,
                     },
                 };
             })(),
         },
         overrides: {
-            allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
-            external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : [],
+            allow: Array.isArray(v4.overrides?.allow) ? uniqueStrings(v4.overrides.allow) : [],
+            external: Array.isArray(v4.overrides?.external) ? uniqueStrings(v4.overrides.external) : [],
         },
         redaction: {
-            maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
-            maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
-            maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
-            maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
-            maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true,
+            maskApprovalIds: v4.redaction?.maskApprovalIds !== false,
+            maskBearerTokens: v4.redaction?.maskBearerTokens !== false,
+            maskAuthHeaders: v4.redaction?.maskAuthHeaders !== false,
+            maskKeyValueSecrets: v4.redaction?.maskKeyValueSecrets !== false,
+            maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings === true,
         },
         controlPlane: {
-            enabled: v3.controlPlane?.enabled === true
+            enabled: v4.controlPlane?.enabled === true
                 ? true
-                : v3.controlPlane?.enabled === false
+                : v4.controlPlane?.enabled === false
                     ? false
                     : DEFAULT_CONTROL_PLANE_V3.enabled,
-            configDir: typeof v3.controlPlane?.configDir === 'string' && v3.controlPlane.configDir.trim()
-                ? v3.controlPlane.configDir.trim()
+            configDir: typeof v4.controlPlane?.configDir === 'string' && v4.controlPlane.configDir.trim()
+                ? v4.controlPlane.configDir.trim()
                 : null,
-            integrity: v3.controlPlane?.integrity === 'hash-pinned'
+            integrity: v4.controlPlane?.integrity === 'hash-pinned'
                 ? 'hash-pinned'
-                : v3.controlPlane?.integrity === 'none'
+                : v4.controlPlane?.integrity === 'none'
                     ? 'none'
                     : DEFAULT_CONTROL_PLANE_V3.integrity,
-            spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
+            spikeOnPrompt: v4.controlPlane?.spikeOnPrompt === true,
             isolation: {
-                mode: v3.controlPlane?.isolation?.mode === 'read-only-mount' ||
-                    v3.controlPlane?.isolation?.mode === 'separate-user'
-                    ? v3.controlPlane.isolation.mode
+                mode: v4.controlPlane?.isolation?.mode === 'read-only-mount' ||
+                    v4.controlPlane?.isolation?.mode === 'separate-user'
+                    ? v4.controlPlane.isolation.mode
                     : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
-                expectedOwnerUid: typeof v3.controlPlane?.isolation?.expectedOwnerUid === 'number'
-                    ? v3.controlPlane.isolation.expectedOwnerUid
+                expectedOwnerUid: typeof v4.controlPlane?.isolation?.expectedOwnerUid === 'number'
+                    ? v4.controlPlane.isolation.expectedOwnerUid
                     : undefined,
-                verifyAgentWritable: v3.controlPlane?.isolation?.verifyAgentWritable !== false,
+                verifyAgentWritable: v4.controlPlane?.isolation?.verifyAgentWritable !== false,
             },
         },
         notifications: {
-            webhookUrl: typeof v3.notifications?.webhookUrl === 'string' && v3.notifications.webhookUrl.trim()
-                ? v3.notifications.webhookUrl.trim()
+            webhookUrl: typeof v4.notifications?.webhookUrl === 'string' && v4.notifications.webhookUrl.trim()
+                ? v4.notifications.webhookUrl.trim()
                 : undefined,
-            commandHook: typeof v3.notifications?.commandHook === 'string' && v3.notifications.commandHook.trim()
-                ? v3.notifications.commandHook.trim()
+            commandHook: typeof v4.notifications?.commandHook === 'string' && v4.notifications.commandHook.trim()
+                ? v4.notifications.commandHook.trim()
                 : undefined,
         },
         approvalSigning: {
-            required: v3.approvalSigning?.required === true,
+            required: v4.approvalSigning?.required === true,
         },
         egress: {
-            enabled: v3.egress?.enabled === true,
-            listenHost: normalizeEgressListenHost(typeof v3.egress?.listenHost === 'string' && v3.egress.listenHost.trim()
-                ? v3.egress.listenHost.trim()
+            enabled: v4.egress?.enabled === true,
+            listenHost: normalizeEgressListenHost(typeof v4.egress?.listenHost === 'string' && v4.egress.listenHost.trim()
+                ? v4.egress.listenHost.trim()
                 : DEFAULT_EGRESS_V3.listenHost),
-            listenPort: typeof v3.egress?.listenPort === 'number' && v3.egress.listenPort > 0
-                ? v3.egress.listenPort
+            listenPort: typeof v4.egress?.listenPort === 'number' && v4.egress.listenPort > 0
+                ? v4.egress.listenPort
                 : DEFAULT_EGRESS_V3.listenPort,
-            demoteL3External: v3.egress?.demoteL3External !== false,
+            demoteL3External: v4.egress?.demoteL3External !== false,
         },
         sandbox: {
-            enabled: v3.sandbox?.enabled === true,
-            runtime: v3.sandbox?.runtime === 'cursor-sandbox' ||
-                v3.sandbox?.runtime === 'container' ||
-                v3.sandbox?.runtime === 'seatbelt' ||
-                v3.sandbox?.runtime === 'landlock'
-                ? v3.sandbox.runtime
+            enabled: v4.sandbox?.enabled === true,
+            runtime: v4.sandbox?.runtime === 'cursor-sandbox' ||
+                v4.sandbox?.runtime === 'container' ||
+                v4.sandbox?.runtime === 'seatbelt' ||
+                v4.sandbox?.runtime === 'landlock'
+                ? v4.sandbox.runtime
                 : DEFAULT_SANDBOX_V3.runtime,
-            denyNetworkByDefault: v3.sandbox?.denyNetworkByDefault !== false,
+            denyNetworkByDefault: v4.sandbox?.denyNetworkByDefault !== false,
         },
         audit: {
-            logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
-            includeAssessment: v3.audit?.includeAssessment !== false,
+            logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
+            includeAssessment: v4.audit?.includeAssessment !== false,
         },
+        judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA),
     };
 }
 export function isFreshConfigInput(loaded) {
@@ -521,13 +583,14 @@ export function isFreshConfigInput(loaded) {
     }
     return Object.keys(loaded).length === 0;
 }
-export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
+export function mergeConfig(existing, defaults = DEFAULT_CONFIG_V4) {
     const migrated = isFreshConfigInput(existing)
-        ? normalizeConfig({ ...defaults, version: 3 })
+        ? normalizeConfig({ ...defaults, version: 4 })
         : migrateConfig(existing);
     return normalizeConfig({
         ...defaults,
         ...migrated,
+        judge: migrated.judge ?? defaults.judge,
         gates: {
             ...defaults.gates,
             ...migrated.gates,

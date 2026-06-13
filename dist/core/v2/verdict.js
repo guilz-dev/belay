@@ -174,6 +174,7 @@ function combineInternal(left, right) {
                 : left.reason
             : right.reason,
         signals: [...new Set([...left.signals, ...right.signals])],
+        judgeTrace: right.judgeTrace ?? left.judgeTrace,
     };
 }
 function askVerdict(params) {
@@ -181,6 +182,12 @@ function askVerdict(params) {
 }
 function allowVerdict(params) {
     return { ...params, permission: 'allow' };
+}
+function withJudgeTrace(verdict, judgeTrace) {
+    if (!judgeTrace) {
+        return verdict;
+    }
+    return { ...verdict, judgeTrace };
 }
 function extractPathArgs(tokens) {
     const redirects = extractRedirectTargets(tokens);
@@ -511,12 +518,15 @@ async function evaluateSegment(command, context, depth) {
         TIER0_EXTERNAL_HEADS.has(segment.head) ||
         segment.head === 'curl' ||
         segment.head === 'wget';
+    let tier1Trace;
     if (needsTier1) {
+        const tier1Text = recursiveScript ?? command;
         const tier1 = await context.judge.evaluate({
-            command,
+            text: tier1Text,
+            context: { cwd: context.cwd, repoRoot: context.repoRoot },
             innerCode: recursiveScript ?? undefined,
-            head: segment.head,
         });
+        tier1Trace = context.judge.lastTrace;
         if (tier1RequiresAsk(tier1)) {
             return askVerdict({
                 location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
@@ -524,53 +534,54 @@ async function evaluateSegment(command, context, depth) {
                 effect: tier1.external_change ? 'remote_mutation' : effect,
                 confidence: 'llm',
                 reason: 'tier1_catastrophic',
-                signals: ['tier1_catastrophic'],
+                signals: ['tier1_catastrophic', tier1.reason],
+                judgeTrace: tier1Trace,
             });
         }
     }
     if (pathAnalysis.location === 'repo_local' &&
         (effect === 'read_only' || effect === 'local_mutation') &&
         opacity !== 'opaque') {
-        return allowVerdict({
+        return withJudgeTrace(allowVerdict({
             location: 'repo_local',
             opacity,
             effect,
             confidence: 'assumed_repo_local',
             reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
             signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
-        });
+        }), tier1Trace);
     }
     if (effect === 'read_only') {
-        return allowVerdict({
+        return withJudgeTrace(allowVerdict({
             location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
             opacity,
             effect: 'read_only',
             confidence: 'assumed_repo_local',
             reason: 'read_only',
             signals: ['read_only'],
-        });
+        }), tier1Trace);
     }
     if (allowOverride) {
-        return allowFromCustomOverride(opacity);
+        return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace);
     }
     if (context.unknownLocalEffect === 'allow_flagged') {
-        return allowVerdict({
+        return withJudgeTrace(allowVerdict({
             location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
             opacity,
             effect: 'unknown',
             confidence: 'assumed_repo_local',
             reason: 'unknown_local_effect',
             signals: ['unknown_local_effect'],
-        });
+        }), tier1Trace);
     }
-    return askVerdict({
+    return withJudgeTrace(askVerdict({
         location: pathAnalysis.location,
         opacity,
         effect,
         confidence: 'deterministic',
         reason: 'unknown_local_effect',
         signals: ['unknown_local_effect'],
-    });
+    }), tier1Trace);
 }
 function toVerdictResult(internal, command, context) {
     const commandRedacted = redactCommand(command);
@@ -585,6 +596,7 @@ function toVerdictResult(internal, command, context) {
         commandRedacted,
         fingerprint: verdictFingerprint(relative, commandRedacted),
         signals: internal.signals,
+        judgeTrace: internal.judgeTrace,
     };
 }
 export async function verdict(command, context) {

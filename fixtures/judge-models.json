@@ -1,0 +1,8 @@
+{
+  "cursor": {
+    "autoResolved": "composer-2.5"
+  },
+  "ollama": {
+    "ciPin": "gemma4:e2b"
+  }
+}

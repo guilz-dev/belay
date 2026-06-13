@@ -29,7 +29,7 @@ function mapLegacyClassifierToOverrides(classifier) {
 function migrateV2ToV3(v2, rawOverrides) {
   const legacyOverrides = mapLegacyClassifierToOverrides(v2.classifier);
   return normalizeConfig({
-    version: 3,
+    version: 4,
     mode: v2.mode,
     approvalTtlMinutes: v2.approvalTtlMinutes,
     tokenPrefix: v2.tokenPrefix,
@@ -49,8 +49,33 @@ function migrateV2ToV3(v2, rawOverrides) {
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
     egress: { ...DEFAULT_EGRESS_V3 },
     sandbox: { ...DEFAULT_SANDBOX_V3 },
-    audit: v2.audit
+    audit: v2.audit,
+    judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
   });
+}
+function synthesizeJudgeFromRaw(raw) {
+  const judge = raw.judge;
+  if (judge?.provider === "cursor" || judge?.provider === "ollama") {
+    const base = judge.provider === "cursor" ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+    return normalizeJudgeConfig({
+      ...base,
+      ...judge,
+      provider: judge.provider
+    });
+  }
+  return { ...DEFAULT_JUDGE_LOCAL_OLLAMA };
+}
+function normalizeJudgeConfig(judge) {
+  const base = judge.provider === "cursor" ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+  const model = typeof judge.model === "string" && judge.model.trim() ? judge.model.trim() : base.model;
+  const timeoutMs = typeof judge.timeoutMs === "number" && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs;
+  return {
+    provider: judge.provider === "cursor" ? "cursor" : "ollama",
+    model,
+    timeoutMs,
+    endpoint: typeof judge.endpoint === "string" && judge.endpoint.trim() ? judge.endpoint.trim() : null,
+    keepAlive: typeof judge.keepAlive === "string" && judge.keepAlive.trim() ? judge.keepAlive.trim() : null
+  };
 }
 function hasV3Sections(raw) {
   return raw.policy !== void 0 || raw.overrides !== void 0 || raw.redaction !== void 0 || raw.controlPlane !== void 0;
@@ -61,6 +86,7 @@ function looksLikeV2Config(raw) {
 function mergeV3FromRaw(base, raw) {
   return normalizeConfig({
     ...base,
+    judge: raw.judge ? { ...base.judge, ...raw.judge } : base.judge,
     policy: {
       ...base.policy,
       ...raw.policy ?? {}
@@ -97,9 +123,10 @@ function mergeV3FromRaw(base, raw) {
 }
 function normalizeV3Raw(raw) {
   return normalizeConfig({
-    ...DEFAULT_CONFIG_V3,
+    ...DEFAULT_CONFIG_V4,
     ...raw,
-    version: 3,
+    version: 4,
+    judge: synthesizeJudgeFromRaw(raw),
     gates: {
       ...DEFAULT_CONFIG_V3.gates,
       ...raw.gates ?? {}
@@ -151,9 +178,12 @@ function normalizeV3Raw(raw) {
 }
 function migrateConfig(loaded) {
   if (typeof loaded !== "object" || loaded === null) {
-    return { ...DEFAULT_CONFIG_V3 };
+    return { ...DEFAULT_CONFIG_V4 };
   }
   const raw = loaded;
+  if (raw.version === 4) {
+    return normalizeV3Raw(raw);
+  }
   if (raw.version === 3 || raw.version === void 0 && hasV3Sections(raw)) {
     return normalizeV3Raw(raw);
   }
@@ -223,99 +253,100 @@ function normalizeConfig(config) {
   if (config.version === 2) {
     return normalizeConfigV2(config);
   }
-  const v3 = config;
+  const v4 = config;
   return {
-    version: 3,
-    mode: v3.mode === "audit" ? "audit" : "enforce",
-    approvalTtlMinutes: typeof v3.approvalTtlMinutes === "number" && v3.approvalTtlMinutes > 0 ? v3.approvalTtlMinutes : DEFAULT_CONFIG_V3.approvalTtlMinutes,
-    tokenPrefix: v3.tokenPrefix || DEFAULT_CONFIG_V3.tokenPrefix,
+    version: 4,
+    mode: v4.mode === "audit" ? "audit" : "enforce",
+    approvalTtlMinutes: typeof v4.approvalTtlMinutes === "number" && v4.approvalTtlMinutes > 0 ? v4.approvalTtlMinutes : DEFAULT_CONFIG_V4.approvalTtlMinutes,
+    tokenPrefix: v4.tokenPrefix || DEFAULT_CONFIG_V4.tokenPrefix,
     gates: {
-      shell: v3.gates.shell !== false,
-      subagent: v3.gates.subagent !== false,
-      fileMutation: v3.gates.fileMutation !== false,
-      toolShell: v3.gates.toolShell !== false
+      shell: v4.gates.shell !== false,
+      subagent: v4.gates.subagent !== false,
+      fileMutation: v4.gates.fileMutation !== false,
+      toolShell: v4.gates.toolShell !== false
     },
     classifier: {
-      strictChains: v3.classifier?.strictChains !== false,
-      sensitivePaths: Array.isArray(v3.classifier?.sensitivePaths) ? v3.classifier.sensitivePaths : DEFAULT_CONFIG_V3.classifier.sensitivePaths
+      strictChains: v4.classifier?.strictChains !== false,
+      sensitivePaths: Array.isArray(v4.classifier?.sensitivePaths) ? v4.classifier.sensitivePaths : DEFAULT_CONFIG_V4.classifier.sensitivePaths
     },
     policy: {
-      unknownLocalEffect: v3.policy?.unknownLocalEffect === "deny" ? "deny" : v3.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
-      unparseableShell: v3.policy?.unparseableShell === "deny" ? "deny" : v3.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
+      unknownLocalEffect: v4.policy?.unknownLocalEffect === "deny" ? "deny" : v4.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
+      unparseableShell: v4.policy?.unparseableShell === "deny" ? "deny" : v4.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
       confidenceThresholds: {
-        allow: typeof v3.policy?.confidenceThresholds?.allow === "number" ? v3.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
-        flag: typeof v3.policy?.confidenceThresholds?.flag === "number" ? v3.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
+        allow: typeof v4.policy?.confidenceThresholds?.allow === "number" ? v4.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
+        flag: typeof v4.policy?.confidenceThresholds?.flag === "number" ? v4.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
       },
       modelAssist: {
-        enabled: v3.policy?.modelAssist?.enabled === true,
-        model: v3.policy?.modelAssist?.model,
-        timeoutMs: typeof v3.policy?.modelAssist?.timeoutMs === "number" ? v3.policy.modelAssist.timeoutMs : DEFAULT_MODEL_ASSIST.timeoutMs
+        enabled: v4.policy?.modelAssist?.enabled === true,
+        model: v4.policy?.modelAssist?.model,
+        timeoutMs: typeof v4.policy?.modelAssist?.timeoutMs === "number" ? v4.policy.modelAssist.timeoutMs : DEFAULT_MODEL_ASSIST.timeoutMs
       },
       transactional: (() => {
-        let minConfidence = typeof v3.policy?.transactional?.minConfidence === "number" ? v3.policy.transactional.minConfidence : DEFAULT_TRANSACTIONAL_V3.minConfidence;
-        let maxConfidence = typeof v3.policy?.transactional?.maxConfidence === "number" ? v3.policy.transactional.maxConfidence : DEFAULT_TRANSACTIONAL_V3.maxConfidence;
+        let minConfidence = typeof v4.policy?.transactional?.minConfidence === "number" ? v4.policy.transactional.minConfidence : DEFAULT_TRANSACTIONAL_V3.minConfidence;
+        let maxConfidence = typeof v4.policy?.transactional?.maxConfidence === "number" ? v4.policy.transactional.maxConfidence : DEFAULT_TRANSACTIONAL_V3.maxConfidence;
         if (minConfidence >= maxConfidence) {
           minConfidence = DEFAULT_TRANSACTIONAL_V3.minConfidence;
           maxConfidence = DEFAULT_TRANSACTIONAL_V3.maxConfidence;
         }
         return {
-          enabled: v3.policy?.transactional?.enabled === true,
+          enabled: v4.policy?.transactional?.enabled === true,
           minConfidence,
           maxConfidence,
-          timeoutMs: typeof v3.policy?.transactional?.timeoutMs === "number" && v3.policy.transactional.timeoutMs > 0 ? v3.policy.transactional.timeoutMs : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
-          maxDeletionCount: typeof v3.policy?.transactional?.maxDeletionCount === "number" && v3.policy.transactional.maxDeletionCount >= 0 ? v3.policy.transactional.maxDeletionCount : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
+          timeoutMs: typeof v4.policy?.transactional?.timeoutMs === "number" && v4.policy.transactional.timeoutMs > 0 ? v4.policy.transactional.timeoutMs : DEFAULT_TRANSACTIONAL_V3.timeoutMs,
+          maxDeletionCount: typeof v4.policy?.transactional?.maxDeletionCount === "number" && v4.policy.transactional.maxDeletionCount >= 0 ? v4.policy.transactional.maxDeletionCount : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
           gates: {
-            shell: v3.policy?.transactional?.gates?.shell !== false
+            shell: v4.policy?.transactional?.gates?.shell !== false
           }
         };
       })()
     },
     overrides: {
-      allow: Array.isArray(v3.overrides?.allow) ? uniqueStrings(v3.overrides.allow) : [],
-      external: Array.isArray(v3.overrides?.external) ? uniqueStrings(v3.overrides.external) : []
+      allow: Array.isArray(v4.overrides?.allow) ? uniqueStrings(v4.overrides.allow) : [],
+      external: Array.isArray(v4.overrides?.external) ? uniqueStrings(v4.overrides.external) : []
     },
     redaction: {
-      maskApprovalIds: v3.redaction?.maskApprovalIds !== false,
-      maskBearerTokens: v3.redaction?.maskBearerTokens !== false,
-      maskAuthHeaders: v3.redaction?.maskAuthHeaders !== false,
-      maskKeyValueSecrets: v3.redaction?.maskKeyValueSecrets !== false,
-      maskHighEntropyStrings: v3.redaction?.maskHighEntropyStrings === true
+      maskApprovalIds: v4.redaction?.maskApprovalIds !== false,
+      maskBearerTokens: v4.redaction?.maskBearerTokens !== false,
+      maskAuthHeaders: v4.redaction?.maskAuthHeaders !== false,
+      maskKeyValueSecrets: v4.redaction?.maskKeyValueSecrets !== false,
+      maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings === true
     },
     controlPlane: {
-      enabled: v3.controlPlane?.enabled === true ? true : v3.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
-      configDir: typeof v3.controlPlane?.configDir === "string" && v3.controlPlane.configDir.trim() ? v3.controlPlane.configDir.trim() : null,
-      integrity: v3.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v3.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: v3.controlPlane?.spikeOnPrompt === true,
+      enabled: v4.controlPlane?.enabled === true ? true : v4.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
+      configDir: typeof v4.controlPlane?.configDir === "string" && v4.controlPlane.configDir.trim() ? v4.controlPlane.configDir.trim() : null,
+      integrity: v4.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v4.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
+      spikeOnPrompt: v4.controlPlane?.spikeOnPrompt === true,
       isolation: {
-        mode: v3.controlPlane?.isolation?.mode === "read-only-mount" || v3.controlPlane?.isolation?.mode === "separate-user" ? v3.controlPlane.isolation.mode : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
-        expectedOwnerUid: typeof v3.controlPlane?.isolation?.expectedOwnerUid === "number" ? v3.controlPlane.isolation.expectedOwnerUid : void 0,
-        verifyAgentWritable: v3.controlPlane?.isolation?.verifyAgentWritable !== false
+        mode: v4.controlPlane?.isolation?.mode === "read-only-mount" || v4.controlPlane?.isolation?.mode === "separate-user" ? v4.controlPlane.isolation.mode : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
+        expectedOwnerUid: typeof v4.controlPlane?.isolation?.expectedOwnerUid === "number" ? v4.controlPlane.isolation.expectedOwnerUid : void 0,
+        verifyAgentWritable: v4.controlPlane?.isolation?.verifyAgentWritable !== false
       }
     },
     notifications: {
-      webhookUrl: typeof v3.notifications?.webhookUrl === "string" && v3.notifications.webhookUrl.trim() ? v3.notifications.webhookUrl.trim() : void 0,
-      commandHook: typeof v3.notifications?.commandHook === "string" && v3.notifications.commandHook.trim() ? v3.notifications.commandHook.trim() : void 0
+      webhookUrl: typeof v4.notifications?.webhookUrl === "string" && v4.notifications.webhookUrl.trim() ? v4.notifications.webhookUrl.trim() : void 0,
+      commandHook: typeof v4.notifications?.commandHook === "string" && v4.notifications.commandHook.trim() ? v4.notifications.commandHook.trim() : void 0
     },
     approvalSigning: {
-      required: v3.approvalSigning?.required === true
+      required: v4.approvalSigning?.required === true
     },
     egress: {
-      enabled: v3.egress?.enabled === true,
+      enabled: v4.egress?.enabled === true,
       listenHost: normalizeEgressListenHost(
-        typeof v3.egress?.listenHost === "string" && v3.egress.listenHost.trim() ? v3.egress.listenHost.trim() : DEFAULT_EGRESS_V3.listenHost
+        typeof v4.egress?.listenHost === "string" && v4.egress.listenHost.trim() ? v4.egress.listenHost.trim() : DEFAULT_EGRESS_V3.listenHost
       ),
-      listenPort: typeof v3.egress?.listenPort === "number" && v3.egress.listenPort > 0 ? v3.egress.listenPort : DEFAULT_EGRESS_V3.listenPort,
-      demoteL3External: v3.egress?.demoteL3External !== false
+      listenPort: typeof v4.egress?.listenPort === "number" && v4.egress.listenPort > 0 ? v4.egress.listenPort : DEFAULT_EGRESS_V3.listenPort,
+      demoteL3External: v4.egress?.demoteL3External !== false
     },
     sandbox: {
-      enabled: v3.sandbox?.enabled === true,
-      runtime: v3.sandbox?.runtime === "cursor-sandbox" || v3.sandbox?.runtime === "container" || v3.sandbox?.runtime === "seatbelt" || v3.sandbox?.runtime === "landlock" ? v3.sandbox.runtime : DEFAULT_SANDBOX_V3.runtime,
-      denyNetworkByDefault: v3.sandbox?.denyNetworkByDefault !== false
+      enabled: v4.sandbox?.enabled === true,
+      runtime: v4.sandbox?.runtime === "cursor-sandbox" || v4.sandbox?.runtime === "container" || v4.sandbox?.runtime === "seatbelt" || v4.sandbox?.runtime === "landlock" ? v4.sandbox.runtime : DEFAULT_SANDBOX_V3.runtime,
+      denyNetworkByDefault: v4.sandbox?.denyNetworkByDefault !== false
     },
     audit: {
-      logPath: v3.audit?.logPath || DEFAULT_CONFIG_V3.audit.logPath,
-      includeAssessment: v3.audit?.includeAssessment !== false
-    }
+      logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
+      includeAssessment: v4.audit?.includeAssessment !== false
+    },
+    judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA)
   };
 }
 function isFreshConfigInput(loaded) {
@@ -327,11 +358,12 @@ function isFreshConfigInput(loaded) {
   }
   return Object.keys(loaded).length === 0;
 }
-function mergeConfig(existing, defaults = DEFAULT_CONFIG_V3) {
-  const migrated = isFreshConfigInput(existing) ? normalizeConfig({ ...defaults, version: 3 }) : migrateConfig(existing);
+function mergeConfig(existing, defaults = DEFAULT_CONFIG_V4) {
+  const migrated = isFreshConfigInput(existing) ? normalizeConfig({ ...defaults, version: 4 }) : migrateConfig(existing);
   return normalizeConfig({
     ...defaults,
     ...migrated,
+    judge: migrated.judge ?? defaults.judge,
     gates: {
       ...defaults.gates,
       ...migrated.gates
@@ -427,10 +459,24 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
-var DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3;
+var DEFAULT_JUDGE_LOCAL_OLLAMA, DEFAULT_JUDGE_CURSOR_COMPOSER, DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V4, DEFAULT_CONFIG_V3;
 var init_config = __esm({
   "src/core/config.ts"() {
     "use strict";
+    DEFAULT_JUDGE_LOCAL_OLLAMA = {
+      provider: "ollama",
+      model: "gemma4:e2b",
+      endpoint: "http://localhost:11434",
+      timeoutMs: 25e3,
+      keepAlive: "30m"
+    };
+    DEFAULT_JUDGE_CURSOR_COMPOSER = {
+      provider: "cursor",
+      model: "auto",
+      timeoutMs: 8e3,
+      endpoint: null,
+      keepAlive: null
+    };
     DEFAULT_CONFIDENCE_THRESHOLDS = {
       allow: 0.88,
       flag: 0.72
@@ -530,8 +576,8 @@ var init_config = __esm({
         includeAssessment: true
       }
     };
-    DEFAULT_CONFIG_V3 = {
-      version: 3,
+    DEFAULT_CONFIG_V4 = {
+      version: 4,
       mode: DEFAULT_CONFIG_V2.mode,
       approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
       tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
@@ -548,8 +594,10 @@ var init_config = __esm({
       approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
       egress: { ...DEFAULT_EGRESS_V3 },
       sandbox: { ...DEFAULT_SANDBOX_V3 },
-      audit: { ...DEFAULT_CONFIG_V2.audit }
+      audit: { ...DEFAULT_CONFIG_V2.audit },
+      judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
     };
+    DEFAULT_CONFIG_V3 = DEFAULT_CONFIG_V4;
   }
 });
 
@@ -588,10 +636,10 @@ var init_cursor = __esm({
       runnerCommand,
       defaultConfig(repoRoot) {
         return {
-          ...DEFAULT_CONFIG_V3,
+          ...DEFAULT_CONFIG_V4,
           adapter: "cursor",
           audit: {
-            ...DEFAULT_CONFIG_V3.audit,
+            ...DEFAULT_CONFIG_V4.audit,
             logPath: cursorLayout.defaultAuditLogPath(repoRoot)
           }
         };
@@ -1533,10 +1581,94 @@ function matchesSensitivePath(filePath, patterns) {
   return false;
 }
 
+// src/core/v2/judge-factory.ts
+init_config();
+
+// src/core/v2/judge-outbound.ts
+var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
+var REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
+function hasResidualBearerToken(text) {
+  for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
+    const token = match[1] ?? "";
+    if (!REDACTED_PLACEHOLDER.test(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+function hasResidualApiKey(text) {
+  return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text);
+}
+function redactSensitivePathToken(token, sensitivePaths) {
+  const trimmed = token.replace(/^['"`]+|['"`]+$/g, "");
+  const normalized = trimmed.replaceAll("\\", "/");
+  if (!matchesSensitivePath(normalized, sensitivePaths)) {
+    return token;
+  }
+  const segments = normalized.split("/");
+  const basename = segments.at(-1) ?? normalized;
+  if (segments.length > 1) {
+    return token.replace(basename, "[REDACTED]");
+  }
+  return "[REDACTED]";
+}
+function scrubOutboundForJudge(text, options) {
+  try {
+    let scrubbed = scrubString(text, {
+      ...options.scrubOptions,
+      maskHighEntropyStrings: options.scrubOptions.maskHighEntropyStrings !== false
+    });
+    scrubbed = scrubbed.replace(PATH_LIKE, (match, pathToken) => {
+      const redacted = redactSensitivePathToken(pathToken, options.sensitivePaths);
+      return match.replace(pathToken, redacted);
+    });
+    if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
+      return { ok: false, reason: "residual_secret_detected" };
+    }
+    return { ok: true, text: scrubbed };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "scrub_failed";
+    return { ok: false, reason };
+  }
+}
+
 // src/core/v2/judge.ts
 var SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i];
 var DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i;
 var GIT_PATTERNS = /\.git\b/i;
+var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean,"reason":string}
+Default all three booleans to true when unsure. reason should be a short snake_case label.
+
+external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
+destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
+destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
+
+Command/code:
+`;
+function failClosedVerdict(reason) {
+  return {
+    external_change: true,
+    destroys_outside_repo: true,
+    destroys_history_or_secrets: true,
+    reason
+  };
+}
+function parseTier1Json(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.external_change !== "boolean" || typeof parsed.destroys_outside_repo !== "boolean" || typeof parsed.destroys_history_or_secrets !== "boolean") {
+      return null;
+    }
+    return {
+      external_change: parsed.external_change !== false,
+      destroys_outside_repo: parsed.destroys_outside_repo !== false,
+      destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false,
+      reason: typeof parsed.reason === "string" ? parsed.reason : "tier1_llm"
+    };
+  } catch {
+    return null;
+  }
+}
 function prescanInterpreterCode(code) {
   const normalized = code.replaceAll("\\", "/");
   const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -1546,7 +1678,8 @@ function prescanInterpreterCode(code) {
     return {
       external_change: false,
       destroys_outside_repo: false,
-      destroys_history_or_secrets: true
+      destroys_history_or_secrets: true,
+      reason: "prescan_destructive_secret"
     };
   }
   return null;
@@ -1557,65 +1690,234 @@ function createDeterministicJudgeStub() {
       return Promise.resolve({
         external_change: false,
         destroys_outside_repo: false,
-        destroys_history_or_secrets: false
+        destroys_history_or_secrets: false,
+        reason: "deterministic_stub"
       });
     }
   };
 }
-var TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean}
-Default all three to true when unsure.
-
-external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
-destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
-destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
-
-Command/code:
-`;
-function createOllamaJudge(model = "gemma4:e2b", baseUrl = "http://127.0.0.1:11434") {
-  return {
+function createOllamaJudge(options = {}) {
+  const model = options.model ?? "gemma4:e2b";
+  const baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+  const timeoutMs = options.timeoutMs ?? 25e3;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const judge = {
     async evaluate(input) {
+      const started = Date.now();
       const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
       if (prescan?.destroys_history_or_secrets) {
+        judge.lastTrace = {
+          provider: "ollama",
+          modelRequested: model,
+          modelResolved: model,
+          latencyMs: Date.now() - started
+        };
         return prescan;
       }
-      const body = `${TIER1_PROMPT}${input.innerCode ?? input.command}`;
+      const body = `${TIER1_PROMPT}${input.text}`;
       try {
-        const response = await fetch(`${baseUrl}/api/generate`, {
+        const response = await fetchImpl(`${baseUrl}/api/generate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             model,
             prompt: body,
             stream: false,
-            format: "json"
-          })
+            format: "json",
+            keep_alive: options.keepAlive ?? void 0
+          }),
+          signal: AbortSignal.timeout(timeoutMs)
         });
         if (!response.ok) {
-          return {
-            external_change: true,
-            destroys_outside_repo: true,
-            destroys_history_or_secrets: true
+          judge.lastTrace = {
+            provider: "fallback",
+            modelRequested: model,
+            modelResolved: model,
+            latencyMs: Date.now() - started,
+            fallbackReason: `ollama_http_${response.status}`
           };
+          return failClosedVerdict("ollama_unavailable");
         }
         const payload = await response.json();
-        const parsed = JSON.parse(payload.response ?? "{}");
-        return {
-          external_change: parsed.external_change !== false,
-          destroys_outside_repo: parsed.destroys_outside_repo !== false,
-          destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false
+        const parsed = parseTier1Json(payload.response ?? "{}");
+        if (!parsed) {
+          judge.lastTrace = {
+            provider: "fallback",
+            modelRequested: model,
+            modelResolved: model,
+            latencyMs: Date.now() - started,
+            fallbackReason: "ollama_parse_error"
+          };
+          return failClosedVerdict("ollama_parse_error");
+        }
+        judge.lastTrace = {
+          provider: "ollama",
+          modelRequested: model,
+          modelResolved: model,
+          latencyMs: Date.now() - started
         };
-      } catch {
-        return {
-          external_change: true,
-          destroys_outside_repo: true,
-          destroys_history_or_secrets: true
+        return parsed;
+      } catch (error) {
+        judge.lastTrace = {
+          provider: "fallback",
+          modelRequested: model,
+          modelResolved: model,
+          latencyMs: Date.now() - started,
+          fallbackReason: error instanceof Error ? error.message : "ollama_error"
         };
+        return failClosedVerdict("ollama_unavailable");
       }
     }
   };
+  return judge;
+}
+var DEFAULT_CURSOR_API_BASE = `https://api.${"cursor"}.com/v1`;
+function createCursorJudge(options) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const apiBase = (options.endpoint ?? process.env.CURSOR_API_BASE ?? DEFAULT_CURSOR_API_BASE).replace(/\/$/, "");
+  const judge = {
+    async evaluate(input) {
+      const started = Date.now();
+      const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
+      if (prescan?.destroys_history_or_secrets) {
+        judge.lastTrace = {
+          provider: "cursor",
+          modelRequested: options.modelRequested,
+          modelResolved: options.modelResolved,
+          latencyMs: Date.now() - started
+        };
+        return prescan;
+      }
+      const scrubbed = scrubOutboundForJudge(input.text, {
+        sensitivePaths: options.sensitivePaths,
+        scrubOptions: options.scrubOptions
+      });
+      if (!scrubbed.ok) {
+        judge.lastTrace = {
+          provider: "fallback",
+          modelRequested: options.modelRequested,
+          modelResolved: options.modelResolved,
+          latencyMs: Date.now() - started,
+          fallbackReason: scrubbed.reason
+        };
+        return failClosedVerdict("outbound_scrub_failed");
+      }
+      const apiKey = options.apiKey ?? process.env.CURSOR_API_KEY?.trim();
+      if (!apiKey) {
+        judge.lastTrace = {
+          provider: "fallback",
+          modelRequested: options.modelRequested,
+          modelResolved: options.modelResolved,
+          latencyMs: Date.now() - started,
+          fallbackReason: "missing_api_key"
+        };
+        return failClosedVerdict("cursor_auth_error");
+      }
+      const prompt = `${TIER1_PROMPT}${scrubbed.text}`;
+      try {
+        const response = await fetchImpl(`${apiBase}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: options.modelResolved,
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" }
+          }),
+          signal: AbortSignal.timeout(options.timeoutMs)
+        });
+        if (!response.ok) {
+          judge.lastTrace = {
+            provider: "fallback",
+            modelRequested: options.modelRequested,
+            modelResolved: options.modelResolved,
+            latencyMs: Date.now() - started,
+            fallbackReason: `cursor_http_${response.status}`
+          };
+          return failClosedVerdict("cursor_unavailable");
+        }
+        const payload = await response.json();
+        const content = payload.choices?.[0]?.message?.content ?? "{}";
+        const parsed = parseTier1Json(content);
+        judge.lastTrace = {
+          provider: parsed ? "cursor" : "fallback",
+          modelRequested: options.modelRequested,
+          modelResolved: options.modelResolved,
+          latencyMs: Date.now() - started,
+          outboundRedacted: true,
+          fallbackReason: parsed ? void 0 : "cursor_parse_error"
+        };
+        return parsed ?? failClosedVerdict("cursor_parse_error");
+      } catch (error) {
+        judge.lastTrace = {
+          provider: "fallback",
+          modelRequested: options.modelRequested,
+          modelResolved: options.modelResolved,
+          latencyMs: Date.now() - started,
+          fallbackReason: error instanceof Error ? error.message : "cursor_error"
+        };
+        return failClosedVerdict("cursor_unavailable");
+      }
+    }
+  };
+  return judge;
 }
 function tier1RequiresAsk(verdict2) {
   return verdict2.external_change || verdict2.destroys_outside_repo || verdict2.destroys_history_or_secrets;
+}
+
+// src/core/v2/judge-factory.ts
+var FIXTURE_MODELS_URL = new URL("../../../fixtures/judge-models.json", import.meta.url);
+function resolveCursorModel(requested, pinned) {
+  if (requested === "auto") {
+    const envResolved = process.env.CURSOR_JUDGE_MODEL_RESOLVED?.trim();
+    return {
+      requested,
+      resolved: envResolved || pinned.autoResolved
+    };
+  }
+  return { requested, resolved: requested };
+}
+function createJudgeFromConfig(config, options = {}) {
+  const judgeConfig = config.judge;
+  if (judgeConfig.provider === "cursor") {
+    const pinned = options.pinnedModels ?? { autoResolved: "composer-2.5" };
+    const { resolved } = resolveCursorModel(judgeConfig.model, pinned);
+    return createCursorJudge({
+      modelRequested: judgeConfig.model,
+      modelResolved: resolved,
+      timeoutMs: judgeConfig.timeoutMs,
+      endpoint: judgeConfig.endpoint,
+      sensitivePaths: config.classifier.sensitivePaths,
+      scrubOptions: scrubOptionsFromConfig(config)
+    });
+  }
+  if (judgeConfig.provider === "ollama") {
+    return createOllamaJudge({
+      model: judgeConfig.model,
+      baseUrl: judgeConfig.endpoint ?? "http://127.0.0.1:11434",
+      timeoutMs: judgeConfig.timeoutMs,
+      keepAlive: judgeConfig.keepAlive
+    });
+  }
+  return createDeterministicJudgeStub();
+}
+
+// src/core/v2/judge-audit.ts
+function judgeTraceAuditFields(trace) {
+  if (!trace) {
+    return {};
+  }
+  return {
+    judgeProvider: trace.provider,
+    judgeModelRequested: trace.modelRequested,
+    judgeModelResolved: trace.modelResolved,
+    judgeLatencyMs: trace.latencyMs,
+    ...trace.outboundRedacted !== void 0 ? { judgeOutboundRedacted: trace.outboundRedacted } : {},
+    ...trace.fallbackReason ? { judgeFallbackReason: trace.fallbackReason } : {}
+  };
 }
 
 // src/core/v2/verdict.ts
@@ -2530,7 +2832,8 @@ function combineInternal(left, right) {
     effect: left.effect === "remote_mutation" || right.effect === "remote_mutation" ? "remote_mutation" : left.effect === "unknown" || right.effect === "unknown" ? "unknown" : left.effect === "local_mutation" || right.effect === "local_mutation" ? "local_mutation" : "read_only",
     confidence: left.confidence === "deterministic" || right.confidence === "deterministic" ? "deterministic" : left.confidence,
     reason: worsePermission(left.permission, right.permission) === "ask" ? right.permission === "ask" ? right.reason : left.reason : right.reason,
-    signals: [.../* @__PURE__ */ new Set([...left.signals, ...right.signals])]
+    signals: [.../* @__PURE__ */ new Set([...left.signals, ...right.signals])],
+    judgeTrace: right.judgeTrace ?? left.judgeTrace
   };
 }
 function askVerdict(params) {
@@ -2538,6 +2841,12 @@ function askVerdict(params) {
 }
 function allowVerdict(params) {
   return { ...params, permission: "allow" };
+}
+function withJudgeTrace(verdict2, judgeTrace) {
+  if (!judgeTrace) {
+    return verdict2;
+  }
+  return { ...verdict2, judgeTrace };
 }
 function extractPathArgs(tokens) {
   const redirects = extractRedirectTargets(tokens);
@@ -2860,12 +3169,15 @@ async function evaluateSegment(command, context, depth) {
     });
   }
   const needsTier1 = effect === "unknown" || TIER0_EXTERNAL_HEADS.has(segment.head) || segment.head === "curl" || segment.head === "wget";
+  let tier1Trace;
   if (needsTier1) {
+    const tier1Text = recursiveScript ?? command;
     const tier1 = await context.judge.evaluate({
-      command,
-      innerCode: recursiveScript ?? void 0,
-      head: segment.head
+      text: tier1Text,
+      context: { cwd: context.cwd, repoRoot: context.repoRoot },
+      innerCode: recursiveScript ?? void 0
     });
+    tier1Trace = context.judge.lastTrace;
     if (tier1RequiresAsk(tier1)) {
       return askVerdict({
         location: pathAnalysis.location === "unknown" ? "unknown" : "repo_local",
@@ -2873,51 +3185,64 @@ async function evaluateSegment(command, context, depth) {
         effect: tier1.external_change ? "remote_mutation" : effect,
         confidence: "llm",
         reason: "tier1_catastrophic",
-        signals: ["tier1_catastrophic"]
+        signals: ["tier1_catastrophic", tier1.reason],
+        judgeTrace: tier1Trace
       });
     }
   }
   if (pathAnalysis.location === "repo_local" && (effect === "read_only" || effect === "local_mutation") && opacity !== "opaque") {
-    return allowVerdict({
-      location: "repo_local",
-      opacity,
-      effect,
-      confidence: "assumed_repo_local",
-      reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
-      signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
-    });
+    return withJudgeTrace(
+      allowVerdict({
+        location: "repo_local",
+        opacity,
+        effect,
+        confidence: "assumed_repo_local",
+        reason: effect === "read_only" ? "read_only" : "repo_local_mutation",
+        signals: effect === "read_only" ? ["read_only"] : ["repo_local_mutation"]
+      }),
+      tier1Trace
+    );
   }
   if (effect === "read_only") {
-    return allowVerdict({
-      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
-      opacity,
-      effect: "read_only",
-      confidence: "assumed_repo_local",
-      reason: "read_only",
-      signals: ["read_only"]
-    });
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+        opacity,
+        effect: "read_only",
+        confidence: "assumed_repo_local",
+        reason: "read_only",
+        signals: ["read_only"]
+      }),
+      tier1Trace
+    );
   }
   if (allowOverride) {
-    return allowFromCustomOverride(opacity);
+    return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace);
   }
   if (context.unknownLocalEffect === "allow_flagged") {
-    return allowVerdict({
-      location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+        opacity,
+        effect: "unknown",
+        confidence: "assumed_repo_local",
+        reason: "unknown_local_effect",
+        signals: ["unknown_local_effect"]
+      }),
+      tier1Trace
+    );
+  }
+  return withJudgeTrace(
+    askVerdict({
+      location: pathAnalysis.location,
       opacity,
-      effect: "unknown",
-      confidence: "assumed_repo_local",
+      effect,
+      confidence: "deterministic",
       reason: "unknown_local_effect",
       signals: ["unknown_local_effect"]
-    });
-  }
-  return askVerdict({
-    location: pathAnalysis.location,
-    opacity,
-    effect,
-    confidence: "deterministic",
-    reason: "unknown_local_effect",
-    signals: ["unknown_local_effect"]
-  });
+    }),
+    tier1Trace
+  );
 }
 function toVerdictResult(internal, command, context) {
   const commandRedacted = redactCommand(command);
@@ -2931,7 +3256,8 @@ function toVerdictResult(internal, command, context) {
     reason: internal.reason,
     commandRedacted,
     fingerprint: verdictFingerprint(relative, commandRedacted),
-    signals: internal.signals
+    signals: internal.signals,
+    judgeTrace: internal.judgeTrace
   };
 }
 async function verdict(command, context) {
@@ -2984,7 +3310,7 @@ function buildVerdictContext(params) {
     protectedArtifactRoots: protectedArtifactRoots2.length > 0 ? [...new Set(protectedArtifactRoots2)] : void 0,
     customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
     customExternalCommands: params.options?.customExternalCommands ?? params.config.overrides.external,
-    judge: params.judge ?? (params.config.policy.modelAssist.enabled ? createOllamaJudge(params.config.policy.modelAssist.model) : createDeterministicJudgeStub()),
+    judge: params.judge ?? params.options?.tier1Judge ?? createJudgeFromConfig(params.config),
     mode: params.config.mode,
     unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
     unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell
@@ -3046,7 +3372,8 @@ function verdictToClassifyResult(result) {
       by: "v2",
       commandRedacted: result.commandRedacted,
       commandFingerprint: result.fingerprint,
-      signals: result.signals
+      signals: result.signals,
+      ...judgeTraceAuditFields(result.judgeTrace)
     }
   };
 }

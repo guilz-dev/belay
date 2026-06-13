@@ -1,13 +1,14 @@
-import type { BelayConfigV3 } from '../config.js'
+import type { BelayConfigV4 } from '../config.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
-import { createDeterministicJudgeStub, createOllamaJudge } from './judge.js'
+import { judgeTraceAuditFields } from './judge-audit.js'
+import { createJudgeFromConfig } from './judge-factory.js'
 import type { Tier1Judge, VerdictContext, VerdictResult } from './types.js'
 import { verdict } from './verdict.js'
 
 export function buildVerdictContext(params: {
   cwd: string
   repoRoot: string
-  config: BelayConfigV3
+  config: BelayConfigV4
   options?: ClassifierOptions
   judge?: Tier1Judge
   trustedCwd?: boolean
@@ -27,11 +28,7 @@ export function buildVerdictContext(params: {
     customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
     customExternalCommands:
       params.options?.customExternalCommands ?? params.config.overrides.external,
-    judge:
-      params.judge ??
-      (params.config.policy.modelAssist.enabled
-        ? createOllamaJudge(params.config.policy.modelAssist.model)
-        : createDeterministicJudgeStub()),
+    judge: params.judge ?? params.options?.tier1Judge ?? createJudgeFromConfig(params.config),
     mode: params.config.mode,
     unknownLocalEffect:
       params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
@@ -43,7 +40,7 @@ export async function classifyShell(
   command: string,
   cwd: string,
   repoRoot: string,
-  config: BelayConfigV3,
+  config: BelayConfigV4,
   options: ClassifierOptions = {},
   judge?: Tier1Judge,
 ): Promise<ClassifyResult> {
@@ -135,6 +132,7 @@ export function verdictToClassifyResult(result: VerdictResult): ClassifyResult {
       commandRedacted: result.commandRedacted,
       commandFingerprint: result.fingerprint,
       signals: result.signals,
+      ...judgeTraceAuditFields(result.judgeTrace),
     },
   }
 }
@@ -151,5 +149,6 @@ export function verdictAuditFields(result: VerdictResult): Record<string, unknow
     would: result.permission,
     by: 'v2',
     signals: result.signals,
+    ...judgeTraceAuditFields(result.judgeTrace),
   }
 }

@@ -24,6 +24,12 @@ export interface V2TraceFields {
   commandRedacted?: string
   commandFingerprint?: string
   signals?: string[]
+  judgeProvider?: 'cursor' | 'ollama' | 'fallback'
+  judgeModelRequested?: string
+  judgeModelResolved?: string
+  judgeLatencyMs?: number
+  judgeOutboundRedacted?: boolean
+  judgeFallbackReason?: string
 }
 
 export interface ClassifyResult {
@@ -73,6 +79,8 @@ export interface ClassifierOptions {
   /** When true with sandbox enabled, outside-repo rules defer to fs-scope allowlist. */
   brokerFsScope?: boolean
   fsScopeAllowlist?: FsScopeAllowlistFile
+  /** Test override: inject Tier1 judge without changing config.judge. */
+  tier1Judge?: import('./v2/types.js').Tier1Judge
 }
 
 export interface ApprovalRecord {

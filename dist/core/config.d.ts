@@ -73,6 +73,16 @@ export interface BelayRedactionConfig {
     maskKeyValueSecrets: boolean;
     maskHighEntropyStrings: boolean;
 }
+export type JudgeProvider = 'cursor' | 'ollama';
+export interface BelayJudgeConfig {
+    provider: JudgeProvider;
+    model: string;
+    timeoutMs: number;
+    endpoint: string | null;
+    keepAlive: string | null;
+}
+export declare const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig;
+export declare const DEFAULT_JUDGE_CURSOR_COMPOSER: BelayJudgeConfig;
 export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user';
 export interface BelayControlPlaneIsolationConfig {
     mode: ControlPlaneIsolationMode;
@@ -112,8 +122,8 @@ export interface BelayEgressConfig {
     /** When true with egress enabled, L3 external command lists become hints only. */
     demoteL3External: boolean;
 }
-export interface BelayConfigV3 {
-    version: 3;
+export interface BelayConfigV4 {
+    version: 4;
     adapter?: 'cursor' | 'claude';
     mode: BelayMode;
     approvalTtlMinutes: number;
@@ -129,8 +139,11 @@ export interface BelayConfigV3 {
     egress: BelayEgressConfig;
     sandbox: BelaySandboxConfig;
     audit: BelayConfigV2['audit'];
+    judge: BelayJudgeConfig;
 }
-export type BelayConfig = BelayConfigV3;
+/** @deprecated Use BelayConfigV4 */
+export type BelayConfigV3 = BelayConfigV4;
+export type BelayConfig = BelayConfigV4;
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
 export declare const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds;
 export declare const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig;
@@ -149,28 +162,50 @@ export declare const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig;
 export declare const DEFAULT_EGRESS_V3: BelayEgressConfig;
 export declare function normalizeEgressListenHost(host: string): string;
 export declare const DEFAULT_CONFIG_V2: BelayConfigV2;
-export declare const DEFAULT_CONFIG_V3: BelayConfigV3;
+export declare const DEFAULT_CONFIG_V4: BelayConfigV4;
+/** @deprecated Use DEFAULT_CONFIG_V4 */
+export declare const DEFAULT_CONFIG_V3: BelayConfigV4;
 export declare function mapLegacyClassifierToOverrides(classifier: {
     customAllowCommands?: string[];
     customExternalCommands?: string[];
 }): BelayOverridesConfig;
-export declare function migrateV2ToV3(v2: BelayConfigV2, rawOverrides?: Partial<BelayOverridesConfig>): BelayConfigV3;
+export declare function migrateV2ToV3(v2: BelayConfigV2, rawOverrides?: Partial<BelayOverridesConfig>): BelayConfigV4;
 export declare function isConfigV1(value: unknown): value is BelayConfigV1;
 export declare function isConfigV2(value: unknown): value is BelayConfigV2;
-export declare function isConfigV3(value: unknown): value is BelayConfigV3;
-export declare function migrateConfig(loaded: unknown): BelayConfigV3;
+export declare function isConfigV3(value: unknown): value is BelayConfigV4;
+export declare function isConfigV4(value: unknown): value is BelayConfigV4;
+export declare function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig;
+export declare function migrateV3ToV4(v3: BelayConfigV4, raw?: RawConfigInput): BelayConfigV4;
+type RawConfigInput = Partial<{
+    version: number;
+    judge: Partial<BelayJudgeConfig>;
+    mode: BelayMode;
+    approvalTtlMinutes: number;
+    tokenPrefix: string;
+    gates: Partial<BelayConfigV2['gates']>;
+    classifier: Partial<BelayConfigV2['classifier']> & Partial<BelayClassifierConfig>;
+    policy: Partial<BelayPolicyConfig>;
+    overrides: Partial<BelayOverridesConfig>;
+    redaction: Partial<BelayRedactionConfig>;
+    controlPlane: Partial<BelayControlPlaneConfig>;
+    notifications: Partial<BelayNotificationsConfig>;
+    approvalSigning: Partial<BelayApprovalSigningConfig>;
+    egress: Partial<BelayEgressConfig>;
+    sandbox: Partial<BelaySandboxConfig>;
+    audit: Partial<BelayConfigV2['audit']>;
+}>;
+export declare function migrateConfig(loaded: unknown): BelayConfigV4;
 export declare function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2;
-/** @deprecated Use normalizeConfig for v3 configs. */
-export declare function normalizeConfig(config: BelayConfigV3): BelayConfigV3;
+export declare function normalizeConfig(config: BelayConfigV4): BelayConfigV4;
 export declare function normalizeConfig(config: BelayConfigV2): BelayConfigV2;
 export declare function isFreshConfigInput(loaded: unknown): boolean;
-export declare function mergeConfig(existing: unknown, defaults?: BelayConfigV3): BelayConfigV3;
-export declare function scrubOptionsFromConfig(config: BelayConfigV3): ScrubOptions;
-export declare function classifierOptionsFromConfig(config: BelayConfigV3): ClassifierOptions;
+export declare function mergeConfig(existing: unknown, defaults?: BelayConfigV4): BelayConfigV4;
+export declare function scrubOptionsFromConfig(config: BelayConfigV4): ScrubOptions;
+export declare function classifierOptionsFromConfig(config: BelayConfigV4): ClassifierOptions;
 export declare function defaultControlPlaneDir(env?: NodeJS.ProcessEnv, homedir?: () => string): string;
-export declare function resolveControlPlaneDir(config: BelayConfigV3): string;
+export declare function resolveControlPlaneDir(config: BelayConfigV4): string;
 /** Control-plane directory regardless of enabled flag (for orphan migration). */
-export declare function configuredControlPlaneDir(config: BelayConfigV3): string;
-export declare function belayStateDir(config: BelayConfigV3, repoLocalStateDir: string): string;
-export declare function pendingApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string;
-export declare function approvedApprovalsFile(config: BelayConfigV3, repoLocalStateDir: string): string;
+export declare function configuredControlPlaneDir(config: BelayConfigV4): string;
+export declare function belayStateDir(config: BelayConfigV4, repoLocalStateDir: string): string;
+export declare function pendingApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string;
+export declare function approvedApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string;

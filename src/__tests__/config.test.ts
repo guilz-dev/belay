@@ -24,7 +24,8 @@ describe('config migration', () => {
       audit: { logPath: '.cursor/belay/audit.ndjson' },
     })
 
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
+    expect(migrated.judge.provider).toBe('ollama')
     expect(migrated.mode).toBe('audit')
     expect(migrated.approvalTtlMinutes).toBe(30)
     expect(migrated.gates.subagent).toBe(false)
@@ -46,7 +47,8 @@ describe('config migration', () => {
       },
     })
 
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
+    expect(migrated.judge.provider).toBe('ollama')
     expect(migrated.overrides.allow).toEqual(['pnpm release:staging'])
     expect(migrated.overrides.external).toEqual(['./scripts/release.sh'])
     expect(migrated.classifier).not.toHaveProperty('customAllowCommands')
@@ -58,7 +60,8 @@ describe('config migration', () => {
       controlPlane: { enabled: true, configDir: '/tmp/belay-cp' },
     })
 
-    expect(migrated.version).toBe(3)
+    expect(migrated.version).toBe(4)
+    expect(migrated.judge.provider).toBe('ollama')
     expect(migrated.controlPlane.enabled).toBe(true)
     expect(migrated.controlPlane.configDir).toBe('/tmp/belay-cp')
   })
@@ -250,7 +253,7 @@ describe('migrateV2ToV3', () => {
       },
     })
 
-    expect(fromV2.version).toBe(3)
+    expect(fromV2.version).toBe(4)
     expect(fromV2.gates.toolShell).toBe(false)
     expect(fromV2.audit.logPath).toBe('custom.ndjson')
     expect(fromV2.classifier.strictChains).toBe(false)

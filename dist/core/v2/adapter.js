@@ -1,4 +1,5 @@
-import { createDeterministicJudgeStub, createOllamaJudge } from './judge.js';
+import { createJudgeFromConfig } from './judge-factory.js';
+import { judgeTraceAuditFields } from './judge-audit.js';
 import { verdict } from './verdict.js';
 export function buildVerdictContext(params) {
     const protectedArtifactRoots = [
@@ -13,10 +14,7 @@ export function buildVerdictContext(params) {
         protectedArtifactRoots: protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,
         customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
         customExternalCommands: params.options?.customExternalCommands ?? params.config.overrides.external,
-        judge: params.judge ??
-            (params.config.policy.modelAssist.enabled
-                ? createOllamaJudge(params.config.policy.modelAssist.model)
-                : createDeterministicJudgeStub()),
+        judge: params.judge ?? params.options?.tier1Judge ?? createJudgeFromConfig(params.config),
         mode: params.config.mode,
         unknownLocalEffect: params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
         unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell,
@@ -99,6 +97,7 @@ export function verdictToClassifyResult(result) {
             commandRedacted: result.commandRedacted,
             commandFingerprint: result.fingerprint,
             signals: result.signals,
+            ...judgeTraceAuditFields(result.judgeTrace),
         },
     };
 }
@@ -114,5 +113,6 @@ export function verdictAuditFields(result) {
         would: result.permission,
         by: 'v2',
         signals: result.signals,
+        ...judgeTraceAuditFields(result.judgeTrace),
     };
 }

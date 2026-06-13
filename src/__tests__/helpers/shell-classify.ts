@@ -3,6 +3,7 @@ import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
 import { classifyGatedAction } from '../../core/gate-engine.js'
 import type { ClassifierOptions } from '../../core/types.js'
 import { classifyShell } from '../../core/v2/adapter.js'
+import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
 
 export function shellTestConfig(overrides: Record<string, unknown> = {}): BelayConfigV3 {
   return mergeConfig(overrides)
@@ -23,7 +24,10 @@ export async function classifyShellCore(
         unparseableShell: options.unparseableShell ?? 'deny',
       },
     })
-  return classifyShell(command, cwd, repoRoot, resolvedConfig, options)
+  return classifyShell(command, cwd, repoRoot, resolvedConfig, {
+    ...options,
+    tier1Judge: options.tier1Judge ?? createDeterministicJudgeStub(),
+  })
 }
 
 export async function classifyShellGated(
@@ -42,6 +46,9 @@ export async function classifyShellGated(
       command,
     },
     config,
-    options,
+    {
+      ...options,
+      tier1Judge: options.tier1Judge ?? createDeterministicJudgeStub(),
+    },
   )
 }
