@@ -1,3 +1,5 @@
 node_modules/
 coverage/
-.cursor/
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
