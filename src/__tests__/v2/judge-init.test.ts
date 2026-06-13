@@ -102,7 +102,7 @@ describe('T11 init judge setup matrix', () => {
   })
 
   it('migrates deprecated cursor provider to openai-compatible', () => {
-    const migrated = normalizeConfig({
+    const migrated = migrateConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'cursor',

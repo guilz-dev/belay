@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
+import { DEFAULT_CONFIG_V4, migrateConfig } from '../../core/config.js'
 import { JudgeEndpointRequiredError, resolveInitJudgeConfig } from '../../core/judge-config.js'
 import * as judgeModule from '../../core/v2/judge.js'
 
@@ -33,7 +33,7 @@ describe('T16 no default base / no vendor leak', () => {
   })
 
   it('normalizes migrated cursor provider without endpoint', () => {
-    const config = normalizeConfig({
+    const config = migrateConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'cursor',
