@@ -4,6 +4,10 @@
 
 ### Added
 
+- **SPEC v2.3** — `agent-belay report` (R-V1/R-V2 audit visibility + fence drift warnings)
+- **SPEC v2.3** — `agent-belay recover` (R-R1/R-R2 advisory recovery guidance, show-don't-run)
+- Skill front-door routes: `/belay report`, `/belay recover` (+ bundled command templates)
+- `status` embeds audit visibility via internal `report` call
 - T23: `SKILL.md` snapshot regression test in `skill-quality.test.ts`
 
 ### Changed

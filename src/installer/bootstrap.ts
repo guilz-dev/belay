@@ -14,6 +14,8 @@ const BUNDLED_COMMAND_TEMPLATES = [
   'belay-why.md',
   'belay-explain.md',
   'belay-status.md',
+  'belay-report.md',
+  'belay-recover.md',
 ] as const
 
 async function readBundledTemplate(fileUrl: URL): Promise<string> {

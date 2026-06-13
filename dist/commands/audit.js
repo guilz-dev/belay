@@ -7,7 +7,7 @@ import { parseAuditNdjson, toAuditRecord } from '../core/audit-metrics.js';
 import { buildApprovalRoundTrips, filterAuditRecords, summarizeRoundTrips, } from '../core/audit-query.js';
 import { mergeConfig } from '../core/config.js';
 import { diffReclassification } from '../core/reclassify.js';
-async function loadAuditRecords(repoRoot) {
+export async function loadAuditRecords(repoRoot) {
     const config = await loadConfigFile(repoRoot);
     const auditLogPath = path.join(repoRoot, config.audit.logPath);
     let raw = '';

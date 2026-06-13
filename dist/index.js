@@ -4,6 +4,8 @@ export { getAdapter, listAdapters } from './adapters/registry.js';
 export { doctorProject, formatDoctorReport } from './commands/doctor.js';
 export { explainCommand, formatExplainReport } from './commands/explain.js';
 export { revokeApproval } from './commands/revoke.js';
+export { formatRecoverReport, recoverProject } from './commands/recover.js';
+export { formatReport, reportProject } from './commands/report.js';
 export { formatStatusReport, statusProject } from './commands/status.js';
 export { GATE_CONTRACT_VERSION, } from './core/gate-contract.js';
 export { classifyShell, classifySubagent, classifyToolUse, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, mergeConfig, migrateConfig, } from './core/index.js';

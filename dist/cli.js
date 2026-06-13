@@ -7,6 +7,8 @@ import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js';
 import { explainCommand, formatExplainReport } from './commands/explain.js';
 import { formatMetricsReport, metricsProject } from './commands/metrics.js';
 import { revokeApproval } from './commands/revoke.js';
+import { formatRecoverReport, recoverProject } from './commands/recover.js';
+import { formatReport, reportProject } from './commands/report.js';
 import { formatSimulateReport, simulateProject } from './commands/simulate.js';
 import { formatStatusReport, statusProject } from './commands/status.js';
 import { loadConfigFile } from './config-io.js';
@@ -251,7 +253,12 @@ function parseArgs(argv) {
             if (!next) {
                 throw new Error('--command requires a value.');
             }
-            options.explainCommand = next;
+            if (command === 'recover') {
+                options.recoverCommand = next;
+            }
+            else {
+                options.explainCommand = next;
+            }
             index += 1;
             continue;
         }
@@ -320,6 +327,8 @@ Usage:
   agent-belay dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
+  agent-belay report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
+  agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
   agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]
@@ -463,6 +472,39 @@ async function main() {
             }
             else {
                 process.stdout.write(formatMetricsReport(report));
+            }
+            return;
+        }
+        if (command === 'report') {
+            const report = await reportProject({
+                targetDir: options.targetDir,
+                since: options.since,
+                until: options.until,
+                limit: options.limit,
+                json: options.json,
+            });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatReport(report));
+            }
+            return;
+        }
+        if (command === 'recover') {
+            const report = await recoverProject({
+                targetDir: options.targetDir,
+                since: options.since,
+                fingerprint: options.fingerprint,
+                command: options.recoverCommand,
+                limit: options.limit,
+                json: options.json,
+            });
+            if (options.json) {
+                process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+            }
+            else {
+                process.stdout.write(formatRecoverReport(report));
             }
             return;
         }

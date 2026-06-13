@@ -165,6 +165,59 @@ export interface StatusReport {
   expiredPendingCount: number
   dogfood: DogfoodStatus
   health: HealthSnapshot
+  visibility: AuditVisibilityReport
+}
+
+export interface ReportOptions {
+  targetDir?: string
+  since?: string
+  until?: string
+  limit?: number
+  json?: boolean
+}
+
+export interface AuditVisibilityReport {
+  repoRoot: string
+  auditLogPath: string
+  gateEvents: number
+  askCount: number
+  flagCount: number
+  allowCount: number
+  silentPassRate: number
+  recentAsks: Array<{
+    timestamp?: string
+    summary: string
+    reason: string
+    tier: 'Tier0' | 'Tier1' | 'deterministic'
+  }>
+  warnings: string[]
+}
+
+export interface RecoverOptions {
+  targetDir?: string
+  since?: string
+  fingerprint?: string
+  command?: string
+  limit?: number
+  json?: boolean
+}
+
+export interface RecoverReport {
+  repoRoot: string
+  target?: {
+    timestamp?: string
+    fingerprint?: string
+    summary: string
+    reason: string
+    effect?: string
+    location?: string
+    permission?: string
+  }
+  recoverable: boolean
+  confidence: 'high' | 'medium'
+  disclaimer: string[]
+  advice: string[]
+  warnings: string[]
 }
 
 export interface DogfoodOptions {
