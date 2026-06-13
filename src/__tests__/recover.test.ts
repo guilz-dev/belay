@@ -186,4 +186,33 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
       report.warnings.some((line) => line.includes('Tier1 judge') || line.includes('Tier1')),
     ).toBe(true)
   })
+
+  it('T-R3: audit external_effect entry is not recoverable', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-recover-ext-'))
+    tempDirs.push(tempDir)
+    await initProject({ targetDir: tempDir })
+
+    await writeFile(
+      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      `${JSON.stringify({
+        timestamp: '2026-06-01T12:00:00.000Z',
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        reason: 'tier0_external',
+        effect: 'external_effect',
+        summary: 'docker push myapp:latest',
+        fingerprint: 'fp-recover-external',
+      })}\n`,
+      'utf8',
+    )
+
+    const report = await recoverProject({
+      targetDir: tempDir,
+      fingerprint: 'fp-recover-external',
+    })
+
+    expect(report.recoverable).toBe(false)
+    expect(report.advice.some((line) => line.includes('not recoverable'))).toBe(true)
+  })
 })

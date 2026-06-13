@@ -84,6 +84,40 @@ describe('audit visibility (T-V1)', () => {
     expect(text).toContain('Silent-pass rate: 75.0%')
     expect(text).toContain('docker push myapp')
   })
+
+  it('serializes reportProject output as stable JSON (T-V1)', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-report-json-'))
+    try {
+      await initProject({ targetDir: tempDir })
+      const record = {
+        timestamp: '2026-01-01T00:00:00.000Z',
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        reason: 'tier0_external',
+        summary: 'docker push myapp',
+      }
+      await writeFile(
+        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      )
+
+      const report = await reportProject({ targetDir: tempDir })
+      const parsed = JSON.parse(JSON.stringify(report)) as typeof report
+
+      expect(parsed.gateEvents).toBe(1)
+      expect(parsed.askCount).toBe(1)
+      expect(parsed.flagCount).toBe(0)
+      expect(parsed.allowCount).toBe(0)
+      expect(parsed.silentPassRate).toBe(0)
+      expect(parsed.recentAsks).toHaveLength(1)
+      expect(parsed.recentAsks[0]?.tier).toBe('Tier0')
+      expect(parsed.auditLogPath).toContain('audit.ndjson')
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('fence drift warnings (T-V2)', () => {
