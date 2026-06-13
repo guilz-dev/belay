@@ -20,4 +20,7 @@ export declare function inferAuditTier(record: AuditRecord): AuditTier;
 export declare function summarizeAuditVisibility(records: AuditRecord[], filter?: AuditFilter, options?: {
     recentAskLimit?: number;
 }): AuditVisibilitySummary;
-export declare function detectFenceDrift(summary: Pick<AuditVisibilitySummary, 'gateEvents' | 'silentPassRate'>, threshold?: number): string[];
+export declare function detectFenceDrift(summary: Pick<AuditVisibilitySummary, 'gateEvents' | 'silentPassRate'>, threshold?: number): {
+    warnings: string[];
+    notes: string[];
+};

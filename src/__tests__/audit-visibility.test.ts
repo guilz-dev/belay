@@ -76,6 +76,7 @@ describe('audit visibility (T-V1)', () => {
       repoRoot: '/repo',
       auditLogPath: '/repo/belay/audit.ndjson',
       warnings: [],
+      notes: [],
       ...summary,
     })
 
@@ -87,13 +88,20 @@ describe('audit visibility (T-V1)', () => {
 
 describe('fence drift warnings (T-V2)', () => {
   it('warns when silent-pass rate is below threshold with enough samples', () => {
-    const warnings = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.9 })
-    expect(warnings.some((line) => line.includes('Silent-pass rate'))).toBe(true)
+    const drift = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.9 })
+    expect(drift.warnings.some((line) => line.includes('Silent-pass rate'))).toBe(true)
   })
 
   it('defers fence drift judgment when sample size is small', () => {
-    const warnings = detectFenceDrift({ gateEvents: 5, silentPassRate: 0.5 })
-    expect(warnings.some((line) => line.includes('deferred'))).toBe(true)
+    const drift = detectFenceDrift({ gateEvents: 5, silentPassRate: 0.5 })
+    expect(drift.warnings).toHaveLength(0)
+    expect(drift.notes.some((line) => line.includes('deferred'))).toBe(true)
+  })
+
+  it('stays silent when there are no gate events', () => {
+    const drift = detectFenceDrift({ gateEvents: 0, silentPassRate: 0 })
+    expect(drift.warnings).toHaveLength(0)
+    expect(drift.notes).toHaveLength(0)
   })
 
   it('surfaces fence drift warnings in report and doctor', async () => {
@@ -121,12 +129,7 @@ describe('fence drift warnings (T-V2)', () => {
       expect(report.warnings.some((line) => line.includes('Silent-pass rate'))).toBe(true)
 
       const doctor = await doctorProject({ targetDir: tempDir })
-      expect(
-        doctor.warnings.some(
-          (line) =>
-            line.includes('Silent-pass rate') || line.includes('Fence drift check deferred'),
-        ),
-      ).toBe(true)
+      expect(doctor.warnings.some((line) => line.includes('Silent-pass rate'))).toBe(true)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

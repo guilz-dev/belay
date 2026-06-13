@@ -364,6 +364,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const { reportProject } = await import('./report.js')
     const visibility = await reportProject({ targetDir: repoRoot })
     warnings.push(...visibility.warnings)
+    notes.push(...visibility.notes)
   }
 
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: adapterName })

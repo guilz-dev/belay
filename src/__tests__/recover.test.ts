@@ -1,5 +1,22 @@
-import { describe, expect, it, vi } from 'vitest'
-import { formatRecoverReport } from '../commands/recover.js'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const execFileMock = vi.hoisted(() =>
+  vi.fn((...args: unknown[]) => {
+    const callback = args[args.length - 1]
+    if (typeof callback === 'function') {
+      callback(null, 'true', '')
+    }
+  }),
+)
+
+vi.mock('node:child_process', () => ({
+  execFile: execFileMock,
+}))
+
+import { formatRecoverReport, recoverProject } from '../commands/recover.js'
 import {
   buildRecoverAdvice,
   containsDeniedRecoveryPattern,
@@ -7,25 +24,18 @@ import {
   SHOW_DONT_RUN_LEAD,
 } from '../core/recover-advice.js'
 import * as recoverGitProbe from '../core/recover-git-probe.js'
+import { isReadOnlyGitProbe } from '../core/recover-git-probe.js'
+import { initProject } from '../installer.js'
 
-describe('recover advice (T-R1, T-R3, T-R4, T-R5)', () => {
-  it('suggests file-scoped git restore for local mutation', () => {
-    const result = buildRecoverAdvice({
-      repoRoot: '/repo',
-      target: {
-        summary: 'rm src/important.ts',
-        reason: 'local_mutation',
-        effect: 'local_mutation',
-        assessment: { reversibility: 'recoverable_with_cost' } as never,
-      },
-      git: { inWorkTree: true, notes: [] },
-    })
+const tempDirs: string[] = []
 
-    expect(result.recoverable).toBe(true)
-    expect(result.advice.some((line) => line.includes('git restore'))).toBe(true)
-    expect(result.advice[0]).toBe(SHOW_DONT_RUN_LEAD)
-  })
+afterEach(async () => {
+  execFileMock.mockClear()
+  vi.restoreAllMocks()
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
+describe('recover advice (T-R3, T-R4, T-R5)', () => {
   it('marks external irreversible targets as not recoverable (T-R3)', () => {
     const result = buildRecoverAdvice({
       repoRoot: '/repo',
@@ -82,28 +92,98 @@ describe('recover advice (T-R1, T-R3, T-R4, T-R5)', () => {
   })
 })
 
-describe('recover git probe (T-R2)', () => {
-  it('uses read-only git commands only', async () => {
-    const execFile = vi.fn().mockResolvedValue({ stdout: 'true\n' })
-    vi.spyOn(recoverGitProbe, 'probeGitState').mockImplementation(async (repoRoot) => {
-      await execFile('git', ['rev-parse', '--is-inside-work-tree'], { cwd: repoRoot })
-      await execFile('git', ['status', '--porcelain'], { cwd: repoRoot })
-      await execFile('git', ['reflog', '-n', '10'], { cwd: repoRoot })
-      return { inWorkTree: true, notes: [] }
-    })
+describe('recoverProject integration (T-R1, T-R2)', () => {
+  it('T-R1: reads audit NDJSON and suggests git restore for local mutation', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-recover-'))
+    tempDirs.push(tempDir)
+    await initProject({ targetDir: tempDir })
 
-    await recoverGitProbe.probeGitState('/repo')
-
-    const invoked = execFile.mock.calls.map((call) => `${call[1].join(' ')}`)
-    expect(invoked).toEqual([
-      'rev-parse --is-inside-work-tree',
-      'status --porcelain',
-      'reflog -n 10',
-    ])
-    for (const command of invoked) {
-      expect(recoverGitProbe.isReadOnlyGitProbe(command)).toBe(true)
+    const auditRecord = {
+      timestamp: '2026-06-01T12:00:00.000Z',
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      reason: 'unknown_local_effect',
+      effect: 'local_mutation',
+      location: 'repo',
+      summary: 'rm src/important.ts',
+      fingerprint: 'fp-recover-local',
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: false,
+        blastRadius: 'repo',
+        confidence: 0.75,
+        signals: [],
+      },
     }
 
-    vi.restoreAllMocks()
+    await writeFile(
+      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      `${JSON.stringify(auditRecord)}\n`,
+      'utf8',
+    )
+
+    vi.spyOn(recoverGitProbe, 'probeGitState').mockResolvedValue({
+      inWorkTree: true,
+      porcelain: ' M src/important.ts',
+      notes: [],
+    })
+
+    const report = await recoverProject({
+      targetDir: tempDir,
+      fingerprint: 'fp-recover-local',
+    })
+
+    expect(report.recoverable).toBe(true)
+    expect(report.advice.some((line) => line.includes('git restore'))).toBe(true)
+    expect(report.advice[0]).toBe(SHOW_DONT_RUN_LEAD)
+    expect(report.target?.summary).toBe('rm src/important.ts')
+  })
+
+  it('T-R2: recoverProject only invokes read-only git probes', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-recover-exec-'))
+    tempDirs.push(tempDir)
+    await initProject({ targetDir: tempDir })
+
+    await writeFile(
+      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      `${JSON.stringify({
+        timestamp: '2026-06-01T12:00:00.000Z',
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        reason: 'unknown_local_effect',
+        effect: 'local_mutation',
+        summary: 'rm tracked.txt',
+        fingerprint: 'fp-recover-exec',
+      })}\n`,
+      'utf8',
+    )
+
+    await recoverProject({ targetDir: tempDir, fingerprint: 'fp-recover-exec' })
+
+    const gitCalls = execFileMock.mock.calls.filter((call) => call[0] === 'git')
+    expect(gitCalls.length).toBeGreaterThan(0)
+    for (const call of gitCalls) {
+      const args = call[1] as string[]
+      expect(isReadOnlyGitProbe(args.join(' '))).toBe(true)
+    }
+    expect(execFileMock.mock.calls.every((call) => call[0] === 'git')).toBe(true)
+  })
+
+  it('warns when --command may invoke Tier1 classification', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-recover-cmd-'))
+    tempDirs.push(tempDir)
+    await initProject({ targetDir: tempDir })
+
+    const report = await recoverProject({
+      targetDir: tempDir,
+      command: 'git status',
+    })
+
+    expect(
+      report.warnings.some((line) => line.includes('Tier1 judge') || line.includes('Tier1')),
+    ).toBe(true)
   })
 })

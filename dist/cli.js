@@ -6,9 +6,9 @@ import { doctorProject, formatDoctorReport } from './commands/doctor.js';
 import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js';
 import { explainCommand, formatExplainReport } from './commands/explain.js';
 import { formatMetricsReport, metricsProject } from './commands/metrics.js';
-import { revokeApproval } from './commands/revoke.js';
 import { formatRecoverReport, recoverProject } from './commands/recover.js';
 import { formatReport, reportProject } from './commands/report.js';
+import { revokeApproval } from './commands/revoke.js';
 import { formatSimulateReport, simulateProject } from './commands/simulate.js';
 import { formatStatusReport, statusProject } from './commands/status.js';
 import { loadConfigFile } from './config-io.js';
@@ -329,6 +329,7 @@ Usage:
   agent-belay metrics [--target <dir>] [--json]
   agent-belay report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
   agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
+    (--limit picks the Nth most recent recover candidate; 1 = latest, default 1)
   agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   agent-belay simulate --config <path> [--target <dir>] [--json]
   agent-belay status [--target <dir>] [--json]

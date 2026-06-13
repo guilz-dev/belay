@@ -43,3 +43,18 @@ security boundaries. See [semver-policy.md](./semver-policy.md).
 - Covert channels (DNS tricks, raw sockets, IPC) without OS sandbox enforcement
 - Agent compliance when hooks are disabled or bypassed outside the IDE
 - Protection when config promises L1-full but the sandbox runtime is not actually engaged
+
+## Skill intelligence layer (v2.3, advisory only)
+
+`agent-belay report` and `agent-belay recover` are **read-only advisory** commands. They do
+not change hook verdicts, auto-execute shell, or bypass the enforcement floor (ADR-002).
+
+| Surface | Behavior | Security note |
+|---------|----------|---------------|
+| `report` | Aggregates redacted `audit.ndjson` | No new classification; cannot widen allow |
+| `recover` | Suggests undo steps; does not run them | Advice is partial — based on hook-visible audit only |
+| `recover --command` | Re-runs shell classification for the given text | May invoke Tier1 judge (egress to Ollama/cloud); classification only |
+
+Recovery suggestions are intentionally conservative: irreversible undo patterns (e.g.
+`git reset --hard`) are never recommended. Operators must verify steps manually; recovery
+commands themselves are subject to the same hooks if executed.

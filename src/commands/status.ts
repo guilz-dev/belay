@@ -73,6 +73,14 @@ export function formatStatusReport(report: StatusReport): string {
     lines.push('')
   }
 
+  if (report.visibility.notes.length > 0) {
+    lines.push('Audit notes:')
+    for (const note of report.visibility.notes) {
+      lines.push(`- ${note}`)
+    }
+    lines.push('')
+  }
+
   if (report.visibility.recentAsks.length > 0) {
     lines.push('Recent asks:')
     for (const ask of report.visibility.recentAsks.slice(0, 5)) {

@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { buildRecoverAdvice, } from '../core/recover-advice.js';
-import { probeGitState } from '../core/recover-git-probe.js';
 import { filterAuditRecords, inferWouldBlock, isApprovalRecorded, isGateRecord, parseTimestamp, } from '../core/audit-query.js';
-import { classifyForReport } from './classify-for-report.js';
+import { buildRecoverAdvice } from '../core/recover-advice.js';
+import { probeGitState } from '../core/recover-git-probe.js';
 import { loadAuditRecords } from './audit.js';
+import { classifyForReport } from './classify-for-report.js';
 function isRecoverCandidate(record) {
     if (!isGateRecord(record) || isApprovalRecorded(record)) {
         return false;
@@ -41,12 +41,19 @@ function selectRecoverTarget(records, options) {
         return rightMs - leftMs;
     });
     const limit = options.limit ?? 1;
-    return recordToTarget(candidates[Math.min(limit, candidates.length) - 1] ?? candidates[0]);
+    const index = Math.min(limit, candidates.length) - 1;
+    const selected = candidates[index] ?? candidates[0];
+    if (!selected) {
+        return null;
+    }
+    return recordToTarget(selected);
 }
 export async function recoverProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     let target = null;
+    const extraWarnings = [];
     if (options.command) {
+        extraWarnings.push('--command re-runs shell classification and may invoke Tier1 judge (classification only — no recovery commands are executed). Prefer audit-based recovery when possible.');
         const classified = await classifyForReport({
             targetDir: repoRoot,
             command: options.command,
@@ -92,6 +99,7 @@ export async function recoverProject(options = {}) {
             permission: target.permission,
         },
         ...advice,
+        warnings: [...extraWarnings, ...advice.warnings],
     };
 }
 export function formatRecoverReport(report) {

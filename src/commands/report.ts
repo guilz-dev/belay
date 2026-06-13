@@ -20,13 +20,14 @@ export async function reportProject(options: ReportOptions = {}): Promise<AuditV
   const summary = summarizeAuditVisibility(records, filter, {
     recentAskLimit: options.limit ?? 10,
   })
-  const warnings = detectFenceDrift(summary)
+  const drift = detectFenceDrift(summary)
 
   return {
     repoRoot,
     auditLogPath,
     ...summary,
-    warnings,
+    warnings: drift.warnings,
+    notes: drift.notes,
   }
 }
 
@@ -47,6 +48,14 @@ export function formatReport(report: AuditVisibilityReport): string {
     lines.push('Warnings:')
     for (const warning of report.warnings) {
       lines.push(`- ${warning}`)
+    }
+    lines.push('')
+  }
+
+  if (report.notes.length > 0) {
+    lines.push('Notes:')
+    for (const note of report.notes) {
+      lines.push(`- ${note}`)
     }
     lines.push('')
   }

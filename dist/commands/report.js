@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfigFile } from '../config-io.js';
-import { detectFenceDrift, summarizeAuditVisibility, } from '../core/audit-summary.js';
+import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js';
 import { loadAuditRecords } from './audit.js';
 export async function reportProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
@@ -14,12 +14,13 @@ export async function reportProject(options = {}) {
     const summary = summarizeAuditVisibility(records, filter, {
         recentAskLimit: options.limit ?? 10,
     });
-    const warnings = detectFenceDrift(summary);
+    const drift = detectFenceDrift(summary);
     return {
         repoRoot,
         auditLogPath,
         ...summary,
-        warnings,
+        warnings: drift.warnings,
+        notes: drift.notes,
     };
 }
 export function formatReport(report) {
@@ -38,6 +39,13 @@ export function formatReport(report) {
         lines.push('Warnings:');
         for (const warning of report.warnings) {
             lines.push(`- ${warning}`);
+        }
+        lines.push('');
+    }
+    if (report.notes.length > 0) {
+        lines.push('Notes:');
+        for (const note of report.notes) {
+            lines.push(`- ${note}`);
         }
         lines.push('');
     }

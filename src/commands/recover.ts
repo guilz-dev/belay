@@ -68,8 +68,12 @@ function selectRecoverTarget(
 export async function recoverProject(options: RecoverOptions = {}): Promise<RecoverReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   let target: RecoverTargetInput | null = null
+  const extraWarnings: string[] = []
 
   if (options.command) {
+    extraWarnings.push(
+      '--command re-runs shell classification and may invoke Tier1 judge (classification only — no recovery commands are executed). Prefer audit-based recovery when possible.',
+    )
     const classified = await classifyForReport({
       targetDir: repoRoot,
       command: options.command,
@@ -118,6 +122,7 @@ export async function recoverProject(options: RecoverOptions = {}): Promise<Reco
       permission: target.permission,
     },
     ...advice,
+    warnings: [...extraWarnings, ...advice.warnings],
   }
 }
 

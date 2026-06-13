@@ -115,7 +115,8 @@ export function buildRecoverAdvice(input) {
         };
     }
     const advice = [SHOW_DONT_RUN_LEAD];
-    if (target.effect === 'local_mutation' || target.assessment?.reversibility === 'recoverable_with_cost') {
+    if (target.effect === 'local_mutation' ||
+        target.assessment?.reversibility === 'recoverable_with_cost') {
         advice.push(...localMutationAdvice(target, git));
     }
     else if (inferWouldBlockFromTarget(target)) {
@@ -144,7 +145,9 @@ export function buildRecoverAdvice(input) {
                 'No safe, specific recovery command can be suggested from the observed audit record.',
                 'Inspect git history, backups, or hosting provider recovery tools manually.',
             ],
-            warnings: warnings.length > 0 ? warnings : ['Low confidence — no specific recovery commands are suggested.'],
+            warnings: warnings.length > 0
+                ? warnings
+                : ['Low confidence — no specific recovery commands are suggested.'],
         };
     }
     return {

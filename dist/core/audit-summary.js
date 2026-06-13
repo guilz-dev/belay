@@ -58,13 +58,17 @@ export function summarizeAuditVisibility(records, filter = {}, options = {}) {
 }
 export function detectFenceDrift(summary, threshold = DEFAULT_SILENT_PASS_THRESHOLD) {
     const warnings = [];
+    const notes = [];
+    if (summary.gateEvents === 0) {
+        return { warnings, notes };
+    }
     if (summary.gateEvents < MIN_GATE_EVENTS_FOR_FENCE_DRIFT) {
-        warnings.push(`Fence drift check deferred: only ${summary.gateEvents} gate event(s) recorded (need at least ${MIN_GATE_EVENTS_FOR_FENCE_DRIFT} for a reliable silent-pass rate).`);
-        return warnings;
+        notes.push(`Fence drift check deferred: only ${summary.gateEvents} gate event(s) recorded (need at least ${MIN_GATE_EVENTS_FOR_FENCE_DRIFT} for a reliable silent-pass rate).`);
+        return { warnings, notes };
     }
     if (summary.silentPassRate < threshold) {
         warnings.push(`Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% expected). ` +
             'This may indicate over-blocking (fence-like behavior). Review recent asks with agent-belay report.');
     }
-    return warnings;
+    return { warnings, notes };
 }

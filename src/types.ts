@@ -191,6 +191,7 @@ export interface AuditVisibilityReport {
     tier: 'Tier0' | 'Tier1' | 'deterministic'
   }>
   warnings: string[]
+  notes: string[]
 }
 
 export interface RecoverOptions {
