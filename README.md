@@ -256,10 +256,9 @@ npx agent-belay dogfood
 npx agent-belay init --dogfood
 ```
 
-This sets `mode: "audit"` and `policy.unknownLocalEffect: "deny"`, and enables
-`controlPlane.spikeOnPrompt` for OQ3 validation. Run `npx agent-belay metrics`
-after normal agent work, check `npx agent-belay status` / `doctor` for OQ3 spike
-results, tune `overrides.allow` with `explain`, then:
+This sets `mode: "audit"` and `policy.unknownLocalEffect: "deny"`. Run
+`npx agent-belay metrics` after normal agent work, check `npx agent-belay status` /
+`doctor` for readiness, tune `overrides.allow` with `explain`, then:
 
 ```bash
 npx agent-belay dogfood --enforce
@@ -273,8 +272,12 @@ unrecognized local commands.
 shared across repositories for the current OS user. Existing repo-local approval
 files are copied or merged into the control plane on `upgrade`. Disabling control
 plane merges approvals back to repo-local; run `npx agent-belay doctor --fix` to
-archive orphaned files. Set `controlPlane.spikeOnPrompt: true` to validate hook
-filesystem access (OQ3) — results land in `oq3-spike-last.json`.
+archive orphaned files.
+
+For cloud Tier1 (`judge.provider: "openai-compatible"`), set `judge.endpoint` and
+provide `BELAY_JUDGE_API_KEY` or `OPENAI_API_KEY`. Use
+`npx agent-belay init --judge-provider openai-compatible --judge-endpoint <url> --accept-cloud-judge`
+to opt in explicitly. Fresh installs default to local Ollama (`local-ollama`).
 
 File-mutation tools and shell redirects cannot write control-plane paths when
 control plane is enabled.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
-import { createCursorJudge, createDeterministicJudgeStub } from '../../core/v2/judge.js'
+import { createDeterministicJudgeStub, createOpenAiCompatibleJudge } from '../../core/v2/judge.js'
 import { verdict } from '../../core/v2/verdict.js'
 import { v2TestContext } from './helpers.js'
 
@@ -12,18 +12,19 @@ describe('T13 no silent loosen on provider change', () => {
     expect(result.reason).toBe('high_stakes_path')
   })
 
-  it('falls back to ask when cursor scrub fails', async () => {
+  it('falls back to ask when openai-compatible scrub fails', async () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
-        provider: 'cursor',
+        provider: 'openai-compatible',
         model: 'composer-2.5',
         timeoutMs: 1000,
-        endpoint: null,
+        endpoint: 'https://api.example.com/v1',
         keepAlive: null,
       },
     })
-    const judge = createCursorJudge({
+    const judge = createOpenAiCompatibleJudge({
+      endpoint: 'https://api.example.com/v1',
       modelRequested: 'composer-2.5',
       modelResolved: 'composer-2.5',
       timeoutMs: 1000,

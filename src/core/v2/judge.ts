@@ -17,7 +17,7 @@ Command/code:
 `
 
 export interface Tier1JudgeTrace {
-  provider: 'cursor' | 'ollama' | 'fallback'
+  provider: 'openai-compatible' | 'ollama' | 'fallback'
   modelRequested: string
   modelResolved: string
   latencyMs: number
@@ -90,12 +90,29 @@ export function createDeterministicJudgeStub(): TracedTier1Judge {
 }
 
 /** Fail-closed judge for when Tier1 is required but unavailable. */
-export function createFailClosedJudge(): TracedTier1Judge {
-  return {
+export function createFailClosedJudge(options?: {
+  reason?: string
+  fallbackReason?: string
+  modelRequested?: string
+  modelResolved?: string
+}): TracedTier1Judge {
+  const reason = options?.reason ?? 'fail_closed'
+  const judge: TracedTier1Judge = {
     evaluate() {
-      return Promise.resolve(failClosedVerdict('fail_closed'))
+      const started = Date.now()
+      if (options?.fallbackReason) {
+        judge.lastTrace = {
+          provider: 'fallback',
+          modelRequested: options.modelRequested ?? 'unknown',
+          modelResolved: options.modelResolved ?? 'unknown',
+          latencyMs: Date.now() - started,
+          fallbackReason: options.fallbackReason,
+        }
+      }
+      return Promise.resolve(failClosedVerdict(reason))
     },
   }
+  return judge
 }
 
 export interface OllamaJudgeOptions {
@@ -184,26 +201,22 @@ export function createOllamaJudge(options: OllamaJudgeOptions = {}): TracedTier1
   return judge
 }
 
-export interface CursorJudgeOptions {
+export interface OpenAiCompatibleJudgeOptions {
+  endpoint: string
   modelRequested: string
   modelResolved: string
   timeoutMs: number
-  endpoint?: string | null
   apiKey?: string
   sensitivePaths: string[]
   scrubOptions: ScrubOptions
   fetchImpl?: typeof fetch
 }
 
-const DEFAULT_CURSOR_API_BASE = `https://api.${'cursor'}.com/v1`
-
-export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge {
+export function createOpenAiCompatibleJudge(
+  options: OpenAiCompatibleJudgeOptions,
+): TracedTier1Judge {
   const fetchImpl = options.fetchImpl ?? fetch
-  const apiBase = (
-    options.endpoint ??
-    process.env.CURSOR_API_BASE ??
-    DEFAULT_CURSOR_API_BASE
-  ).replace(/\/$/, '')
+  const apiBase = options.endpoint.replace(/\/$/, '')
 
   const judge: TracedTier1Judge = {
     async evaluate(input) {
@@ -211,7 +224,7 @@ export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge
       const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null
       if (prescan?.destroys_history_or_secrets) {
         judge.lastTrace = {
-          provider: 'cursor',
+          provider: 'openai-compatible',
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
@@ -234,7 +247,9 @@ export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge
         return failClosedVerdict('outbound_scrub_failed')
       }
 
-      const apiKey = options.apiKey ?? process.env.CURSOR_API_KEY?.trim()
+      const { resolveJudgeApiKey } = await import('../judge-api-key.js')
+      const resolvedKey = resolveJudgeApiKey()
+      const apiKey = options.apiKey ?? resolvedKey.key
       if (!apiKey) {
         judge.lastTrace = {
           provider: 'fallback',
@@ -243,7 +258,7 @@ export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge
           latencyMs: Date.now() - started,
           fallbackReason: 'missing_api_key',
         }
-        return failClosedVerdict('cursor_auth_error')
+        return failClosedVerdict('openai_compatible_auth_error')
       }
 
       const prompt = `${TIER1_PROMPT}${scrubbed.text}`
@@ -267,9 +282,9 @@ export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge
             modelRequested: options.modelRequested,
             modelResolved: options.modelResolved,
             latencyMs: Date.now() - started,
-            fallbackReason: `cursor_http_${response.status}`,
+            fallbackReason: `openai_compatible_http_${response.status}`,
           }
-          return failClosedVerdict('cursor_unavailable')
+          return failClosedVerdict('openai_compatible_unavailable')
         }
         const payload = (await response.json()) as {
           choices?: Array<{ message?: { content?: string } }>
@@ -277,28 +292,33 @@ export function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge
         const content = payload.choices?.[0]?.message?.content ?? '{}'
         const parsed = parseTier1Json(content)
         judge.lastTrace = {
-          provider: parsed ? 'cursor' : 'fallback',
+          provider: parsed ? 'openai-compatible' : 'fallback',
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
           outboundRedacted: true,
-          fallbackReason: parsed ? undefined : 'cursor_parse_error',
+          fallbackReason: parsed ? undefined : 'openai_compatible_parse_error',
         }
-        return parsed ?? failClosedVerdict('cursor_parse_error')
+        return parsed ?? failClosedVerdict('openai_compatible_parse_error')
       } catch (error) {
         judge.lastTrace = {
           provider: 'fallback',
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
-          fallbackReason: error instanceof Error ? error.message : 'cursor_error',
+          fallbackReason: error instanceof Error ? error.message : 'openai_compatible_error',
         }
-        return failClosedVerdict('cursor_unavailable')
+        return failClosedVerdict('openai_compatible_unavailable')
       }
     },
   }
   return judge
 }
+
+/** @deprecated Use createOpenAiCompatibleJudge */
+export const createCursorJudge = createOpenAiCompatibleJudge
+
+export interface CursorJudgeOptions extends OpenAiCompatibleJudgeOptions {}
 
 export function tier1RequiresAsk(verdict: Tier1Verdict): boolean {
   return (

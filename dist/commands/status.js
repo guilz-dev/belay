@@ -16,7 +16,6 @@ export async function statusProject(options = {}) {
         approved: compactApprovals(approvedRaw).approvals,
         expiredPendingCount,
         dogfood: operational.dogfood,
-        oq3Spike: operational.oq3Spike,
     };
 }
 export function formatStatusReport(report) {
@@ -29,14 +28,8 @@ export function formatStatusReport(report) {
         `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} (mode=${report.dogfood.mode}, unknownLocalEffect=${report.dogfood.unknownLocalEffect})`,
         `Metrics: ${report.dogfood.gateEvents} gate events, ${report.dogfood.wouldBlockCount} would-block (${(report.dogfood.wouldBlockRate * 100).toFixed(1)}%)`,
         `Ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'not yet'}`,
+        '',
     ];
-    if (report.oq3Spike) {
-        lines.push(`OQ3 spike: ${report.oq3Spike.ok ? 'ok' : 'failed'} at ${report.oq3Spike.path}`);
-    }
-    else if (report.dogfood.spikeOnPrompt) {
-        lines.push('OQ3 spike: pending — submit a chat prompt in Cursor.');
-    }
-    lines.push('');
     if (report.pending.length === 0 && report.approved.length === 0) {
         lines.push('No active approvals.');
         return `${lines.join('\n')}\n`;

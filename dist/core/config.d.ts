@@ -73,7 +73,7 @@ export interface BelayRedactionConfig {
     maskKeyValueSecrets: boolean;
     maskHighEntropyStrings: boolean;
 }
-export type JudgeProvider = 'cursor' | 'ollama';
+export type JudgeProvider = 'ollama' | 'openai-compatible';
 export interface BelayJudgeConfig {
     provider: JudgeProvider;
     model: string;
@@ -82,6 +82,8 @@ export interface BelayJudgeConfig {
     keepAlive: string | null;
 }
 export declare const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig;
+export declare const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig;
+/** @deprecated Use DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE */
 export declare const DEFAULT_JUDGE_CURSOR_COMPOSER: BelayJudgeConfig;
 export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user';
 export interface BelayControlPlaneIsolationConfig {
@@ -93,8 +95,6 @@ export interface BelayControlPlaneConfig {
     enabled: boolean;
     configDir: string | null;
     integrity: ControlPlaneIntegrity;
-    /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
-    spikeOnPrompt?: boolean;
     isolation: BelayControlPlaneIsolationConfig;
 }
 export type SandboxRuntime = 'none' | 'cursor-sandbox' | 'container' | 'seatbelt' | 'landlock';
@@ -174,6 +174,7 @@ export declare function isConfigV1(value: unknown): value is BelayConfigV1;
 export declare function isConfigV2(value: unknown): value is BelayConfigV2;
 export declare function isConfigV3(value: unknown): value is BelayConfigV4;
 export declare function isConfigV4(value: unknown): value is BelayConfigV4;
+export declare function normalizeJudgeProvider(provider: string | undefined): 'ollama' | 'openai-compatible';
 export declare function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig;
 export declare function migrateV3ToV4(v3: BelayConfigV4, raw?: RawConfigInput): BelayConfigV4;
 type RawConfigInput = Partial<{

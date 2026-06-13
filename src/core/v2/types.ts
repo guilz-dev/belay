@@ -43,7 +43,7 @@ export interface Tier1Judge {
 }
 
 export interface JudgeTrace {
-  provider: 'cursor' | 'ollama' | 'fallback'
+  provider: 'openai-compatible' | 'ollama' | 'fallback'
   modelRequested: string
   modelResolved: string
   latencyMs: number

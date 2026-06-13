@@ -2,21 +2,28 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
-import { scrubOptionsFromConfig } from '../config.js'
+import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
 import {
-  createCursorJudge,
   createDeterministicJudgeStub,
+  createFailClosedJudge,
   createOllamaJudge,
+  createOpenAiCompatibleJudge,
   type TracedTier1Judge,
 } from './judge.js'
 
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url)
 
-let cachedPinnedModels: { cursor: { autoResolved: string }; ollama: { ciPin: string } } | null =
-  null
+let cachedPinnedModels: {
+  'openai-compatible': { autoResolved: string }
+  ollama: { ciPin: string }
+} | null = null
+
+export function resetPinnedJudgeModelsCache(): void {
+  cachedPinnedModels = null
+}
 
 export async function loadPinnedJudgeModels(): Promise<{
-  cursor: { autoResolved: string }
+  'openai-compatible': { autoResolved: string }
   ollama: { ciPin: string }
 }> {
   if (cachedPinnedModels) {
@@ -25,25 +32,25 @@ export async function loadPinnedJudgeModels(): Promise<{
   try {
     const raw = await readFile(fileURLToPath(FIXTURE_MODELS_URL), 'utf8')
     cachedPinnedModels = JSON.parse(raw) as {
-      cursor: { autoResolved: string }
+      'openai-compatible': { autoResolved: string }
       ollama: { ciPin: string }
     }
     return cachedPinnedModels
   } catch {
     cachedPinnedModels = {
-      cursor: { autoResolved: 'composer-2.5' },
+      'openai-compatible': { autoResolved: 'composer-2.5' },
       ollama: { ciPin: 'gemma4:e2b' },
     }
     return cachedPinnedModels
   }
 }
 
-export function resolveCursorModel(
+export function resolveCloudModel(
   requested: string,
   pinned: { autoResolved: string },
 ): { requested: string; resolved: string } {
   if (requested === 'auto') {
-    const envResolved = process.env.CURSOR_JUDGE_MODEL_RESOLVED?.trim()
+    const envResolved = process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim()
     return {
       requested,
       resolved: envResolved || pinned.autoResolved,
@@ -52,25 +59,39 @@ export function resolveCursorModel(
   return { requested, resolved: requested }
 }
 
+/** @deprecated Use resolveCloudModel */
+export const resolveCursorModel = resolveCloudModel
+
 export function createJudgeFromConfig(
   config: BelayConfigV4,
   options: { pinnedModels?: { autoResolved: string } } = {},
 ): TracedTier1Judge {
   const judgeConfig = config.judge
-  if (judgeConfig.provider === 'cursor') {
+  const provider = normalizeJudgeProvider(judgeConfig.provider)
+
+  if (provider === 'openai-compatible') {
+    const endpoint = judgeConfig.endpoint?.trim()
+    if (!endpoint) {
+      return createFailClosedJudge({
+        reason: 'openai_compatible_endpoint_missing',
+        fallbackReason: 'missing_endpoint',
+        modelRequested: judgeConfig.model,
+        modelResolved: judgeConfig.model,
+      })
+    }
     const pinned = options.pinnedModels ?? { autoResolved: 'composer-2.5' }
-    const { resolved } = resolveCursorModel(judgeConfig.model, pinned)
-    return createCursorJudge({
+    const { resolved } = resolveCloudModel(judgeConfig.model, pinned)
+    return createOpenAiCompatibleJudge({
+      endpoint,
       modelRequested: judgeConfig.model,
       modelResolved: resolved,
       timeoutMs: judgeConfig.timeoutMs,
-      endpoint: judgeConfig.endpoint,
       sensitivePaths: config.classifier.sensitivePaths,
       scrubOptions: scrubOptionsFromConfig(config),
     })
   }
 
-  if (judgeConfig.provider === 'ollama') {
+  if (provider === 'ollama') {
     return createOllamaJudge({
       model: judgeConfig.model,
       baseUrl: judgeConfig.endpoint ?? 'http://127.0.0.1:11434',

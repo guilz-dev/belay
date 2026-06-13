@@ -12,6 +12,7 @@ export {
   createDeterministicJudgeStub,
   createFailClosedJudge,
   createOllamaJudge,
+  createOpenAiCompatibleJudge,
   prescanInterpreterCode,
   tier1RequiresAsk,
 } from './judge.js'
@@ -20,7 +21,8 @@ export {
   createJudgeFromConfig,
   judgeConfigSummary,
   loadPinnedJudgeModels,
-  resolveCursorModel,
+  resetPinnedJudgeModelsCache,
+  resolveCloudModel,
 } from './judge-factory.js'
 export { scrubOutboundForJudge } from './judge-outbound.js'
 export { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'

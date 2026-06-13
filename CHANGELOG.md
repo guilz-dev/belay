@@ -4,8 +4,33 @@
 
 ### Added
 
-- **SPEC v2.1 judge providers** — config `version: 4` with top-level `judge` field (`cursor` / `ollama`)
-- Judge profiles `cursor-composer` (distribution default) and `local-ollama` (principle default)
+- **SPEC v2.1.1** — `openai-compatible` cloud judge provider (endpoint required, key from `BELAY_JUDGE_API_KEY` / `OPENAI_API_KEY`)
+- `init --judge-endpoint` for explicit cloud endpoint configuration
+- Tier1 accuracy measurement harness (`src/__tests__/v2/llm/judge-accuracy.test.ts`, non-gate)
+- `pnpm test:stable` — runs vitest three times for flake detection (T18)
+- Test isolation via per-test `HOME` / `XDG_CONFIG_HOME` (`src/__tests__/setup.ts`)
+
+### Changed
+
+- Cloud judge provider renamed from `cursor` to `openai-compatible`; `cursor` is a deprecated read alias (M4)
+- Fresh `init` default remains `local-ollama` only; `cursor-composer` profile removed (R27)
+- `doctor` reports `BELAY_JUDGE_API_KEY` / `OPENAI_API_KEY` for cloud judge diagnostics
+
+### Removed
+
+- OQ3 `spikeOnPrompt` / control-plane spike wiring (R28)
+- `control-plane-spike.ts`, `scripts/oq3-control-plane-spike.mjs`, and `--no-spike` CLI flag
+- Default `https://api.cursor.com` cloud base URL (R25)
+
+### Fixed
+
+- CI runs `pnpm test:stable` (vitest x3) per SPEC T18
+- Build cleans `dist/` before compile to drop removed modules
+- Runtime fail-closed judge when `openai-compatible` endpoint is missing (no generic hook deny)
+- README dogfood section updated for v2.1.1
+
+### Added (v2.1)
+- Judge profiles `cursor-composer` (requires `--accept-cloud-judge`) and `local-ollama` (fresh init default)
 - `init` flags: `--judge-profile`, `--judge-provider`, `--judge-model`, `--accept-cloud-judge` (R19)
 - Provider-aware `doctor` diagnostics and audit fields (`judgeProvider`, `judgeModelResolved`, `judgeLatencyMs`, `judgeOutboundRedacted`)
 - Outbound redaction (R23) for cloud judge calls via `scrubOutboundForJudge`
@@ -28,6 +53,9 @@
 
 ### Fixed
 
+- R23 outbound scrub no longer blocks cloud judge after `Bearer <redacted>` masking
+- Tier1 judge trace (`judgeProvider`, `judgeFallbackReason`, etc.) recorded on all Tier1 paths, not only catastrophic
+- Ollama parse failures report `judgeProvider: fallback` in audit trace
 - `npm run … -- …` forwarded args no longer dropped before classification
 - Multi-line `make` targets no longer flatten into a single benign-leading command
 - `xargs` is peeled as a transparent wrapper so piped stdin execution escalates correctly

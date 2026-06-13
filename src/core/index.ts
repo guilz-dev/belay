@@ -45,10 +45,6 @@ export {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
 } from './config.js'
-export {
-  persistControlPlaneSpikeResult,
-  runControlPlaneSpike,
-} from './control-plane-spike.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,

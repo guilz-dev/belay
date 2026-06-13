@@ -39,7 +39,6 @@ function parseArgs(argv: string[]) {
     dogfood?: boolean
     enforce?: boolean
     force?: boolean
-    noSpike?: boolean
     adapter?: 'cursor' | 'claude'
     auditSubcommand?: 'query' | 'summarize' | 'replay'
     since?: string
@@ -61,9 +60,10 @@ function parseArgs(argv: string[]) {
     approvePath?: string
     sandboxSubcommand?: 'status'
     preset?: ConfigPresetName
-    judgeProfile?: 'cursor-composer' | 'local-ollama'
-    judgeProvider?: 'cursor' | 'ollama'
+    judgeProfile?: 'local-ollama'
+    judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
     judgeModel?: string
+    judgeEndpoint?: string
     acceptCloudJudge?: boolean
   } = {}
 
@@ -83,10 +83,6 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--force') {
       options.force = true
-      continue
-    }
-    if (token === '--no-spike') {
-      options.noSpike = true
       continue
     }
     if (token === '--adapter') {
@@ -110,19 +106,28 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--judge-profile') {
       const next = rest[index + 1]
-      if (!next || !['cursor-composer', 'local-ollama'].includes(next)) {
-        throw new Error('--judge-profile requires cursor-composer or local-ollama.')
+      if (!next || next !== 'local-ollama') {
+        throw new Error('--judge-profile requires local-ollama.')
       }
-      options.judgeProfile = next as 'cursor-composer' | 'local-ollama'
+      options.judgeProfile = 'local-ollama'
       index += 1
       continue
     }
     if (token === '--judge-provider') {
       const next = rest[index + 1]
-      if (!next || !['cursor', 'ollama'].includes(next)) {
-        throw new Error('--judge-provider requires cursor or ollama.')
+      if (!next || !['ollama', 'openai-compatible', 'cursor'].includes(next)) {
+        throw new Error('--judge-provider requires ollama or openai-compatible.')
       }
-      options.judgeProvider = next as 'cursor' | 'ollama'
+      options.judgeProvider = next as 'ollama' | 'openai-compatible' | 'cursor'
+      index += 1
+      continue
+    }
+    if (token === '--judge-endpoint') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--judge-endpoint requires a URL.')
+      }
+      options.judgeEndpoint = next
       index += 1
       continue
     }
@@ -340,10 +345,10 @@ function printHelp() {
   process.stdout.write(`agent-belay
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile cursor-composer|local-ollama] [--judge-provider cursor|ollama] [--judge-model <id|auto>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  agent-belay init [--target <dir>] [--adapter cursor|claude] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
     (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   agent-belay upgrade [--target <dir>] [--adapter cursor|claude] [--with-skill]
-  agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force] [--no-spike]
+  agent-belay dogfood [--target <dir>] [--adapter cursor|claude] [--enforce] [--force]
   agent-belay doctor [--target <dir>] [--adapter cursor|claude] [--json] [--fix] [--dry-run]
   agent-belay metrics [--target <dir>] [--json]
   agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
@@ -375,6 +380,7 @@ async function main() {
         judgeProfile: options.judgeProfile,
         judgeProvider: options.judgeProvider,
         judgeModel: options.judgeModel,
+        judgeEndpoint: options.judgeEndpoint,
         acceptCloudJudge: options.acceptCloudJudge,
       })
       const extras = [
@@ -393,7 +399,6 @@ async function main() {
         targetDir: options.targetDir,
         enforce: options.enforce,
         force: options.force,
-        spikeOnPrompt: options.noSpike ? false : undefined,
         adapter: options.adapter,
       })
       process.stdout.write(formatDogfoodResult(result))

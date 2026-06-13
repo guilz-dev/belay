@@ -1,14 +1,7 @@
 import type { BelayJudgeConfig } from './config.js'
+import { normalizeJudgeProvider } from './config.js'
 
-export type JudgeProfileName = 'cursor-composer' | 'local-ollama'
-
-export const JUDGE_PROFILE_CURSOR_COMPOSER: BelayJudgeConfig = {
-  provider: 'cursor',
-  model: 'auto',
-  timeoutMs: 8000,
-  endpoint: null,
-  keepAlive: null,
-}
+export type JudgeProfileName = 'local-ollama'
 
 export const JUDGE_PROFILE_LOCAL_OLLAMA: BelayJudgeConfig = {
   provider: 'ollama',
@@ -19,24 +12,26 @@ export const JUDGE_PROFILE_LOCAL_OLLAMA: BelayJudgeConfig = {
 }
 
 export const JUDGE_PROFILES: Record<JudgeProfileName, BelayJudgeConfig> = {
-  'cursor-composer': JUDGE_PROFILE_CURSOR_COMPOSER,
   'local-ollama': JUDGE_PROFILE_LOCAL_OLLAMA,
 }
 
 export interface ResolveJudgeConfigInput {
   judgeProfile?: JudgeProfileName
-  judgeProvider?: 'cursor' | 'ollama'
+  judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
   judgeModel?: string
+  judgeEndpoint?: string
   existingJudge?: BelayJudgeConfig
 }
 
 export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJudgeConfig {
   if (input.judgeProvider) {
+    const provider = normalizeJudgeProvider(input.judgeProvider)
     const base =
-      input.judgeProvider === 'cursor' ? JUDGE_PROFILE_CURSOR_COMPOSER : JUDGE_PROFILE_LOCAL_OLLAMA
+      provider === 'openai-compatible' ? openAiCompatibleBase(input) : JUDGE_PROFILE_LOCAL_OLLAMA
     return {
       ...base,
       model: input.judgeModel ?? base.model,
+      endpoint: input.judgeEndpoint?.trim() || base.endpoint,
     }
   }
 
@@ -45,6 +40,7 @@ export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJu
     return {
       ...profile,
       model: input.judgeModel ?? profile.model,
+      endpoint: input.judgeEndpoint?.trim() || profile.endpoint,
     }
   }
 
@@ -52,29 +48,55 @@ export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJu
     return { ...input.existingJudge }
   }
 
-  return { ...JUDGE_PROFILE_CURSOR_COMPOSER }
+  return { ...JUDGE_PROFILE_LOCAL_OLLAMA }
+}
+
+function openAiCompatibleBase(input: ResolveJudgeConfigInput): BelayJudgeConfig {
+  return {
+    provider: 'openai-compatible',
+    model: input.judgeModel ?? 'auto',
+    timeoutMs: 8000,
+    endpoint: input.judgeEndpoint?.trim() ?? null,
+    keepAlive: null,
+  }
 }
 
 export class CloudJudgeConsentRequiredError extends Error {
   constructor() {
     super(
-      'Cloud judge sends redacted shell commands outside the repo and requires CURSOR_API_KEY. ' +
+      'Cloud judge sends redacted shell commands to an external endpoint and requires an API key in BELAY_JUDGE_API_KEY or OPENAI_API_KEY. ' +
         'Pass --accept-cloud-judge to confirm, or use --judge-profile local-ollama for local-only Tier1.',
     )
     this.name = 'CloudJudgeConsentRequiredError'
   }
 }
 
+export class JudgeEndpointRequiredError extends Error {
+  constructor() {
+    super(
+      'openai-compatible judge requires --judge-endpoint (or judge.endpoint in config). No default cloud base URL is applied.',
+    )
+    this.name = 'JudgeEndpointRequiredError'
+  }
+}
+
 function isCloudJudgeConfig(judge: BelayJudgeConfig): boolean {
-  return judge.provider === 'cursor'
+  return judge.provider === 'openai-compatible'
+}
+
+export function assertJudgeEndpoint(judge: BelayJudgeConfig): void {
+  if (judge.provider === 'openai-compatible' && !judge.endpoint?.trim()) {
+    throw new JudgeEndpointRequiredError()
+  }
 }
 
 export function resolveInitJudgeConfig(input: {
   isFresh: boolean
   hasExplicitJudgeFlags: boolean
   judgeProfile?: JudgeProfileName
-  judgeProvider?: 'cursor' | 'ollama'
+  judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
   judgeModel?: string
+  judgeEndpoint?: string
   acceptCloudJudge?: boolean
   existingJudge?: BelayJudgeConfig
 }): BelayJudgeConfig {
@@ -83,23 +105,20 @@ export function resolveInitJudgeConfig(input: {
       judgeProfile: input.judgeProfile,
       judgeProvider: input.judgeProvider,
       judgeModel: input.judgeModel,
+      judgeEndpoint: input.judgeEndpoint,
     })
     if (isCloudJudgeConfig(judge) && !input.acceptCloudJudge) {
       throw new CloudJudgeConsentRequiredError()
     }
+    assertJudgeEndpoint(judge)
     return judge
   }
 
   if (!input.isFresh && input.existingJudge) {
-    return resolveJudgeConfig({ existingJudge: input.existingJudge })
+    const judge = resolveJudgeConfig({ existingJudge: input.existingJudge })
+    assertJudgeEndpoint(judge)
+    return judge
   }
 
-  if (input.isFresh) {
-    if (input.acceptCloudJudge) {
-      return resolveJudgeConfig({ judgeProfile: 'cursor-composer' })
-    }
-    return resolveJudgeConfig({ judgeProfile: 'local-ollama' })
-  }
-
-  return resolveJudgeConfig({ existingJudge: input.existingJudge })
+  return resolveJudgeConfig({ judgeProfile: 'local-ollama' })
 }

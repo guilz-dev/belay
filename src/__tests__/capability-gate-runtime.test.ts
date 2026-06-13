@@ -27,7 +27,6 @@ function sandboxBrokerConfig(): BelayConfigV3 {
       enabled: false,
       configDir: null,
       integrity: 'none' as const,
-      spikeOnPrompt: false,
       isolation: { mode: 'none' as const, verifyAgentWritable: true },
     },
     audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },

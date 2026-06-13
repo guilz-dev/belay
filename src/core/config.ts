@@ -92,7 +92,7 @@ export interface BelayRedactionConfig {
   maskHighEntropyStrings: boolean
 }
 
-export type JudgeProvider = 'cursor' | 'ollama'
+export type JudgeProvider = 'ollama' | 'openai-compatible'
 
 export interface BelayJudgeConfig {
   provider: JudgeProvider
@@ -110,13 +110,16 @@ export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
   keepAlive: '30m',
 }
 
-export const DEFAULT_JUDGE_CURSOR_COMPOSER: BelayJudgeConfig = {
-  provider: 'cursor',
+export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig = {
+  provider: 'openai-compatible',
   model: 'auto',
   timeoutMs: 8000,
   endpoint: null,
   keepAlive: null,
 }
+
+/** @deprecated Use DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE */
+export const DEFAULT_JUDGE_CURSOR_COMPOSER = DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
 
 export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user'
 
@@ -130,8 +133,6 @@ export interface BelayControlPlaneConfig {
   enabled: boolean
   configDir: string | null
   integrity: ControlPlaneIntegrity
-  /** Run OQ3 control-plane filesystem spike on beforeSubmitPrompt (dogfood / validation). */
-  spikeOnPrompt?: boolean
   isolation: BelayControlPlaneIsolationConfig
 }
 
@@ -252,7 +253,6 @@ export const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   enabled: false,
   configDir: null,
   integrity: 'none',
-  spikeOnPrompt: false,
   isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 }
 
@@ -260,7 +260,6 @@ export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   enabled: true,
   configDir: null,
   integrity: 'hash-pinned',
-  spikeOnPrompt: false,
   isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 }
 
@@ -413,35 +412,54 @@ export function isConfigV4(value: unknown): value is BelayConfigV4 {
   return typeof value === 'object' && value !== null && (value as BelayConfigV4).version === 4
 }
 
+export function normalizeJudgeProvider(
+  provider: string | undefined,
+): 'ollama' | 'openai-compatible' {
+  if (provider === 'openai-compatible' || provider === 'cursor') {
+    return 'openai-compatible'
+  }
+  return 'ollama'
+}
+
 function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
-  const judge = raw.judge as Partial<BelayJudgeConfig> | undefined
-  if (judge?.provider === 'cursor' || judge?.provider === 'ollama') {
+  const judge = raw.judge as (Partial<BelayJudgeConfig> & { provider?: string }) | undefined
+  if (judge?.provider) {
+    const provider = normalizeJudgeProvider(judge.provider)
     const base =
-      judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA
+      provider === 'openai-compatible'
+        ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
+        : DEFAULT_JUDGE_LOCAL_OLLAMA
     return normalizeJudgeConfig({
       ...base,
       ...judge,
-      provider: judge.provider,
+      provider,
     })
   }
   return { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
 }
 
 export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig {
+  const provider = normalizeJudgeProvider(judge.provider)
   const base =
-    judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA
+    provider === 'openai-compatible'
+      ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
+      : DEFAULT_JUDGE_LOCAL_OLLAMA
   const model =
     typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
   const timeoutMs =
     typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
   return {
-    provider: judge.provider === 'cursor' ? 'cursor' : 'ollama',
+    provider,
     model,
     timeoutMs,
     endpoint:
       typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null,
     keepAlive:
-      typeof judge.keepAlive === 'string' && judge.keepAlive.trim() ? judge.keepAlive.trim() : null,
+      provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
+        ? judge.keepAlive.trim()
+        : provider === 'ollama'
+          ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
+          : null,
   }
 }
 
@@ -799,7 +817,6 @@ export function normalizeConfig(
           : v4.controlPlane?.integrity === 'none'
             ? 'none'
             : DEFAULT_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: v4.controlPlane?.spikeOnPrompt === true,
       isolation: {
         mode:
           v4.controlPlane?.isolation?.mode === 'read-only-mount' ||

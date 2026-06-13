@@ -46,7 +46,6 @@ function transactionalConfig() {
       enabled: false,
       configDir: null,
       integrity: 'none' as const,
-      spikeOnPrompt: false,
     },
     audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
   }

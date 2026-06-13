@@ -186,13 +186,14 @@ async function applyInitJudgeConfig(repoRoot, adapterName, options) {
     }
     const isFresh = isFreshConfigInput(existingConfig);
     const mergedConfig = await loadConfigFile(repoRoot, adapterName);
-    const hasExplicitJudgeFlags = options.judgeProfile || options.judgeProvider || options.judgeModel;
+    const hasExplicitJudgeFlags = options.judgeProfile || options.judgeProvider || options.judgeModel || options.judgeEndpoint;
     const judge = resolveInitJudgeConfig({
         isFresh,
         hasExplicitJudgeFlags: Boolean(hasExplicitJudgeFlags),
         judgeProfile: options.judgeProfile,
         judgeProvider: options.judgeProvider,
         judgeModel: options.judgeModel,
+        judgeEndpoint: options.judgeEndpoint,
         acceptCloudJudge: options.acceptCloudJudge,
         existingJudge: mergedConfig.judge,
     });

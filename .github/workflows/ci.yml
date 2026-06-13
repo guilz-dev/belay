@@ -34,7 +34,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        run: pnpm test:stable
 
       - name: Corpus
         run: pnpm corpus
@@ -63,4 +63,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test
-        run: pnpm test
+        run: pnpm test:stable

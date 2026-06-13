@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { cursorLayout } from '../layouts/cursor.js';
-import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToCursorResponse, maybeRunControlPlaneSpike, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
+import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToCursorResponse, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
 import { findRepoRoot } from '../shared/repo-root.js';
 async function readStdinJson() {
     const chunks = [];
@@ -40,7 +40,6 @@ export async function runBeforeSubmitPromptHook() {
         const prompt = String(payload.prompt ?? '');
         const ctx = await loadRuntimeContext(process.cwd());
         const deps = createDefaultGateRuntimeDeps();
-        await maybeRunControlPlaneSpike(ctx, deps, process.env.BELAY_OQ3_SPIKE === '1');
         const result = await processApprovalPrompt(ctx, deps, prompt);
         jsonResponse({
             continue: result.continue,
