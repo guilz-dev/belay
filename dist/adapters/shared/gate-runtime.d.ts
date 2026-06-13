@@ -34,7 +34,6 @@ export declare function processApprovalPrompt(ctx: GateRuntimeContext, deps: Gat
     continue: boolean;
     user_message?: string;
 }>;
-export declare function maybeRunControlPlaneSpike(ctx: GateRuntimeContext, deps: GateRuntimeDeps, envEnabled: boolean): Promise<void>;
 export declare function gateVerdictToCursorResponse(verdict: GateVerdict): GatePermissionResponse;
 export declare function gateVerdictToClaudePreToolUseResponse(verdict: GateVerdict): Record<string, unknown>;
 export declare function gateVerdictToClaudeUserPromptResponse(verdict: {

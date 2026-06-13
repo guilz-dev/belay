@@ -1,7 +1,7 @@
 import type { ScrubOptions } from '../types.js';
 import type { Tier1Judge, Tier1Verdict } from './types.js';
 export interface Tier1JudgeTrace {
-    provider: 'cursor' | 'ollama' | 'fallback';
+    provider: 'openai-compatible' | 'ollama' | 'fallback';
     modelRequested: string;
     modelResolved: string;
     latencyMs: number;
@@ -24,15 +24,19 @@ export interface OllamaJudgeOptions {
     fetchImpl?: typeof fetch;
 }
 export declare function createOllamaJudge(options?: OllamaJudgeOptions): TracedTier1Judge;
-export interface CursorJudgeOptions {
+export interface OpenAiCompatibleJudgeOptions {
+    endpoint: string;
     modelRequested: string;
     modelResolved: string;
     timeoutMs: number;
-    endpoint?: string | null;
     apiKey?: string;
     sensitivePaths: string[];
     scrubOptions: ScrubOptions;
     fetchImpl?: typeof fetch;
 }
-export declare function createCursorJudge(options: CursorJudgeOptions): TracedTier1Judge;
+export declare function createOpenAiCompatibleJudge(options: OpenAiCompatibleJudgeOptions): TracedTier1Judge;
+/** @deprecated Use createOpenAiCompatibleJudge */
+export declare const createCursorJudge: typeof createOpenAiCompatibleJudge;
+export interface CursorJudgeOptions extends OpenAiCompatibleJudgeOptions {
+}
 export declare function tier1RequiresAsk(verdict: Tier1Verdict): boolean;

@@ -38,9 +38,7 @@ import {
   configuredControlPlaneDir,
   createApprovalRecord,
   pendingApprovalsFile,
-  persistControlPlaneSpikeResult,
   resolveControlPlaneDir,
-  runControlPlaneSpike,
   scrubOptionsFromConfig,
   scrubValue,
 } from '../../core/index.js'
@@ -552,43 +550,6 @@ export async function processApprovalPrompt(
     continue: false,
     user_message: recorded.message,
   }
-}
-
-const controlPlaneSpikeRanFor = new Set<string>()
-
-export async function maybeRunControlPlaneSpike(
-  ctx: GateRuntimeContext,
-  deps: GateRuntimeDeps,
-  envEnabled: boolean,
-): Promise<void> {
-  if (!envEnabled && !ctx.config.controlPlane.spikeOnPrompt) {
-    return
-  }
-  const spikeKey = `${ctx.repoRoot}:${ctx.configPath}`
-  if (controlPlaneSpikeRanFor.has(spikeKey)) {
-    return
-  }
-  controlPlaneSpikeRanFor.add(spikeKey)
-
-  const controlPlaneDir = ctx.config.controlPlane.configDir ?? resolveControlPlaneDir(ctx.config)
-  const homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? ''
-  const spike = await runControlPlaneSpike(process.env, process.cwd(), homedir, controlPlaneDir)
-  const spikePath = await persistControlPlaneSpikeResult(
-    spike,
-    process.env,
-    homedir,
-    controlPlaneDir,
-  )
-  await deps.appendAudit(ctx, {
-    event: 'controlPlaneSpike',
-    kind: 'diagnostic',
-    verdict: spike.ok ? 'allow' : 'deny_pending_approval',
-    reason: spike.ok ? 'control_plane_writable' : 'control_plane_blocked',
-    summary: spike.error ?? spikePath,
-    mode: ctx.config.mode,
-    wouldBlock: !spike.ok,
-    permission: 'allow',
-  })
 }
 
 export function gateVerdictToCursorResponse(verdict: GateVerdict): GatePermissionResponse {

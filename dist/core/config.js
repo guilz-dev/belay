@@ -6,13 +6,15 @@ export const DEFAULT_JUDGE_LOCAL_OLLAMA = {
     timeoutMs: 25000,
     keepAlive: '30m',
 };
-export const DEFAULT_JUDGE_CURSOR_COMPOSER = {
-    provider: 'cursor',
+export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
+    provider: 'openai-compatible',
     model: 'auto',
     timeoutMs: 8000,
     endpoint: null,
     keepAlive: null,
 };
+/** @deprecated Use DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE */
+export const DEFAULT_JUDGE_CURSOR_COMPOSER = DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE;
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
 export const DEFAULT_CONFIDENCE_THRESHOLDS = {
     allow: 0.88,
@@ -66,14 +68,12 @@ export const LEGACY_CONTROL_PLANE_V3 = {
     enabled: false,
     configDir: null,
     integrity: 'none',
-    spikeOnPrompt: false,
     isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 };
 export const DEFAULT_CONTROL_PLANE_V3 = {
     enabled: true,
     configDir: null,
     integrity: 'hash-pinned',
-    spikeOnPrompt: false,
     isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 };
 export const DEFAULT_SANDBOX_V3 = {
@@ -202,28 +202,46 @@ export function isConfigV3(value) {
 export function isConfigV4(value) {
     return typeof value === 'object' && value !== null && value.version === 4;
 }
+export function normalizeJudgeProvider(provider) {
+    if (provider === 'openai-compatible' || provider === 'cursor') {
+        return 'openai-compatible';
+    }
+    return 'ollama';
+}
 function synthesizeJudgeFromRaw(raw) {
     const judge = raw.judge;
-    if (judge?.provider === 'cursor' || judge?.provider === 'ollama') {
-        const base = judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+    if (judge?.provider) {
+        const provider = normalizeJudgeProvider(judge.provider);
+        const base = provider === 'openai-compatible'
+            ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
+            : DEFAULT_JUDGE_LOCAL_OLLAMA;
         return normalizeJudgeConfig({
             ...base,
             ...judge,
-            provider: judge.provider,
+            provider,
         });
     }
     return { ...DEFAULT_JUDGE_LOCAL_OLLAMA };
 }
 export function normalizeJudgeConfig(judge) {
-    const base = judge.provider === 'cursor' ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+    const provider = normalizeJudgeProvider(judge.provider);
+    const base = provider === 'openai-compatible'
+        ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
+        : DEFAULT_JUDGE_LOCAL_OLLAMA;
     const model = typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model;
     const timeoutMs = typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs;
     return {
-        provider: judge.provider === 'cursor' ? 'cursor' : 'ollama',
+        provider,
         model,
         timeoutMs,
         endpoint: typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null,
-        keepAlive: typeof judge.keepAlive === 'string' && judge.keepAlive.trim() ? judge.keepAlive.trim() : null,
+        keepAlive: provider === 'ollama' &&
+            typeof judge.keepAlive === 'string' &&
+            judge.keepAlive.trim()
+            ? judge.keepAlive.trim()
+            : provider === 'ollama'
+                ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
+                : null,
     };
 }
 export function migrateV3ToV4(v3, raw) {
@@ -524,7 +542,6 @@ export function normalizeConfig(config) {
                 : v4.controlPlane?.integrity === 'none'
                     ? 'none'
                     : DEFAULT_CONTROL_PLANE_V3.integrity,
-            spikeOnPrompt: v4.controlPlane?.spikeOnPrompt === true,
             isolation: {
                 mode: v4.controlPlane?.isolation?.mode === 'read-only-mount' ||
                     v4.controlPlane?.isolation?.mode === 'separate-user'

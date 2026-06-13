@@ -1,7 +1,9 @@
 import type { BelayConfigV4 } from './config.js'
-import { scrubOptionsFromConfig } from './config.js'
-import { createCursorJudge, createOllamaJudge } from './v2/judge.js'
-import { loadPinnedJudgeModels, resolveCursorModel } from './v2/judge-factory.js'
+import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js'
+import { resolveJudgeApiKey } from './judge-api-key.js'
+import { assertJudgeEndpoint } from './judge-config.js'
+import { createOllamaJudge, createOpenAiCompatibleJudge } from './v2/judge.js'
+import { loadPinnedJudgeModels, resolveCloudModel } from './v2/judge-factory.js'
 
 export interface JudgeDoctorResult {
   issues: string[]
@@ -14,8 +16,9 @@ export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorR
   const warnings: string[] = []
   const notes: string[] = []
   const judge = config.judge
+  const provider = normalizeJudgeProvider(judge.provider)
 
-  notes.push(`Judge provider: ${judge.provider}`)
+  notes.push(`Judge provider: ${provider}`)
   notes.push(`Judge model requested: ${judge.model}`)
 
   if (config.policy.modelAssist.enabled) {
@@ -24,24 +27,40 @@ export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorR
     )
   }
 
-  if (judge.provider === 'cursor') {
+  if (provider === 'openai-compatible') {
     warnings.push(
       'Cloud judge egress is enabled. Commands are redacted (R23) before send, but path structure and intent may still leave the repo.',
     )
-    if (!process.env.CURSOR_API_KEY?.trim()) {
-      issues.push('CURSOR_API_KEY is not set. Tier1 cloud judge will fail closed to ask.')
+    try {
+      assertJudgeEndpoint(judge)
+      notes.push(`OpenAI-compatible endpoint: ${judge.endpoint}`)
+    } catch {
+      issues.push(
+        'openai-compatible judge requires judge.endpoint. No default cloud base URL is applied.',
+      )
+      return { issues, warnings, notes }
     }
+
+    const keyInfo = resolveJudgeApiKey()
+    if (!keyInfo.key) {
+      issues.push(
+        'BELAY_JUDGE_API_KEY / OPENAI_API_KEY is not set. Tier1 cloud judge will fail closed to ask.',
+      )
+    } else {
+      notes.push(`API key source: ${keyInfo.source}`)
+    }
+
     const pinnedModels = await loadPinnedJudgeModels()
-    const resolved = resolveCursorModel(judge.model, {
-      autoResolved: pinnedModels['cursor'].autoResolved,
-    })
+    const resolved = resolveCloudModel(judge.model, pinnedModels['openai-compatible'])
     notes.push(`Resolved model: ${resolved.resolved}`)
-    if (process.env.CURSOR_API_KEY?.trim()) {
-      const traced = createCursorJudge({
+
+    if (keyInfo.key && judge.endpoint?.trim()) {
+      const traced = createOpenAiCompatibleJudge({
+        endpoint: judge.endpoint.trim(),
         modelRequested: judge.model,
         modelResolved: resolved.resolved,
         timeoutMs: Math.min(judge.timeoutMs, 5000),
-        endpoint: judge.endpoint,
+        apiKey: keyInfo.key,
         sensitivePaths: config.classifier.sensitivePaths,
         scrubOptions: scrubOptionsFromConfig(config),
         fetchImpl: async () =>
@@ -67,10 +86,13 @@ export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorR
         text: 'git status',
         context: { cwd: process.cwd(), repoRoot: process.cwd() },
       })
-      if (dryRun.reason.startsWith('cursor_') || dryRun.reason === 'outbound_scrub_failed') {
-        issues.push(`Cursor judge dry-run failed: ${dryRun.reason}`)
+      if (
+        dryRun.reason.startsWith('openai_compatible_') ||
+        dryRun.reason === 'outbound_scrub_failed'
+      ) {
+        issues.push(`OpenAI-compatible judge dry-run failed: ${dryRun.reason}`)
       } else {
-        notes.push('Cursor judge dry-run succeeded.')
+        notes.push('OpenAI-compatible judge dry-run succeeded.')
       }
     }
     return { issues, warnings, notes }

@@ -17,10 +17,11 @@ export interface InitOptions {
     dogfood?: boolean;
     adapter?: AdapterName;
     preset?: import('./presets.js').ConfigPresetName;
-    judgeProfile?: 'cursor-composer' | 'local-ollama';
-    judgeProvider?: 'cursor' | 'ollama';
+    judgeProfile?: 'local-ollama';
+    judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor';
     judgeModel?: string;
-    /** Acknowledge cloud judge egress + redaction limits (R19). Required for cursor profile/provider. */
+    judgeEndpoint?: string;
+    /** Acknowledge cloud judge egress + redaction limits (R19). Required for openai-compatible provider. */
     acceptCloudJudge?: boolean;
     /** When true, skip writing judge config (used when user declines cloud consent). */
     skipJudgeWrite?: boolean;
@@ -36,18 +37,10 @@ export interface DoctorOptions {
     dryRun?: boolean;
     adapter?: AdapterName;
 }
-export interface Oq3SpikeStatus {
-    path: string;
-    ok: boolean;
-    recordedAt: string | null;
-    error: string | null;
-    controlPlaneDir: string;
-}
 export interface DogfoodStatus {
     active: boolean;
     mode: string;
     unknownLocalEffect: string;
-    spikeOnPrompt: boolean;
     readyForEnforce: boolean;
     gateEvents: number;
     wouldBlockCount: number;
@@ -85,13 +78,11 @@ export interface StatusReport {
     approved: ApprovalRecord[];
     expiredPendingCount: number;
     dogfood: DogfoodStatus;
-    oq3Spike: Oq3SpikeStatus | null;
 }
 export interface DogfoodOptions {
     targetDir?: string;
     enforce?: boolean;
     force?: boolean;
-    spikeOnPrompt?: boolean;
     adapter?: AdapterName;
 }
 export interface DogfoodResult {
@@ -101,7 +92,6 @@ export interface DogfoodResult {
     configPath: string;
     mode: string;
     unknownLocalEffect: string;
-    spikeOnPrompt: boolean;
 }
 export type ExplainKind = 'shell' | 'tool' | 'subagent';
 export interface ExplainReport {

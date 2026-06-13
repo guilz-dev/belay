@@ -4,9 +4,10 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfigFile } from '../../config-io.js'
-import { migrateConfig, normalizeConfig } from '../../core/config.js'
+import { DEFAULT_CONFIG_V4, migrateConfig, normalizeConfig } from '../../core/config.js'
 import {
   CloudJudgeConsentRequiredError,
+  JudgeEndpointRequiredError,
   resolveInitJudgeConfig,
   resolveJudgeConfig,
 } from '../../core/judge-config.js'
@@ -25,24 +26,41 @@ describe('T11 init judge setup matrix', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('writes cursor-composer profile as version 4 with cloud consent', async () => {
+  it('writes openai-compatible provider with cloud consent and endpoint', async () => {
     const repoRoot = await createTempRepo()
     await initProject({
       targetDir: repoRoot,
-      judgeProfile: 'cursor-composer',
+      judgeProvider: 'openai-compatible',
+      judgeEndpoint: 'https://api.openai.com/v1',
       acceptCloudJudge: true,
     })
     const config = await loadConfigFile(repoRoot)
     expect(config.version).toBe(4)
-    expect(config.judge.provider).toBe('cursor')
+    expect(config.judge.provider).toBe('openai-compatible')
+    expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
     expect(config.judge.model).toBe('auto')
   })
 
-  it('rejects cursor-composer without cloud consent', async () => {
+  it('rejects openai-compatible without cloud consent', async () => {
     const repoRoot = await createTempRepo()
     await expect(
-      initProject({ targetDir: repoRoot, judgeProfile: 'cursor-composer' }),
+      initProject({
+        targetDir: repoRoot,
+        judgeProvider: 'openai-compatible',
+        judgeEndpoint: 'https://api.openai.com/v1',
+      }),
     ).rejects.toBeInstanceOf(CloudJudgeConsentRequiredError)
+  })
+
+  it('rejects openai-compatible without endpoint', async () => {
+    const repoRoot = await createTempRepo()
+    await expect(
+      initProject({
+        targetDir: repoRoot,
+        judgeProvider: 'openai-compatible',
+        acceptCloudJudge: true,
+      }),
+    ).rejects.toBeInstanceOf(JudgeEndpointRequiredError)
   })
 
   it('defaults fresh init to local-ollama without cloud consent', async () => {
@@ -64,7 +82,7 @@ describe('T11 init judge setup matrix', () => {
 
   it('prefers explicit provider flags over profile', () => {
     const judge = resolveJudgeConfig({
-      judgeProfile: 'cursor-composer',
+      judgeProfile: 'local-ollama',
       judgeProvider: 'ollama',
       judgeModel: 'custom:7b',
     })
@@ -72,14 +90,29 @@ describe('T11 init judge setup matrix', () => {
     expect(judge.model).toBe('custom:7b')
   })
 
-  it('requires consent for explicit cursor provider', () => {
+  it('requires consent for explicit openai-compatible provider', () => {
     expect(() =>
       resolveInitJudgeConfig({
         isFresh: true,
         hasExplicitJudgeFlags: true,
-        judgeProvider: 'cursor',
+        judgeProvider: 'openai-compatible',
+        judgeEndpoint: 'https://api.example.com/v1',
       }),
     ).toThrow(CloudJudgeConsentRequiredError)
+  })
+
+  it('migrates deprecated cursor provider to openai-compatible', () => {
+    const migrated = normalizeConfig({
+      ...DEFAULT_CONFIG_V4,
+      judge: {
+        provider: 'cursor',
+        model: 'auto',
+        endpoint: 'https://api.example.com/v1',
+        timeoutMs: 8000,
+        keepAlive: null,
+      },
+    })
+    expect(migrated.judge.provider).toBe('openai-compatible')
   })
 
   it('migrates v3 without judge to v4 ollama principle default', () => {

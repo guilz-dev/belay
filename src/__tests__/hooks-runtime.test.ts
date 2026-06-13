@@ -25,7 +25,6 @@ async function initIsolatedRepo() {
       enabled: true,
       configDir: path.join(repoRoot, '.belay-cp'),
       integrity: 'hash-pinned',
-      spikeOnPrompt: false,
     },
     audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
   })
@@ -251,39 +250,6 @@ describe('generated hook runtime', () => {
     const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).toContain('"wouldBlock":true')
     expect(auditRaw).toContain('"mode":"audit"')
-  })
-
-  it('records control plane spike from beforeSubmitPrompt when spikeOnPrompt is enabled', async () => {
-    const repoRoot = await createTempRepo()
-    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
-    await initProject({ targetDir: repoRoot })
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          controlPlane: {
-            enabled: false,
-            configDir: controlPlaneDir,
-            spikeOnPrompt: true,
-            integrity: 'none',
-          },
-        }),
-        null,
-        2,
-      )}\n`,
-    )
-
-    const result = await runRunner(repoRoot, 'belay-before-submit', {
-      prompt: 'hello',
-    })
-    expect(JSON.parse(result.stdout)).toEqual({ continue: true })
-    const spikeRecord = JSON.parse(
-      await readFile(path.join(controlPlaneDir, 'oq3-spike-last.json'), 'utf8'),
-    )
-    expect(spikeRecord.ok).toBe(true)
-
-    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
-    expect(auditRaw).toContain('"event":"controlPlaneSpike"')
   })
 
   it('stores approvals in the control plane when enabled (T3)', async () => {

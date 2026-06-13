@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCursorJudge } from '../../core/v2/judge.js'
+import { createOpenAiCompatibleJudge } from '../../core/v2/judge.js'
 import { scrubOutboundForJudge } from '../../core/v2/judge-outbound.js'
 
 describe('T14 outbound redaction', () => {
@@ -66,7 +66,8 @@ describe('T14 outbound redaction', () => {
     expect(blocked.ok).toBe(false)
 
     let cloudCalled = false
-    const judge = createCursorJudge({
+    const judge = createOpenAiCompatibleJudge({
+      endpoint: 'https://api.example.com/v1',
       modelRequested: 'composer-2.5',
       modelResolved: 'composer-2.5',
       timeoutMs: 1000,

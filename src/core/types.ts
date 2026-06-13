@@ -24,7 +24,7 @@ export interface V2TraceFields {
   commandRedacted?: string
   commandFingerprint?: string
   signals?: string[]
-  judgeProvider?: 'cursor' | 'ollama' | 'fallback'
+  judgeProvider?: 'openai-compatible' | 'ollama' | 'fallback'
   judgeModelRequested?: string
   judgeModelResolved?: string
   judgeLatencyMs?: number

@@ -1,7 +1,12 @@
 // agent-belay claude runtime bundle
+var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 
 // src/core/config.ts
@@ -53,28 +58,36 @@ function migrateV2ToV3(v2, rawOverrides) {
     judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
   });
 }
+function normalizeJudgeProvider(provider) {
+  if (provider === "openai-compatible" || provider === "cursor") {
+    return "openai-compatible";
+  }
+  return "ollama";
+}
 function synthesizeJudgeFromRaw(raw) {
   const judge = raw.judge;
-  if (judge?.provider === "cursor" || judge?.provider === "ollama") {
-    const base = judge.provider === "cursor" ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+  if (judge?.provider) {
+    const provider = normalizeJudgeProvider(judge.provider);
+    const base = provider === "openai-compatible" ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE : DEFAULT_JUDGE_LOCAL_OLLAMA;
     return normalizeJudgeConfig({
       ...base,
       ...judge,
-      provider: judge.provider
+      provider
     });
   }
   return { ...DEFAULT_JUDGE_LOCAL_OLLAMA };
 }
 function normalizeJudgeConfig(judge) {
-  const base = judge.provider === "cursor" ? DEFAULT_JUDGE_CURSOR_COMPOSER : DEFAULT_JUDGE_LOCAL_OLLAMA;
+  const provider = normalizeJudgeProvider(judge.provider);
+  const base = provider === "openai-compatible" ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE : DEFAULT_JUDGE_LOCAL_OLLAMA;
   const model = typeof judge.model === "string" && judge.model.trim() ? judge.model.trim() : base.model;
   const timeoutMs = typeof judge.timeoutMs === "number" && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs;
   return {
-    provider: judge.provider === "cursor" ? "cursor" : "ollama",
+    provider,
     model,
     timeoutMs,
     endpoint: typeof judge.endpoint === "string" && judge.endpoint.trim() ? judge.endpoint.trim() : null,
-    keepAlive: typeof judge.keepAlive === "string" && judge.keepAlive.trim() ? judge.keepAlive.trim() : null
+    keepAlive: provider === "ollama" && typeof judge.keepAlive === "string" && judge.keepAlive.trim() ? judge.keepAlive.trim() : provider === "ollama" ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive : null
   };
 }
 function hasV3Sections(raw) {
@@ -315,7 +328,6 @@ function normalizeConfig(config) {
       enabled: v4.controlPlane?.enabled === true ? true : v4.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
       configDir: typeof v4.controlPlane?.configDir === "string" && v4.controlPlane.configDir.trim() ? v4.controlPlane.configDir.trim() : null,
       integrity: v4.controlPlane?.integrity === "hash-pinned" ? "hash-pinned" : v4.controlPlane?.integrity === "none" ? "none" : DEFAULT_CONTROL_PLANE_V3.integrity,
-      spikeOnPrompt: v4.controlPlane?.spikeOnPrompt === true,
       isolation: {
         mode: v4.controlPlane?.isolation?.mode === "read-only-mount" || v4.controlPlane?.isolation?.mode === "separate-user" ? v4.controlPlane.isolation.mode : DEFAULT_CONTROL_PLANE_ISOLATION_V3.mode,
         expectedOwnerUid: typeof v4.controlPlane?.isolation?.expectedOwnerUid === "number" ? v4.controlPlane.isolation.expectedOwnerUid : void 0,
@@ -459,7 +471,7 @@ function pendingApprovalsFile(config, repoLocalStateDir) {
 function approvedApprovalsFile(config, repoLocalStateDir) {
   return path.join(belayStateDir(config, repoLocalStateDir), "approved-approvals.json");
 }
-var DEFAULT_JUDGE_LOCAL_OLLAMA, DEFAULT_JUDGE_CURSOR_COMPOSER, DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V4, DEFAULT_CONFIG_V3;
+var DEFAULT_JUDGE_LOCAL_OLLAMA, DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE, DEFAULT_CONFIDENCE_THRESHOLDS, DEFAULT_MODEL_ASSIST, DEFAULT_TRANSACTIONAL_V3, LEGACY_POLICY_V3, DEFAULT_POLICY_V3, DEFAULT_OVERRIDES_V3, DEFAULT_REDACTION_V3, DEFAULT_CONTROL_PLANE_ISOLATION_V3, LEGACY_CONTROL_PLANE_V3, DEFAULT_CONTROL_PLANE_V3, DEFAULT_SANDBOX_V3, DEFAULT_NOTIFICATIONS_V3, DEFAULT_APPROVAL_SIGNING_V3, DEFAULT_EGRESS_V3, LOOPBACK_EGRESS_HOSTS, DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V4, DEFAULT_CONFIG_V3;
 var init_config = __esm({
   "src/core/config.ts"() {
     "use strict";
@@ -470,8 +482,8 @@ var init_config = __esm({
       timeoutMs: 25e3,
       keepAlive: "30m"
     };
-    DEFAULT_JUDGE_CURSOR_COMPOSER = {
-      provider: "cursor",
+    DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
+      provider: "openai-compatible",
       model: "auto",
       timeoutMs: 8e3,
       endpoint: null,
@@ -528,14 +540,12 @@ var init_config = __esm({
       enabled: false,
       configDir: null,
       integrity: "none",
-      spikeOnPrompt: false,
       isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
     };
     DEFAULT_CONTROL_PLANE_V3 = {
       enabled: true,
       configDir: null,
       integrity: "hash-pinned",
-      spikeOnPrompt: false,
       isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 }
     };
     DEFAULT_SANDBOX_V3 = {
@@ -861,6 +871,28 @@ var init_config_layers = __esm({
   }
 });
 
+// src/core/judge-api-key.ts
+var judge_api_key_exports = {};
+__export(judge_api_key_exports, {
+  resolveJudgeApiKey: () => resolveJudgeApiKey
+});
+function resolveJudgeApiKey(env = process.env) {
+  const belay = env.BELAY_JUDGE_API_KEY?.trim();
+  if (belay) {
+    return { key: belay, source: "BELAY_JUDGE_API_KEY" };
+  }
+  const openai = env.OPENAI_API_KEY?.trim();
+  if (openai) {
+    return { key: openai, source: "OPENAI_API_KEY" };
+  }
+  return { key: null, source: null };
+}
+var init_judge_api_key = __esm({
+  "src/core/judge-api-key.ts"() {
+    "use strict";
+  }
+});
+
 // src/adapters/layouts/cursor.ts
 var init_cursor = __esm({
   "src/adapters/layouts/cursor.ts"() {
@@ -941,9 +973,9 @@ init_claude();
 
 // src/adapters/shared/gate-runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync8 } from "node:fs";
-import { mkdir as mkdir4, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import path17 from "node:path";
+import { existsSync as existsSync7 } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import path16 from "node:path";
 
 // src/core/approval-service.ts
 init_approval();
@@ -1601,6 +1633,22 @@ function judgeTraceAuditFields(trace) {
 // src/core/v2/judge-factory.ts
 init_config();
 
+// src/core/judge-config.ts
+init_config();
+var JudgeEndpointRequiredError = class extends Error {
+  constructor() {
+    super(
+      "openai-compatible judge requires --judge-endpoint (or judge.endpoint in config). No default cloud base URL is applied."
+    );
+    this.name = "JudgeEndpointRequiredError";
+  }
+};
+function assertJudgeEndpoint(judge) {
+  if (judge.provider === "openai-compatible" && !judge.endpoint?.trim()) {
+    throw new JudgeEndpointRequiredError();
+  }
+}
+
 // src/core/v2/judge-outbound.ts
 var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
 var REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
@@ -1788,17 +1836,16 @@ function createOllamaJudge(options = {}) {
   };
   return judge;
 }
-var DEFAULT_CURSOR_API_BASE = `https://api.${"cursor"}.com/v1`;
-function createCursorJudge(options) {
+function createOpenAiCompatibleJudge(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const apiBase = (options.endpoint ?? process.env.CURSOR_API_BASE ?? DEFAULT_CURSOR_API_BASE).replace(/\/$/, "");
+  const apiBase = options.endpoint.replace(/\/$/, "");
   const judge = {
     async evaluate(input) {
       const started = Date.now();
       const prescan = input.innerCode ? prescanInterpreterCode(input.innerCode) : null;
       if (prescan?.destroys_history_or_secrets) {
         judge.lastTrace = {
-          provider: "cursor",
+          provider: "openai-compatible",
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started
@@ -1819,7 +1866,9 @@ function createCursorJudge(options) {
         };
         return failClosedVerdict("outbound_scrub_failed");
       }
-      const apiKey = options.apiKey ?? process.env.CURSOR_API_KEY?.trim();
+      const { resolveJudgeApiKey: resolveJudgeApiKey2 } = await Promise.resolve().then(() => (init_judge_api_key(), judge_api_key_exports));
+      const resolvedKey = resolveJudgeApiKey2();
+      const apiKey = options.apiKey ?? resolvedKey.key;
       if (!apiKey) {
         judge.lastTrace = {
           provider: "fallback",
@@ -1828,7 +1877,7 @@ function createCursorJudge(options) {
           latencyMs: Date.now() - started,
           fallbackReason: "missing_api_key"
         };
-        return failClosedVerdict("cursor_auth_error");
+        return failClosedVerdict("openai_compatible_auth_error");
       }
       const prompt = `${TIER1_PROMPT}${scrubbed.text}`;
       try {
@@ -1851,31 +1900,31 @@ function createCursorJudge(options) {
             modelRequested: options.modelRequested,
             modelResolved: options.modelResolved,
             latencyMs: Date.now() - started,
-            fallbackReason: `cursor_http_${response.status}`
+            fallbackReason: `openai_compatible_http_${response.status}`
           };
-          return failClosedVerdict("cursor_unavailable");
+          return failClosedVerdict("openai_compatible_unavailable");
         }
         const payload = await response.json();
         const content = payload.choices?.[0]?.message?.content ?? "{}";
         const parsed = parseTier1Json(content);
         judge.lastTrace = {
-          provider: parsed ? "cursor" : "fallback",
+          provider: parsed ? "openai-compatible" : "fallback",
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
           outboundRedacted: true,
-          fallbackReason: parsed ? void 0 : "cursor_parse_error"
+          fallbackReason: parsed ? void 0 : "openai_compatible_parse_error"
         };
-        return parsed ?? failClosedVerdict("cursor_parse_error");
+        return parsed ?? failClosedVerdict("openai_compatible_parse_error");
       } catch (error) {
         judge.lastTrace = {
           provider: "fallback",
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
-          fallbackReason: error instanceof Error ? error.message : "cursor_error"
+          fallbackReason: error instanceof Error ? error.message : "openai_compatible_error"
         };
-        return failClosedVerdict("cursor_unavailable");
+        return failClosedVerdict("openai_compatible_unavailable");
       }
     }
   };
@@ -1887,9 +1936,9 @@ function tier1RequiresAsk(verdict2) {
 
 // src/core/v2/judge-factory.ts
 var FIXTURE_MODELS_URL = new URL("../../../fixtures/judge-models.json", import.meta.url);
-function resolveCursorModel(requested, pinned) {
+function resolveCloudModel(requested, pinned) {
   if (requested === "auto") {
-    const envResolved = process.env.CURSOR_JUDGE_MODEL_RESOLVED?.trim();
+    const envResolved = process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim();
     return {
       requested,
       resolved: envResolved || pinned.autoResolved
@@ -1899,19 +1948,21 @@ function resolveCursorModel(requested, pinned) {
 }
 function createJudgeFromConfig(config, options = {}) {
   const judgeConfig = config.judge;
-  if (judgeConfig.provider === "cursor") {
+  const provider = normalizeJudgeProvider(judgeConfig.provider);
+  if (provider === "openai-compatible") {
+    assertJudgeEndpoint(judgeConfig);
     const pinned = options.pinnedModels ?? { autoResolved: "composer-2.5" };
-    const { resolved } = resolveCursorModel(judgeConfig.model, pinned);
-    return createCursorJudge({
+    const { resolved } = resolveCloudModel(judgeConfig.model, pinned);
+    return createOpenAiCompatibleJudge({
+      endpoint: judgeConfig.endpoint,
       modelRequested: judgeConfig.model,
       modelResolved: resolved,
       timeoutMs: judgeConfig.timeoutMs,
-      endpoint: judgeConfig.endpoint,
       sensitivePaths: config.classifier.sensitivePaths,
       scrubOptions: scrubOptionsFromConfig(config)
     });
   }
-  if (judgeConfig.provider === "ollama") {
+  if (provider === "ollama") {
     return createOllamaJudge({
       model: judgeConfig.model,
       baseUrl: judgeConfig.endpoint ?? "http://127.0.0.1:11434",
@@ -3791,68 +3842,10 @@ function gateEnabledForAction(config, action) {
 init_approval();
 init_config();
 
-// src/core/control-plane-spike.ts
-init_config();
-import { existsSync as existsSync5 } from "node:fs";
-import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import path12 from "node:path";
-async function persistControlPlaneSpikeResult(result, env = process.env, homedir = () => env.HOME ?? "", controlPlaneDir) {
-  const outputPath = path12.join(
-    controlPlaneDir ?? defaultControlPlaneDir(env, homedir),
-    "oq3-spike-last.json"
-  );
-  await mkdir2(path12.dirname(outputPath), { recursive: true });
-  await writeFile2(
-    outputPath,
-    `${JSON.stringify({ ...result, recordedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
-`,
-    "utf8"
-  );
-  return outputPath;
-}
-async function runControlPlaneSpike(env = process.env, cwd = process.cwd(), homedir = () => env.HOME ?? "", controlPlaneDirOverride) {
-  const controlPlaneDir = controlPlaneDirOverride ?? defaultControlPlaneDir(env, homedir);
-  const testFile = path12.join(controlPlaneDir, "oq3-spike.json");
-  const payload = {
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    cwd,
-    pid: process.pid
-  };
-  const base = {
-    ok: false,
-    controlPlaneDir,
-    testFile,
-    home: homedir(),
-    xdgConfigHome: env.XDG_CONFIG_HOME?.trim() || null,
-    cwd,
-    wrote: false,
-    readBack: null
-  };
-  try {
-    await mkdir2(controlPlaneDir, { recursive: true });
-    await writeFile2(testFile, `${JSON.stringify(payload)}
-`, "utf8");
-    const readBack = await readFile2(testFile, "utf8");
-    const parsed = JSON.parse(readBack.trim());
-    await rm(testFile, { force: true });
-    return {
-      ...base,
-      ok: parsed.cwd === cwd && existsSync5(controlPlaneDir),
-      wrote: true,
-      readBack: readBack.trim()
-    };
-  } catch (error) {
-    return {
-      ...base,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-
 // src/core/transactional/diff-evaluator.ts
-import path13 from "node:path";
+import path12 from "node:path";
 function categorizeChange(change, ctx) {
-  const absolutePath = canonicalPath(path13.join(ctx.repoRoot, change.relativePath));
+  const absolutePath = canonicalPath(path12.join(ctx.repoRoot, change.relativePath));
   if (!pathWithinRoot(ctx.repoRoot, absolutePath)) {
     return "repo_outside";
   }
@@ -3983,10 +3976,10 @@ var TRANSACTIONAL_APPROVAL_BYPASS_REASONS = /* @__PURE__ */ new Set([
 // src/core/transactional/git-worktree.ts
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync6 } from "node:fs";
-import { copyFile, mkdir as mkdir3, mkdtemp, rm as rm2 } from "node:fs/promises";
+import { existsSync as existsSync5 } from "node:fs";
+import { copyFile, mkdir as mkdir2, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
-import path14 from "node:path";
+import path13 from "node:path";
 function execGit(repoRoot, args) {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repoRoot, ...args], {
@@ -4027,8 +4020,8 @@ async function isDirtyWorktree(repoRoot) {
   }
 }
 async function createGitWorktreeSnapshot(repoRoot, stateDir) {
-  const worktreePath = path14.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
-  await mkdir3(stateDir, { recursive: true });
+  const worktreePath = path13.join(stateDir, `tx-${randomUUID().replaceAll("-", "")}`);
+  await mkdir2(stateDir, { recursive: true });
   await execGit(repoRoot, ["worktree", "add", "--detach", worktreePath, "HEAD"]);
   return {
     worktreePath,
@@ -4036,7 +4029,7 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
       try {
         await execGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
       } catch {
-        await rm2(worktreePath, { recursive: true, force: true });
+        await rm(worktreePath, { recursive: true, force: true });
         try {
           await execGit(repoRoot, ["worktree", "prune"]);
         } catch {
@@ -4047,14 +4040,14 @@ async function createGitWorktreeSnapshot(repoRoot, stateDir) {
 }
 function resolveWorktreeCwd(repoRoot, worktreePath, cwd) {
   const resolvedCwd = canonicalPath(cwd);
-  const relative = path14.relative(canonicalPath(repoRoot), resolvedCwd);
-  if (relative.startsWith("..") || path14.isAbsolute(relative)) {
+  const relative = path13.relative(canonicalPath(repoRoot), resolvedCwd);
+  if (relative.startsWith("..") || path13.isAbsolute(relative)) {
     return worktreePath;
   }
   if (relative === "") {
     return worktreePath;
   }
-  return path14.join(worktreePath, relative);
+  return path13.join(worktreePath, relative);
 }
 function runShellCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
@@ -4124,42 +4117,42 @@ async function rollbackAppliedChanges(actions) {
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === "restore") {
-        await mkdir3(path14.dirname(action.target), { recursive: true });
+        await mkdir2(path13.dirname(action.target), { recursive: true });
         await copyFile(action.backupPath, action.target);
       } else {
-        await rm2(action.target, { force: true });
+        await rm(action.target, { force: true });
       }
     } catch {
     }
   }
 }
 async function applyWorktreeChanges(worktreePath, repoRoot, changes) {
-  const backupRoot = await mkdtemp(path14.join(os.tmpdir(), "belay-tx-rollback-"));
+  const backupRoot = await mkdtemp(path13.join(os.tmpdir(), "belay-tx-rollback-"));
   const rollbackActions = [];
   try {
     for (const change of changes) {
-      const target = path14.join(repoRoot, change.relativePath);
-      if (existsSync6(target)) {
-        const backupPath = path14.join(backupRoot, change.relativePath);
-        await mkdir3(path14.dirname(backupPath), { recursive: true });
+      const target = path13.join(repoRoot, change.relativePath);
+      if (existsSync5(target)) {
+        const backupPath = path13.join(backupRoot, change.relativePath);
+        await mkdir2(path13.dirname(backupPath), { recursive: true });
         await copyFile(target, backupPath);
         rollbackActions.push({ type: "restore", target, backupPath });
       } else if (change.kind !== "deleted") {
         rollbackActions.push({ type: "remove", target });
       }
       if (change.kind === "deleted") {
-        await rm2(target, { force: true });
+        await rm(target, { force: true });
         continue;
       }
-      const source = path14.join(worktreePath, change.relativePath);
-      await mkdir3(path14.dirname(target), { recursive: true });
+      const source = path13.join(worktreePath, change.relativePath);
+      await mkdir2(path13.dirname(target), { recursive: true });
       await copyFile(source, target);
     }
   } catch (error) {
     await rollbackAppliedChanges(rollbackActions);
     throw error;
   } finally {
-    await rm2(backupRoot, { recursive: true, force: true });
+    await rm(backupRoot, { recursive: true, force: true });
   }
 }
 
@@ -4314,8 +4307,8 @@ async function notifyDeny(config, event) {
 }
 
 // src/services/egress-service.ts
-import { existsSync as existsSync7, readFileSync as readFileSync3 } from "node:fs";
-import path15 from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync3 } from "node:fs";
+import path14 from "node:path";
 init_config_io();
 init_config();
 
@@ -4331,10 +4324,10 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
     belayStateDir(config, repoLocalStateDir),
     configuredControlPlaneDir(config)
   ]);
-  const resolvedRepoRoot = path15.resolve(repoRoot);
+  const resolvedRepoRoot = path14.resolve(repoRoot);
   for (const stateDir of stateDirs) {
-    const statusPath = path15.join(stateDir, "egress-proxy.json");
-    if (!existsSync7(statusPath)) {
+    const statusPath = path14.join(stateDir, "egress-proxy.json");
+    if (!existsSync6(statusPath)) {
       continue;
     }
     try {
@@ -4342,7 +4335,7 @@ function isEgressProxyActiveForRepo(config, repoRoot, repoLocalStateDir) {
       if (typeof raw.pid !== "number" || !isProcessAlive(raw.pid)) {
         continue;
       }
-      if (raw.repoRoot && path15.resolve(raw.repoRoot) !== resolvedRepoRoot) {
+      if (raw.repoRoot && path14.resolve(raw.repoRoot) !== resolvedRepoRoot) {
         continue;
       }
       return true;
@@ -4361,7 +4354,7 @@ function isProcessAlive(pid) {
 }
 
 // src/adapters/layouts/protected-paths.ts
-import path16 from "node:path";
+import path15 from "node:path";
 function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   const roots = [
     layout.configPath(repoRoot),
@@ -4373,7 +4366,7 @@ function protectedArtifactRoots(layout, repoRoot, controlPlaneDir) {
   if (controlPlaneDir) {
     roots.push(controlPlaneDir);
   }
-  return roots.map((entry) => path16.resolve(entry));
+  return roots.map((entry) => path15.resolve(entry));
 }
 
 // src/adapters/shared/gate-runtime.ts
@@ -4383,7 +4376,7 @@ var EMPTY_APPROVALS = {
 };
 async function loadJsonFile(filePath, fallback) {
   try {
-    const raw = await readFile3(filePath, "utf8");
+    const raw = await readFile2(filePath, "utf8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -4395,14 +4388,14 @@ function createDefaultGateRuntimeDeps() {
       return loadJsonFile(configPath, {});
     },
     async appendAudit(ctx, event) {
-      const auditPath = path17.join(ctx.repoRoot, ctx.config.audit.logPath);
-      await mkdir4(path17.dirname(auditPath), { recursive: true });
+      const auditPath = path16.join(ctx.repoRoot, ctx.config.audit.logPath);
+      await mkdir3(path16.dirname(auditPath), { recursive: true });
       const record = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...event };
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment;
       }
       const scrubbed = scrubValue(record, scrubOptionsFromConfig(ctx.config));
-      await writeFile3(auditPath, `${JSON.stringify(scrubbed)}
+      await writeFile2(auditPath, `${JSON.stringify(scrubbed)}
 `, {
         encoding: "utf8",
         flag: "a"
@@ -4421,8 +4414,8 @@ function createDefaultGateRuntimeDeps() {
       };
     },
     async writeApprovals(filePath, state) {
-      await mkdir4(path17.dirname(filePath), { recursive: true });
-      await writeFile3(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
+      await mkdir3(path16.dirname(filePath), { recursive: true });
+      await writeFile2(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}
 `, "utf8");
     }
   };
@@ -4431,8 +4424,8 @@ async function resolveGateConfig(ctx, deps) {
   const loaded = await deps.readConfig(ctx.configPath);
   let teamConfig = null;
   const teamPath = teamConfigPath();
-  if (existsSync8(teamPath)) {
-    teamConfig = JSON.parse(await readFile3(teamPath, "utf8"));
+  if (existsSync7(teamPath)) {
+    teamConfig = JSON.parse(await readFile2(teamPath, "utf8"));
   }
   return resolveLayeredConfig({
     repoConfig: loaded,
@@ -4567,7 +4560,7 @@ async function evaluateGatedAction(ctx, deps, params) {
       command: params.command,
       cwd: params.cwd,
       repoRoot: ctx.repoRoot,
-      stateDir: path17.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
+      stateDir: path16.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), "transactional"),
       timeoutMs: transactional.timeoutMs,
       predicted,
       diffContext: {
@@ -4762,36 +4755,6 @@ async function processApprovalPrompt(ctx, deps, prompt) {
     user_message: recorded.message
   };
 }
-var controlPlaneSpikeRanFor = /* @__PURE__ */ new Set();
-async function maybeRunControlPlaneSpike(ctx, deps, envEnabled) {
-  if (!envEnabled && !ctx.config.controlPlane.spikeOnPrompt) {
-    return;
-  }
-  const spikeKey = `${ctx.repoRoot}:${ctx.configPath}`;
-  if (controlPlaneSpikeRanFor.has(spikeKey)) {
-    return;
-  }
-  controlPlaneSpikeRanFor.add(spikeKey);
-  const controlPlaneDir = ctx.config.controlPlane.configDir ?? resolveControlPlaneDir(ctx.config);
-  const homedir = () => process.env.HOME ?? process.env.USERPROFILE ?? "";
-  const spike = await runControlPlaneSpike(process.env, process.cwd(), homedir, controlPlaneDir);
-  const spikePath = await persistControlPlaneSpikeResult(
-    spike,
-    process.env,
-    homedir,
-    controlPlaneDir
-  );
-  await deps.appendAudit(ctx, {
-    event: "controlPlaneSpike",
-    kind: "diagnostic",
-    verdict: spike.ok ? "allow" : "deny_pending_approval",
-    reason: spike.ok ? "control_plane_writable" : "control_plane_blocked",
-    summary: spike.error ?? spikePath,
-    mode: ctx.config.mode,
-    wouldBlock: !spike.ok,
-    permission: "allow"
-  });
-}
 function gateVerdictToClaudePreToolUseResponse(verdict2) {
   if (verdict2.permission === "allow") {
     return {};
@@ -4827,19 +4790,19 @@ async function appendObservedAudit(ctx, deps, eventName, payload) {
 }
 
 // src/adapters/shared/repo-root.ts
-import { existsSync as existsSync9 } from "node:fs";
-import path18 from "node:path";
+import { existsSync as existsSync8 } from "node:fs";
+import path17 from "node:path";
 function findRepoRoot(startPath, layout) {
-  let current = path18.resolve(startPath);
+  let current = path17.resolve(startPath);
   while (true) {
     for (const marker of layout.repoRootMarkers) {
-      if (existsSync9(path18.join(current, marker))) {
+      if (existsSync8(path17.join(current, marker))) {
         return current;
       }
     }
-    const parent = path18.dirname(current);
+    const parent = path17.dirname(current);
     if (parent === current) {
-      return path18.resolve(startPath);
+      return path17.resolve(startPath);
     }
     current = parent;
   }
@@ -4925,7 +4888,6 @@ async function runBeforeSubmitPromptHook() {
     const prompt = String(payload.prompt ?? process2.env.CLAUDE_USER_PROMPT ?? "");
     const ctx = await loadRuntimeContext(process2.cwd());
     const deps = createDefaultGateRuntimeDeps();
-    await maybeRunControlPlaneSpike(ctx, deps, process2.env.BELAY_OQ3_SPIKE === "1");
     const result = await processApprovalPrompt(ctx, deps, prompt);
     jsonResponse(gateVerdictToClaudeUserPromptResponse(result));
   } catch {

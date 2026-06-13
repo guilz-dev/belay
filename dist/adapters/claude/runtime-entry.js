@@ -1,7 +1,7 @@
 import process from 'node:process';
 import { unnormalizedGateVerdict } from '../../core/gate-contract.js';
 import { claudeLayout } from '../layouts/claude.js';
-import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToClaudePreToolUseResponse, gateVerdictToClaudeUserPromptResponse, maybeRunControlPlaneSpike, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
+import { appendObservedAudit, createDefaultGateRuntimeDeps, evaluateGatedAction, gateVerdictToClaudePreToolUseResponse, gateVerdictToClaudeUserPromptResponse, processApprovalPrompt, resolveGateConfig, } from '../shared/gate-runtime.js';
 import { findRepoRoot } from '../shared/repo-root.js';
 async function readStdinJson() {
     const chunks = [];
@@ -90,7 +90,6 @@ export async function runBeforeSubmitPromptHook() {
         const prompt = String(payload.prompt ?? process.env.CLAUDE_USER_PROMPT ?? '');
         const ctx = await loadRuntimeContext(process.cwd());
         const deps = createDefaultGateRuntimeDeps();
-        await maybeRunControlPlaneSpike(ctx, deps, process.env.BELAY_OQ3_SPIKE === '1');
         const result = await processApprovalPrompt(ctx, deps, prompt);
         jsonResponse(gateVerdictToClaudeUserPromptResponse(result));
     }

@@ -1,5 +1,5 @@
 {
-  "cursor": {
+  "openai-compatible": {
     "autoResolved": "composer-2.5"
   },
   "ollama": {

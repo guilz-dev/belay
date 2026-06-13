@@ -210,7 +210,6 @@ export async function doctorProject(options = {}) {
             active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
             mode: loadedConfig.mode,
             unknownLocalEffect: loadedConfig.policy.unknownLocalEffect,
-            spikeOnPrompt: loadedConfig.controlPlane.spikeOnPrompt === true,
             readyForEnforce: metrics.dogfood.readyForEnforce,
             gateEvents: metrics.gateEvents,
             wouldBlockCount: metrics.wouldBlockCount,

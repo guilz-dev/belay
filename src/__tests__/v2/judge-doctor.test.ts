@@ -15,13 +15,40 @@ describe('T12 doctor judge matrix', () => {
     expect(report.warnings.some((warning) => warning.includes('modelAssist'))).toBe(true)
   })
 
-  it('flags missing CURSOR_API_KEY for cursor provider', async () => {
-    const previous = process.env.CURSOR_API_KEY
-    delete process.env.CURSOR_API_KEY
+  it('flags missing API key for openai-compatible provider', async () => {
+    const previousBelay = process.env.BELAY_JUDGE_API_KEY
+    const previousOpenai = process.env.OPENAI_API_KEY
+    delete process.env.BELAY_JUDGE_API_KEY
+    delete process.env.OPENAI_API_KEY
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
-        provider: 'cursor',
+        provider: 'openai-compatible',
+        model: 'auto',
+        timeoutMs: 8000,
+        endpoint: 'https://api.example.com/v1',
+        keepAlive: null,
+      },
+    })
+    const report = await diagnoseJudge(config)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('BELAY_JUDGE_API_KEY') || issue.includes('OPENAI_API_KEY'),
+      ),
+    ).toBe(true)
+    if (previousBelay) {
+      process.env.BELAY_JUDGE_API_KEY = previousBelay
+    }
+    if (previousOpenai) {
+      process.env.OPENAI_API_KEY = previousOpenai
+    }
+  })
+
+  it('flags missing endpoint for openai-compatible provider', async () => {
+    const config = normalizeConfig({
+      ...DEFAULT_CONFIG_V4,
+      judge: {
+        provider: 'openai-compatible',
         model: 'auto',
         timeoutMs: 8000,
         endpoint: null,
@@ -29,10 +56,7 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.includes('CURSOR_API_KEY'))).toBe(true)
-    if (previous) {
-      process.env.CURSOR_API_KEY = previous
-    }
+    expect(report.issues.some((issue) => issue.includes('endpoint'))).toBe(true)
   })
 
   it('flags unreachable ollama endpoint', async () => {
