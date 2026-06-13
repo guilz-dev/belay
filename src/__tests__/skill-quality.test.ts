@@ -40,4 +40,9 @@ describe('SKILL.md quality (T20/T23)', () => {
     expect(content).toContain('/belay why')
     expect(content).toContain('agent-belay explain')
   })
+
+  it('T23: SKILL.md snapshot stays stable', async () => {
+    const content = await readFile(skillPath, 'utf8')
+    expect(content).toMatchSnapshot()
+  })
 })

@@ -117,15 +117,38 @@ denylist.
 ### Full setup (recommended)
 
 ```bash
+npx agent-belay init-wizard
 npx agent-belay init --with-skill
 npx agent-belay init --adapter claude
 npx agent-belay init --preset l1-full-recommended   # adversarial L1-full stack
 ```
 
+`init-wizard` is the interactive path: it prompts for adapter, install scope, skill, and
+dogfood mode, then runs the same install as `init`.
+
+### Install scope (project vs global)
+
+`--scope project|global` controls where hooks, runtime, and skill are installed.
+Even with `--scope global`, `belay.config.json`, approvals, and audit remain repo-local.
+This means the hook floor can be user-wide while policy and audit stay per-repository.
+
+```bash
+npx agent-belay init --scope project    # default: artifacts under .cursor/ (or .claude/, .codex/)
+npx agent-belay init --scope global     # hooks/runtime/skill under ~/.cursor/ (etc.)
+```
+
+See [docs/design/global-scope.md](./docs/design/global-scope.md) for the full path matrix.
+
+After install, check floor health with `agent-belay doctor` and confirm install scope /
+skill-only state with `agent-belay status`.
+
 This installs the runtime hooks and also writes helper artifacts for:
 
 - `.cursor/skills/belay/SKILL.md`
 - `.cursor/commands/belay-approve.md`
+- `.cursor/commands/belay-why.md`
+- `.cursor/commands/belay-explain.md`
+- `.cursor/commands/belay-status.md`
 
 ### Hook runtime only
 
@@ -176,17 +199,26 @@ Optional skill and command artifacts (with `--with-skill`):
 
 - `.cursor/skills/belay/SKILL.md`
 - `.cursor/commands/belay-approve.md`
+- `.cursor/commands/belay-why.md`
+- `.cursor/commands/belay-explain.md`
+- `.cursor/commands/belay-status.md`
 
 Packaged skill source for `npx skills add`:
 
 - `skills/belay/SKILL.md`
 - `skills/belay/belay-approve.md`
+- `skills/belay/belay-why.md`
+- `skills/belay/belay-explain.md`
+- `skills/belay/belay-status.md`
 
 ## Commands
 
 ```bash
 npx agent-belay init
+npx agent-belay init-wizard
 npx agent-belay init --with-skill
+npx agent-belay init --scope project
+npx agent-belay init --scope global
 npx agent-belay init --dogfood
 npx agent-belay upgrade
 npx agent-belay dogfood

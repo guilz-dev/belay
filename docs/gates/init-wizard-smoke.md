@@ -1,6 +1,6 @@
 # init-wizard smoke (manual)
 
-Run after `agent-belay init-wizard` ships.
+Routine smoke for `agent-belay init-wizard` after install or wizard changes.
 
 ## Steps
 

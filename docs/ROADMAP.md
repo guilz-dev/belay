@@ -30,11 +30,13 @@
 | **v2.1.1** | Cloud provider 正直化（openai-compatible）、v0.3 残渣撤去、テスト隔離、精度計測 | Specced — see [SPEC-v2.1.1.md](./SPEC-v2.1.1.md) |
 | **v2.1.2** | Tier0 偽陰性修正（`docker buildx build --push`） | Specced — see [SPEC-v2.1.2.md](./SPEC-v2.1.2.md) / [dogfood report](./dogfood-docker-tier0-gap.md) |
 | **v2.1.3** | Tier0 偽陽性修正（egress 読み取り系の allow） | Implemented — see [SPEC-v2.1.3.md](./SPEC-v2.1.3.md) |
-| **v2.2** | skill 配布フロントドア + 横展開（Codex アダプタ） | Canonical spec; Codex 実装済み(experimental) — see [SPEC-v2.2.md](./SPEC-v2.2.md) |
+| **v2.1.4** | Concept conformance audit（L1 demote 廃止 / egress read-mutate / guarantee 実行照合 / Codex tool identity / subagent intent） | Implemented — see [SPEC-v2.1.4.md](./SPEC-v2.1.4.md) |
+| **v2.2** | skill 配布フロントドア + scope + 横展開（Codex アダプタ） | Implemented — see [SPEC-v2.2.md](./SPEC-v2.2.md) |
+| **v2.3 (Release)** | **初 OSS リリース** — restorability floor + 命綱 skill 知性層（③可視化 + ①復元）。Codex は experimental 出荷 | Release spec — see [SPEC-v2.3.md](./SPEC-v2.3.md) |
 
 v2.2 のワークストリーム別状態: **WS-Codex** = 実装済み・GO（experimental、belay 実適配器の
-TUI smoke=G-B2 で解除）/ **WS-Skill** = 規範化済み・未実装（G-A 決定 + G-B1 Cursor UX 検証が
-着手ゲート）/ **WS-Pkg** = 要件化（plugin / hook-package / skill）。
+TUI smoke=G-B2 で解除）/ **WS-Skill** = 実装済み（G-B1 実機記録 pending — 機能未実装ではない）
+/ **WS-Pkg** = 要件化（plugin / hook-package / skill）。
 
 ## v0.3 (0.3.0)
 

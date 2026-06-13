@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- T23: `SKILL.md` snapshot regression test in `skill-quality.test.ts`
+
+### Changed
+
+- README: `init-wizard`, `--scope project|global`, install-scope caveats, and Cursor slash command artifacts
+- SPEC-v2.2 / ROADMAP: WS-Skill marked implemented; G-B1 decision recorded (verification pending)
+- G-B1 gate doc: decision fixed, execution/result template for Cursor smoke
+- SPEC-v2.2 §6: skill quality checklist reflects shipped WS-Skill items
+
 ### Fixed
 
 - **SPEC v2.1.2** — Tier0 now catches docker registry publish via `--push` and `--output=type=registry` (R31/R32); fixes FN on `docker buildx build --push`
