@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-### Added
+### Fixed
 
-- **SPEC v2.1.1** — `openai-compatible` cloud judge provider (endpoint required, key from `BELAY_JUDGE_API_KEY` / `OPENAI_API_KEY`)
+- **SPEC v2.1.2** — Tier0 now catches docker registry publish via `--push` and `--output=type=registry` (R31/R32); fixes FN on `docker buildx build --push`
+
+### Added (v2.1.1)
 - `init --judge-endpoint` for explicit cloud endpoint configuration
 - Tier1 accuracy measurement harness (`src/__tests__/v2/llm/judge-accuracy.test.ts`, non-gate)
 - `pnpm test:stable` — runs vitest three times for flake detection (T18)

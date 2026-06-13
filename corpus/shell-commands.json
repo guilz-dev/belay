@@ -26,6 +26,11 @@
     "reason": "external_effect"
   },
   {
+    "command": "docker buildx build --push -t r/app .",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
     "command": "terraform apply -auto-approve",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
