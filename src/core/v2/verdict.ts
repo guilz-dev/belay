@@ -2,6 +2,7 @@ import path from 'node:path'
 import { relativeWithinRepo } from '../path-utils.js'
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
 import { analyzePathTargets, cwdRelative } from './containment.js'
+import { classifyEgressTool } from './egress-classify.js'
 import { verdictFingerprint } from './fingerprint.js'
 import type { TracedTier1Judge } from './judge.js'
 import { prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
@@ -42,15 +43,6 @@ const TIER0_EXTERNAL_KEYS = new Set([
   'npm publish',
   'pnpm publish',
   'terraform apply',
-  'aws',
-  'curl',
-  'wget',
-  'gh',
-  'gcloud',
-  'kubectl',
-  'heroku',
-  'vercel',
-  'netlify',
   'firebase',
   'fly',
   'supabase',
@@ -290,9 +282,6 @@ function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolea
   if (head === 'terraform' && tokens[1] === 'apply') {
     return true
   }
-  if (head === 'aws' && tokens.slice(1).join(' ').includes('s3 rm')) {
-    return true
-  }
   return false
 }
 
@@ -513,6 +502,28 @@ async function evaluateSegment(
     }
   }
 
+  const egressClass = classifyEgressTool(segment.head, peeled)
+  if (egressClass === 'destructive') {
+    return askVerdict({
+      location: 'external',
+      opacity: 'transparent',
+      effect: 'remote_mutation',
+      confidence: 'deterministic',
+      reason: 'tier0_external',
+      signals: ['tier0_external', segment.head],
+    })
+  }
+  if (egressClass === 'read') {
+    return allowVerdict({
+      location: 'external',
+      opacity: 'transparent',
+      effect: 'read_only',
+      confidence: 'deterministic',
+      reason: 'egress_read',
+      signals: ['egress_read', segment.head],
+    })
+  }
+
   if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
     return askVerdict({
       location: 'external',
@@ -614,10 +625,7 @@ async function evaluateSegment(
   }
 
   const needsTier1 =
-    effect === 'unknown' ||
-    TIER0_EXTERNAL_HEADS.has(segment.head) ||
-    segment.head === 'curl' ||
-    segment.head === 'wget'
+    effect === 'unknown' || TIER0_EXTERNAL_HEADS.has(segment.head) || egressClass === 'ambiguous'
 
   let tier1Trace: JudgeTrace | undefined
   if (needsTier1) {

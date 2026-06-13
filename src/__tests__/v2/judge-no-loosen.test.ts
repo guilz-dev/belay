@@ -12,7 +12,7 @@ describe('T13 no silent loosen on provider change', () => {
     expect(result.reason).toBe('high_stakes_path')
   })
 
-  it('falls back to ask when openai-compatible scrub fails', async () => {
+  it('falls back to ask when openai-compatible scrub fails on ambiguous egress', async () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
@@ -34,7 +34,7 @@ describe('T13 no silent loosen on provider change', () => {
       fetchImpl: async () => new Response('{}', { status: 200 }),
     })
     const context = v2TestContext({ judge })
-    const result = await verdict('curl https://example.com/api', context)
+    const result = await verdict('aws s3 mb s3://new-bucket', context)
     expect(result.permission).toBe('ask')
   })
 })

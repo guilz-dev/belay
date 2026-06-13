@@ -140,7 +140,8 @@ export async function runBeforeSubmitPromptHook() {
   } catch {
     jsonResponse({
       decision: 'block',
-      reason: 'agent-belay failed while processing approval state. Run agent-belay doctor, then retry.',
+      reason:
+        'agent-belay failed while processing approval state. Run agent-belay doctor, then retry.',
     })
   }
 }
@@ -175,9 +176,7 @@ export async function runToolGateHook(eventName: string) {
       kind,
       cwd,
       command:
-        kind === 'shell'
-          ? extractString(normalizedPayload.tool_input, 'command')
-          : undefined,
+        kind === 'shell' ? extractString(normalizedPayload.tool_input, 'command') : undefined,
       payload: normalizedPayload,
       toolName,
     })

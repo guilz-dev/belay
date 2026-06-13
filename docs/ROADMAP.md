@@ -29,6 +29,7 @@
 | **v2.1** | Judge provider 抽象、config v4 | Implemented — see [SPEC-v2.1.md](./SPEC-v2.1.md) |
 | **v2.1.1** | Cloud provider 正直化（openai-compatible）、v0.3 残渣撤去、テスト隔離、精度計測 | Specced — see [SPEC-v2.1.1.md](./SPEC-v2.1.1.md) |
 | **v2.1.2** | Tier0 偽陰性修正（`docker buildx build --push`） | Specced — see [SPEC-v2.1.2.md](./SPEC-v2.1.2.md) / [dogfood report](./dogfood-docker-tier0-gap.md) |
+| **v2.1.3** | Tier0 偽陽性修正（egress 読み取り系の allow） | Implemented — see [SPEC-v2.1.3.md](./SPEC-v2.1.3.md) |
 | **v2.2** | skill 配布フロントドア + 横展開（Codex アダプタ） | Canonical spec; Codex 実装済み(experimental) — see [SPEC-v2.2.md](./SPEC-v2.2.md) |
 
 v2.2 のワークストリーム別状態: **WS-Codex** = 実装済み・GO（experimental、belay 実適配器の

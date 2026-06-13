@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -11,8 +11,8 @@ import {
   mergeCodexHooksToml,
   renderCodexHooksToml,
 } from '../../adapters/codex/hooks.js'
-import { codexLayout } from '../../adapters/layouts/codex.js'
 import { codexUnmappedToolDenyResponse } from '../../adapters/codex/runtime-entry.js'
+import { codexLayout } from '../../adapters/layouts/codex.js'
 import {
   gateVerdictToCodexPreToolUseResponse,
   gateVerdictToCodexUserPromptResponse,
@@ -58,7 +58,11 @@ describe('codex adapter (experimental)', () => {
         user_message: 'Belay blocked a registry publish.',
       })
       const response = gateVerdictToCodexPreToolUseResponse(verdict) as {
-        hookSpecificOutput?: { hookEventName?: string; permissionDecision?: string; permissionDecisionReason?: string }
+        hookSpecificOutput?: {
+          hookEventName?: string
+          permissionDecision?: string
+          permissionDecisionReason?: string
+        }
       }
       expect(response.hookSpecificOutput?.hookEventName).toBe('PreToolUse')
       expect(response.hookSpecificOutput?.permissionDecision).toBe('deny')

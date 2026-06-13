@@ -1,6 +1,6 @@
 # agent-belay SPEC v2.1.3 — Tier0 偽陽性修正: egress 過剰ブロックの restorability 整合
 
-Status: Draft（spec-first。実装前のレビュー用）
+Status: **Implemented** (SPEC v2.1.3)
 Builds on: SPEC-v2.1 / CONCEPT-v2.0（restorability floor）/ ADR-001（layered enforcement）
 Mirror of: SPEC-v2.1.2（Tier0 **偽陰性**修正）。本書は Tier0 **偽陽性**修正。
 Source: dogfood 観測（2026-06-13、Codex G-B2 smoke）。`curl https://example.com` が

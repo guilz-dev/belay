@@ -145,9 +145,7 @@ export async function runToolGateHook(eventName) {
         const verdict = await evaluateGatedAction(ctx, deps, {
             kind,
             cwd,
-            command: kind === 'shell'
-                ? extractString(normalizedPayload.tool_input, 'command')
-                : undefined,
+            command: kind === 'shell' ? extractString(normalizedPayload.tool_input, 'command') : undefined,
             payload: normalizedPayload,
             toolName,
         });

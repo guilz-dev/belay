@@ -43,7 +43,9 @@ await runAuditHook(eventName)
 `
 }
 
-async function readRuntimeBundle(adapter: 'cursor' | 'claude' | 'codex' = 'cursor'): Promise<string> {
+async function readRuntimeBundle(
+  adapter: 'cursor' | 'claude' | 'codex' = 'cursor',
+): Promise<string> {
   const bundlePath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     '..',

@@ -28,7 +28,11 @@ const TIER1_ACCURACY_CORPUS: Array<{
   { command: 'mystery-cli deploy --force', expectedPermission: 'ask', category: 'opaque_external' },
   { command: 'git status', expectedPermission: 'allow', category: 'routine_read' },
   { command: 'npm test', expectedPermission: 'allow', category: 'routine_launcher' },
-  { command: 'curl https://example.com', expectedPermission: 'ask', category: 'known_external' },
+  {
+    command: 'curl https://example.com',
+    expectedPermission: 'allow',
+    category: 'known_external_read',
+  },
 ]
 
 interface AccuracyReport {

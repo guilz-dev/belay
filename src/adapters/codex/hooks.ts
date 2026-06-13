@@ -1,6 +1,7 @@
 import { codexLayout } from '../layouts/codex.js'
 
-export const CODEX_HOOKS_BEGIN = '# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---'
+export const CODEX_HOOKS_BEGIN =
+  '# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---'
 export const CODEX_HOOKS_END = '# --- BELAY MANAGED HOOKS END ---'
 
 const HOOK_TIMEOUT_SECONDS = 30
@@ -33,7 +34,11 @@ function tomlString(value: string): string {
 export function renderCodexHooksToml(platform: NodeJS.Platform = process.platform): string {
   const lines: string[] = [CODEX_HOOKS_BEGIN]
   for (const spec of CODEX_HOOK_SPECS) {
-    const command = codexLayout.runnerCommand(platform, spec.runnerArgs[0], ...spec.runnerArgs.slice(1))
+    const command = codexLayout.runnerCommand(
+      platform,
+      spec.runnerArgs[0],
+      ...spec.runnerArgs.slice(1),
+    )
     lines.push('')
     lines.push(`[[hooks.${spec.event}]]`)
     if (spec.matcher !== undefined) {
@@ -80,9 +85,10 @@ function stripManagedBlock(content: string): string {
 }
 
 // Used by adapter.hookEvents() for diagnostics/parity with other adapters.
-export function getCodexManagedHookEntries(
-  platform: NodeJS.Platform = process.platform,
-): Array<{ event: string; definition: { command: string; placement: 'prepend'; matcher?: string } }> {
+export function getCodexManagedHookEntries(platform: NodeJS.Platform = process.platform): Array<{
+  event: string
+  definition: { command: string; placement: 'prepend'; matcher?: string }
+}> {
   return CODEX_HOOK_SPECS.map((spec) => ({
     event: spec.event,
     definition: {
