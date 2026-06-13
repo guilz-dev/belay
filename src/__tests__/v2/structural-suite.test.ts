@@ -89,11 +89,15 @@ describe('v2 structural suite', () => {
     it('docker buildx build --push is ask (Tier0)', async () => {
       const result = await verdict('docker buildx build --push -t r/app .', context)
       expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('tier0_external')
+      expect(result.signals).toContain('tier0_external')
     })
 
     it('docker build --push is ask (Tier0)', async () => {
       const result = await verdict('docker build --push -t r/app .', context)
       expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('tier0_external')
+      expect(result.signals).toContain('tier0_external')
     })
 
     it('docker buildx build --output=type=registry is ask (Tier0)', async () => {
@@ -102,11 +106,16 @@ describe('v2 structural suite', () => {
         context,
       )
       expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('tier0_external')
+      expect(result.signals).toContain('tier0_external')
     })
 
     it('docker build (no push) does NOT floor to Tier0 external', async () => {
-      const result = await verdict('docker buildx build -t myapp .', context)
-      expect(result.signals).not.toContain('tier0_external')
+      const buildx = await verdict('docker buildx build -t myapp .', context)
+      expect(buildx.signals).not.toContain('tier0_external')
+
+      const build = await verdict('docker build -t myapp .', context)
+      expect(build.signals).not.toContain('tier0_external')
     })
 
     it('npm run deploy resolves recipe and asks', async () => {
