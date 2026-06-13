@@ -200,13 +200,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           issues.push(`Missing Codex managed hook for ${event}: ${definition.command}`)
         }
       }
-      // EXPERIMENTAL: Codex hook firing was not confirmed in headless `codex exec` (SPEC-v2.2
-      // R-X1). Until a TUI/managed smoke test proves a PreToolUse deny actually blocks, belay
-      // must NOT present itself as an active floor on Codex (no silent false floor).
+      // Codex adapter: shell gating VERIFIED end-to-end on Codex TUI (PreToolUse deny honored;
+      // SPEC-v2.2 R-X3 / G-B2). Surface only the residual caveats so users know the boundary.
       warnings.push(
-        'Codex adapter is EXPERIMENTAL: hook firing is UNVERIFIED. belay may not actually block ' +
-          'actions on Codex until a smoke test confirms a PreToolUse deny is honored. See ' +
-          'docs/SPEC-v2.2.md R-X3.',
+        'Codex adapter: shell gating verified on Codex TUI (PreToolUse deny honored). Residual ' +
+          'caveats — only the shell (Bash) tool is confirmed; non-shell tool names (apply_patch ' +
+          'etc.) are best-guess and fail-closed; managed (pre-trusted) deployment is not yet ' +
+          'available; non-managed hooks require /hooks trust. See docs/SPEC-v2.2.md R-X3.',
       )
     } else {
       const settings = JSON.parse(await readFile(hooksPath, 'utf8')) as {

@@ -29,9 +29,9 @@ async function loadRuntimeContext(cwd) {
     const config = await resolveGateConfig({ layout: codexLayout, repoRoot, configPath }, deps);
     return { layout: codexLayout, repoRoot, config, configPath };
 }
-// TODO-verify: confirm the exact tool names Codex emits in PreToolUse hook input.
-// These mappings are a best guess pending the credit-gated TUI smoke test (SPEC-v2.2 R-X1.1).
-// Unknown names are denied in runToolGateHook (fail-closed) until the mapping is verified.
+// shell is confirmed as tool_name:"Bash" / tool_input:{command} (TUI smoke, SPEC-v2.2 R-X1/R-X3).
+// Non-shell names (apply_patch / read-family / subagent variants) are still best-guess pending
+// the belay-adapter TUI smoke (G-B2). Unknown names are denied in runToolGateHook (fail-closed).
 function mapCodexToolName(toolName) {
     const name = toolName.toLowerCase();
     if (name === 'shell' ||

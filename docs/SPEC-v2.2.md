@@ -19,7 +19,7 @@ WS-J→CLI マッピング・ホスト横断イベント表を取り込み済み
 
 | WS | 内容 | 状態 | 着手ゲート |
 | --- | --- | --- | --- |
-| **WS-Codex** | Codex アダプタ（per-repo hooks） | **実装済み・GO**（R-X1 で TUI 実証） | なし。残るは belay 実適配器の TUI smoke で experimental を外すのみ（G-B2） |
+| **WS-Codex** | Codex アダプタ（per-repo hooks） | **実装済み・正式**（R-X1 機構実証 + G-B2 で belay 実適配器の shell gating 検証済み） | クローズ。残るは任意の追検証（非 shell tool 名 / 承認ループ） |
 | **WS-Skill** | skill フロントドア（R-S1〜S4） | 規範化済み・**未実装** | **G-A**（O1/O5 の決定）＋ **G-B1**（Cursor commands/skills UX 実機検証） |
 | **WS-Pkg** | 配布 packaging（plugin/hook-package/skill） | 要件化（R-X4） | WS-Codex/WS-Skill 安定後 |
 
@@ -47,10 +47,10 @@ WS-J→CLI マッピング・ホスト横断イベント表を取り込み済み
   - **Claude Code**: 既に実装済み（`src/adapters/claude`、PreToolUse/UserPromptSubmit/
     PostToolUse）。新規ではなく既存。
   - **Cursor**: 既に実装済み（`src/adapters/cursor`、hooks + 薄い SKILL）。
-  - **Codex CLI**: **GO（2026-06-13 対話 TUI で実証）**。`codex exec` ヘッドレスでは未発火
-    だったが、**対話 TUI で正しく trust された PreToolUse deny は shell コマンドを実際に
-    ブロックした**。さらに実ペイロードで `tool_name:"Bash"` / `tool_input:{command}` が
-    判明し、**Claude と同一**＝ belay の shell 経路はそのまま機能する（後述 R-X1）。
+  - **Codex CLI**: **正式（実装済み・shell 検証済み）**。機構は R-X1（TUI で PreToolUse deny が
+    ブロック・`tool_name:"Bash"` 確定）、**belay 実適配器**は R-X3/G-B2（Codex 0.139 TUI で
+    `curl` をブロック・`git status` を許可・過剰ブロックなし）で end-to-end 実証。残るは任意の
+    追検証（非 shell tool 名 / 承認ループ）。
 
 ---
 
@@ -325,7 +325,7 @@ Codex クレジット枯渇で TUI 実測が一時不能になったため、方
 
 > この節は「assumed-pass で建てた」ことの記録。R-X1 が GO になり、下記 R-X3 が as-built を規定する。
 
-### R-X3 — Codex アダプタ（**実装済み・experimental**・as-built 規範）
+### R-X3 — Codex アダプタ（**実装済み・shell 検証済み / G-B2 GO**・as-built 規範）
 
 WS-Codex は実装済み。本節がその規範を確定する。
 
@@ -345,12 +345,21 @@ WS-Codex は実装済み。本節がその規範を確定する。
   オプトアウト）に切替可。`allow` は「実機で read 系まで過剰ブロックされた」証拠が出た時のみ。
 - 分類失敗・unmapped はいずれも fail-closed（deny）。
 
-**experimental ガード（MUST、実装済み）**
-- `doctor` は Codex アダプタを **`firing-unverified` として赤警告**し、belay 自身の発火スモークが
-  通るまで「保護済み」と名乗らせない（サイレントな偽の床の禁止）。
-- **G-B2（experimental 解除ゲート）**: belay 実適配器を `.codex/config.toml` に入れ、`dropdb`/
-  `docker push` 相当が belay 自身でブロックされることを TUI で確認 → doctor の experimental 警告
-  を外し、`mapCodexToolName` の shell 以外（apply_patch 等）の実 tool 名を確定する。
+**G-B2 検証結果（✅ GO・2026-06-13 Codex 0.139.0 TUI, gpt-5.4）**
+- belay 実適配器を per-repo `.codex/config.toml` に入れ、`/hooks` で trust した対話 TUI で実測:
+  - `curl https://example.com` → **belay がブロック**（`PreToolUse hook (blocked)` / `Belay
+    blocked this high-risk action. Approval ID: belay_…` / `/belay-approve` 導線付き）。
+  - `git status`（対照）→ **通常実行**（belay allow）。
+  - セッション中 Codex は正常動作（過剰ブロックなし → 未マップ fail-closed が read 系を巻き込まない）。
+- → **layout / runtime-entry / 分類コア / deny 契約が end-to-end で Codex 上で機能**。
+  **G-B2 GO。experimental(firing-unverified)を解除。**
+
+**残存ガード（MUST、verified 後の正確な表示）**
+- `doctor` は「**shell gating 検証済み + 残存注意点**」を warning で表示する（旧 `firing-unverified`
+  の赤警告は撤去）。残存注意点 = ① shell（Bash）のみ tool 名確定・非 shell（apply_patch 等）は
+  best-guess で fail-closed、② managed（pre-trusted）配置は未実装、③ 非 managed は `/hooks` trust 要。
+- **次の検証(任意)**: 非 shell tool（apply_patch / MCP）の実 tool 名確定と承認ループ
+  （`/belay-approve` → 再実行）の Codex 実測。
 
 **運用制約（MUST 明示）— scope（R-S5）に従う**: Windows は Codex hooks 無効。
 `project`/`global` scope は非 managed hook なので `/hooks` 手動 trust が必要（doctor/skill で

@@ -108,12 +108,14 @@ describe('codex adapter (experimental)', () => {
       expect(existsSync(path.join(codexLayout.hooksDir(repoRoot), 'belay-runner'))).toBe(true)
     })
 
-    it('doctor flags Codex as EXPERIMENTAL with unverified firing', async () => {
+    it('doctor surfaces Codex residual caveats (shell verified; non-shell fail-closed)', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-doctor-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
       const report = await codexAdapter.doctor({ targetDir: repoRoot })
-      expect(report.warnings.some((w) => w.includes('EXPERIMENTAL'))).toBe(true)
+      expect(
+        report.warnings.some((w) => w.includes('Codex adapter') && w.includes('fail-closed')),
+      ).toBe(true)
     })
 
     it('registers SubagentStart in managed hook events', () => {
