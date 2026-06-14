@@ -34,15 +34,16 @@ policy to maintain.
 | **Codex** | Experimental | `.codex/config.toml` | `.codex/belay.config.json` |
 
 Pick the adapter at install time with `--adapter cursor|claude|codex` (or let
-`init-wizard` prompt). On every install, Belay registers the same lifecycle
-hooks so shell, tool, subagent, and audit events all flow through one gate:
+`init-wizard` prompt). Hosts use different hook event names, but Belay registers
+the same runners (`belay-tool-gate`, `belay-before-submit`, `belay-audit`) at
+equivalent lifecycle points:
 
-| Hook event | belay hook | Role |
-|------------|-----------|------|
-| `PreToolUse` | `belay-tool-gate` | Gate shell commands, tool actions, file mutations |
-| `SubagentStart` | `belay-tool-gate` | Gate subagent launches (Codex; Cursor/Claude route via `PreToolUse`) |
-| `UserPromptSubmit` | `belay-before-submit` | Apply one-shot `/belay-approve` decisions |
-| `PostToolUse` | `belay-audit` | Append every decision to the audit log |
+| Role | belay hook | Cursor | Claude Code | Codex |
+|------|-----------|--------|-------------|-------|
+| Gate shell / tools / file mutations | `belay-tool-gate` | `beforeShellExecution`, `preToolUse` | `PreToolUse` | `PreToolUse` |
+| Gate subagent launches | `belay-tool-gate` | `subagentStart` | (via `PreToolUse`) | `SubagentStart` |
+| One-shot approvals | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
+| Audit log | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
 
 ## Why
 
@@ -71,6 +72,7 @@ npx @guilz-dev/belay init-wizard
 
 # Or non-interactive
 npx @guilz-dev/belay init --adapter claude   # Claude Code
+npx @guilz-dev/belay init --adapter codex    # Codex (experimental)
 npx @guilz-dev/belay init                     # Cursor (default)
 ```
 
@@ -107,7 +109,8 @@ When an action is denied, approve the **next matching action once** by sending:
 ```
 
 Approvals are one-shot and expire after 15 minutes by default. Every decision is
-written to `.cursor/belay/audit.ndjson` (or `.claude/belay/audit.ndjson`).
+written to `.cursor/belay/audit.ndjson`, `.claude/belay/audit.ndjson`, or
+`.codex/belay/audit.ndjson` (depending on the adapter).
 
 In **audit mode** (`mode: "audit"`), would-be denials are recorded
 (`wouldBlock: true`) but execution still continues, and no approval IDs are
@@ -270,6 +273,14 @@ Belay state files are local runtime artifacts and should usually stay out of git
 .cursor/hooks/belay-*
 .cursor/skills/belay/
 .cursor/commands/belay-approve.md
+
+.claude/belay/
+.claude/belay.config.json
+.claude/hooks/belay-*
+
+.codex/belay/
+.codex/belay.config.json
+.codex/hooks/belay-*
 ```
 
 ## Library exports
