@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
-import { classifyShell } from '../core/v2/adapter.js'
+import { classifyShell } from '../core/verdict/adapter.js'
 
 const repoRoot = '/workspace/project'
 const cwd = repoRoot
@@ -20,7 +20,7 @@ describe('classifyToolUse', () => {
     )
     expect(shellOnly.verdict).toBe('deny_pending_approval')
     expect(shellOnly.summary).toBe('git push origin main')
-    expect(shellOnly.v2).toBeDefined()
+    expect(shellOnly.axes).toBeDefined()
 
     const shellCore = await classifyShell('git push origin main', cwd, repoRoot, config)
     expect(shellOnly.fingerprint).toBe(shellCore.fingerprint)

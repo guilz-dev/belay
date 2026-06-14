@@ -46,7 +46,7 @@ describe('egress proxy does not loosen the restorability floor', () => {
   })
 
   it('keeps resolved external launcher recipes denied', async () => {
-    const fixtureRoot = path.join(import.meta.dirname, 'v2', 'fixtures')
+    const fixtureRoot = path.join(import.meta.dirname, 'verdict', 'fixtures')
     const result = await classifyShellGated(
       'npm run deploy',
       fixtureRoot,

@@ -14,7 +14,7 @@ export interface Assessment {
   signals: string[]
 }
 
-export interface V2TraceFields {
+export interface VerdictAxes {
   location: string
   opacity: string
   effect: string
@@ -39,7 +39,7 @@ export interface ClassifyResult {
   assessment: Assessment
   normalizedCommand?: string
   summary?: string
-  v2?: V2TraceFields
+  axes?: VerdictAxes
 }
 
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny'
@@ -80,7 +80,7 @@ export interface ClassifierOptions {
   brokerFsScope?: boolean
   fsScopeAllowlist?: FsScopeAllowlistFile
   /** Test override: inject Tier1 judge without changing config.judge. */
-  tier1Judge?: import('./v2/types.js').Tier1Judge
+  tier1Judge?: import('./verdict/types.js').Tier1Judge
 }
 
 export interface ApprovalRecord {

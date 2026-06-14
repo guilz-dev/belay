@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
-import type { VerdictContext } from '../../core/v2/types.js'
+import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
+import type { VerdictContext } from '../../core/verdict/types.js'
 
 const FIXTURE_ROOT = path.join(import.meta.dirname, 'fixtures')
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { peelTransparentWrappers } from '../../core/v2/parser.js'
-import { verdict } from '../../core/v2/verdict.js'
+import { peelTransparentWrappers } from '../../core/verdict/parser.js'
+import { verdict } from '../../core/verdict/verdict.js'
 import { v2TestContext } from './helpers.js'
 
-describe('v2 parser xargs', () => {
+describe('parser xargs', () => {
   it('treats xargs as a transparent wrapper', () => {
     const { tokens, xargsStdinOpaque } = peelTransparentWrappers(['xargs', 'curl'])
     expect(xargsStdinOpaque).toBe(false)

@@ -5,7 +5,7 @@ import { matchesSensitivePath } from './glob.js'
 import { pathWithinRoot, relativeWithinRepo } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
-import { classifyShell } from './v2/adapter.js'
+import { classifyShell } from './verdict/adapter.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
 const FILE_WRITE_TOOL_NAMES = new Set(['write'])

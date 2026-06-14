@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createOpenAiCompatibleJudge } from '../../core/v2/judge.js'
-import { scrubOutboundForJudge } from '../../core/v2/judge-outbound.js'
+import { createOpenAiCompatibleJudge } from '../../core/verdict/judge.js'
+import { scrubOutboundForJudge } from '../../core/verdict/judge-outbound.js'
 
 describe('T14 outbound redaction', () => {
   const scrubOptions = {

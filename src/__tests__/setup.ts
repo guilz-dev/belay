@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach } from 'vitest'
-import { resetPinnedJudgeModelsCache } from '../core/v2/judge-factory.js'
+import { resetPinnedJudgeModelsCache } from '../core/verdict/judge-factory.js'
 
 let isolatedHome: string | undefined
 

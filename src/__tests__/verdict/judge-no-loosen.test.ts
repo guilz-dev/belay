@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
-import { createDeterministicJudgeStub, createOpenAiCompatibleJudge } from '../../core/v2/judge.js'
-import { verdict } from '../../core/v2/verdict.js'
+import {
+  createDeterministicJudgeStub,
+  createOpenAiCompatibleJudge,
+} from '../../core/verdict/judge.js'
+import { verdict } from '../../core/verdict/verdict.js'
 import { v2TestContext } from './helpers.js'
 
 describe('T13 no silent loosen on provider change', () => {

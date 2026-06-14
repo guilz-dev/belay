@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, migrateConfig } from '../../core/config.js'
 import { JudgeEndpointRequiredError, resolveInitJudgeConfig } from '../../core/judge-config.js'
-import * as judgeModule from '../../core/v2/judge.js'
+import * as judgeModule from '../../core/verdict/judge.js'
 
 describe('T16 no default base / no vendor leak', () => {
   it('does not export DEFAULT_CURSOR_API_BASE from judge module', () => {
@@ -14,7 +14,12 @@ describe('T16 no default base / no vendor leak', () => {
 
   it('does not reference api.cursor.com in source tree', async () => {
     const srcRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
-    const files = ['core/v2/judge.ts', 'core/judge-config.ts', 'core/judge-doctor.ts', 'cli.ts']
+    const files = [
+      'core/verdict/judge.ts',
+      'core/judge-config.ts',
+      'core/judge-doctor.ts',
+      'cli.ts',
+    ]
     for (const relative of files) {
       const content = await readFile(path.join(srcRoot, relative), 'utf8')
       expect(content).not.toContain('api.cursor.com')

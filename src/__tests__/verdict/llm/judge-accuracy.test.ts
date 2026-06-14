@@ -2,8 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
-import { createOllamaJudge } from '../../../core/v2/judge.js'
-import { verdict } from '../../../core/v2/verdict.js'
+import { createOllamaJudge } from '../../../core/verdict/judge.js'
+import { verdict } from '../../../core/verdict/verdict.js'
 import { v2TestContext } from '../helpers.js'
 
 async function ollamaAvailable(): Promise<boolean> {

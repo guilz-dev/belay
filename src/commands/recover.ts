@@ -29,8 +29,8 @@ export async function recoverProject(options: RecoverOptions = {}): Promise<Reco
     target = {
       summary: classified.input,
       reason: classified.result.reason,
-      effect: classified.result.v2?.effect,
-      location: classified.result.v2?.location,
+      effect: classified.result.axes?.effect,
+      location: classified.result.axes?.location,
       permission: classified.permission,
       assessment: classified.result.assessment,
     }

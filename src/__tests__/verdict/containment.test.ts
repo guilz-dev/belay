@@ -1,9 +1,9 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { analyzePathTargets, resolveTrustedPath } from '../../core/v2/containment.js'
+import { analyzePathTargets, resolveTrustedPath } from '../../core/verdict/containment.js'
 import { v2TestContext } from './helpers.js'
 
-describe('v2 containment', () => {
+describe('containment', () => {
   const ctx = v2TestContext()
 
   it('resolves repo-local paths with trusted cwd', () => {

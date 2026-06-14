@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { filterAuditRecords } from '../../core/audit-query.js'
 import type { AuditRecord } from '../../core/audit-types.js'
 
-describe('audit schema v2', () => {
+describe('audit schema', () => {
   const sample: AuditRecord = {
     timestamp: '2026-06-12T00:00:00.000Z',
     event: 'beforeShellExecution',
@@ -15,17 +15,17 @@ describe('audit schema v2', () => {
     effect: 'local_mutation',
     confidence: 'deterministic',
     would: 'ask',
-    by: 'v2',
+    by: 'verdict',
     fingerprint: 'abc',
     summary: 'rm -rf .git',
   }
 
-  it('filters by v2 location axis', () => {
+  it('filters by location axis', () => {
     const filtered = filterAuditRecords([sample], { location: 'repo_local' })
     expect(filtered).toHaveLength(1)
   })
 
-  it('filters by v2 opacity axis', () => {
+  it('filters by opacity axis', () => {
     const filtered = filterAuditRecords([sample], { opacity: 'transparent' })
     expect(filtered).toHaveLength(1)
     expect(filterAuditRecords([sample], { opacity: 'opaque' })).toHaveLength(0)

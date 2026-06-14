@@ -2,8 +2,8 @@ import type { BelayConfigV4 } from './config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js'
 import { resolveJudgeApiKey } from './judge-api-key.js'
 import { assertJudgeEndpoint } from './judge-config.js'
-import { createOllamaJudge, createOpenAiCompatibleJudge } from './v2/judge.js'
-import { loadPinnedJudgeModels, resolveCloudModel } from './v2/judge-factory.js'
+import { createOllamaJudge, createOpenAiCompatibleJudge } from './verdict/judge.js'
+import { loadPinnedJudgeModels, resolveCloudModel } from './verdict/judge-factory.js'
 
 export interface JudgeDoctorResult {
   issues: string[]

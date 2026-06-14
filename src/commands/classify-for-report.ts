@@ -7,7 +7,7 @@ import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
 import { classifySubagent, classifyToolUse } from '../core/index.js'
 import { isTransactionalEligible } from '../core/transactional/index.js'
 import type { ClassifyResult } from '../core/types.js'
-import { classifyShell } from '../core/v2/adapter.js'
+import { classifyShell } from '../core/verdict/adapter.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { ClassifyForReportResult, ExplainKind } from '../types.js'
@@ -74,12 +74,12 @@ export async function classifyForReport(params: {
   const transactionalEligible = kind === 'shell' && isTransactionalEligible(config, 'shell', result)
 
   const permission =
-    result.v2?.would ??
+    result.axes?.would ??
     (result.verdict === 'allow' || result.verdict === 'allow_flagged' ? 'allow' : 'ask')
   const tier =
     result.reason.startsWith('tier0_') || result.reason === 'external_effect'
       ? 'Tier0'
-      : result.v2?.confidence === 'llm' || result.reason === 'unknown_local_effect'
+      : result.axes?.confidence === 'llm' || result.reason === 'unknown_local_effect'
         ? 'Tier1'
         : 'deterministic'
 

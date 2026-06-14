@@ -14,8 +14,8 @@ import {
 } from '../../adapters/shared/gate-runtime.js'
 import { type BelayConfigV3, mergeConfig } from '../../core/config.js'
 import { scrubValue } from '../../core/scrub.js'
-import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
-import * as judgeFactory from '../../core/v2/judge-factory.js'
+import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
+import * as judgeFactory from '../../core/verdict/judge-factory.js'
 
 const shellScenarios = [
   { command: 'git status', permission: 'allow' as const },
