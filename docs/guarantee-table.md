@@ -36,7 +36,7 @@ Recommended starting point: `belay init --preset l1-full-recommended`.
 ## L3 classifier lists
 
 Command-name lists are **noise-reduction caches** for the prediction layer (L3), not
-security boundaries. See [semver-policy.md](./semver-policy.md).
+security boundaries. See [semver-policy.md](./ops/semver-policy.md).
 
 ## What is never guaranteed
 

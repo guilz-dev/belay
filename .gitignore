@@ -1,5 +1,61 @@
+# Dependencies
 node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage
 coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors and local AI tooling
+.idea/
+*.swp
+*.swo
+*~
+.kiro/
+
+# Cursor — keep shared repo skills only (see .cursor/skills/)
 .cursor/*
 !.cursor/skills/
-!.cursor/skills/**
+.cursor/skills/*
+!.cursor/skills/belay/
+!.cursor/skills/belay/**
+!.cursor/skills/verify-parallel/
+!.cursor/skills/verify-parallel/**
+
+# Belay runtime artifacts (installed by `belay init`; do not commit)
+.cursor/belay/
+.cursor/belay.config.json
+.cursor/hooks/belay-*
+.cursor/commands/belay-*.md
+
+.claude/belay/
+.claude/belay.config.json
+.claude/hooks/belay-*
+.claude/skills/belay/
+
+.codex/belay/
+.codex/belay.config.json
+.codex/hooks/belay-*
+.codex/skills/belay/
+
+# Temporary files
+tmp/
+temp/

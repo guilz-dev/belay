@@ -6,8 +6,8 @@ or a permission fence.
 
 Before contributing, read the two documents that govern every change:
 
-- [docs/CONCEPT-v2.0.md](docs/CONCEPT-v2.0.md) — what belay is (the restorability floor).
-- [docs/ADR-002-concept-conformance.md](docs/ADR-002-concept-conformance.md) — the rule
+- [docs/CONCEPT.md](docs/CONCEPT.md) — what belay is (the restorability floor).
+- [docs/adr/ADR-002-concept-conformance.md](docs/adr/ADR-002-concept-conformance.md) — the rule
   every contribution must satisfy.
 
 ---
@@ -74,12 +74,13 @@ Convenience: `make verify` (lint + typecheck + test), `make verify-parallel`.
 When changing hook semantics, update core modules and tests first, then rebuild so the
 generated `.<adapter>/belay/runtime/core.mjs` artifacts pick up the new bundle.
 
-## Workflow: spec-first
+## Workflow: design-first
 
 Non-trivial changes — anything touching the verdict/gate, a new rule, or a new adapter —
-**start with a short `docs/SPEC-*.md`** (or extend an existing one) that is reviewed before
-code. Reason from the concept, not the symptom (ADR-002 M7): state which consequence of the
-restorability rule your change follows from.
+**start with a short design note in `docs/`** (ADR, plan doc, or an extension to
+[CONCEPT.md](docs/CONCEPT.md)) that is reviewed before code. Reason from the
+concept, not the symptom (ADR-002 M7): state which consequence of the restorability rule
+your change follows from.
 
 ## Changing a gate rule — required checklist
 
@@ -108,12 +109,12 @@ extend the conformance suite. Keep the verdict core single-sourced.
 - `README.md` — public-facing runtime, command, or scope changes.
 - `src/__tests__/` — any observable behavior change (with `MUST-ALLOW` + `MUST-ASK` cases).
 - `skills/belay/SKILL.md` and `skills/belay/belay-*.md` — distributed skill/command content.
-- `docs/SPEC-*.md` — when scope or design decisions change.
+- `docs/` — when scope or design decisions change (CONCEPT, ADR, ROADMAP, guarantee-table).
 
 ## Pull requests
 
 - Branch off `main`. `pnpm typecheck` and `pnpm test` must be green.
-- Concept-justify any gate change (link the SPEC/ADR consequence).
+- Concept-justify any gate change (link the ADR / CONCEPT consequence).
 - Keep diffs focused; match the style of surrounding code (biome enforces formatting).
 
 ## Reporting issues
@@ -125,14 +126,9 @@ extend the conformance suite. Keep the verdict core single-sourced.
 
 ## Releases
 
-Releases follow [docs/semver-policy.md](docs/semver-policy.md). Before cutting a release:
+Release execution lives in [docs/ops/releasing.md](docs/ops/releasing.md).
 
-1. `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` all pass (Ubuntu + macOS CI).
-2. FN=0 structural suite and the guarantee-table execute-verification are green.
-3. Conformance scenarios match [docs/guarantee-table.md](docs/guarantee-table.md).
-4. `README.md` and the active `docs/SPEC-v2.*.md` match the release.
-5. `dist/` rebuilt from current sources; `npm pack --dry-run` contents reviewed.
-6. `npx skills add guilz-dev/belay --list` shows `belay` after push.
+Version bump policy lives in [docs/ops/semver-policy.md](docs/ops/semver-policy.md).
 
 ## License
 

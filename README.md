@@ -4,260 +4,147 @@
 [![CI](https://github.com/guilz-dev/belay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guilz-dev/belay/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**LLM / AI SDK agent 向けの restorability floor（取り消せない×破滅的だけ止める）**
+**A safety gate for coding agents that stops only the actions you can't undo.**
 
-`@guilz-dev/belay` (`belay` CLI) is a practical Belay-style gate for agent runtimes.
+[Documentation (日本語)](./docs/README.ja.md)
 
-> **0.0.x early release** — APIs and behavior may change. Cursor and Claude Code adapters
-> are the primary path; **Codex is experimental**. Skill-only install is advisory; run
-> `npx @guilz-dev/belay init` for the enforcement floor.
-
-The current integration targets hook-capable agent environments.
+`@guilz-dev/belay` hooks into agent runtimes (Cursor, Claude Code) and inspects
+each shell command, subagent launch, and file mutation *before* it runs. Most
+actions pass through untouched. Only the irreversible-and-catastrophic ones are
+held back for one-shot human approval — and every decision is written to an
+audit log.
 
 <p align="center">
   <img src="./agent-belay-logo.png" alt="Belay logo" width="480">
 </p>
 
-## Motivation
+> **0.0.x early release** — APIs and behavior may change. Cursor and Claude Code
+> are the supported adapters; Codex is experimental.
 
-Static denylists are broken — they can't read context, and the list never keeps up.
+## Why
 
-The same command can be harmless in one situation and high-risk in another.
+Static denylists don't work for agents. The same command (`rm`, `curl`, a
+deploy script) can be harmless in one context and catastrophic in another, and a
+hand-maintained "never run this" list is always out of date and easy to work
+around.
 
-A rule like "never run this command" is too coarse. But the growing list of
-exceptions you bolt on to fix that quickly becomes fragile, hard to maintain,
-and easy to work around.
-
-`belay` exists to move the decision boundary away from command names
-alone. Instead of treating every invocation of a tool as equally dangerous, it
-makes its own runtime judgment based on:
+Belay moves the decision away from command names. For every gated action it
+forms its own judgment based on:
 
 - **reversibility** — can this be undone?
 - **external effects** — does it reach outside the machine?
 - **blast radius** — how much could it affect?
-- **operator confidence** — how sure are we?
+- **confidence** — how sure are we?
 
-When that judgment gets uncertain, or an action looks like it crosses a real
-safety boundary, it falls back to explicit approval and audit — instead of
-pretending a static denylist solved the problem.
+When the action looks safe and local, it runs. When it looks irreversible,
+externally destructive, or ambiguous, Belay falls back to explicit approval and
+audit instead of guessing.
+
+## Quick start
+
+```bash
+# Interactive setup (prompts for adapter, scope, skill, mode)
+npx @guilz-dev/belay init-wizard
+
+# Or non-interactive
+npx @guilz-dev/belay init --adapter claude   # Claude Code
+npx @guilz-dev/belay init                     # Cursor (default)
+```
+
+After install, verify the floor is healthy:
+
+```bash
+npx @guilz-dev/belay doctor
+npx @guilz-dev/belay status
+```
+
+Fresh installs default to **fail-closed** shell policy: unknown or unparseable
+shell commands are denied until approved. Use `belay explain` to inspect a
+verdict and `overrides.allow` to whitelist commands you trust.
 
 ## How it works
 
-`belay` hooks into specific agent runtime events and gates them before
-they take effect. v0.4 ships two adapters:
+Belay registers hooks on the host runtime (`.cursor/hooks.json` or
+`.claude/settings.json`) and gates shell execution, subagent launches, and file
+mutations through one shared classifier. It always forms its own judgment — it
+does not trust an assessment supplied by the agent.
 
-- **Cursor** — `.cursor/hooks.json` + hook scripts
-- **Claude Code** — `.claude/settings.json` hooks (`PreToolUse`, `UserPromptSubmit`)
+Every gated action gets one of three verdicts:
 
-Both gate shell execution, subagent launches, and file mutations through the
-same core classifier and shared runtime.
+| Verdict | Meaning |
+|---------|---------|
+| `allow` | Safe and read-only — runs without intervention |
+| `allow_flagged` | Local mutation or unknown-but-local effect — runs, but recorded for audit |
+| `deny_pending_approval` | Irreversible, externally destructive, or ambiguous — blocked, issues an approval ID |
 
-When one of these events fires, Belay runs its own lightweight classifier on the
-payload to estimate reversibility, external effects, blast radius, and
-confidence. It does not rely on an agent-side `Assessment` being present in the
-payload; it always forms its own judgment.
+When an action is denied, approve the **next matching action once** by sending:
 
-Based on that judgment, Belay assigns one of three verdicts:
+```text
+/belay-approve <approval-id>
+```
 
-- `allow` — Safe enough to execute without intervention (e.g., read-only
-  commands)
-- `allow_flagged` — Local mutation or unknown-but-local effect; allowed, but
-  recorded for audit (fresh installs default to deny for unknown/unparseable shell;
-  use `belay explain` and `overrides.allow` to tune)
-- `deny_pending_approval` — High-risk or ambiguous (destructive external effects,
-  irreversible-looking mutations, writes outside the repo); blocks execution and
-  issues an approval ID
+Approvals are one-shot and expire after 15 minutes by default. Every decision is
+written to `.cursor/belay/audit.ndjson` (or `.claude/belay/audit.ndjson`).
 
-When an action is denied, the user can approve the next matching action once by
-sending `/belay-approve <approval-id>`. Approvals are one-shot and expire after
-15 minutes by default. Every decision is written to the adapter-specific audit log (for example
-`.cursor/belay/audit.ndjson` or `.claude/belay/audit.ndjson`) for later review.
+In **audit mode** (`mode: "audit"`), would-be denials are recorded
+(`wouldBlock: true`) but execution still continues, and no approval IDs are
+created. This is the recommended way to dogfood before enforcing.
 
-If `mode` is set to `"audit"` in `.cursor/belay.config.json`, would-be denies
-are recorded (`wouldBlock: true` in the audit log) but execution is still
-allowed to continue. Pending approvals are not created in audit mode.
+## Layers
 
-This creates a dynamic, context-aware gate rather than a static command
-denylist.
+Belay is a layered hook gate, not a static denylist. Higher layers are opt-in.
 
-## Scope
-
-`belay` is a **layered hook gate** for agent runtimes — not a static denylist.
-
-| Layer | Role | Opt-in |
-|-------|------|--------|
-| **L1** Containment | Egress proxy, sandbox capability broker | `egress`, `sandbox` config |
+| Layer | Role | Enabled by |
+|-------|------|------------|
+| **L1** Containment | Egress proxy, sandbox capability broker | `egress` / `sandbox` config |
 | **L2** Observation | Transactional git-worktree diff | `policy.transactional` |
-| **L3** Prediction | Policy rules + command-key heuristics (noise-reduction cache) | default |
+| **L3** Prediction | Policy rules + command heuristics | default |
 | **L4** Approval | Human one-shot / scoped approvals | default |
 
 - L3 command lists are **not security boundaries** by themselves — see
-  [docs/semver-policy.md](./docs/semver-policy.md) and [docs/guarantee-table.md](./docs/guarantee-table.md).
-- Adversarial resistance requires the **L1-full** stack; use
-  `belay init --preset l1-full-recommended` and verify with `belay sandbox status`.
-- Fresh installs default to **fail-closed** shell policy (L3+L4) with control plane enabled.
+  [docs/ops/semver-policy.md](./docs/ops/semver-policy.md) and
+  [docs/guarantee-table.md](./docs/guarantee-table.md).
+- Adversarial resistance requires the full L1 stack:
+  `belay init --preset l1-full-recommended`, verified with `belay sandbox status`.
 
-## Runtime Support
-
-`belay` is intended as an agent-facing package, not a Cursor-only product.
-
-- Cursor and Claude Code adapters are included in v0.4.
-- Additional adapters can target other agent runtimes without changing the package
-  name or core concepts.
-- The optional Skill artifact is only a UX layer; it is not the core runtime.
-
-## Roadmap
-
-- `v0.1`: Cursor-style hook adapter with one-shot approval and audit
-- `v0.2`: testable core, stronger classifier, tool gates, config v2, ops CLI — see [docs/v0.2-plan.md](./docs/v0.2-plan.md)
-- `v0.3`: config v3, fail-closed shell mode, user control plane — see [docs/SPEC-v0.3.md](./docs/SPEC-v0.3.md), [docs/v0.3-remaining.md](./docs/v0.3-remaining.md), and [docs/ROADMAP.md](./docs/ROADMAP.md)
-- `v0.4`: portable adapters (Cursor + Claude), gate contract, fail-closed defaults — see [docs/v0.4-plan.md](./docs/v0.4-plan.md)
-- `v0.5`: policy-as-code judgment pipeline, corpus metrics, confidence thresholds — see [docs/v0.5-plan.md](./docs/v0.5-plan.md)
-- `v0.6`: audit tooling, policy simulation, layered config, signed OOB approval — see [docs/v0.6-plan.md](./docs/v0.6-plan.md)
-- `v0.7`–`v0.9`: layered enforcement (L1 egress, L2 transactional, L1-full broker) — see [docs/v0.7-v1.0-plan.md](./docs/v0.7-v1.0-plan.md)
-- `v1.0`: stable guarantees, adapter SDK, semver policy — see [docs/SPEC-v1.0.md](./docs/SPEC-v1.0.md)
-
-## Install
-
-### Full setup (recommended)
+## Install options
 
 ```bash
-npx @guilz-dev/belay init-wizard
-npx @guilz-dev/belay init --with-skill
-npx @guilz-dev/belay init --adapter claude
-npx @guilz-dev/belay init --preset l1-full-recommended   # adversarial L1-full stack
+npx @guilz-dev/belay init --with-skill      # also install skill + slash commands
+npx @guilz-dev/belay init --scope global    # hooks/runtime under ~/.cursor/ etc.
+npx @guilz-dev/belay init --dogfood         # audit mode, fail-closed classification
+npx @guilz-dev/belay upgrade                # refresh hooks/runtime, migrate config
 ```
 
-`init-wizard` is the interactive path: it prompts for adapter, install scope, skill, and
-dogfood mode, then runs the same install as `init`.
+**Install scope.** `--scope project` (default) writes artifacts under
+`.cursor/` (or `.claude/`, `.codex/`). `--scope global` installs hooks, runtime,
+and skill under `~/.cursor/`, so the gate is user-wide while `belay.config.json`,
+approvals, and audit stay repo-local.
 
-### Install scope (project vs global)
-
-`--scope project|global` controls where hooks, runtime, and skill are installed.
-Even with `--scope global`, `belay.config.json`, approvals, and audit remain repo-local.
-This means the hook floor can be user-wide while policy and audit stay per-repository.
-
-```bash
-npx @guilz-dev/belay init --scope project    # default: artifacts under .cursor/ (or .claude/, .codex/)
-npx @guilz-dev/belay init --scope global     # hooks/runtime/skill under ~/.cursor/ (etc.)
-```
-
-See [docs/design/global-scope.md](./docs/design/global-scope.md) for the full path matrix.
-
-After install, check floor health with `belay doctor` and confirm install scope /
-skill-only state with `belay status`.
-
-This installs the runtime hooks and also writes helper artifacts for:
-
-- `.cursor/skills/belay/SKILL.md`
-- `.cursor/commands/belay-approve.md`
-- `.cursor/commands/belay-why.md`
-- `.cursor/commands/belay-explain.md`
-- `.cursor/commands/belay-status.md`
-- `.cursor/commands/belay-report.md`
-- `.cursor/commands/belay-recover.md`
-
-### Hook runtime only
-
-```bash
-npx @guilz-dev/belay init
-```
-
-### Upgrade from v0.1 / v0.2
-
-```bash
-npx @guilz-dev/belay upgrade
-```
-
-`upgrade` refreshes hook scripts and the bundled runtime while merging your
-existing `.cursor/belay.config.json` settings (v1/v2 configs migrate to v3).
-When you newly enable `controlPlane`, existing repo-local approval files are
-copied into the control-plane directory if it is empty.
-
-### Skill only (skills CLI)
+**Skill-only.** The skill is just a UX layer (slash commands + guidance) and does
+**not** enable gating on its own:
 
 ```bash
 npx skills add guilz-dev/belay --skill belay -a cursor -y
 ```
 
-Re-running `init` merges config and re-writes managed hook files. Prefer
-`upgrade` when you only need a runtime refresh. Keep local customizations
-outside the generated Belay files.
+Runtime enforcement still requires `belay init` in the target repository.
 
-Installing the skill alone does not enable gating. Runtime enforcement still
-requires `npx @guilz-dev/belay init` in the target repository.
-
-## What it installs
-
-Current adapter artifacts:
-
-- `.cursor/belay.config.json`
-- `.cursor/hooks/belay-runner`
-- `.cursor/hooks/belay-before-submit.mjs`
-- `.cursor/hooks/belay-shell-gate.mjs`
-- `.cursor/hooks/belay-tool-gate.mjs`
-- `.cursor/hooks/belay-audit.mjs`
-- `.cursor/belay/runtime/core.mjs`
-- `.cursor/belay/pending-approvals.json` (or `~/.config/belay/` when `controlPlane.enabled`)
-- `.cursor/belay/approved-approvals.json` (or control-plane directory)
-- `.cursor/belay/audit.ndjson` (always repo-local via `audit.logPath`)
-
-Optional skill and command artifacts (with `--with-skill`):
-
-- `.cursor/skills/belay/SKILL.md`
-- `.cursor/commands/belay-approve.md`
-- `.cursor/commands/belay-why.md`
-- `.cursor/commands/belay-explain.md`
-- `.cursor/commands/belay-status.md`
-- `.cursor/commands/belay-report.md`
-- `.cursor/commands/belay-recover.md`
-
-Packaged skill source for `npx skills add`:
-
-- `skills/belay/SKILL.md`
-- `skills/belay/belay-approve.md`
-- `skills/belay/belay-why.md`
-- `skills/belay/belay-explain.md`
-- `skills/belay/belay-status.md`
-- `skills/belay/belay-report.md`
-- `skills/belay/belay-recover.md`
-
-## Commands
+## Dogfood → enforce
 
 ```bash
-npx @guilz-dev/belay init
-npx @guilz-dev/belay init-wizard
-npx @guilz-dev/belay init --with-skill
-npx @guilz-dev/belay init --scope project
-npx @guilz-dev/belay init --scope global
-npx @guilz-dev/belay init --dogfood
-npx @guilz-dev/belay upgrade
-npx @guilz-dev/belay dogfood
+npx @guilz-dev/belay dogfood            # mode: audit, unknownLocalEffect: deny
+# ...run normal agent work...
+npx @guilz-dev/belay metrics           # review what would have been blocked
+npx @guilz-dev/belay status            # check readiness
+# tune overrides.allow with `belay explain`, then:
 npx @guilz-dev/belay dogfood --enforce
-npx @guilz-dev/belay doctor
-npx @guilz-dev/belay doctor --fix
-npx @guilz-dev/belay metrics
-npx @guilz-dev/belay report
-npx @guilz-dev/belay status
-npx @guilz-dev/belay recover
-npx @guilz-dev/belay recover --command "rm important.ts"
-npx @guilz-dev/belay explain -- <shell-command>
-npx @guilz-dev/belay explain --kind subagent -- "deploy to production"
-npx @guilz-dev/belay explain --kind tool --tool Write -- .env
-npx @guilz-dev/belay egress start
-npx @guilz-dev/belay egress status
-npx @guilz-dev/belay egress env
-npx @guilz-dev/belay approve <approval-id> --scope domain
-npx @guilz-dev/belay revoke <approval-id>
 ```
 
-`mode: "audit"` is supported in `.cursor/belay.config.json`. In audit mode,
-Belay records would-be denies but allows execution to continue.
-
-### Config v3 highlights
+## Configuration
 
 `belay.config.json` uses `version: 3`. v1/v2 configs migrate automatically on
-load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
+load.
 
 ```json
 {
@@ -298,73 +185,61 @@ load (`customAllowCommands` / `customExternalCommands` map to `overrides`).
 }
 ```
 
-**OQ1 dogfood** — one command to start:
+Notable settings:
+
+- **`policy.unknownLocalEffect: "deny"`** — fail-closed classification for
+  unrecognized local commands.
+- **`classifier.strictChains: true`** (default) — scans every `&&`, `|`, and `;`
+  segment and keeps the strictest verdict. Override lists match exact command or
+  segment keys only.
+- **`controlPlane.enabled: true`** — stores approval state under
+  `~/.config/belay/` (or `XDG_CONFIG_HOME/belay`), shared across repos for the
+  current OS user. `upgrade` migrates repo-local approvals in; disabling merges
+  them back. File-mutation tools and shell redirects cannot write control-plane
+  paths while it is enabled.
+- **Cloud judge** — for `judge.provider: "openai-compatible"`, set
+  `judge.endpoint` and provide `BELAY_JUDGE_API_KEY` (or `OPENAI_API_KEY`), or
+  opt in with
+  `belay init --judge-provider openai-compatible --judge-endpoint <url> --accept-cloud-judge`.
+  Fresh installs default to local Ollama (`local-ollama`).
+
+## Command reference
 
 ```bash
-npx @guilz-dev/belay dogfood
-# or on init:
-npx @guilz-dev/belay init --dogfood
+belay init [--adapter cursor|claude|codex] [--scope project|global]
+           [--preset strict|standard|audit-first|l1-full-recommended]
+           [--with-skill] [--dogfood]
+belay init-wizard                # interactive install
+belay upgrade                    # refresh hooks + runtime, migrate config
+belay dogfood [--enforce]        # toggle audit / enforce mode
+belay doctor [--fix]             # check (and repair) floor health
+belay status                     # show install scope / skill-only state
+belay metrics                    # would-block / verdict summary
+belay report                     # audit log report
+belay recover [--command "rm important.ts"]   # find recovery candidates
+belay explain -- <shell-command>              # inspect a verdict
+belay explain --kind subagent -- "deploy to production"
+belay explain --kind tool --tool Write -- .env
+belay egress <start|stop|status|env>
+belay sandbox status
+belay approve <approval-id> [--scope once|domain|path]
+belay revoke <approval-id>
 ```
 
-This sets `mode: "audit"` and `policy.unknownLocalEffect: "deny"`. Run
-`npx @guilz-dev/belay metrics` after normal agent work, check `npx @guilz-dev/belay status` /
-`doctor` for readiness, tune `overrides.allow` with `explain`, then:
+## Coexisting with existing hooks
 
-```bash
-npx @guilz-dev/belay dogfood --enforce
-```
+Belay is designed to run alongside your other repo-local hooks:
 
-`policy.unknownLocalEffect: "deny"` enables fail-closed shell classification for
-unrecognized local commands.
-
-`controlPlane.enabled: true` stores approval state under
-`~/.config/belay/` (or `XDG_CONFIG_HOME/belay`). The same path is
-shared across repositories for the current OS user. Existing repo-local approval
-files are copied or merged into the control plane on `upgrade`. Disabling control
-plane merges approvals back to repo-local; run `npx @guilz-dev/belay doctor --fix` to
-archive orphaned files.
-
-For cloud Tier1 (`judge.provider: "openai-compatible"`), set `judge.endpoint` and
-provide `BELAY_JUDGE_API_KEY` or `OPENAI_API_KEY`. Use
-`npx @guilz-dev/belay init --judge-provider openai-compatible --judge-endpoint <url> --accept-cloud-judge`
-to opt in explicitly. Fresh installs default to local Ollama (`local-ollama`).
-
-File-mutation tools and shell redirects cannot write control-plane paths when
-control plane is enabled.
-
-`strictChains: true` (default) scans every `&&`, `|`, and `;` segment and keeps
-the strictest verdict. Override lists use exact command or segment key matches only.
-
-## Approval flow
-
-High-risk actions are denied with an approval ID. Approve the next matching
-action once by sending:
-
-```text
-/belay-approve <approval-id>
-```
-
-Approvals are one-shot and expire after 15 minutes by default.
-
-## Existing Hooks
-
-For the current Cursor-style adapter, `belay` is designed to coexist with
-existing repo-local hooks.
-
-- Gate hooks are inserted with prepend semantics so they run before existing
-  hooks for the same event.
-- Audit hooks are appended so they observe the final flow after other hooks.
+- Gate hooks are **prepended** so they run before existing hooks for the same event.
+- Audit hooks are **appended** so they observe the final flow.
 - Existing non-Belay hook entries are preserved in order.
 
-If another hook also denies the same event, the host runtime will still block
-it; Belay does not try to suppress other repo policies.
+If another hook also denies an event, the host runtime still blocks it — Belay
+does not suppress other repo policies.
 
-## Git Hygiene
+## Git hygiene
 
-Belay state files are local runtime artifacts for the current adapter. They
-should usually stay out of git.
-
-Recommended ignore entries:
+Belay state files are local runtime artifacts and should usually stay out of git:
 
 ```gitignore
 .cursor/belay/
@@ -384,4 +259,10 @@ import { classifyShell, DEFAULT_CONFIG_V3, mergeConfig } from 'belay'
 const result = await classifyShell('git status', process.cwd(), process.cwd(), mergeConfig({}))
 ```
 
-See also `belay/core` for lower-level exports.
+See `belay/core` for lower-level exports.
+
+## Roadmap & history
+
+Release notes and the version-by-version roadmap live in
+[CHANGELOG.md](./CHANGELOG.md) and [docs/ROADMAP.md](./docs/ROADMAP.md).
+Japanese documentation index: [docs/README.ja.md](./docs/README.ja.md).

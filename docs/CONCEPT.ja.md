@@ -1,11 +1,12 @@
 # agent-belay CONCEPT v2.0 — belay 再設計: 復元可能性の床(restorability floor)
 
 Status: **検証済みプロトタイプに基づく設計(作り直しの土台)**
-実装仕様: [`docs/SPEC-v2.0.md`](./SPEC-v2.0.md)
 基づくもの: 動作確認済みスパイク `~/.belay-spike/`(`verdict.mjs` / `hook.mjs` / `warm.mjs`)
-思想の出典: [`docs/storyline.md`](./storyline.md)(Opus との原設計)、[`docs/ADR-001-layered-enforcement.md`](./ADR-001-layered-enforcement.md)
+思想の出典: Opus との原設計（storyline）、[`docs/adr/ADR-001-layered-enforcement.md`](./adr/ADR-001-layered-enforcement.md)
 位置づけ: v0.3〜v0.9 の「静的コマンドリストで事前予測する gate」を core において**置き換える**。
 ADR-001 が示した方向(予測を境界から外す)を、実測で裏づけた具体形。
+
+> 日本語訳: [`CONCEPT.md`](./CONCEPT.md) が正本。両者が食い違う場合は英語版に従う。
 
 ---
 

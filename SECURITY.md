@@ -25,7 +25,7 @@ security-relevant reports.
 Built-in command keys (`src/core/policy/command-keys.ts`) and policy rules are a
 **noise-reduction cache** for the prediction layer (L3). They are **not** security
 boundaries unless paired with L1/L2 enforcement. List updates ship in **minor**
-releases per [docs/semver-policy.md](docs/semver-policy.md).
+releases per [docs/ops/semver-policy.md](docs/ops/semver-policy.md).
 
 ## Recommended adversarial configuration (v1.0)
 

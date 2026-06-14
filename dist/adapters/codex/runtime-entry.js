@@ -28,7 +28,7 @@ async function loadRuntimeContext(cwd) {
     const config = await resolveGateConfig({ layout: codexLayout, repoRoot, configPath }, deps);
     return { layout: codexLayout, repoRoot, config, configPath };
 }
-// shell is confirmed as tool_name:"Bash" / tool_input:{command} (TUI smoke, SPEC-v2.2 R-X1/R-X3).
+// shell is confirmed as tool_name:"Bash" / tool_input:{command} (TUI smoke).
 // Non-shell names (apply_patch / read-family / subagent variants) are still best-guess pending
 // the belay-adapter TUI smoke (G-B2). Unknown names ask with pending approval (R39).
 function mapCodexToolName(toolName) {

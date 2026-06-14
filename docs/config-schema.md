@@ -108,5 +108,5 @@ Use `belay init --preset <name>` or the team config `preset` field:
 | v1 / v2 / v3 | Automatic merge to v4 on load (`migrateConfig`) |
 | v0.x command lists | Use `overrides.allow` / `overrides.external` |
 
-Versioning follows [semver-policy.md](./semver-policy.md). The restorability floor and its
-rules are described in [CONCEPT-v2.0.md](./CONCEPT-v2.0.md) / [ADR-002-concept-conformance.md](./ADR-002-concept-conformance.md).
+Versioning follows [semver-policy.md](./ops/semver-policy.md). The restorability floor and its
+rules are described in [CONCEPT.md](./CONCEPT.md) / [adr/ADR-002-concept-conformance.md](./adr/ADR-002-concept-conformance.md).
