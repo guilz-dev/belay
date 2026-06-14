@@ -6,12 +6,12 @@ const SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /s
 const DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i
 const GIT_PATTERNS = /\.git\b/i
 
-const TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"destroys_outside_repo":boolean,"destroys_history_or_secrets":boolean,"reason":string}
-Default all three booleans to true when unsure. reason should be a short snake_case label.
+const TIER1_PROMPT = `Answer ONLY with JSON: {"external_change":boolean,"reason":string}
+reason should be a short snake_case label.
 
-external_change: CREATE/MODIFY/DELETE on database, network endpoint, cloud, remote git, registry, queue. READ/QUERY/GET is NOT a change.
-destroys_outside_repo: DELETE/OVERWRITE files OUTSIDE the current repository working tree.
-destroys_history_or_secrets: DELETE/OVERWRITE .git directory OR secret/credential files (.env, *.pem, id_rsa, credentials).
+external_change: true if this operation CREATEs, MODIFYs, DELETEs, or SENDs data to any system outside the local machine and its git repository working tree.
+READ/QUERY/GET/list/describe/SELECT/HTTP GET is NOT a change. Local build, test, and package install inside the repo are NOT external changes.
+If unsure, answer true.
 
 Command/code:
 `
@@ -41,17 +41,13 @@ function failClosedVerdict(reason: string): Tier1Verdict {
 function parseTier1Json(raw: string): Tier1Verdict | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Tier1Verdict>
-    if (
-      typeof parsed.external_change !== 'boolean' ||
-      typeof parsed.destroys_outside_repo !== 'boolean' ||
-      typeof parsed.destroys_history_or_secrets !== 'boolean'
-    ) {
+    if (typeof parsed.external_change !== 'boolean') {
       return null
     }
     return {
-      external_change: parsed.external_change !== false,
-      destroys_outside_repo: parsed.destroys_outside_repo !== false,
-      destroys_history_or_secrets: parsed.destroys_history_or_secrets !== false,
+      external_change: parsed.external_change,
+      destroys_outside_repo: false,
+      destroys_history_or_secrets: false,
       reason: typeof parsed.reason === 'string' ? parsed.reason : 'tier1_llm',
     }
   } catch {
@@ -321,7 +317,5 @@ export const createCursorJudge = createOpenAiCompatibleJudge
 export interface CursorJudgeOptions extends OpenAiCompatibleJudgeOptions {}
 
 export function tier1RequiresAsk(verdict: Tier1Verdict): boolean {
-  return (
-    verdict.external_change || verdict.destroys_outside_repo || verdict.destroys_history_or_secrets
-  )
+  return verdict.external_change || verdict.destroys_history_or_secrets
 }

@@ -63,13 +63,13 @@ describe('T11 init judge setup matrix', () => {
     ).rejects.toBeInstanceOf(JudgeEndpointRequiredError)
   })
 
-  it('defaults fresh init to cursor profile without explicit cloud consent flags', async () => {
+  it('defaults fresh init to local ollama judge without explicit flags', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     const config = await loadConfigFile(repoRoot)
-    expect(config.judge.provider).toBe('openai-compatible')
-    expect(config.judge.model).toBe('auto')
-    expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
+    expect(config.judge.provider).toBe('ollama')
+    expect(config.judge.model).toBe('gemma4:e2b')
+    expect(config.judge.endpoint).toBe('http://localhost:11434')
   })
 
   it('writes local-ollama profile as version 4', async () => {

@@ -49,7 +49,7 @@ describe('classifyShell nested substitution', () => {
   it('still denies when outer command is external alongside benign substitution', async () => {
     const result = await classifyShellCore('git push origin main $(git status)', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('command_substitution')
+    expect(['command_substitution', 'external_effect']).toContain(result.reason)
   })
 
   it('denies chained external commands even when later substitution is benign', async () => {

@@ -4,7 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadApprovalState, loadConfigFile, pendingApprovalsPath, approvedApprovalsPath } from '../config-io.js'
+import {
+  approvedApprovalsPath,
+  loadApprovalState,
+  loadConfigFile,
+  pendingApprovalsPath,
+} from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 
@@ -30,7 +35,14 @@ async function initIsolatedRepo() {
   })
   await writeFile(
     path.join(repoRoot, '.cursor', 'belay.config.json'),
-    `${JSON.stringify(config, null, 2)}\n`,
+    `${JSON.stringify(
+      mergeConfig({
+        ...config,
+        mode: 'enforce',
+      }),
+      null,
+      2,
+    )}\n`,
   )
   return repoRoot
 }
@@ -144,7 +156,7 @@ describe('generated hook runtime', () => {
     const repoRoot = await initIsolatedRepo()
 
     const readonly = await runRunner(repoRoot, 'belay-shell-gate', {
-      command: 'rg plan src',
+      command: 'curl https://example.com',
       cwd: repoRoot,
     })
     expect(JSON.parse(readonly.stdout)).toEqual({ permission: 'allow' })
@@ -315,6 +327,7 @@ describe('generated hook runtime', () => {
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
+          mode: 'enforce',
           controlPlane: { enabled: true, configDir: controlPlaneDir, integrity: 'hash-pinned' },
         }),
         null,

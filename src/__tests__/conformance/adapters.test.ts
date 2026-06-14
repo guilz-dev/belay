@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { claudeAdapter } from '../../adapters/claude/adapter.js'
 import { cursorAdapter } from '../../adapters/cursor/adapter.js'
@@ -14,6 +14,8 @@ import {
 } from '../../adapters/shared/gate-runtime.js'
 import { type BelayConfigV3, mergeConfig } from '../../core/config.js'
 import { scrubValue } from '../../core/scrub.js'
+import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
+import * as judgeFactory from '../../core/v2/judge-factory.js'
 
 const shellScenarios = [
   { command: 'git status', permission: 'allow' as const },
@@ -40,15 +42,22 @@ async function withAdapterRepo(
 }
 
 describe('adapter conformance suite', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   for (const adapter of [cursorAdapter, claudeAdapter]) {
     describe(adapter.name, () => {
       for (const scenario of shellScenarios) {
         it(`${scenario.command || '(empty)'} -> ${scenario.permission}`, async () => {
+          vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(
+            createDeterministicJudgeStub(),
+          )
           await withAdapterRepo(adapter, async (repoRoot, config) => {
             const ctx = {
               layout: adapter.layout,
               repoRoot,
-              config,
+              config: { ...config, mode: 'enforce' as const },
               configPath: adapter.layout.configPath(repoRoot),
             }
             const deps = createDefaultGateRuntimeDeps()
@@ -81,7 +90,7 @@ describe('adapter conformance suite', () => {
           const ctx = {
             layout: adapter.layout,
             repoRoot,
-            config,
+            config: { ...config, mode: 'enforce' as const },
             configPath: adapter.layout.configPath(repoRoot),
           }
           const deps = createDefaultGateRuntimeDeps()

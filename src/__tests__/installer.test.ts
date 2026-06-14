@@ -81,7 +81,7 @@ describe('agent-belay installer', () => {
     }
     expect(await readFile(runnerPath, 'utf8')).toContain('resolve_node')
     expect(await readFile(runnerCmdPath, 'utf8')).toContain('NODE_BIN')
-    expect(await readFile(configPath, 'utf8')).toContain('"mode": "enforce"')
+    expect(await readFile(configPath, 'utf8')).toContain('"mode": "audit"')
     expect(await readFile(configPath, 'utf8')).toContain('"version": 4')
   })
 
@@ -144,7 +144,7 @@ describe('agent-belay installer', () => {
     expect(config.egress.demoteL3External).toBe(true)
     expect(config.approvalSigning.required).toBe(true)
     expect(config.controlPlane.isolation.mode).toBe('separate-user')
-    expect(config.policy.unknownLocalEffect).toBe('deny')
+    expect(config.policy.unknownLocalEffect).toBe('allow_flagged')
     expect(config.policy.unparseableShell).toBe('deny')
   })
 

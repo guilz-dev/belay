@@ -33,6 +33,7 @@ async function createGitRepo(): Promise<string> {
 function transactionalConfig() {
   return {
     ...DEFAULT_CONFIG_V3,
+    mode: 'enforce' as const,
     policy: {
       ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: 'allow_flagged' as const,

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -18,6 +18,7 @@ import {
   gateVerdictToCodexUserPromptResponse,
 } from '../../adapters/shared/gate-runtime.js'
 import { loadConfigFile, pendingApprovalsPath } from '../../config-io.js'
+import { mergeConfig } from '../../core/config.js'
 import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
 
 async function runCodexRunner(
@@ -120,6 +121,12 @@ describe('codex adapter (experimental)', () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-unmapped-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
+      const configPath = codexLayout.configPath(repoRoot)
+      const installed = await loadConfigFile(repoRoot)
+      await writeFile(
+        configPath,
+        `${JSON.stringify(mergeConfig({ ...installed, mode: 'enforce' }), null, 2)}\n`,
+      )
 
       const result = await runCodexRunner(
         repoRoot,

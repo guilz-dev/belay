@@ -26,6 +26,7 @@ import {
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
 import {
+  APPROVAL_EXECUTION_LEASE_MS,
   type ApprovalStateFile,
   approvalCommandMatch,
   approvedApprovalsFile,
@@ -34,7 +35,6 @@ import {
   type ClassifyResult,
   canonicalStringify,
   classifierOptionsFromConfig,
-  APPROVAL_EXECUTION_LEASE_MS,
   compactApprovals,
   configuredControlPlaneDir,
   createApprovalRecord,

@@ -18,6 +18,7 @@ const tempDirs: string[] = []
 function sandboxBrokerConfig(): BelayConfigV3 {
   return {
     ...DEFAULT_CONFIG_V3,
+    mode: 'enforce',
     policy: {
       ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: 'allow_flagged' as const,
