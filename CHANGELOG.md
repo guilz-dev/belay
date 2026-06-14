@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.1.2 — 2026-06-14
+
+### Fixed
+
+- **approval loop** — keep approved entries on a short execution lease so duplicate Cursor `beforeShellExecution` invocations for one retry do not burn one-shot approval early
+- **init-wizard** — treat empty Enter answers as bracket defaults for adapter, scope, and yes/no prompts
+- **approval loop** — allow `belay approve <id>` / `belay revoke <id>` commands under fail-closed shell policy to avoid self-deadlock during one-shot approval handling
+- **test/build classification** — resolve `pnpm` shorthand (`pnpm build`, `pnpm test`) and exec-like test invocations (`pnpm vitest ...`) so routine verification commands are not blocked as unknown launcher calls
+- **wizard UX** — default judge profile now tracks adapter (`cursor`/`claude`/`codex`), expose all judge profiles in `init-wizard`, and move dogfood behind a developer-options question
+- **ADR default alignment** — fresh config now starts in `mode: audit` with `policy.unknownLocalEffect: allow_flagged`; `policy.unparseableShell: deny` remains fail-closed
+- **MUST-ALLOW hard gate** — structural suite now explicitly gates `pnpm test`, `pnpm build`, `pnpm vitest ...`, and `belay approve ...` in CI
+
 ## 0.1.1 — 2026-06-14
 
 ### Added

@@ -50,7 +50,7 @@ export interface InitOptions {
   adapter?: AdapterName
   scope?: InstallScope
   preset?: import('./presets.js').ConfigPresetName
-  judgeProfile?: 'local-ollama'
+  judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
   judgeModel?: string
   judgeEndpoint?: string

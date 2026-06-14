@@ -8,6 +8,7 @@ export interface WizardAnswers {
   adapter: AdapterName
   scope: 'project' | 'global'
   withSkill: boolean
+  judgeProfile: 'local-ollama' | 'cursor' | 'claude' | 'codex'
   dogfood: boolean
 }
 
@@ -38,6 +39,22 @@ export function parseYesNo(value: string | undefined, defaultValue: boolean): bo
   return defaultValue
 }
 
+export function parseJudgeProfile(
+  value: string | undefined,
+  defaultProfile: 'local-ollama' | 'cursor' | 'claude' | 'codex',
+): 'local-ollama' | 'cursor' | 'claude' | 'codex' {
+  const normalized = (value?.trim() || defaultProfile).toLowerCase()
+  if (
+    normalized === 'local-ollama' ||
+    normalized === 'cursor' ||
+    normalized === 'claude' ||
+    normalized === 'codex'
+  ) {
+    return normalized
+  }
+  throw new Error(`Unknown judge profile: ${value ?? '(empty)'}`)
+}
+
 export function buildInitOptionsFromWizard(
   answers: WizardAnswers,
   targetDir?: string,
@@ -47,6 +64,7 @@ export function buildInitOptionsFromWizard(
     adapter: answers.adapter,
     scope: answers.scope,
     withSkill: answers.withSkill,
+    judgeProfile: answers.judgeProfile,
     dogfood: answers.dogfood,
   }
 }
@@ -55,15 +73,25 @@ export async function runInitWizard(options: { targetDir?: string } = {}) {
   const rl = readline.createInterface({ input, output })
   try {
     output.write('belay init wizard\n')
-    const adapter = parseAdapter(await rl.question('Adapter (cursor/claude/codex) [cursor]: '))
-    const scope = parseScope(await rl.question('Install scope (project/global) [project]: '))
+    const adapter = parseAdapter(await rl.question('Adapter [cursor | claude | codex] (cursor): '))
+    const scope = parseScope(await rl.question('Install scope [project | global] (project): '))
     const withSkill = parseYesNo(
-      await rl.question('Install SKILL.md and slash commands? (y/n) [y]: '),
+      await rl.question('Install SKILL.md and slash commands? [y | n] (y): '),
       true,
     )
-    const dogfood = parseYesNo(await rl.question('Start in audit dogfood mode? (y/n) [n]: '), false)
+    // Show Tier1 judge choice explicitly so init defaults are visible in wizard UX.
+    const defaultJudgeProfile = adapter
+    const judgeProfile = parseJudgeProfile(
+      await rl.question(
+        `Tier1 judge profile [cursor | claude | codex | local-ollama] (${defaultJudgeProfile}): `,
+      ),
+      defaultJudgeProfile,
+    )
     return initProject(
-      buildInitOptionsFromWizard({ adapter, scope, withSkill, dogfood }, options.targetDir),
+      buildInitOptionsFromWizard(
+        { adapter, scope, withSkill, judgeProfile, dogfood: false },
+        options.targetDir,
+      ),
     )
   } finally {
     rl.close()

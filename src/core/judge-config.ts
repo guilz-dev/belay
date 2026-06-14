@@ -1,7 +1,7 @@
 import type { BelayJudgeConfig } from './config.js'
 import { normalizeJudgeProvider } from './config.js'
 
-export type JudgeProfileName = 'local-ollama'
+export type JudgeProfileName = 'local-ollama' | 'cursor' | 'claude' | 'codex'
 
 export const JUDGE_PROFILE_LOCAL_OLLAMA: BelayJudgeConfig = {
   provider: 'ollama',
@@ -11,8 +11,27 @@ export const JUDGE_PROFILE_LOCAL_OLLAMA: BelayJudgeConfig = {
   keepAlive: '30m',
 }
 
+export const JUDGE_PROFILE_CURSOR: BelayJudgeConfig = {
+  provider: 'openai-compatible',
+  model: 'auto',
+  endpoint: 'https://api.openai.com/v1',
+  timeoutMs: 8000,
+  keepAlive: null,
+}
+
+export const JUDGE_PROFILE_CLAUDE: BelayJudgeConfig = {
+  ...JUDGE_PROFILE_CURSOR,
+}
+
+export const JUDGE_PROFILE_CODEX: BelayJudgeConfig = {
+  ...JUDGE_PROFILE_CURSOR,
+}
+
 export const JUDGE_PROFILES: Record<JudgeProfileName, BelayJudgeConfig> = {
   'local-ollama': JUDGE_PROFILE_LOCAL_OLLAMA,
+  cursor: JUDGE_PROFILE_CURSOR,
+  claude: JUDGE_PROFILE_CLAUDE,
+  codex: JUDGE_PROFILE_CODEX,
 }
 
 export interface ResolveJudgeConfigInput {
@@ -99,6 +118,7 @@ export function resolveInitJudgeConfig(input: {
   judgeEndpoint?: string
   acceptCloudJudge?: boolean
   existingJudge?: BelayJudgeConfig
+  defaultJudgeProfile?: JudgeProfileName
 }): BelayJudgeConfig {
   if (input.hasExplicitJudgeFlags) {
     const judge = resolveJudgeConfig({
@@ -120,5 +140,5 @@ export function resolveInitJudgeConfig(input: {
     return judge
   }
 
-  return resolveJudgeConfig({ judgeProfile: 'local-ollama' })
+  return resolveJudgeConfig({ judgeProfile: input.defaultJudgeProfile ?? 'cursor' })
 }

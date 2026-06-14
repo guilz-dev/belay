@@ -1,5 +1,8 @@
 import type { ApprovalRecord, ApprovalStateFile } from './types.js'
 
+/** Cursor may invoke the same shell gate more than once per retry; lease covers that window. */
+export const APPROVAL_EXECUTION_LEASE_MS = 60_000
+
 export function nowIso(): string {
   return new Date().toISOString()
 }
@@ -8,10 +11,19 @@ export function isExpired(approval: ApprovalRecord): boolean {
   return Date.parse(approval.expiresAt) <= Date.now()
 }
 
+export function isExecutionLeaseExpired(approval: ApprovalRecord): boolean {
+  if (!approval.executionLeaseExpiresAt) {
+    return false
+  }
+  return Date.parse(approval.executionLeaseExpiresAt) <= Date.now()
+}
+
 export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
   return {
     version: state.version,
-    approvals: state.approvals.filter((approval) => !isExpired(approval)),
+    approvals: state.approvals.filter(
+      (approval) => !isExpired(approval) && !isExecutionLeaseExpired(approval),
+    ),
   }
 }
 
@@ -41,8 +53,15 @@ export function escapeRegex(value: string): string {
 
 export function approvalCommandMatch(prompt: string, tokenPrefix: string): string | null {
   const escapedPrefix = escapeRegex(tokenPrefix)
-  const match = prompt.match(new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, 'i'))
-  return match?.[1] ?? null
+  const linePattern = new RegExp(`^\\s*${escapedPrefix}\\s+(\\S+)\\s*$`, 'i')
+  for (const line of prompt.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue
+    }
+    const match = line.match(linePattern)
+    return match?.[1] ?? null
+  }
+  return null
 }
 
 export function buildRetryInstruction(tokenPrefix: string, approvalId: string): string {

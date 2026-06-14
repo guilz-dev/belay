@@ -2,16 +2,30 @@
 name: belay
 description: >-
   Guides approval when belay blocks a high-risk shell command, subagent launch,
-  or tool action. Use when an action is denied, blocked, or needs belay-approve, or when
-  installing or checking belay hook health in a repository.
+  or tool action across Cursor, Claude Code, and Codex. Use when an action is
+  denied, blocked, or needs belay-approve, or when installing or checking belay
+  hook health in a repository.
 disable-model-invocation: true
 ---
 
 # Belay
 
-Belay installs repo-local hooks that gate high-risk shell commands, tool actions, and
-subagent launches. Enforcement lives in hooks; this skill only explains the flow and
-routes you to the CLI. It does not classify commands itself.
+Belay is a safety gate for coding agents: it inspects each shell command,
+subagent launch, and file mutation *before* it runs, lets safe-and-local actions
+through, and holds back only the irreversible-and-catastrophic ones for one-shot
+human approval. Every decision is written to an audit log.
+
+It runs on **Cursor**, **Claude Code**, and **Codex (experimental)**, wiring the
+same classifier into each agent through its native hooks:
+
+| Agent | Hook config |
+| --- | --- |
+| Cursor | `.cursor/hooks.json` |
+| Claude Code | `.claude/settings.json` |
+| Codex | `.codex/config.toml` |
+
+Enforcement lives in those hooks; this skill only explains the flow and routes
+you to the CLI. It does not classify commands itself.
 
 ## Prerequisites
 
@@ -28,7 +42,9 @@ check whether hooks are present.
 
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
-For install health, use `/belay status` or `belay status`.
+For install health and audit visibility, use `/belay status` or `belay status`.
+For audit-only summary, use `/belay report` or `belay report`.
+For recovery advice after a block, use `/belay recover` or `belay recover`.
 
 ## Install or repair
 
@@ -44,5 +60,7 @@ Do not run init or doctor implicitly from this skill — only when the user asks
 | --- | --- |
 | Why was this blocked? | `belay explain --command "..."` |
 | Explain latest pending ask | `belay explain` |
-| Status / dogfood | `belay status` |
+| Status / dogfood / audit visibility | `belay status` |
+| Audit summary (read-only) | `belay report` |
+| Recovery advice (advisory only) | `belay recover` |
 | Approve once | `belay approve <id>` |

@@ -163,6 +163,7 @@ async function applyInitJudgeConfig(
     judgeEndpoint: options.judgeEndpoint,
     acceptCloudJudge: options.acceptCloudJudge,
     existingJudge: mergedConfig.judge,
+    defaultJudgeProfile: adapterName,
   })
   const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge })
   await writeConfigFile(repoRoot, configWithJudge, adapterName)

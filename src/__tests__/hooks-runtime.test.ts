@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadApprovalState, loadConfigFile, pendingApprovalsPath } from '../config-io.js'
+import { loadApprovalState, loadConfigFile, pendingApprovalsPath, approvedApprovalsPath } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 
@@ -98,7 +98,7 @@ describe('generated hook runtime', () => {
     const approvalId = pending.approvals[0].approvalId
 
     const approvedPrompt = await runRunner(repoRoot, 'belay-before-submit', {
-      prompt: `/belay-approve ${approvalId}`,
+      prompt: `/belay-approve ${approvalId}\nplease continue`,
     })
     const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
     expect(approvedPromptJson.continue).toBe(false)
@@ -109,6 +109,29 @@ describe('generated hook runtime', () => {
       cwd: repoRoot,
     })
     expect(JSON.parse(allowed.stdout)).toEqual({ permission: 'allow' })
+
+    const allowedAgain = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(allowedAgain.stdout)).toEqual({ permission: 'allow' })
+
+    const approvedPath = approvedApprovalsPath(repoRoot, config)
+    const approved = await readJson(approvedPath)
+    await writeFile(
+      approvedPath,
+      `${JSON.stringify(
+        {
+          ...approved,
+          approvals: approved.approvals.map((entry: { executionLeaseExpiresAt?: string }) => ({
+            ...entry,
+            executionLeaseExpiresAt: '2026-01-01T00:00:00.000Z',
+          })),
+        },
+        null,
+        2,
+      )}\n`,
+    )
 
     const deniedAgain = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'git push origin main',

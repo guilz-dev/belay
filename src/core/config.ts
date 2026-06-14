@@ -238,9 +238,9 @@ export const LEGACY_POLICY_V3: BelayPolicyConfig = {
   fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 }
 
-/** Fresh v0.4+ install defaults (fail-closed). */
+/** Fresh install defaults: recoverable-first with opaque/unparseable fail-closed. */
 export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
-  unknownLocalEffect: 'deny',
+  unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'deny',
   codexUnmappedTool: 'deny',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
@@ -336,7 +336,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
 
 export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
   version: 4,
-  mode: DEFAULT_CONFIG_V2.mode,
+  mode: 'audit',
   approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
   tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
   gates: { ...DEFAULT_CONFIG_V2.gates },

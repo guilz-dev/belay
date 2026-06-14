@@ -1,8 +1,10 @@
 export {
+  APPROVAL_EXECUTION_LEASE_MS,
   approvalCommandMatch,
   buildRetryInstruction,
   compactApprovals,
   createApprovalRecord,
+  isExecutionLeaseExpired,
   isExpired,
   mergeApprovalStates,
   nowIso,

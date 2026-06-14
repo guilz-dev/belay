@@ -30,7 +30,15 @@ const WRAPPER_TRANSFORMS: Array<(core: string) => string> = [
   },
 ]
 
-const MUST_ALLOW = ['npm test', 'npm run build', "bash -lc 'git status'"]
+const MUST_ALLOW = [
+  'npm test',
+  'npm run build',
+  'pnpm test',
+  'pnpm build',
+  'pnpm vitest run src/example.test.ts',
+  "bash -lc 'git status'",
+  'belay approve belay_deadbeef1234',
+]
 
 describe('v2 structural suite', () => {
   const context = v2TestContext()

@@ -46,6 +46,28 @@ describe('v2 launcher-resolve', () => {
     expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json --outDir ../published'])
   })
 
+  it('resolves pnpm shorthand scripts without run', () => {
+    const resolution = resolveLauncherRecipe({
+      tokens: ['pnpm', 'build'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      depth: 0,
+    })
+    expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json'])
+    expect(resolution?.opaque).toBe(false)
+  })
+
+  it('treats pnpm vitest as exec-like local routine', () => {
+    const resolution = resolveLauncherRecipe({
+      tokens: ['pnpm', 'vitest', 'run', 'src/example.test.ts'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      depth: 0,
+    })
+    expect(resolution?.recipes).toEqual(['vitest run src/example.test.ts'])
+    expect(resolution?.opaque).toBe(false)
+  })
+
   it('resolves npm test recipe', () => {
     const resolution = resolveLauncherRecipe({
       tokens: ['npm', 'test'],
@@ -87,6 +109,11 @@ describe('v2 launcher-resolve', () => {
     const result = await verdict('npm run build -- --outDir ../published', ctx)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('repo_outside_mutation')
+  })
+
+  it('allows pnpm vitest run under fail-closed defaults', async () => {
+    const result = await verdict('pnpm vitest run src/example.test.ts', ctx)
+    expect(result.permission).toBe('allow')
   })
 
   it('classifies each line of a multi-line make target', async () => {
