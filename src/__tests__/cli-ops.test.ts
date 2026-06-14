@@ -8,6 +8,7 @@ import { revokeApproval } from '../commands/revoke.js'
 import { statusProject } from '../commands/status.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { initProject, upgradeProject } from '../installer.js'
+import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
 
@@ -99,7 +100,9 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(4)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
-    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.0\.1@/)
+    expect(coreAfter).toMatch(
+      new RegExp(`RUNTIME_BUILD_STAMP = "${PACKAGE_VERSION.replace(/\./g, '\\.')}@`),
+    )
     expect(coreAfter).toContain('verdict')
   })
 

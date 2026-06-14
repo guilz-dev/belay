@@ -10,6 +10,45 @@ YOLO で動かしつつ、**取り消せない × 破滅的** な操作だけを
 
 ---
 
+## 対応エージェント
+
+Belay は **Cursor**、**Claude Code**、**Codex（実験的）** の 3 エージェントに対応します。
+いずれも同じ分類器を、各エージェントのネイティブ **hook** 機構経由で動かします。
+
+| エージェント | 状態 | Hook 設定 | belay 設定 |
+| --- | --- | --- | --- |
+| **Cursor** | サポート対象 | `.cursor/hooks.json` | `.cursor/belay.config.json` |
+| **Claude Code** | サポート対象 | `.claude/settings.json` | `.claude/belay.config.json` |
+| **Codex** | 実験的 | `.codex/config.toml` | `.codex/belay.config.json` |
+
+インストール時に `--adapter cursor|claude|codex` で選びます（`init-wizard` でも可）。
+ホストごとに hook イベント名は異なりますが、Belay は同じ runner
+（`belay-tool-gate` / `belay-before-submit` / `belay-audit`）を同等のタイミングで登録します。
+
+| 役割 | belay hook | Cursor | Claude Code | Codex |
+| --- | --- | --- | --- | --- |
+| シェル・ツール・ファイル変更のゲート | `belay-tool-gate` | `beforeShellExecution`, `preToolUse` | `PreToolUse` | `PreToolUse` |
+| サブエージェント起動のゲート | `belay-tool-gate` | `subagentStart` | （`PreToolUse` 経由） | `SubagentStart` |
+| ワンショット承認 | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
+| 監査ログ | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
+
+クイックスタート例:
+
+```bash
+npx @guilz-dev/belay init-wizard
+npx @guilz-dev/belay init --adapter claude   # Claude Code
+npx @guilz-dev/belay init --adapter codex    # Codex（実験的）
+npx @guilz-dev/belay init                     # Cursor（既定）
+```
+
+承認・判定は `.cursor/belay/audit.ndjson`、`.claude/belay/audit.ndjson`、
+`.codex/belay/audit.ndjson` のいずれかに記録されます（アダプター依存）。
+
+スキルだけを入れた場合（`npx skills add`）は UX 補助のみで、**hook による強制は有効になりません**。
+リポジトリで `belay init` を実行してください。
+
+---
+
 ## まず読むもの
 
 | 文書 | 内容 |

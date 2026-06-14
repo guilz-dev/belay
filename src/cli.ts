@@ -24,6 +24,7 @@ import {
   stopEgressProxy,
 } from './services/egress-service.js'
 import { formatSandboxStatusReport, sandboxStatus } from './services/sandbox-service.js'
+import { PACKAGE_VERSION } from './version.js'
 
 function parseArgs(argv: string[]) {
   const [command, ...rest] = argv
@@ -71,6 +72,13 @@ function parseArgs(argv: string[]) {
     judgeEndpoint?: string
     acceptCloudJudge?: boolean
   } = {}
+
+  if (!command || command === '--help' || command === '-h') {
+    return { command: 'help', options }
+  }
+  if (command === '--version' || command === '-V') {
+    return { command: 'version', options }
+  }
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index]
@@ -399,6 +407,11 @@ async function main() {
     const { command, options } = parseArgs(process.argv.slice(2))
     if (command === 'help') {
       printHelp()
+      return
+    }
+
+    if (command === 'version') {
+      process.stdout.write(`${PACKAGE_VERSION}\n`)
       return
     }
 

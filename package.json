@@ -1,6 +1,6 @@
 {
   "name": "@guilz-dev/belay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",
@@ -48,7 +48,9 @@
     "agent-belay-logo.png"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/build-runtime.mjs",
+    "build": "rm -rf dist && node scripts/sync-version.mjs && tsc -p tsconfig.build.json && node scripts/build-runtime.mjs",
+    "check:version": "node scripts/check-cli-version.mjs",
+    "prepublishOnly": "pnpm build && node scripts/check-cli-version.mjs",
     "lint": "biome check src package.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts docs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && vitest run",

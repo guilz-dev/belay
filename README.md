@@ -8,10 +8,10 @@
 
 [Documentation (日本語)](./docs/README.ja.md)
 
-`@guilz-dev/belay` hooks into agent runtimes (Cursor, Claude Code) and inspects
-each shell command, subagent launch, and file mutation *before* it runs. Most
-actions pass through untouched. Only the irreversible-and-catastrophic ones are
-held back for one-shot human approval — and every decision is written to an
+`@guilz-dev/belay` hooks into agent runtimes (Cursor, Claude Code, Codex) and
+inspects each shell command, subagent launch, and file mutation *before* it runs.
+Most actions pass through untouched. Only the irreversible-and-catastrophic ones
+are held back for one-shot human approval — and every decision is written to an
 audit log.
 
 <p align="center">
@@ -20,6 +20,30 @@ audit log.
 
 > **0.0.x early release** — APIs and behavior may change. Cursor and Claude Code
 > are the supported adapters; Codex is experimental.
+
+## Supported agents
+
+Belay works across three coding agents. Each one runs the **same classifier**,
+wired in through that agent's native **hook** mechanism — no agent-specific
+policy to maintain.
+
+| Agent | Status | Hook config | belay config |
+|-------|--------|-------------|--------------|
+| **Cursor** | Supported | `.cursor/hooks.json` | `.cursor/belay.config.json` |
+| **Claude Code** | Supported | `.claude/settings.json` | `.claude/belay.config.json` |
+| **Codex** | Experimental | `.codex/config.toml` | `.codex/belay.config.json` |
+
+Pick the adapter at install time with `--adapter cursor|claude|codex` (or let
+`init-wizard` prompt). Hosts use different hook event names, but Belay registers
+the same runners (`belay-tool-gate`, `belay-before-submit`, `belay-audit`) at
+equivalent lifecycle points:
+
+| Role | belay hook | Cursor | Claude Code | Codex |
+|------|-----------|--------|-------------|-------|
+| Gate shell / tools / file mutations | `belay-tool-gate` | `beforeShellExecution`, `preToolUse` | `PreToolUse` | `PreToolUse` |
+| Gate subagent launches | `belay-tool-gate` | `subagentStart` | (via `PreToolUse`) | `SubagentStart` |
+| One-shot approvals | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
+| Audit log | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
 
 ## Why
 
@@ -48,6 +72,7 @@ npx @guilz-dev/belay init-wizard
 
 # Or non-interactive
 npx @guilz-dev/belay init --adapter claude   # Claude Code
+npx @guilz-dev/belay init --adapter codex    # Codex (experimental)
 npx @guilz-dev/belay init                     # Cursor (default)
 ```
 
@@ -64,10 +89,10 @@ verdict and `overrides.allow` to whitelist commands you trust.
 
 ## How it works
 
-Belay registers hooks on the host runtime (`.cursor/hooks.json` or
-`.claude/settings.json`) and gates shell execution, subagent launches, and file
-mutations through one shared classifier. It always forms its own judgment — it
-does not trust an assessment supplied by the agent.
+Belay registers hooks on the host runtime (`.cursor/hooks.json`,
+`.claude/settings.json`, or `.codex/config.toml`) and gates shell execution,
+subagent launches, and file mutations through one shared classifier. It always
+forms its own judgment — it does not trust an assessment supplied by the agent.
 
 Every gated action gets one of three verdicts:
 
@@ -84,7 +109,8 @@ When an action is denied, approve the **next matching action once** by sending:
 ```
 
 Approvals are one-shot and expire after 15 minutes by default. Every decision is
-written to `.cursor/belay/audit.ndjson` (or `.claude/belay/audit.ndjson`).
+written to `.cursor/belay/audit.ndjson`, `.claude/belay/audit.ndjson`, or
+`.codex/belay/audit.ndjson` (depending on the adapter).
 
 In **audit mode** (`mode: "audit"`), would-be denials are recorded
 (`wouldBlock: true`) but execution still continues, and no approval IDs are
@@ -247,6 +273,14 @@ Belay state files are local runtime artifacts and should usually stay out of git
 .cursor/hooks/belay-*
 .cursor/skills/belay/
 .cursor/commands/belay-approve.md
+
+.claude/belay/
+.claude/belay.config.json
+.claude/hooks/belay-*
+
+.codex/belay/
+.codex/belay.config.json
+.codex/hooks/belay-*
 ```
 
 ## Library exports

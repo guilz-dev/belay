@@ -2,16 +2,30 @@
 name: belay
 description: >-
   Guides approval when belay blocks a high-risk shell command, subagent launch,
-  or tool action. Use when an action is denied, blocked, or needs belay-approve, or when
-  installing or checking belay hook health in a repository.
+  or tool action across Cursor, Claude Code, and Codex. Use when an action is
+  denied, blocked, or needs belay-approve, or when installing or checking belay
+  hook health in a repository.
 disable-model-invocation: true
 ---
 
 # Belay
 
-Belay installs repo-local hooks that gate high-risk shell commands, tool actions, and
-subagent launches. Enforcement lives in hooks; this skill only explains the flow and
-routes you to the CLI. It does not classify commands itself.
+Belay is a safety gate for coding agents: it inspects each shell command,
+subagent launch, and file mutation *before* it runs, lets safe-and-local actions
+through, and holds back only the irreversible-and-catastrophic ones for one-shot
+human approval. Every decision is written to an audit log.
+
+It runs on **Cursor**, **Claude Code**, and **Codex (experimental)**, wiring the
+same classifier into each agent through its native hooks:
+
+| Agent | Hook config |
+| --- | --- |
+| Cursor | `.cursor/hooks.json` |
+| Claude Code | `.claude/settings.json` |
+| Codex | `.codex/config.toml` |
+
+Enforcement lives in those hooks; this skill only explains the flow and routes
+you to the CLI. It does not classify commands itself.
 
 ## Prerequisites
 
