@@ -29,9 +29,12 @@ SDK. Incrementing it requires a **major** release and migration notes.
 
 ## Config schema
 
-Config `version: 3` is stable for 1.x. New optional fields default safely in
+Config `version: 4` is stable for 2.x. New optional fields default safely in
 `normalizeConfig`. Removing or renaming fields requires a **major** release and
 migration code.
+
+Stable CLI surface (semver applies): `init`, `upgrade`, `doctor`, `explain`, `status`,
+`report`, `recover`, `approve`, `metrics`, `audit`, and config schema v4.
 
 ## Release checklist
 

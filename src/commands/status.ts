@@ -12,6 +12,7 @@ import { compactApprovals } from '../core/approval.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
+import { reportProject } from './report.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
@@ -21,6 +22,7 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
   const expiredPendingCount = countExpiredPending(pendingRaw)
   const operational = await loadOperationalInsights({ targetDir: repoRoot })
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
+  const visibility = await reportProject({ targetDir: repoRoot })
 
   return {
     repoRoot,
@@ -30,6 +32,7 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
     expiredPendingCount,
     dogfood: operational.dogfood,
     health,
+    visibility,
   }
 }
 
@@ -53,31 +56,66 @@ export function formatStatusReport(report: StatusReport): string {
     `Metrics: ${report.dogfood.gateEvents} gate events, ${report.dogfood.wouldBlockCount} would-block (${(report.dogfood.wouldBlockRate * 100).toFixed(1)}%)`,
     `Ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'not yet'}`,
     '',
+    'Audit visibility:',
+    `  Gate events: ${report.visibility.gateEvents}`,
+    `  Ask (would-block): ${report.visibility.askCount}`,
+    `  Flag (allow_flagged): ${report.visibility.flagCount}`,
+    `  Allow (silent pass): ${report.visibility.allowCount}`,
+    `  Silent-pass rate: ${(report.visibility.silentPassRate * 100).toFixed(1)}%`,
+    '',
   ]
 
-  if (report.pending.length === 0 && report.approved.length === 0) {
-    lines.push('No active approvals.')
-    return `${lines.join('\n')}\n`
-  }
-
-  if (report.pending.length > 0) {
-    lines.push('Pending approvals:')
-    for (const approval of report.pending) {
-      lines.push(
-        `- ${approval.approvalId} [${approval.kind}] ${approval.reason} — expires ${approval.expiresAt}`,
-      )
+  if (report.visibility.warnings.length > 0) {
+    lines.push('Audit warnings:')
+    for (const warning of report.visibility.warnings) {
+      lines.push(`- ${warning}`)
     }
     lines.push('')
   }
 
-  if (report.approved.length > 0) {
-    lines.push('Approved (one-shot, not yet consumed):')
-    for (const approval of report.approved) {
-      lines.push(
-        `- ${approval.approvalId} [${approval.kind}] ${approval.reason} — expires ${approval.expiresAt}`,
-      )
+  if (report.visibility.notes.length > 0) {
+    lines.push('Audit notes:')
+    for (const note of report.visibility.notes) {
+      lines.push(`- ${note}`)
+    }
+    lines.push('')
+  }
+
+  if (report.visibility.recentAsks.length > 0) {
+    lines.push('Recent asks:')
+    for (const ask of report.visibility.recentAsks.slice(0, 5)) {
+      const when = ask.timestamp ?? 'unknown-time'
+      lines.push(`- [${when}] (${ask.tier}) ${ask.reason} — ${ask.summary}`)
+    }
+    lines.push('')
+  }
+
+  const approvalLines: string[] = []
+
+  if (report.pending.length === 0 && report.approved.length === 0) {
+    approvalLines.push('No active approvals.')
+  } else {
+    if (report.pending.length > 0) {
+      approvalLines.push('Pending approvals:')
+      for (const approval of report.pending) {
+        approvalLines.push(
+          `- ${approval.approvalId} [${approval.kind}] ${approval.reason} — expires ${approval.expiresAt}`,
+        )
+      }
+      approvalLines.push('')
+    }
+
+    if (report.approved.length > 0) {
+      approvalLines.push('Approved (one-shot, not yet consumed):')
+      for (const approval of report.approved) {
+        approvalLines.push(
+          `- ${approval.approvalId} [${approval.kind}] ${approval.reason} — expires ${approval.expiresAt}`,
+        )
+      }
     }
   }
+
+  lines.push(...approvalLines)
 
   return `${lines.join('\n')}\n`
 }

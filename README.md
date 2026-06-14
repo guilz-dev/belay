@@ -149,6 +149,8 @@ This installs the runtime hooks and also writes helper artifacts for:
 - `.cursor/commands/belay-why.md`
 - `.cursor/commands/belay-explain.md`
 - `.cursor/commands/belay-status.md`
+- `.cursor/commands/belay-report.md`
+- `.cursor/commands/belay-recover.md`
 
 ### Hook runtime only
 
@@ -202,6 +204,8 @@ Optional skill and command artifacts (with `--with-skill`):
 - `.cursor/commands/belay-why.md`
 - `.cursor/commands/belay-explain.md`
 - `.cursor/commands/belay-status.md`
+- `.cursor/commands/belay-report.md`
+- `.cursor/commands/belay-recover.md`
 
 Packaged skill source for `npx skills add`:
 
@@ -210,6 +214,8 @@ Packaged skill source for `npx skills add`:
 - `skills/belay/belay-why.md`
 - `skills/belay/belay-explain.md`
 - `skills/belay/belay-status.md`
+- `skills/belay/belay-report.md`
+- `skills/belay/belay-recover.md`
 
 ## Commands
 
@@ -226,7 +232,10 @@ npx agent-belay dogfood --enforce
 npx agent-belay doctor
 npx agent-belay doctor --fix
 npx agent-belay metrics
+npx agent-belay report
 npx agent-belay status
+npx agent-belay recover
+npx agent-belay recover --command "rm important.ts"
 npx agent-belay explain -- <shell-command>
 npx agent-belay explain --kind subagent -- "deploy to production"
 npx agent-belay explain --kind tool --tool Write -- .env

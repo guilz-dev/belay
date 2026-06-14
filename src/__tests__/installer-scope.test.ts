@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { claudeAdapter } from '../adapters/claude/adapter.js'
 import { codexAdapter } from '../adapters/codex/adapter.js'
@@ -115,6 +115,10 @@ describe('installer scope (T29)', () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot, scope: 'global', withSkill: true })
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ models: [{ name: 'gemma4:e2b' }] }), { status: 200 }),
+    )
 
     const report = await doctorProject({ targetDir: repoRoot })
     expect(report.ok).toBe(true)

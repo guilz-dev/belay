@@ -4,6 +4,12 @@
 
 ### Added
 
+- **SPEC v2.3** — `agent-belay report` (R-V1/R-V2 audit visibility + fence drift warnings)
+- **SPEC v2.3** — `agent-belay recover` (R-R1/R-R2 advisory recovery guidance, show-don't-run)
+- Skill front-door routes: `/belay report`, `/belay recover` (+ bundled command templates)
+- **SPEC v2.3** — review fixes: audit-based recover integration tests (T-R1/T-R2), fence drift deferred notes (not warnings), `--command` Tier1 notice, SECURITY/guarantee-table updates
+- Installer test verifies all bundled slash command templates (report/recover included)
+- T-V1 JSON serialization test; T-R3 audit integration test for irreversible recovery
 - T23: `SKILL.md` snapshot regression test in `skill-quality.test.ts`
 
 ### Changed

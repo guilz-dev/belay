@@ -4,6 +4,8 @@ export { getAdapter, listAdapters } from './adapters/registry.js'
 export type { BelayAdapter } from './adapters/types.js'
 export { doctorProject, formatDoctorReport } from './commands/doctor.js'
 export { explainCommand, formatExplainReport } from './commands/explain.js'
+export { formatRecoverReport, recoverProject } from './commands/recover.js'
+export { formatReport, reportProject } from './commands/report.js'
 export { revokeApproval } from './commands/revoke.js'
 export { formatStatusReport, statusProject } from './commands/status.js'
 export {
@@ -27,6 +29,7 @@ export type {
   ApprovalRecord,
   ApprovalStateFile,
   Assessment,
+  AuditVisibilityReport,
   BelayConfig,
   BelayConfigV1,
   BelayConfigV2,
@@ -37,6 +40,9 @@ export type {
   ExplainOptions,
   ExplainReport,
   InitOptions,
+  RecoverOptions,
+  RecoverReport,
+  ReportOptions,
   RevokeOptions,
   StatusOptions,
   StatusReport,

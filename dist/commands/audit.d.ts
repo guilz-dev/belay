@@ -18,6 +18,7 @@ export interface AuditOptions {
     limit?: number;
     configPath?: string;
 }
+export declare function loadAuditRecords(repoRoot: string): Promise<AuditRecord[]>;
 export declare function auditProject(options: AuditOptions): Promise<{
     subcommand: string;
     records: AuditRecord[];

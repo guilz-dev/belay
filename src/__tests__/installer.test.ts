@@ -9,7 +9,14 @@ import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
 const BUNDLED_SKILL_PATH = new URL('../../skills/belay/SKILL.md', import.meta.url)
-const BUNDLED_COMMAND_PATH = new URL('../../skills/belay/belay-approve.md', import.meta.url)
+const BUNDLED_COMMAND_TEMPLATES = [
+  'belay-approve.md',
+  'belay-why.md',
+  'belay-explain.md',
+  'belay-status.md',
+  'belay-report.md',
+  'belay-recover.md',
+] as const
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-'))
@@ -56,17 +63,22 @@ describe('agent-belay installer', () => {
     expect(hooks.hooks.sessionEnd.at(-1).command).toBe(managedByEvent.sessionEnd.command)
 
     const skillPath = path.join(cursorDir, 'skills', 'belay', 'SKILL.md')
-    const commandPath = path.join(cursorDir, 'commands', 'belay-approve.md')
     const runnerPath = path.join(cursorDir, 'hooks', 'belay-runner')
     const runnerCmdPath = path.join(cursorDir, 'hooks', 'belay-runner.cmd')
     const configPath = path.join(cursorDir, 'belay.config.json')
     const bundledSkill = await readFile(BUNDLED_SKILL_PATH, 'utf8')
-    const bundledCommand = await readFile(BUNDLED_COMMAND_PATH, 'utf8')
     expect(bundledSkill).toContain('name: belay')
     expect(bundledSkill).toContain('description:')
 
     expect(await readFile(skillPath, 'utf8')).toBe(bundledSkill)
-    expect(await readFile(commandPath, 'utf8')).toBe(bundledCommand)
+    for (const fileName of BUNDLED_COMMAND_TEMPLATES) {
+      const bundledCommand = await readFile(
+        new URL(`../../skills/belay/${fileName}`, import.meta.url),
+        'utf8',
+      )
+      const installedPath = path.join(cursorDir, 'commands', fileName)
+      expect(await readFile(installedPath, 'utf8')).toBe(bundledCommand)
+    }
     expect(await readFile(runnerPath, 'utf8')).toContain('resolve_node')
     expect(await readFile(runnerCmdPath, 'utf8')).toContain('NODE_BIN')
     expect(await readFile(configPath, 'utf8')).toContain('"mode": "enforce"')

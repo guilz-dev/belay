@@ -35,7 +35,7 @@ export interface AuditOptions {
   configPath?: string
 }
 
-async function loadAuditRecords(repoRoot: string): Promise<AuditRecord[]> {
+export async function loadAuditRecords(repoRoot: string): Promise<AuditRecord[]> {
   const config = await loadConfigFile(repoRoot)
   const auditLogPath = path.join(repoRoot, config.audit.logPath)
   let raw = ''

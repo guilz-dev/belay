@@ -9,6 +9,8 @@ const BUNDLED_COMMAND_TEMPLATES = [
     'belay-why.md',
     'belay-explain.md',
     'belay-status.md',
+    'belay-report.md',
+    'belay-recover.md',
 ];
 async function readBundledTemplate(fileUrl) {
     try {

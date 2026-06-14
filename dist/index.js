@@ -3,6 +3,8 @@ export { cursorAdapter } from './adapters/cursor/adapter.js';
 export { getAdapter, listAdapters } from './adapters/registry.js';
 export { doctorProject, formatDoctorReport } from './commands/doctor.js';
 export { explainCommand, formatExplainReport } from './commands/explain.js';
+export { formatRecoverReport, recoverProject } from './commands/recover.js';
+export { formatReport, reportProject } from './commands/report.js';
 export { revokeApproval } from './commands/revoke.js';
 export { formatStatusReport, statusProject } from './commands/status.js';
 export { GATE_CONTRACT_VERSION, } from './core/gate-contract.js';

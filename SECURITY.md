@@ -58,6 +58,16 @@ Requires external OS sandbox runtime + running egress proxy. See
 | Control plane (`~/.config/agent-belay/` or `%APPDATA%/agent-belay`) | User-level; must not be writable via gated shell/file tools |
 | Agent shell / tools | Untrusted; classified heuristically |
 
+### Audit and recovery advisory (v2.3)
+
+- **`agent-belay report`** — read-only aggregation of hook audit logs (ask/flag/allow counts,
+  silent-pass rate). Does not introduce new stops or allows.
+- **`agent-belay recover`** — advisory recovery hints only; **never auto-executes** undo commands.
+  Input is primarily stored audit axes (`effect`, `location`, `assessment`). `--command` may
+  re-invoke Tier1 classification (not recovery execution).
+- Advice is limited to redacted hook observations; manual operator actions outside the hook
+  path are not visible to recover.
+
 ### Mitigations in v0.4
 
 - **Fail-closed defaults (fresh install)** — `policy.unknownLocalEffect` and `policy.unparseableShell` default to `"deny"`; control plane defaults to enabled.
