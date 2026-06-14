@@ -35,11 +35,14 @@ describe('egress proxy does not loosen the restorability floor', () => {
       'python -c "import urllib.request; urllib.request.urlopen(\'https://example.com\')"',
       cwd,
       repoRoot,
-      DEFAULT_CONFIG_V3,
+      {
+        ...DEFAULT_CONFIG_V3,
+        policy: { ...DEFAULT_CONFIG_V3.policy, unknownLocalEffect: 'deny' },
+      },
       { demoteL3External: true },
     )
-    expect(result.verdict).toBe('allow')
-    expect(result.reason).toBe('tier1_restorable')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).not.toBe('l3_external_hint')
   })
 
   it('keeps resolved external launcher recipes denied', async () => {

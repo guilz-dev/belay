@@ -37,7 +37,7 @@ describe('capability broker policy', () => {
       unknownLocalEffect: 'deny',
     })
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('outside_repo_mutation')
+    expect(result.reason).toBe('outside_repo_redirect')
   })
 
   it('demotes outside-repo shell denies to capability hints when paths are allowlisted', async () => {

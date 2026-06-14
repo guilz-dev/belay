@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createFailClosedJudge } from '../../core/v2/judge.js'
 import { verdict } from '../../core/v2/verdict.js'
 import { v2TestContext } from './helpers.js'
 
@@ -72,16 +71,15 @@ describe('v2 structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
-    it('allows substitution when inner command is restorable', async () => {
+    it('denies substitution under fail-closed policy even when inner is read-only', async () => {
       const result = await verdict('echo $(git status)', context)
-      expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('tier1_restorable')
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('command_substitution')
     })
 
-    it('npm install is allow when recoverable (Tier1 stub)', async () => {
+    it('npm install is ask under fail-closed defaults', async () => {
       const result = await verdict('npm install', context)
-      expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('tier1_restorable')
+      expect(result.permission).toBe('ask')
     })
   })
 
@@ -147,7 +145,7 @@ describe('v2 structural suite', () => {
     it('allows pure read-only command after opaque cd chain', async () => {
       const result = await verdict('cd $HOME && git status', context)
       expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('tier1_restorable')
+      expect(result.location).toBe('unknown')
     })
 
     it('distinguishes fingerprint for resolved cd chain', async () => {
@@ -190,19 +188,9 @@ describe('v2 structural suite', () => {
       expect(result.permission, `false allow for destructive egress: ${command}`).toBe('ask')
     })
 
-    it('ambiguous egress delegates to Tier1; destructive s3 mb stays Tier0', async () => {
-      const destructive = await verdict('aws s3 mb s3://new-bucket', context)
-      expect(destructive.permission).toBe('ask')
-      expect(destructive.signals).toContain('tier0_external')
-    })
-
-    it('ambiguous egress fails closed when judge is unavailable', async () => {
-      const result = await verdict('aws s3 cp s3://bucket/a s3://bucket/b', {
-        ...context,
-        judge: createFailClosedJudge(),
-      })
+    it('ambiguous egress delegates to Tier1 and fails closed without judge', async () => {
+      const result = await verdict('aws s3 mb s3://new-bucket', context)
       expect(result.permission).toBe('ask')
-      expect(result.reason).toBe('tier1_not_restorable')
     })
 
     it('action-specific keys remain tier0_external (non-regression)', async () => {

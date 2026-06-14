@@ -106,7 +106,7 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       id: 'l1f-deny-outside-repo',
       command: 'echo hi > ../../outside.txt',
       permission: 'deny',
-      reason: 'outside_repo_mutation',
+      reason: 'outside_repo_redirect',
     },
   ],
 }

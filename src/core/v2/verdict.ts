@@ -30,7 +30,6 @@ import type {
   VerdictContext,
   VerdictEffect,
   VerdictLocation,
-  VerdictOpacity,
   VerdictPermission,
   VerdictResult,
 } from './types.js'
@@ -61,6 +60,37 @@ const TIER0_EXTERNAL_HEADS = new Set([
   'redis-cli',
 ])
 
+const READ_ONLY_KEYS = new Set([
+  'cat',
+  'cd',
+  'echo',
+  'git diff',
+  'git log',
+  'git rev-parse',
+  'git show',
+  'git status',
+  'head',
+  'ls',
+  'pwd',
+  'rg',
+  'sort',
+  'tail',
+  'wc',
+  'which',
+  'find',
+])
+
+const PURE_READ_ONLY_KEYS = new Set([
+  'echo',
+  'git diff',
+  'git log',
+  'git rev-parse',
+  'git show',
+  'git status',
+  'pwd',
+  'which',
+])
+
 const LOCAL_MUTATION_KEYS = new Set([
   'chmod',
   'cp',
@@ -77,6 +107,24 @@ const LOCAL_MUTATION_KEYS = new Set([
   'touch',
   'truncate',
 ])
+
+/** Routine local build/test runners resolved from launcher recipes. */
+const LOCAL_ROUTINE_HEADS = new Set([
+  'tsc',
+  'vitest',
+  'vite',
+  'webpack',
+  'esbuild',
+  'rollup',
+  'jest',
+  'mocha',
+  'cargo',
+  'go',
+  'make',
+  'cmake',
+])
+
+const BELAY_SELF_COMMANDS = new Set(['approve', 'revoke'])
 
 const FIND_DANGEROUS_FLAGS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
 
@@ -106,6 +154,18 @@ async function evaluateSubstitutions(
     return null
   }
 
+  if (context.unknownLocalEffect === 'deny') {
+    return askVerdict({
+      location: 'unknown',
+      opacity: 'recursive',
+      effect: 'unknown',
+      confidence: 'deterministic',
+      reason: 'command_substitution',
+      signals: ['command_substitution'],
+    })
+  }
+
+  let worst: InternalSegmentVerdict | null = null
   for (const inner of inners) {
     const innerVerdict = await evaluateSegment(inner, context, depth + 1)
     if (innerVerdict.permission === 'ask') {
@@ -116,9 +176,20 @@ async function evaluateSubstitutions(
         signals: [...innerVerdict.signals, 'command_substitution'],
       })
     }
+    worst = worst ? combineInternal(worst, innerVerdict) : innerVerdict
   }
 
-  return null
+  if (!worst) {
+    return null
+  }
+
+  return {
+    ...worst,
+    permission: 'allow',
+    opacity: 'recursive',
+    reason: 'command_substitution',
+    signals: [...worst.signals, 'command_substitution'],
+  }
 }
 
 function mergeLocation(left: VerdictLocation, right: VerdictLocation): VerdictLocation {
@@ -180,6 +251,16 @@ function allowVerdict(params: Omit<InternalSegmentVerdict, 'permission'>): Inter
   return { ...params, permission: 'allow' }
 }
 
+function withJudgeTrace(
+  verdict: InternalSegmentVerdict,
+  judgeTrace?: JudgeTrace,
+): InternalSegmentVerdict {
+  if (!judgeTrace) {
+    return verdict
+  }
+  return { ...verdict, judgeTrace }
+}
+
 function extractPathArgs(tokens: string[]): string[] {
   const redirects = extractRedirectTargets(tokens)
   const args: string[] = [...redirects]
@@ -200,8 +281,8 @@ function isVariableOrOpaquePathToken(token: string): boolean {
   return token.includes('$') || token.includes('`')
 }
 
-function isLocalMutationHead(key: string, head: string): boolean {
-  return LOCAL_MUTATION_KEYS.has(key) || LOCAL_MUTATION_KEYS.has(head)
+function isPureReadOnlySegment(segment: ReturnType<typeof parseSegment>): boolean {
+  return PURE_READ_ONLY_KEYS.has(segment.key) || PURE_READ_ONLY_KEYS.has(segment.head)
 }
 
 function updateChainState(command: string, state: ChainState): ChainState {
@@ -254,6 +335,12 @@ function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolea
     return true
   }
   return false
+}
+
+function isBelaySelfCommand(tokens: string[]): boolean {
+  const head = tokens[0] ?? ''
+  const subcommand = tokens[1] ?? ''
+  return head === 'belay' && BELAY_SELF_COMMANDS.has(subcommand)
 }
 
 function tier0HighStakesRm(
@@ -313,48 +400,6 @@ function tier0HighStakesRm(
     }
   }
   return null
-}
-
-async function evaluateTier1(
-  command: string,
-  context: VerdictContext,
-  params: {
-    opacity: VerdictOpacity
-    effect: VerdictEffect
-    pathAnalysis: ReturnType<typeof analyzePathTargets>
-    innerCode?: string
-  },
-): Promise<InternalSegmentVerdict> {
-  const tier1 = await context.judge.evaluate({
-    text: command,
-    context: { cwd: context.cwd, repoRoot: context.repoRoot },
-    innerCode: params.innerCode,
-  })
-  const tier1Trace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
-  const location =
-    params.pathAnalysis.location === 'unknown' ? 'unknown' : params.pathAnalysis.location
-
-  if (tier1RequiresAsk(tier1)) {
-    return askVerdict({
-      location,
-      opacity: params.opacity,
-      effect: tier1.external_change ? 'remote_mutation' : params.effect,
-      confidence: 'llm',
-      reason: 'tier1_not_restorable',
-      signals: ['tier1_not_restorable', tier1.reason],
-      judgeTrace: tier1Trace,
-    })
-  }
-
-  return allowVerdict({
-    location: location === 'unknown' ? 'repo_local' : location,
-    opacity: params.opacity,
-    effect: params.effect === 'unknown' ? 'read_only' : params.effect,
-    confidence: 'llm',
-    reason: 'tier1_restorable',
-    signals: ['tier1_restorable', tier1.reason],
-    judgeTrace: tier1Trace,
-  })
 }
 
 async function evaluateSegment(
@@ -473,15 +518,24 @@ async function evaluateSegment(
       repoRoot: context.repoRoot,
       depth,
     })
-    if (!resolution || resolution.opaque || resolution.recipes.length === 0) {
-      return evaluateTier1(command, context, {
-        opacity: resolution?.opaque ? 'opaque' : 'transparent',
+    if (!resolution) {
+      return askVerdict({
+        location: 'unknown',
+        opacity: 'opaque',
         effect: 'unknown',
-        pathAnalysis: {
-          location: 'unknown',
-          isHighStakes: false,
-          signals: [resolution?.reason ?? 'launcher_unresolved'],
-        },
+        confidence: 'deterministic',
+        reason: 'launcher_unresolved',
+        signals: ['launcher_unresolved'],
+      })
+    }
+    if (resolution.opaque || resolution.recipes.length === 0) {
+      return askVerdict({
+        location: 'unknown',
+        opacity: 'opaque',
+        effect: 'unknown',
+        confidence: 'deterministic',
+        reason: resolution.reason,
+        signals: [resolution.reason],
       })
     }
     let innerVerdict: InternalSegmentVerdict | null = null
@@ -490,14 +544,13 @@ async function evaluateSegment(
       innerVerdict = innerVerdict ? combineInternal(innerVerdict, evaluated) : evaluated
     }
     if (!innerVerdict) {
-      return evaluateTier1(command, context, {
+      return askVerdict({
+        location: 'unknown',
         opacity: 'opaque',
         effect: 'unknown',
-        pathAnalysis: {
-          location: 'unknown',
-          isHighStakes: false,
-          signals: [resolution.reason],
-        },
+        confidence: 'deterministic',
+        reason: resolution.reason,
+        signals: [resolution.reason],
       })
     }
     return {
@@ -518,7 +571,6 @@ async function evaluateSegment(
       signals: ['tier0_external', segment.head],
     })
   }
-  // tier0_restorable: egress tools with no payload/mutate flags (structural read, not tool-name allow)
   if (egressClass === 'read') {
     return allowVerdict({
       location: 'external',
@@ -546,9 +598,25 @@ async function evaluateSegment(
     return rmVerdict
   }
 
-  const effect: VerdictEffect = isLocalMutationHead(segment.key, segment.head)
-    ? 'local_mutation'
-    : 'unknown'
+  if (isBelaySelfCommand(peeled)) {
+    return allowVerdict({
+      location: 'unknown',
+      opacity: 'transparent',
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: 'belay_control_plane_command',
+      signals: ['belay_control_plane_command', segment.head],
+    })
+  }
+
+  let effect: VerdictEffect = 'unknown'
+  if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
+    effect = 'read_only'
+  } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
+    effect = 'local_mutation'
+  } else if (LOCAL_ROUTINE_HEADS.has(segment.head)) {
+    effect = 'local_mutation'
+  }
 
   const pathArgs = extractPathArgs(peeled)
   const pathAnalysis = analyzePathTargets({
@@ -561,14 +629,21 @@ async function evaluateSegment(
   })
 
   if (!context.trustedCwd || !context.cwd) {
-    if (
-      isLocalMutationHead(segment.key, segment.head) &&
-      (pathArgs.length > 0 || effect === 'local_mutation')
-    ) {
+    if (opacity === 'opaque' || effect === 'unknown' || effect === 'local_mutation') {
       return askVerdict({
         location: 'unknown',
         opacity,
-        effect,
+        effect: effect === 'read_only' ? 'unknown' : effect,
+        confidence: 'deterministic',
+        reason: 'missing_trusted_cwd',
+        signals: ['missing_trusted_cwd'],
+      })
+    }
+    if (effect === 'read_only' && !isPureReadOnlySegment(segment)) {
+      return askVerdict({
+        location: 'unknown',
+        opacity,
+        effect: 'read_only',
         confidence: 'deterministic',
         reason: 'missing_trusted_cwd',
         signals: ['missing_trusted_cwd'],
@@ -599,10 +674,12 @@ async function evaluateSegment(
   }
 
   if (pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed') {
+    const outsideEffect: VerdictEffect =
+      effect === 'read_only' ? 'read_only' : effect === 'unknown' ? 'local_mutation' : effect
     return askVerdict({
       location: pathAnalysis.location,
       opacity: 'transparent',
-      effect: effect === 'unknown' ? 'local_mutation' : effect,
+      effect: outsideEffect,
       confidence: 'deterministic',
       reason: 'repo_outside_mutation',
       signals: ['repo_outside_mutation', ...pathAnalysis.signals],
@@ -612,7 +689,7 @@ async function evaluateSegment(
   if (
     pathAnalysis.location === 'unknown' &&
     pathArgs.length > 0 &&
-    isLocalMutationHead(segment.key, segment.head)
+    LOCAL_MUTATION_KEYS.has(segment.head)
   ) {
     return askVerdict({
       location: 'unknown',
@@ -624,31 +701,98 @@ async function evaluateSegment(
     })
   }
 
-  // tier0_restorable: repo-local FS mutation with proven path containment
+  const needsTier1 =
+    effect === 'unknown' || TIER0_EXTERNAL_HEADS.has(segment.head) || egressClass === 'ambiguous'
+
+  let tier1Trace: JudgeTrace | undefined
+  if (needsTier1) {
+    const tier1Text = recursiveScript ?? command
+    const tier1 = await context.judge.evaluate({
+      text: tier1Text,
+      context: { cwd: context.cwd, repoRoot: context.repoRoot },
+      innerCode: recursiveScript ?? undefined,
+    })
+    tier1Trace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
+    if (tier1RequiresAsk(tier1)) {
+      return askVerdict({
+        location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
+        opacity,
+        effect: tier1.external_change ? 'remote_mutation' : effect,
+        confidence: 'llm',
+        reason: 'tier1_catastrophic',
+        signals: ['tier1_catastrophic', tier1.reason],
+        judgeTrace: tier1Trace,
+      })
+    }
+  }
+
   if (
     pathAnalysis.location === 'repo_local' &&
-    effect === 'local_mutation' &&
+    (effect === 'read_only' || effect === 'local_mutation') &&
     opacity !== 'opaque'
   ) {
-    return allowVerdict({
-      location: 'repo_local',
-      opacity,
-      effect,
-      confidence: 'assumed_repo_local',
-      reason: 'tier0_restorable',
-      signals: ['tier0_restorable', 'repo_local_mutation'],
-    })
+    return withJudgeTrace(
+      allowVerdict({
+        location: 'repo_local',
+        opacity,
+        effect,
+        confidence: 'assumed_repo_local',
+        reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
+        signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
+      }),
+      tier1Trace,
+    )
+  }
+
+  if (effect === 'read_only') {
+    const readOnlyLocation =
+      context.trustedCwd && context.cwd
+        ? pathAnalysis.location === 'unknown'
+          ? 'repo_local'
+          : pathAnalysis.location
+        : 'unknown'
+    return withJudgeTrace(
+      allowVerdict({
+        location: readOnlyLocation,
+        opacity,
+        effect: 'read_only',
+        confidence: context.trustedCwd && context.cwd ? 'assumed_repo_local' : 'deterministic',
+        reason: 'read_only',
+        signals: ['read_only'],
+      }),
+      tier1Trace,
+    )
   }
 
   if (allowOverride) {
-    return allowFromCustomOverride(opacity)
+    return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace)
   }
 
-  return evaluateTier1(command, context, {
-    opacity,
-    effect,
-    pathAnalysis,
-  })
+  if (context.unknownLocalEffect === 'allow_flagged') {
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+        opacity,
+        effect: 'unknown',
+        confidence: 'assumed_repo_local',
+        reason: 'unknown_local_effect',
+        signals: ['unknown_local_effect'],
+      }),
+      tier1Trace,
+    )
+  }
+
+  return withJudgeTrace(
+    askVerdict({
+      location: pathAnalysis.location,
+      opacity,
+      effect,
+      confidence: 'deterministic',
+      reason: 'unknown_local_effect',
+      signals: ['unknown_local_effect'],
+    }),
+    tier1Trace,
+  )
 }
 
 function toVerdictResult(
