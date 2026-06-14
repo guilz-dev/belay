@@ -352,7 +352,9 @@ function isBelayJudgeSelfCommand(tokens: string[]): boolean {
 function isBelaySelfCommand(tokens: string[]): boolean {
   const head = tokens[0] ?? ''
   const subcommand = tokens[1] ?? ''
-  return head === 'belay' && (BELAY_SELF_COMMANDS.has(subcommand) || isBelayJudgeSelfCommand(tokens))
+  return (
+    head === 'belay' && (BELAY_SELF_COMMANDS.has(subcommand) || isBelayJudgeSelfCommand(tokens))
+  )
 }
 
 function tier0HighStakesRm(

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_CONFIG_V4, migrateConfig, normalizeConfig, normalizeJudgeConfig } from '../core/config.js'
+import {
+  DEFAULT_CONFIG_V4,
+  migrateConfig,
+  normalizeConfig,
+  normalizeJudgeConfig,
+} from '../core/config.js'
 
 describe('mixed-version judge config', () => {
   it('keeps openai-compatible driver when read by legacy normalize path', () => {

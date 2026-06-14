@@ -1,12 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-
+import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
-import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
 import { resolveJudgeCredential } from '../judge-api-key.js'
-import { repoLocalStateDirFor } from '../../config-io.js'
-import { getJudgeProviderSpec } from './judge-catalog.js'
+import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
 import {
   createDeterministicJudgeStub,
   createFailClosedJudge,
@@ -14,6 +12,7 @@ import {
   createOpenAiCompatibleJudge,
   type TracedTier1Judge,
 } from './judge.js'
+import { getJudgeProviderSpec } from './judge-catalog.js'
 
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url)
 
@@ -49,7 +48,10 @@ export async function loadPinnedJudgeModels(): Promise<{
   }
 }
 
-export function resolveJudgeModel(judge: BelayJudgeConfig): { requested: string; resolved: string } {
+export function resolveJudgeModel(judge: BelayJudgeConfig): {
+  requested: string
+  resolved: string
+} {
   const requested = judge.model
   if (requested === 'auto') {
     const spec = judge.providerId ? getJudgeProviderSpec(judge.providerId) : null
@@ -84,9 +86,7 @@ export function createJudgeFromConfig(
 ): TracedTier1Judge {
   const judgeConfig = config.judge
   const provider = normalizeJudgeProvider(judgeConfig.provider)
-  const catalogSpec = judgeConfig.providerId
-    ? getJudgeProviderSpec(judgeConfig.providerId)
-    : null
+  const catalogSpec = judgeConfig.providerId ? getJudgeProviderSpec(judgeConfig.providerId) : null
 
   if (provider === 'openai-compatible') {
     const endpoint = judgeConfig.endpoint?.trim()

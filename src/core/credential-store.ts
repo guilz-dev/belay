@@ -12,10 +12,7 @@ export function credentialStorePath(stateDir: string): string {
   return path.join(stateDir, STORE_FILENAME)
 }
 
-export async function writeJudgeCredentialStore(
-  stateDir: string,
-  apiKey: string,
-): Promise<string> {
+export async function writeJudgeCredentialStore(stateDir: string, apiKey: string): Promise<string> {
   await mkdir(stateDir, { recursive: true, mode: 0o700 })
   const filePath = credentialStorePath(stateDir)
   const payload: JudgeCredentialStoreFile = {

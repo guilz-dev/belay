@@ -422,7 +422,13 @@ function parseArgs(argv: string[]) {
       throw new Error('sandbox requires subcommand: status')
     }
     if (command === 'judge' && !options.judgeSubcommand) {
-      if (token === 'status' || token === 'list' || token === 'use' || token === 'test' || token === 'consent') {
+      if (
+        token === 'status' ||
+        token === 'list' ||
+        token === 'use' ||
+        token === 'test' ||
+        token === 'consent'
+      ) {
         options.judgeSubcommand = token
         continue
       }

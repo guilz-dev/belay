@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_JUDGE_LOCAL_OLLAMA } from '../../core/config.js'
-import { applyCloudConsent, hasValidCloudConsent, resolveJudgeUsePatch } from '../../core/judge-config.js'
+import {
+  applyCloudConsent,
+  hasValidCloudConsent,
+  resolveJudgeUsePatch,
+} from '../../core/judge-config.js'
 
-describe('cloud consent boundaries (plan A\')', () => {
+describe("cloud consent boundaries (plan A')", () => {
   it('does not record consent from acceptCloud in non-interactive mode', () => {
     const { judge, warnings } = resolveJudgeUsePatch(DEFAULT_JUDGE_LOCAL_OLLAMA, {
       providerId: 'openai',

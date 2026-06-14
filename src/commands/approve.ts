@@ -8,9 +8,9 @@ import {
   saveApprovalState,
 } from '../config-io.js'
 import { recordApproval } from '../core/approval-service.js'
+import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { CapabilityApprovalScope } from '../core/capability/types.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
-import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { EgressApprovalScope } from '../core/egress/types.js'
 import { recordEgressApproval } from '../core/egress-approval.js'
 import { createEgressApprovalStore } from '../services/egress-service.js'

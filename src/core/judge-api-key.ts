@@ -1,9 +1,6 @@
 import type { BelayJudgeConfig, JudgeCredentialConfig } from './config.js'
 import { belayStateDir } from './config.js'
-import {
-  parseCredentialRef,
-  readJudgeCredentialStore,
-} from './credential-store.js'
+import { parseCredentialRef, readJudgeCredentialStore } from './credential-store.js'
 import type { JudgeProviderSpec } from './verdict/judge-catalog.js'
 
 export interface ResolvedJudgeCredential {

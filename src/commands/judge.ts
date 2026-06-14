@@ -1,7 +1,6 @@
-import { createInterface } from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
-
 import path from 'node:path'
+import { stdin as input, stdout as output } from 'node:process'
+import { createInterface } from 'node:readline/promises'
 
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -20,20 +19,20 @@ import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
 import { writeJudgeCredentialStore } from '../core/credential-store.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from '../core/integrity.js'
 import { resolveJudgeCredential } from '../core/judge-api-key.js'
+import { ensurePendingJudgeCloudConsentApproval } from '../core/judge-cloud-consent.js'
 import {
   hasValidCloudConsent,
   isCloudJudgeConfig,
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
-import { ensurePendingJudgeCloudConsentApproval } from '../core/judge-cloud-consent.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
-import { resolveJudgeModel } from '../core/verdict/judge-factory.js'
 import {
-  JUDGE_CATALOG,
-  JUDGE_PROVIDER_IDS,
   getJudgeProviderSpec,
   isJudgeProviderId,
+  JUDGE_CATALOG,
+  JUDGE_PROVIDER_IDS,
 } from '../core/verdict/judge-catalog.js'
+import { resolveJudgeModel } from '../core/verdict/judge-factory.js'
 
 export interface JudgeCommandOptions {
   targetDir?: string
@@ -229,7 +228,11 @@ export async function judgeUse(options: JudgeCommandOptions) {
         `Approval ${options.cloudConsentApprovalId} is not an approved judge_cloud_consent.`,
       )
     }
-  } else if (options.acceptCloud && !isInteractiveTTY() && getJudgeProviderSpec(providerId)?.isCloud) {
+  } else if (
+    options.acceptCloud &&
+    !isInteractiveTTY() &&
+    getJudgeProviderSpec(providerId)?.isCloud
+  ) {
     throw new Error(
       '--accept-cloud has no effect in non-interactive mode. Use TTY confirmation or --cloud-consent-approval-id.',
     )
@@ -305,7 +308,11 @@ export async function judgeUse(options: JudgeCommandOptions) {
     return result
   }
 
-  const parts = [result.diff, ...result.warnings.map((w) => `Warning: ${w}`), 'Judge config updated.']
+  const parts = [
+    result.diff,
+    ...result.warnings.map((w) => `Warning: ${w}`),
+    'Judge config updated.',
+  ]
   return parts.join('\n')
 }
 
@@ -318,13 +325,12 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
   }
   const spec = getJudgeProviderSpec(providerId)
   if (!spec?.isCloud) {
-    throw new Error(`judge consent applies only to cloud providers (${JUDGE_PROVIDER_IDS.filter((id) => JUDGE_CATALOG[id].isCloud).join(', ')}).`)
+    throw new Error(
+      `judge consent applies only to cloud providers (${JUDGE_PROVIDER_IDS.filter((id) => JUDGE_CATALOG[id].isCloud).join(', ')}).`,
+    )
   }
   const endpoint =
-    options.endpoint?.trim() ||
-    config.judge.endpoint?.trim() ||
-    spec.defaultEndpoint ||
-    ''
+    options.endpoint?.trim() || config.judge.endpoint?.trim() || spec.defaultEndpoint || ''
   if (!endpoint) {
     throw new Error(`${providerId} requires --endpoint for cloud consent request.`)
   }

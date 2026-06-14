@@ -16,7 +16,11 @@ import {
 } from './config-io.js'
 import { isFreshConfigInput, mergeConfig, normalizeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
-import { resolveInitJudgeConfig, hasValidCloudConsent, isCloudJudgeConfig } from './core/judge-config.js'
+import {
+  hasValidCloudConsent,
+  isCloudJudgeConfig,
+  resolveInitJudgeConfig,
+} from './core/judge-config.js'
 import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'

@@ -1,13 +1,12 @@
 import { stdin as input, stdout as output } from 'node:process'
 import readline from 'node:readline/promises'
-
-import { initProject } from '../installer.js'
-import type { AdapterName, InitOptions } from '../types.js'
 import {
   isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
   type JudgeProviderId,
 } from '../core/verdict/judge-catalog.js'
+import { initProject } from '../installer.js'
+import type { AdapterName, InitOptions } from '../types.js'
 
 export interface WizardAnswers {
   adapter: AdapterName
@@ -47,7 +46,10 @@ export function parseYesNo(value: string | undefined, defaultValue: boolean): bo
   return defaultValue
 }
 
-export function parseJudgeProviderId(value: string | undefined, defaultId: JudgeProviderId): JudgeProviderId {
+export function parseJudgeProviderId(
+  value: string | undefined,
+  defaultId: JudgeProviderId,
+): JudgeProviderId {
   const normalized = (value?.trim() || defaultId).toLowerCase()
   if (isJudgeProviderId(normalized)) {
     return normalized
@@ -83,9 +85,7 @@ export async function runInitWizard(options: { targetDir?: string } = {}) {
       true,
     )
     const judgeProviderId = parseJudgeProviderId(
-      await rl.question(
-        `Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (local): `,
-      ),
+      await rl.question(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (local): `),
       'local',
     )
 

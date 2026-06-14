@@ -1,13 +1,13 @@
 import type { BelayJudgeConfig, JudgeCloudConsent, JudgeProviderId } from './config.js'
 import { normalizeJudgeProvider } from './config.js'
 import {
+  type JudgeProviderId as CatalogId,
   catalogRequiresEndpoint,
   getJudgeProviderSpec,
   isCloudProviderId,
   isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
   resolveJudgeFromCatalog,
-  type JudgeProviderId as CatalogId,
 } from './verdict/judge-catalog.js'
 
 export type JudgeProfileName = 'local-ollama' | 'cursor' | 'claude' | 'codex'
@@ -65,11 +65,7 @@ export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJu
     const rawProvider = input.judgeProvider
     const provider = normalizeJudgeProvider(rawProvider)
     const providerId: CatalogId =
-      rawProvider === 'cursor'
-        ? 'cursor'
-        : provider === 'ollama'
-          ? 'local'
-          : 'openai'
+      rawProvider === 'cursor' ? 'cursor' : provider === 'ollama' ? 'local' : 'openai'
     return resolveJudgeFromCatalog({
       providerId,
       model: input.judgeModel,
@@ -258,8 +254,7 @@ export function resolveJudgeUsePatch(
   let judge = resolveJudgeFromCatalog({
     providerId: options.providerId,
     model:
-      options.model ??
-      (existing.providerId === options.providerId ? existing.model : undefined),
+      options.model ?? (existing.providerId === options.providerId ? existing.model : undefined),
     endpoint:
       options.endpoint !== undefined
         ? options.endpoint

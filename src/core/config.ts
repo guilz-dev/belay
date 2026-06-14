@@ -7,10 +7,7 @@ import type {
   UnknownLocalEffectPolicy,
   UnparseableShellPolicy,
 } from './types.js'
-import {
-  getJudgeProviderSpec,
-  inferProviderIdFromConfig,
-} from './verdict/judge-catalog.js'
+import { getJudgeProviderSpec, inferProviderIdFromConfig } from './verdict/judge-catalog.js'
 
 export type BelayMode = 'enforce' | 'audit'
 

@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto'
-
-import type { BelayConfigV4 } from './config.js'
-import { compactApprovals, createApprovalRecord } from './approval.js'
 import { loadApprovalState, saveApprovalState } from '../config-io.js'
-import type { JudgeProviderId } from './config.js'
+import { compactApprovals, createApprovalRecord } from './approval.js'
 import { JUDGE_CLOUD_CONSENT_REASON } from './capability/reasons.js'
+import type { BelayConfigV4, JudgeProviderId } from './config.js'
 
 export { JUDGE_CLOUD_CONSENT_REASON }
 
-export function judgeCloudConsentFingerprint(providerId: JudgeProviderId, endpoint: string): string {
+export function judgeCloudConsentFingerprint(
+  providerId: JudgeProviderId,
+  endpoint: string,
+): string {
   return `judge_cloud_consent:${providerId}:${endpoint.trim()}`
 }
 
