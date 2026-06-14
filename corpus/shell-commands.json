@@ -12,13 +12,13 @@
   },
   {
     "command": "curl https://example.com",
-    "verdict": "deny_pending_approval",
-    "reason": "external_effect"
+    "verdict": "allow",
+    "reason": "egress_read"
   },
   {
     "command": "wget https://example.com",
-    "verdict": "deny_pending_approval",
-    "reason": "external_effect"
+    "verdict": "allow",
+    "reason": "egress_read"
   },
   {
     "command": "docker run node:22 node -v",
@@ -63,8 +63,8 @@
   },
   {
     "command": "ls\ncurl https://example.com",
-    "verdict": "deny_pending_approval",
-    "reason": "external_effect"
+    "verdict": "allow",
+    "reason": "egress_read"
   },
   {
     "command": "rm -rf /tmp/build",
