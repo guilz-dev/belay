@@ -49,6 +49,8 @@
   ],
   "scripts": {
     "build": "rm -rf dist && node scripts/sync-version.mjs && tsc -p tsconfig.build.json && node scripts/build-runtime.mjs",
+    "check:version": "node scripts/check-cli-version.mjs",
+    "prepublishOnly": "pnpm build && node scripts/check-cli-version.mjs",
     "lint": "biome check src package.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts docs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && vitest run",

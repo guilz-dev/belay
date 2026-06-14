@@ -47,13 +47,11 @@ Before tagging or publishing:
 5. Rebuild from a clean working tree and run:
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test:stable
-pnpm corpus
-pnpm build
-npm pack --dry-run
+scripts/pre-release-check.sh
 ```
+
+That script runs lint, typecheck, tests, corpus, build, CLI version checks, and
+`npm pack --dry-run`. Do not publish if it fails.
 
 6. Verify Ubuntu and macOS CI are green on the release commit.
 
@@ -90,6 +88,12 @@ npm view @guilz-dev/belay version
 ```
 
 2. Confirm the package can be fetched and invoked:
+
+```bash
+scripts/post-release-verify.sh 0.0.2
+```
+
+Or manually:
 
 ```bash
 npx @guilz-dev/belay@0.0.2 --version
