@@ -1,6 +1,7 @@
 # Belay
 
 [![npm version](https://img.shields.io/npm/v/@guilz-dev/belay)](https://www.npmjs.com/package/@guilz-dev/belay)
+[![skills.sh](https://skills.sh/b/guilz-dev/belay)](https://skills.sh/guilz-dev/belay)
 [![CI](https://github.com/guilz-dev/belay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guilz-dev/belay/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
@@ -148,11 +149,22 @@ and skill under `~/.cursor/`, so the gate is user-wide while `belay.config.json`
 approvals, and audit stay repo-local.
 
 **Skill-only.** The skill is just a UX layer (slash commands + guidance) and does
-**not** enable gating on its own:
+**not** enable gating on its own. Install from [skills.sh](https://skills.sh/guilz-dev/belay)
+or GitHub:
 
 ```bash
+# Cursor
 npx skills add guilz-dev/belay --skill belay -a cursor -y
+
+# Claude Code
+npx skills add guilz-dev/belay --skill belay -a claude-code -y
+
+# Codex
+npx skills add guilz-dev/belay --skill belay -a codex -y
 ```
+
+Running `npx skills add` also registers anonymous install telemetry on skills.sh,
+which is how the skill appears in the directory leaderboard.
 
 Runtime enforcement still requires `belay init` in the target repository.
 

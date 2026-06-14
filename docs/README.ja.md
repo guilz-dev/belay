@@ -47,6 +47,23 @@ npx @guilz-dev/belay init                     # Cursor（既定）
 スキルだけを入れた場合（`npx skills add`）は UX 補助のみで、**hook による強制は有効になりません**。
 リポジトリで `belay init` を実行してください。
 
+[![skills.sh](https://skills.sh/b/guilz-dev/belay)](https://skills.sh/guilz-dev/belay)
+
+[skills.sh](https://skills.sh/guilz-dev/belay) または GitHub からスキルのみを入れる例:
+
+```bash
+# Cursor
+npx skills add guilz-dev/belay --skill belay -a cursor -y
+
+# Claude Code
+npx skills add guilz-dev/belay --skill belay -a claude-code -y
+
+# Codex
+npx skills add guilz-dev/belay --skill belay -a codex -y
+```
+
+`npx skills add` の実行は skills.sh の匿名インストール計測にも使われ、ディレクトリ掲載のトリガーになります。
+
 ---
 
 ## まず読むもの
