@@ -259,7 +259,7 @@ export const DEFAULT_REDACTION_V3: BelayRedactionConfig = {
   maskBearerTokens: true,
   maskAuthHeaders: true,
   maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false,
+  maskHighEntropyStrings: true,
 }
 
 export const DEFAULT_CONTROL_PLANE_ISOLATION_V3: BelayControlPlaneIsolationConfig = {
@@ -827,7 +827,7 @@ export function normalizeConfig(
       maskBearerTokens: v4.redaction?.maskBearerTokens !== false,
       maskAuthHeaders: v4.redaction?.maskAuthHeaders !== false,
       maskKeyValueSecrets: v4.redaction?.maskKeyValueSecrets !== false,
-      maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings === true,
+      maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings !== false,
     },
     controlPlane: {
       enabled:

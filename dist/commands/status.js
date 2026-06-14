@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, } from '../config-io.js';
-import { formatAskBreakdown } from '../core/audit-summary.js';
 import { compactApprovals } from '../core/approval.js';
+import { formatAskBreakdown } from '../core/audit-summary.js';
 import { loadOperationalInsights } from '../operational-insights.js';
 import { collectHealthSnapshot } from './health-snapshot.js';
 import { reportProject } from './report.js';
@@ -32,6 +32,13 @@ export function formatStatusReport(report) {
         `Adapter: ${health.adapter} (scope=${health.installScope})`,
         `Floor installed: ${health.floorInstalled ? 'yes' : 'no'}`,
         `Skill installed: ${health.skillInstalled ? 'yes' : 'no'}`,
+        `Containment posture: ${health.containmentPosture}`,
+        ...(health.containmentWarnings.length > 0
+            ? [`Containment warnings: ${health.containmentWarnings.join('; ')}`]
+            : []),
+        ...(health.additionalRiskSignals.length > 0
+            ? [`Additional risk signals: ${health.additionalRiskSignals.join('; ')}`]
+            : []),
         ...(health.skillOnly
             ? [
                 'Skill-only mode: yes — hooks are missing or incomplete. Run `npx agent-belay init` to install the enforcement floor.',

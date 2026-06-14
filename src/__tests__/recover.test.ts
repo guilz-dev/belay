@@ -189,9 +189,16 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
 
     const gitCalls = execFileMock.mock.calls.filter((call) => call[0] === 'git')
     expect(gitCalls.length).toBeGreaterThan(0)
+    const allowedGitArgs = new Set([
+      'rev-parse --is-inside-work-tree',
+      'status --porcelain',
+      'reflog -n 10',
+    ])
     for (const call of gitCalls) {
       const args = call[1] as string[]
-      expect(isReadOnlyGitProbe(args.join(' '))).toBe(true)
+      const commandKey = args.join(' ')
+      expect(isReadOnlyGitProbe(commandKey)).toBe(true)
+      expect(allowedGitArgs.has(commandKey)).toBe(true)
     }
     expect(execFileMock.mock.calls.every((call) => call[0] === 'git')).toBe(true)
   })

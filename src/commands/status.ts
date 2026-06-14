@@ -8,8 +8,8 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from '../config-io.js'
-import { formatAskBreakdown } from '../core/audit-summary.js'
 import { compactApprovals } from '../core/approval.js'
+import { formatAskBreakdown } from '../core/audit-summary.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
 import { collectHealthSnapshot } from './health-snapshot.js'

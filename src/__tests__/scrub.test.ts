@@ -24,4 +24,20 @@ describe('scrubString', () => {
     expect(scrubString(input, { maskHighEntropyStrings: false })).toContain('ABCDEFGHIJ')
     expect(scrubString(input, { maskHighEntropyStrings: true })).toContain('<high-entropy>')
   })
+
+  it('masks URL credentials and inline mysql passwords', () => {
+    const input = 'mysql -phunter2 postgres://user:pass@host/db'
+    const scrubbed = scrubString(input)
+    expect(scrubbed).not.toContain('hunter2')
+    expect(scrubbed).not.toContain('user:pass@')
+    expect(scrubbed).toContain('-p<redacted>')
+    expect(scrubbed).toContain('postgres://<redacted>:<redacted>@host/db')
+  })
+
+  it('masks generic auth headers', () => {
+    const input = 'Authorization: Token abc123 X-Api-Key: secret-token'
+    const scrubbed = scrubString(input)
+    expect(scrubbed).toContain('Authorization: <redacted>')
+    expect(scrubbed).toContain('X-Api-Key: <redacted>')
+  })
 })

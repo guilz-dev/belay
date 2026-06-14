@@ -52,6 +52,20 @@ describe('T14 outbound redaction', () => {
     expect(scrubbed.text).not.toContain('supersecret')
   })
 
+  it('masks URL credentials, generic auth headers, and inline mysql passwords', () => {
+    const raw =
+      'mysql -phunter2 https://user:pass@example.internal/api -H "Authorization: Token abc123" -H "X-Api-Key: secret-token"'
+    const scrubbed = scrubOutboundForJudge(raw, scrubOptions)
+    expect(scrubbed.ok).toBe(true)
+    if (!scrubbed.ok) {
+      return
+    }
+    expect(scrubbed.text).not.toContain('hunter2')
+    expect(scrubbed.text).not.toContain('user:pass@')
+    expect(scrubbed.text).not.toContain('secret-token')
+    expect(scrubbed.text).toContain('Authorization: <redacted>')
+  })
+
   it('fails closed when scrub detects residual secrets', async () => {
     const blocked = scrubOutboundForJudge('deploy sk-live-abcdef1234567890', {
       sensitivePaths: [],
@@ -93,5 +107,19 @@ describe('T14 outbound redaction', () => {
     expect(result.external_change).toBe(true)
     expect(result.reason).toBe('outbound_scrub_failed')
     expect(judge.lastTrace?.provider).toBe('fallback')
+  })
+
+  it('fails closed on residual URL credentials', () => {
+    const blocked = scrubOutboundForJudge('curl https://user:pass@example.com', {
+      sensitivePaths: [],
+      scrubOptions: {
+        maskApprovalIds: true,
+        maskBearerTokens: true,
+        maskAuthHeaders: false,
+        maskKeyValueSecrets: false,
+        maskHighEntropyStrings: false,
+      },
+    })
+    expect(blocked.ok).toBe(false)
   })
 })

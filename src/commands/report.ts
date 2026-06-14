@@ -1,7 +1,11 @@
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
-import { detectFenceDrift, formatAskBreakdown, summarizeAuditVisibility } from '../core/audit-summary.js'
+import {
+  detectFenceDrift,
+  formatAskBreakdown,
+  summarizeAuditVisibility,
+} from '../core/audit-summary.js'
 import type { AuditFilter } from '../core/audit-types.js'
 import type { AuditVisibilityReport, ReportOptions } from '../types.js'
 import { loadAuditRecords } from './audit.js'

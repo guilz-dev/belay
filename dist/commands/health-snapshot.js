@@ -8,6 +8,7 @@ import { resolveScopedPaths } from '../adapters/layouts/scope.js';
 import { detectAdapterName, loadLayeredConfig } from '../config-io.js';
 import { diagnoseJudge } from '../core/judge-doctor.js';
 import { getManagedHookEntries } from '../defaults.js';
+import { sandboxStatus } from '../services/sandbox-service.js';
 function skillCandidates(adapter, repoRoot) {
     const projectAgent = adapter === 'cursor'
         ? path.join(repoRoot, '.cursor')
@@ -39,6 +40,11 @@ async function managedHooksPresent(adapter, hooksPath, hooksDir, repoRoot) {
         const hooksFile = JSON.parse(content);
         return managedEntries.every(({ event, definition }) => (hooksFile.hooks?.[event] ?? []).some((entry) => entry.command === definition.command && entry.matcher === definition.matcher));
     }
+    if (adapter === 'claude') {
+        const settings = JSON.parse(content);
+        return managedEntries.every(({ event, definition }) => (settings.hooks?.[event] ?? []).some((entry) => entry.matcher === definition.matcher &&
+            entry.hooks?.some((hook) => hook.command === definition.command)));
+    }
     return managedEntries.every(({ definition }) => content.includes(definition.command));
 }
 export async function collectHealthSnapshot(options = {}) {
@@ -52,6 +58,10 @@ export async function collectHealthSnapshot(options = {}) {
     let judgeIssues = [];
     let judgeWarnings = [];
     let judgeNotes = [];
+    let containmentPosture = 'best-effort';
+    let containmentWarnings = [];
+    const additionalRiskSignals = [];
+    let l1FullActive = false;
     if (configPresent) {
         try {
             const layered = await loadLayeredConfig(repoRoot, adapter);
@@ -60,10 +70,34 @@ export async function collectHealthSnapshot(options = {}) {
             judgeIssues = judgeDoctor.issues;
             judgeWarnings = judgeDoctor.warnings;
             judgeNotes = judgeDoctor.notes;
+            const sandbox = await sandboxStatus({ targetDir: repoRoot });
+            l1FullActive = sandbox.l1FullActive;
+            containmentPosture = l1FullActive ? 'l1-full' : 'best-effort';
+            if (!layered.config.sandbox.enabled || layered.config.sandbox.runtime === 'none') {
+                containmentWarnings.push('sandbox runtime is not enabled');
+            }
+            if (!layered.config.egress.enabled) {
+                containmentWarnings.push('egress proxy is not enabled');
+            }
+            else if (!sandbox.l1Full.egressProxyRunning) {
+                containmentWarnings.push('egress proxy is not running for this repository');
+            }
+            if (layered.config.controlPlane.isolation.mode === 'none') {
+                containmentWarnings.push('control-plane isolation mode is none');
+            }
+            if (!layered.config.approvalSigning.required) {
+                containmentWarnings.push('approval signing is not required');
+            }
+            if (layered.config.judge.provider === 'openai-compatible') {
+                additionalRiskSignals.push('cloud judge enabled: redacted command text may be sent to an external provider');
+            }
         }
         catch {
             configPresent = false;
         }
+    }
+    if (!configPresent) {
+        containmentWarnings = ['belay config is missing or unreadable'];
     }
     const scopedPaths = resolveScopedPaths(layout, installScope, repoRoot);
     const hooksPath = scopedPaths.hooksSettingsPath;
@@ -124,5 +158,9 @@ export async function collectHealthSnapshot(options = {}) {
         judgeIssues,
         judgeWarnings,
         judgeNotes,
+        containmentPosture,
+        containmentWarnings,
+        additionalRiskSignals,
+        l1FullActive,
     };
 }

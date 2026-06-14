@@ -2,6 +2,8 @@ import { matchesSensitivePath } from '../glob.js';
 import { scrubString } from '../scrub.js';
 const PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
 const REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
+const URL_CREDENTIALS_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/\s:@]+):([^@\s/]+)@/gi;
+const GENERIC_AUTH_HEADER_PATTERN = /\b(?:Authorization|X-Api-Key|X-Auth-Token|Private-Token):\s*([^\s]+)/gi;
 function hasResidualBearerToken(text) {
     for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
         const token = match[1] ?? '';
@@ -13,6 +15,25 @@ function hasResidualBearerToken(text) {
 }
 function hasResidualApiKey(text) {
     return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text);
+}
+function hasResidualUrlCredentials(text) {
+    for (const match of text.matchAll(URL_CREDENTIALS_PATTERN)) {
+        const username = (match[1] ?? '').replace(/^['"]|['"]$/g, '');
+        const password = (match[2] ?? '').replace(/^['"]|['"]$/g, '');
+        if (!REDACTED_PLACEHOLDER.test(username) || !REDACTED_PLACEHOLDER.test(password)) {
+            return true;
+        }
+    }
+    return false;
+}
+function hasResidualAuthHeader(text) {
+    for (const match of text.matchAll(GENERIC_AUTH_HEADER_PATTERN)) {
+        const token = (match[1] ?? '').replace(/^['"]|['"]$/g, '');
+        if (!REDACTED_PLACEHOLDER.test(token)) {
+            return true;
+        }
+    }
+    return false;
 }
 function redactSensitivePathToken(token, sensitivePaths) {
     const trimmed = token.replace(/^['"`]+|['"`]+$/g, '');
@@ -37,7 +58,10 @@ export function scrubOutboundForJudge(text, options) {
             const redacted = redactSensitivePathToken(pathToken, options.sensitivePaths);
             return match.replace(pathToken, redacted);
         });
-        if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
+        if (hasResidualApiKey(scrubbed) ||
+            hasResidualBearerToken(scrubbed) ||
+            hasResidualUrlCredentials(scrubbed) ||
+            hasResidualAuthHeader(scrubbed)) {
             return { ok: false, reason: 'residual_secret_detected' };
         }
         return { ok: true, text: scrubbed };

@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
+import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterName } from '../adapters/layouts/types.js'
 import { detectAdapterName, loadLayeredConfig } from '../config-io.js'
@@ -63,6 +64,19 @@ async function managedHooksPresent(
     )
   }
 
+  if (adapter === 'claude') {
+    const settings = JSON.parse(content) as {
+      hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>>
+    }
+    return managedEntries.every(({ event, definition }) =>
+      (settings.hooks?.[event] ?? []).some(
+        (entry) =>
+          entry.matcher === definition.matcher &&
+          entry.hooks?.some((hook) => hook.command === definition.command),
+      ),
+    )
+  }
+
   return managedEntries.every(({ definition }) => content.includes(definition.command))
 }
 
@@ -71,9 +85,7 @@ export async function collectHealthSnapshot(
 ): Promise<HealthSnapshot> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const adapter: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
-
-  const { getAdapter } = await import('../adapters/registry.js')
-  const layout = getAdapter(adapter).layout
+  const layout = getAdapterLayout(adapter)
   const configPath = layout.configPath(repoRoot)
 
   let configPresent = existsSync(configPath)
@@ -83,14 +95,12 @@ export async function collectHealthSnapshot(
   let judgeNotes: string[] = []
   let containmentPosture: HealthSnapshot['containmentPosture'] = 'best-effort'
   let containmentWarnings: string[] = []
-  let additionalRiskSignals: string[] = []
+  const additionalRiskSignals: string[] = []
   let l1FullActive = false
-  let loadedConfig: Awaited<ReturnType<typeof loadLayeredConfig>>['config'] | null = null
 
   if (configPresent) {
     try {
       const layered = await loadLayeredConfig(repoRoot, adapter)
-      loadedConfig = layered.config
       installScope = layered.config.installScope === 'global' ? 'global' : 'project'
       const judgeDoctor = await diagnoseJudge(layered.config)
       judgeIssues = judgeDoctor.issues

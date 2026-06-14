@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
+import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { cleanupOrphanApprovalState } from '../cleanup-orphans.js'
 import {
@@ -14,6 +15,7 @@ import {
   repoLocalStateDirFor,
 } from '../config-io.js'
 import { defaultControlPlaneDir } from '../core/config.js'
+import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
 import { getManagedHookEntries } from '../defaults.js'
@@ -22,6 +24,7 @@ import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
 import { PACKAGE_VERSION } from '../version.js'
+import { loadAuditRecords } from './audit.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
 import { metricsProject } from './metrics.js'
 
@@ -50,9 +53,6 @@ function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterNam
 }
 
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
-  // Lazy import to break the registry -> adapter -> doctor -> registry import cycle that
-  // otherwise leaves a freshly-imported adapter undefined in the registry record.
-  const { getAdapter } = await import('../adapters/registry.js')
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const issues: string[] = []
   const notes: string[] = []
@@ -61,11 +61,10 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   let loadedConfig = null
   let configProvenance: DoctorReport['configProvenance'] = []
   let adapterName: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
-  const adapter = getAdapter(adapterName)
-  const layout = adapter.layout
-  let configPath = layout.configPath(repoRoot)
-  let hooksPath = layout.hooksSettingsPath(repoRoot)
-  let corePath = path.join(layout.runtimeDir(repoRoot), 'core.mjs')
+  let activeLayout = getAdapterLayout(adapterName)
+  let configPath = activeLayout.configPath(repoRoot)
+  let hooksPath = activeLayout.hooksSettingsPath(repoRoot)
+  let corePath = path.join(activeLayout.runtimeDir(repoRoot), 'core.mjs')
 
   if (!existsSync(configPath)) {
     issues.push(`Missing config: ${configPath}`)
@@ -76,10 +75,10 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         adapter?: AdapterName
       }
       adapterName = resolveDoctorAdapter(options, rawConfig.adapter)
-      const activeAdapter = getAdapter(adapterName)
-      configPath = activeAdapter.layout.configPath(repoRoot)
-      hooksPath = activeAdapter.layout.hooksSettingsPath(repoRoot)
-      corePath = path.join(activeAdapter.layout.runtimeDir(repoRoot), 'core.mjs')
+      activeLayout = getAdapterLayout(adapterName)
+      configPath = activeLayout.configPath(repoRoot)
+      hooksPath = activeLayout.hooksSettingsPath(repoRoot)
+      corePath = path.join(activeLayout.runtimeDir(repoRoot), 'core.mjs')
 
       if (rawConfig.version === undefined) {
         warnings.push(
@@ -103,7 +102,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       notes.push(...judgeDoctor.notes)
       notes.push(`Adapter: ${adapterName}`)
       const installScope = loadedConfig.installScope === 'global' ? 'global' : 'project'
-      const scopedPaths = resolveScopedPaths(activeAdapter.layout, installScope, repoRoot)
+      const scopedPaths = resolveScopedPaths(activeLayout, installScope, repoRoot)
       hooksPath = scopedPaths.hooksSettingsPath
       corePath = path.join(scopedPaths.runtimeDir, 'core.mjs')
       notes.push(
@@ -145,7 +144,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         notes.push(
           'Integrity: hash-pinned (verify with agent-belay upgrade after runtime changes).',
         )
-        const integrity = await verifyIntegrityManifest(repoRoot, activeAdapter.layout)
+        const integrity = await verifyIntegrityManifest(repoRoot, activeLayout)
         if (!integrity.ok) {
           issues.push(
             `Integrity verification failed: ${integrity.mismatches.slice(0, 3).join(', ')}`,
@@ -157,7 +156,6 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     }
   }
 
-  const activeLayout = getAdapter(adapterName).layout
   const installScope = loadedConfig?.installScope === 'global' ? 'global' : 'project'
   const scopedPaths = resolveScopedPaths(activeLayout, installScope, repoRoot)
   hooksPath = scopedPaths.hooksSettingsPath
@@ -232,17 +230,15 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       )
     } else {
       const settings = JSON.parse(await readFile(hooksPath, 'utf8')) as {
-        hooks?: Record<string, unknown[]>
+        hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>>
       }
       for (const { event, definition } of managedEntries) {
         const eventHooks = settings.hooks?.[event] ?? []
-        const present = eventHooks.some((entry) => {
-          if (!entry || typeof entry !== 'object') {
-            return false
-          }
-          const hooks = (entry as { hooks?: Array<{ command?: string }> }).hooks
-          return hooks?.some((hook) => hook.command === definition.command)
-        })
+        const present = eventHooks.some(
+          (entry) =>
+            entry.matcher === definition.matcher &&
+            entry.hooks?.some((hook) => hook.command === definition.command),
+        )
         if (!present) {
           hooksOk = false
           issues.push(`Missing Claude managed hook for ${event}: ${definition.command}`)
@@ -291,6 +287,14 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   let dogfood = null
   if (loadedConfig) {
+    const auditRecords = await loadAuditRecords(repoRoot)
+    const auditVisibility = summarizeAuditVisibility(auditRecords)
+    const drift = detectFenceDrift(auditVisibility, {
+      threshold: loadedConfig.policy.fenceWarnThreshold,
+    })
+    warnings.push(...drift.warnings)
+    notes.push(...drift.notes)
+
     const metrics = await metricsProject({ targetDir: repoRoot })
     dogfood = {
       active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
@@ -361,13 +365,17 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
     }
 
-    const { reportProject } = await import('./report.js')
-    const visibility = await reportProject({ targetDir: repoRoot })
-    warnings.push(...visibility.warnings)
-    notes.push(...visibility.notes)
   }
 
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: adapterName })
+  if (health.containmentPosture !== 'l1-full') {
+    warnings.push(
+      `Containment posture is ${health.containmentPosture}: ${health.containmentWarnings.join('; ')}`,
+    )
+  }
+  for (const signal of health.additionalRiskSignals) {
+    warnings.push(`Additional risk signal: ${signal}`)
+  }
   if (health.skillOnly) {
     warnings.push(
       'Skill-only install detected: belay SKILL.md is present but hook floor is missing or incomplete. ' +

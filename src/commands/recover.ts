@@ -1,6 +1,10 @@
 import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
-import { buildRecoverAdvice, RECOVER_DISCLAIMER, type RecoverTargetInput } from '../core/recover-advice.js'
+import {
+  buildRecoverAdvice,
+  RECOVER_DISCLAIMER,
+  type RecoverTargetInput,
+} from '../core/recover-advice.js'
 import { probeGitState } from '../core/recover-git-probe.js'
 import { selectRecoverTarget } from '../core/recover-select.js'
 import type { RecoverOptions, RecoverReport } from '../types.js'

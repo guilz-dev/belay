@@ -565,10 +565,28 @@ export async function processApprovalPrompt(
     return { continue: true }
   }
 
+  if (ctx.config.approvalSigning.required) {
+    const message =
+      `Signed approval token required for ${approvalId}. Editor prompt approval is disabled in this configuration. ` +
+      `Use agent-belay approve --approval-id ${approvalId} --token <signed-token>.`
+    await deps.appendAudit(ctx, {
+      event: 'approval',
+      kind: 'approval',
+      verdict: 'deny_pending_approval',
+      approvalId,
+      reason: 'approval_prompt_signing_required',
+      summary: prompt,
+    })
+    return {
+      continue: false,
+      user_message: message,
+    }
+  }
+
   const recorded = await recordApproval({
     approvalId,
     config: ctx.config,
-    requireSignedToken: false,
+    requireSignedToken: ctx.config.approvalSigning.required,
     store: {
       loadPending: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
       loadApproved: () => deps.loadApprovals(ctx, 'approved-approvals.json'),

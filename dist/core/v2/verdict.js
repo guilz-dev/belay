@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { relativeWithinRepo } from '../path-utils.js';
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js';
-import { analyzePathTargets, cwdRelative } from './containment.js';
+import { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containment.js';
 import { classifyEgressTool } from './egress-classify.js';
 import { verdictFingerprint } from './fingerprint.js';
 import { prescanInterpreterCode, tier1RequiresAsk } from './judge.js';
@@ -49,6 +49,16 @@ const READ_ONLY_KEYS = new Set([
     'wc',
     'which',
     'find',
+]);
+const PURE_READ_ONLY_KEYS = new Set([
+    'echo',
+    'git diff',
+    'git log',
+    'git rev-parse',
+    'git show',
+    'git status',
+    'pwd',
+    'which',
 ]);
 const LOCAL_MUTATION_KEYS = new Set([
     'chmod',
@@ -195,6 +205,33 @@ function extractPathArgs(tokens) {
         args.push(token);
     }
     return args;
+}
+function isVariableOrOpaquePathToken(token) {
+    return token.includes('$') || token.includes('`');
+}
+function isPureReadOnlySegment(segment) {
+    return PURE_READ_ONLY_KEYS.has(segment.key) || PURE_READ_ONLY_KEYS.has(segment.head);
+}
+function updateChainState(command, state) {
+    const segment = parseSegment(command);
+    if (segment.head !== 'cd') {
+        return state;
+    }
+    if (!state.trustedCwd) {
+        return state;
+    }
+    const target = segment.tokens[1] ?? '~';
+    if (!target || target === '-' || isVariableOrOpaquePathToken(target)) {
+        return { ...state, trustedCwd: false };
+    }
+    const resolved = resolveTrustedPath(target, state.cwd, state.trustedCwd);
+    if (!resolved) {
+        return { ...state, trustedCwd: false };
+    }
+    return {
+        cwd: resolved,
+        trustedCwd: true,
+    };
 }
 function tier0ExternalMatch(key, head, tokens) {
     if (TIER0_EXTERNAL_KEYS.has(key)) {
@@ -451,19 +488,6 @@ async function evaluateSegment(command, context, depth) {
     if (rmVerdict) {
         return rmVerdict;
     }
-    if (!context.trustedCwd || !context.cwd) {
-        const hasMutation = LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head);
-        if (hasMutation || opacity === 'opaque') {
-            return askVerdict({
-                location: 'unknown',
-                opacity,
-                effect: 'unknown',
-                confidence: 'deterministic',
-                reason: 'missing_trusted_cwd',
-                signals: ['missing_trusted_cwd'],
-            });
-        }
-    }
     let effect = 'unknown';
     if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
         effect = 'read_only';
@@ -483,6 +507,28 @@ async function evaluateSegment(command, context, depth) {
         sensitivePaths: context.sensitivePaths,
         protectedArtifactRoots: context.protectedArtifactRoots,
     });
+    if (!context.trustedCwd || !context.cwd) {
+        if (opacity === 'opaque' || effect === 'unknown' || effect === 'local_mutation') {
+            return askVerdict({
+                location: 'unknown',
+                opacity,
+                effect: effect === 'read_only' ? 'unknown' : effect,
+                confidence: 'deterministic',
+                reason: 'missing_trusted_cwd',
+                signals: ['missing_trusted_cwd'],
+            });
+        }
+        if (effect === 'read_only' && !isPureReadOnlySegment(segment)) {
+            return askVerdict({
+                location: 'unknown',
+                opacity,
+                effect: 'read_only',
+                confidence: 'deterministic',
+                reason: 'missing_trusted_cwd',
+                signals: ['missing_trusted_cwd'],
+            });
+        }
+    }
     if (pathAnalysis.isHighStakes) {
         return askVerdict({
             location: pathAnalysis.location,
@@ -561,11 +607,16 @@ async function evaluateSegment(command, context, depth) {
         }), tier1Trace);
     }
     if (effect === 'read_only') {
+        const readOnlyLocation = context.trustedCwd && context.cwd
+            ? pathAnalysis.location === 'unknown'
+                ? 'repo_local'
+                : pathAnalysis.location
+            : 'unknown';
         return withJudgeTrace(allowVerdict({
-            location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+            location: readOnlyLocation,
             opacity,
             effect: 'read_only',
-            confidence: 'assumed_repo_local',
+            confidence: context.trustedCwd && context.cwd ? 'assumed_repo_local' : 'deterministic',
             reason: 'read_only',
             signals: ['read_only'],
         }), tier1Trace);
@@ -592,9 +643,9 @@ async function evaluateSegment(command, context, depth) {
         signals: ['unknown_local_effect'],
     }), tier1Trace);
 }
-function toVerdictResult(internal, command, context) {
+function toVerdictResult(internal, command, context, fingerprintCwd = context.cwd) {
     const commandRedacted = redactCommand(command);
-    const relative = cwdRelative(context.repoRoot, context.cwd);
+    const relative = cwdRelative(context.repoRoot, fingerprintCwd);
     return {
         permission: internal.permission,
         location: internal.location,
@@ -622,9 +673,19 @@ export async function verdict(command, context) {
     }
     const segments = splitTopLevelSegments(trimmed);
     let combined = null;
+    let chainState = {
+        cwd: context.cwd,
+        trustedCwd: context.trustedCwd,
+    };
     for (const segment of segments) {
-        const segmentVerdict = await evaluateSegment(segment, context, 0);
+        const segmentContext = {
+            ...context,
+            cwd: chainState.cwd,
+            trustedCwd: chainState.trustedCwd,
+        };
+        const segmentVerdict = await evaluateSegment(segment, segmentContext, 0);
         combined = combined ? combineInternal(combined, segmentVerdict) : segmentVerdict;
+        chainState = updateChainState(segment, chainState);
     }
     return toVerdictResult(combined ??
         askVerdict({
@@ -634,5 +695,5 @@ export async function verdict(command, context) {
             confidence: 'deterministic',
             reason: 'empty_segments',
             signals: ['empty_segments'],
-        }), trimmed, context);
+        }), trimmed, context, chainState.cwd);
 }

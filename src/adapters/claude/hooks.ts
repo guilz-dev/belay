@@ -15,22 +15,13 @@ export function getClaudeManagedHookGroups(
   const runner = (hookName: string, ...args: string[]) =>
     buildRunnerInvocation(platform, hooksDir, repoRoot, hookName, ...args)
   const toolGate = runner('belay-tool-gate', 'PreToolUse')
-  const shellGate = runner('belay-shell-gate')
   const approvalGate = runner('belay-before-submit')
   const auditHook = runner('belay-audit', 'PostToolUse')
 
   return {
     PreToolUse: [
       {
-        matcher: 'Bash',
-        hooks: [{ type: 'command', command: shellGate }],
-      },
-      {
-        matcher: 'Task',
-        hooks: [{ type: 'command', command: toolGate }],
-      },
-      {
-        matcher: 'Write|Edit|Delete',
+        matcher: '*',
         hooks: [{ type: 'command', command: toolGate }],
       },
     ],

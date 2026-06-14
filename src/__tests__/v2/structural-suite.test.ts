@@ -122,6 +122,29 @@ describe('v2 structural suite', () => {
       const result = await verdict('npm run deploy', context)
       expect(result.permission).toBe('ask')
     })
+
+    it('asks on outside-repo mutation after resolved cd chain', async () => {
+      const result = await verdict('cd /tmp && rm -rf foo', context)
+      expect(result.permission).toBe('ask')
+    })
+
+    it('asks on mutation after opaque cd chain', async () => {
+      const result = await verdict('cd $HOME && rm -rf foo', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('missing_trusted_cwd')
+    })
+
+    it('allows pure read-only command after opaque cd chain', async () => {
+      const result = await verdict('cd $HOME && git status', context)
+      expect(result.permission).toBe('allow')
+      expect(result.location).toBe('unknown')
+    })
+
+    it('distinguishes fingerprint for resolved cd chain', async () => {
+      const chained = await verdict('cd subdir && rm -rf build', context)
+      const bare = await verdict('rm -rf build', context)
+      expect(chained.fingerprint).not.toBe(bare.fingerprint)
+    })
   })
 
   describe('v2.1.3 egress read/mutate (SPEC R33)', () => {

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfigFile } from '../config-io.js';
-import { detectFenceDrift, formatAskBreakdown, summarizeAuditVisibility } from '../core/audit-summary.js';
+import { detectFenceDrift, formatAskBreakdown, summarizeAuditVisibility, } from '../core/audit-summary.js';
 import { loadAuditRecords } from './audit.js';
 export async function reportProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());

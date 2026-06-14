@@ -79,15 +79,13 @@ describe('audit visibility (T-V1)', () => {
   })
 
   it('infers audit tiers with saved confidence first, then reason fallback', () => {
-    expect(inferAuditTier(toAuditRecord({ reason: 'tier0_external', confidence: 'deterministic' }))).toBe(
-      'Tier0',
+    expect(
+      inferAuditTier(toAuditRecord({ reason: 'tier0_external', confidence: 'deterministic' })),
+    ).toBe('Tier0')
+    expect(inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'llm' }))).toBe('Tier1')
+    expect(inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'deterministic' }))).toBe(
+      'deterministic',
     )
-    expect(
-      inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'llm' })),
-    ).toBe('Tier1')
-    expect(
-      inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'deterministic' })),
-    ).toBe('deterministic')
     expect(inferAuditTier(toAuditRecord({ reason: 'tier0_external' }))).toBe('Tier0')
     expect(
       inferAuditTier(toAuditRecord({ reason: 'unknown_local_effect', confidence: 'llm' })),
@@ -147,11 +145,7 @@ describe('audit visibility (T-V1)', () => {
         auditAskCount: 1,
         unknownModeAskCount: 0,
       }),
-    ).toEqual([
-      'Ask (would-block): 3',
-      '  enforce (blocked): 2',
-      '  audit (would-block only): 1',
-    ])
+    ).toEqual(['Ask (would-block): 3', '  enforce (blocked): 2', '  audit (would-block only): 1'])
     expect(
       formatAskBreakdown({
         askCount: 4,
@@ -182,6 +176,7 @@ describe('audit visibility (T-V1)', () => {
 
       const status = await statusProject({ targetDir: tempDir })
       const text = formatStatusReport(status)
+      expect(text).toContain('Containment posture: best-effort')
       expect(text).toContain('enforce (blocked): 1')
       expect(text).toContain('audit (would-block only): 0')
     } finally {
@@ -254,6 +249,9 @@ describe('audit visibility (T-V1)', () => {
       const report = await reportProject({ targetDir: tempDir })
       expect(report.silentPassRate).toBeCloseTo(0.6)
       expect(report.warnings.some((line) => line.includes('below 70% threshold'))).toBe(true)
+
+      const doctor = await doctorProject({ targetDir: tempDir })
+      expect(doctor.warnings.some((line) => line.includes('below 70% threshold'))).toBe(true)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

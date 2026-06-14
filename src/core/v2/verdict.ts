@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { relativeWithinRepo } from '../path-utils.js'
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
-import { analyzePathTargets, cwdRelative } from './containment.js'
+import { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containment.js'
 import { classifyEgressTool } from './egress-classify.js'
 import { verdictFingerprint } from './fingerprint.js'
 import type { TracedTier1Judge } from './judge.js'
@@ -80,6 +80,17 @@ const READ_ONLY_KEYS = new Set([
   'find',
 ])
 
+const PURE_READ_ONLY_KEYS = new Set([
+  'echo',
+  'git diff',
+  'git log',
+  'git rev-parse',
+  'git show',
+  'git status',
+  'pwd',
+  'which',
+])
+
 const LOCAL_MUTATION_KEYS = new Set([
   'chmod',
   'cp',
@@ -114,6 +125,11 @@ const LOCAL_ROUTINE_HEADS = new Set([
 ])
 
 const FIND_DANGEROUS_FLAGS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
+
+interface ChainState {
+  cwd: string
+  trustedCwd: boolean
+}
 
 function isFindDangerous(tokens: string[]): boolean {
   return tokens.some(
@@ -257,6 +273,40 @@ function extractPathArgs(tokens: string[]): string[] {
     args.push(token)
   }
   return args
+}
+
+function isVariableOrOpaquePathToken(token: string): boolean {
+  return token.includes('$') || token.includes('`')
+}
+
+function isPureReadOnlySegment(segment: ReturnType<typeof parseSegment>): boolean {
+  return PURE_READ_ONLY_KEYS.has(segment.key) || PURE_READ_ONLY_KEYS.has(segment.head)
+}
+
+function updateChainState(command: string, state: ChainState): ChainState {
+  const segment = parseSegment(command)
+  if (segment.head !== 'cd') {
+    return state
+  }
+
+  if (!state.trustedCwd) {
+    return state
+  }
+
+  const target = segment.tokens[1] ?? '~'
+  if (!target || target === '-' || isVariableOrOpaquePathToken(target)) {
+    return { ...state, trustedCwd: false }
+  }
+
+  const resolved = resolveTrustedPath(target, state.cwd, state.trustedCwd)
+  if (!resolved) {
+    return { ...state, trustedCwd: false }
+  }
+
+  return {
+    cwd: resolved,
+    trustedCwd: true,
+  }
 }
 
 function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolean {
@@ -540,21 +590,6 @@ async function evaluateSegment(
     return rmVerdict
   }
 
-  if (!context.trustedCwd || !context.cwd) {
-    const hasMutation =
-      LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)
-    if (hasMutation || opacity === 'opaque') {
-      return askVerdict({
-        location: 'unknown',
-        opacity,
-        effect: 'unknown',
-        confidence: 'deterministic',
-        reason: 'missing_trusted_cwd',
-        signals: ['missing_trusted_cwd'],
-      })
-    }
-  }
-
   let effect: VerdictEffect = 'unknown'
   if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
     effect = 'read_only'
@@ -573,6 +608,29 @@ async function evaluateSegment(
     sensitivePaths: context.sensitivePaths,
     protectedArtifactRoots: context.protectedArtifactRoots,
   })
+
+  if (!context.trustedCwd || !context.cwd) {
+    if (opacity === 'opaque' || effect === 'unknown' || effect === 'local_mutation') {
+      return askVerdict({
+        location: 'unknown',
+        opacity,
+        effect: effect === 'read_only' ? 'unknown' : effect,
+        confidence: 'deterministic',
+        reason: 'missing_trusted_cwd',
+        signals: ['missing_trusted_cwd'],
+      })
+    }
+    if (effect === 'read_only' && !isPureReadOnlySegment(segment)) {
+      return askVerdict({
+        location: 'unknown',
+        opacity,
+        effect: 'read_only',
+        confidence: 'deterministic',
+        reason: 'missing_trusted_cwd',
+        signals: ['missing_trusted_cwd'],
+      })
+    }
+  }
 
   if (pathAnalysis.isHighStakes) {
     return askVerdict({
@@ -668,12 +726,18 @@ async function evaluateSegment(
   }
 
   if (effect === 'read_only') {
+    const readOnlyLocation =
+      context.trustedCwd && context.cwd
+        ? pathAnalysis.location === 'unknown'
+          ? 'repo_local'
+          : pathAnalysis.location
+        : 'unknown'
     return withJudgeTrace(
       allowVerdict({
-        location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+        location: readOnlyLocation,
         opacity,
         effect: 'read_only',
-        confidence: 'assumed_repo_local',
+        confidence: context.trustedCwd && context.cwd ? 'assumed_repo_local' : 'deterministic',
         reason: 'read_only',
         signals: ['read_only'],
       }),
@@ -716,9 +780,10 @@ function toVerdictResult(
   internal: InternalSegmentVerdict,
   command: string,
   context: VerdictContext,
+  fingerprintCwd: string = context.cwd,
 ): VerdictResult {
   const commandRedacted = redactCommand(command)
-  const relative = cwdRelative(context.repoRoot, context.cwd)
+  const relative = cwdRelative(context.repoRoot, fingerprintCwd)
   return {
     permission: internal.permission,
     location: internal.location,
@@ -752,10 +817,20 @@ export async function verdict(command: string, context: VerdictContext): Promise
 
   const segments = splitTopLevelSegments(trimmed)
   let combined: InternalSegmentVerdict | null = null
+  let chainState: ChainState = {
+    cwd: context.cwd,
+    trustedCwd: context.trustedCwd,
+  }
 
   for (const segment of segments) {
-    const segmentVerdict = await evaluateSegment(segment, context, 0)
+    const segmentContext: VerdictContext = {
+      ...context,
+      cwd: chainState.cwd,
+      trustedCwd: chainState.trustedCwd,
+    }
+    const segmentVerdict = await evaluateSegment(segment, segmentContext, 0)
     combined = combined ? combineInternal(combined, segmentVerdict) : segmentVerdict
+    chainState = updateChainState(segment, chainState)
   }
 
   return toVerdictResult(
@@ -770,5 +845,6 @@ export async function verdict(command: string, context: VerdictContext): Promise
       }),
     trimmed,
     context,
+    chainState.cwd,
   )
 }

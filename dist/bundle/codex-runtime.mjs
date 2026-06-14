@@ -103,7 +103,7 @@ var DEFAULT_REDACTION_V3 = {
   maskBearerTokens: true,
   maskAuthHeaders: true,
   maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false
+  maskHighEntropyStrings: true
 };
 var DEFAULT_CONTROL_PLANE_ISOLATION_V3 = {
   mode: "none",
@@ -495,7 +495,7 @@ function normalizeConfig(config) {
       maskBearerTokens: v4.redaction?.maskBearerTokens !== false,
       maskAuthHeaders: v4.redaction?.maskAuthHeaders !== false,
       maskKeyValueSecrets: v4.redaction?.maskKeyValueSecrets !== false,
-      maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings === true
+      maskHighEntropyStrings: v4.redaction?.maskHighEntropyStrings !== false
     },
     controlPlane: {
       enabled: v4.controlPlane?.enabled === true ? true : v4.controlPlane?.enabled === false ? false : DEFAULT_CONTROL_PLANE_V3.enabled,
@@ -1304,15 +1304,22 @@ var TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 var APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi;
 var TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi;
 var BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi;
-var AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi;
+var AUTH_HEADER_PATTERN = /(?<!["'])\bAuthorization:\s*(?:Bearer|Basic|Token)?\s*\S+/gi;
+var DOUBLE_QUOTED_AUTH_HEADER_PATTERN = /"Authorization:\s*[^"]*"/gi;
+var SINGLE_QUOTED_AUTH_HEADER_PATTERN = /'Authorization:\s*[^']*'/gi;
+var GENERIC_AUTH_HEADER_PATTERN = /(?<!["'])\b(?:X-Api-Key|X-Auth-Token|Private-Token):\s*\S+/gi;
+var DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN = /"(X-Api-Key|X-Auth-Token|Private-Token):\s*[^"]*"/gi;
+var SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN = /'(X-Api-Key|X-Auth-Token|Private-Token):\s*[^']*'/gi;
 var KEY_VALUE_SECRET_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi;
+var URL_CREDENTIALS_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/g;
+var MYSQL_INLINE_PASSWORD_PATTERN = /(\s-p)([^\s]+)/g;
 var HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g;
 var DEFAULT_SCRUB_OPTIONS = {
   maskApprovalIds: true,
   maskBearerTokens: true,
   maskAuthHeaders: true,
   maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false
+  maskHighEntropyStrings: true
 };
 function resolvedScrubOptions(options = {}) {
   return {
@@ -1333,15 +1340,25 @@ function scrubString(value, options = {}) {
     scrubbed = scrubbed.replace(BEARER_PATTERN, "Bearer <redacted>");
   }
   if (resolved.maskAuthHeaders) {
-    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>");
+    scrubbed = scrubbed.replace(DOUBLE_QUOTED_AUTH_HEADER_PATTERN, '"Authorization: <redacted>"').replace(SINGLE_QUOTED_AUTH_HEADER_PATTERN, "'Authorization: <redacted>'").replace(
+      DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN,
+      (_match, header) => `"${header}: <redacted>"`
+    ).replace(
+      SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN,
+      (_match, header) => `'${header}: <redacted>'`
+    ).replace(AUTH_HEADER_PATTERN, "Authorization: <redacted>").replace(GENERIC_AUTH_HEADER_PATTERN, (match) => {
+      const separatorIndex = match.indexOf(":");
+      return `${match.slice(0, separatorIndex + 1)} <redacted>`;
+    });
   }
   if (resolved.maskKeyValueSecrets) {
+    scrubbed = scrubbed.replace(URL_CREDENTIALS_PATTERN, "$1<redacted>:<redacted>@").replace(MYSQL_INLINE_PASSWORD_PATTERN, "$1<redacted>");
     scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
-      const separatorIndex = Math.max(match.indexOf("="), match.indexOf(":"));
-      if (separatorIndex === -1) {
+      const separatorMatch = match.match(/\s*[:=]\s*/);
+      if (!separatorMatch || separatorMatch.index === void 0) {
         return "<secret>";
       }
-      return `${match.slice(0, separatorIndex + 1)}<redacted>`;
+      return `${match.slice(0, separatorMatch.index)}${separatorMatch[0]}<redacted>`;
     });
   }
   if (resolved.maskHighEntropyStrings) {
@@ -1505,6 +1522,8 @@ function judgeTraceAuditFields(trace) {
 // src/core/v2/judge-outbound.ts
 var PATH_LIKE = /(?:^|[\s"'`=])(~\/[^\s"'`]+|\/[^\s"'`]+|\.\/[^\s"'`]+|\.\.\/[^\s"'`]+|[A-Za-z]:\\[^\s"'`]+)/g;
 var REDACTED_PLACEHOLDER = /^(?:<redacted>|\[REDACTED\]|<secret>|<high-entropy>|<approval-id>)$/i;
+var URL_CREDENTIALS_PATTERN2 = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/\s:@]+):([^@\s/]+)@/gi;
+var GENERIC_AUTH_HEADER_PATTERN2 = /\b(?:Authorization|X-Api-Key|X-Auth-Token|Private-Token):\s*([^\s]+)/gi;
 function hasResidualBearerToken(text) {
   for (const match of text.matchAll(/\bBearer\s+(\S+)/gi)) {
     const token = match[1] ?? "";
@@ -1516,6 +1535,25 @@ function hasResidualBearerToken(text) {
 }
 function hasResidualApiKey(text) {
   return /\bsk-(?![^\s]*<redacted>)[A-Za-z0-9_-]{4,}/i.test(text);
+}
+function hasResidualUrlCredentials(text) {
+  for (const match of text.matchAll(URL_CREDENTIALS_PATTERN2)) {
+    const username = (match[1] ?? "").replace(/^['"]|['"]$/g, "");
+    const password = (match[2] ?? "").replace(/^['"]|['"]$/g, "");
+    if (!REDACTED_PLACEHOLDER.test(username) || !REDACTED_PLACEHOLDER.test(password)) {
+      return true;
+    }
+  }
+  return false;
+}
+function hasResidualAuthHeader(text) {
+  for (const match of text.matchAll(GENERIC_AUTH_HEADER_PATTERN2)) {
+    const token = (match[1] ?? "").replace(/^['"]|['"]$/g, "");
+    if (!REDACTED_PLACEHOLDER.test(token)) {
+      return true;
+    }
+  }
+  return false;
 }
 function redactSensitivePathToken(token, sensitivePaths) {
   const trimmed = token.replace(/^['"`]+|['"`]+$/g, "");
@@ -1540,7 +1578,7 @@ function scrubOutboundForJudge(text, options) {
       const redacted = redactSensitivePathToken(pathToken, options.sensitivePaths);
       return match.replace(pathToken, redacted);
     });
-    if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed)) {
+    if (hasResidualApiKey(scrubbed) || hasResidualBearerToken(scrubbed) || hasResidualUrlCredentials(scrubbed) || hasResidualAuthHeader(scrubbed)) {
       return { ok: false, reason: "residual_secret_detected" };
     }
     return { ok: true, text: scrubbed };
@@ -2866,6 +2904,16 @@ var READ_ONLY_KEYS = /* @__PURE__ */ new Set([
   "which",
   "find"
 ]);
+var PURE_READ_ONLY_KEYS = /* @__PURE__ */ new Set([
+  "echo",
+  "git diff",
+  "git log",
+  "git rev-parse",
+  "git show",
+  "git status",
+  "pwd",
+  "which"
+]);
 var LOCAL_MUTATION_KEYS = /* @__PURE__ */ new Set([
   "chmod",
   "cp",
@@ -2994,6 +3042,33 @@ function extractPathArgs(tokens) {
     args.push(token);
   }
   return args;
+}
+function isVariableOrOpaquePathToken(token) {
+  return token.includes("$") || token.includes("`");
+}
+function isPureReadOnlySegment(segment) {
+  return PURE_READ_ONLY_KEYS.has(segment.key) || PURE_READ_ONLY_KEYS.has(segment.head);
+}
+function updateChainState(command, state) {
+  const segment = parseSegment(command);
+  if (segment.head !== "cd") {
+    return state;
+  }
+  if (!state.trustedCwd) {
+    return state;
+  }
+  const target = segment.tokens[1] ?? "~";
+  if (!target || target === "-" || isVariableOrOpaquePathToken(target)) {
+    return { ...state, trustedCwd: false };
+  }
+  const resolved = resolveTrustedPath(target, state.cwd, state.trustedCwd);
+  if (!resolved) {
+    return { ...state, trustedCwd: false };
+  }
+  return {
+    cwd: resolved,
+    trustedCwd: true
+  };
 }
 function tier0ExternalMatch(key, head, tokens) {
   if (TIER0_EXTERNAL_KEYS.has(key)) {
@@ -3247,19 +3322,6 @@ async function evaluateSegment(command, context, depth) {
   if (rmVerdict) {
     return rmVerdict;
   }
-  if (!context.trustedCwd || !context.cwd) {
-    const hasMutation = LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head);
-    if (hasMutation || opacity === "opaque") {
-      return askVerdict({
-        location: "unknown",
-        opacity,
-        effect: "unknown",
-        confidence: "deterministic",
-        reason: "missing_trusted_cwd",
-        signals: ["missing_trusted_cwd"]
-      });
-    }
-  }
   let effect = "unknown";
   if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
     effect = "read_only";
@@ -3277,6 +3339,28 @@ async function evaluateSegment(command, context, depth) {
     sensitivePaths: context.sensitivePaths,
     protectedArtifactRoots: context.protectedArtifactRoots
   });
+  if (!context.trustedCwd || !context.cwd) {
+    if (opacity === "opaque" || effect === "unknown" || effect === "local_mutation") {
+      return askVerdict({
+        location: "unknown",
+        opacity,
+        effect: effect === "read_only" ? "unknown" : effect,
+        confidence: "deterministic",
+        reason: "missing_trusted_cwd",
+        signals: ["missing_trusted_cwd"]
+      });
+    }
+    if (effect === "read_only" && !isPureReadOnlySegment(segment)) {
+      return askVerdict({
+        location: "unknown",
+        opacity,
+        effect: "read_only",
+        confidence: "deterministic",
+        reason: "missing_trusted_cwd",
+        signals: ["missing_trusted_cwd"]
+      });
+    }
+  }
   if (pathAnalysis.isHighStakes) {
     return askVerdict({
       location: pathAnalysis.location,
@@ -3354,12 +3438,13 @@ async function evaluateSegment(command, context, depth) {
     );
   }
   if (effect === "read_only") {
+    const readOnlyLocation = context.trustedCwd && context.cwd ? pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location : "unknown";
     return withJudgeTrace(
       allowVerdict({
-        location: pathAnalysis.location === "unknown" ? "repo_local" : pathAnalysis.location,
+        location: readOnlyLocation,
         opacity,
         effect: "read_only",
-        confidence: "assumed_repo_local",
+        confidence: context.trustedCwd && context.cwd ? "assumed_repo_local" : "deterministic",
         reason: "read_only",
         signals: ["read_only"]
       }),
@@ -3394,9 +3479,9 @@ async function evaluateSegment(command, context, depth) {
     tier1Trace
   );
 }
-function toVerdictResult(internal, command, context) {
+function toVerdictResult(internal, command, context, fingerprintCwd = context.cwd) {
   const commandRedacted = redactCommand(command);
-  const relative = cwdRelative(context.repoRoot, context.cwd);
+  const relative = cwdRelative(context.repoRoot, fingerprintCwd);
   return {
     permission: internal.permission,
     location: internal.location,
@@ -3428,9 +3513,19 @@ async function verdict(command, context) {
   }
   const segments = splitTopLevelSegments(trimmed);
   let combined = null;
+  let chainState = {
+    cwd: context.cwd,
+    trustedCwd: context.trustedCwd
+  };
   for (const segment of segments) {
-    const segmentVerdict = await evaluateSegment(segment, context, 0);
+    const segmentContext = {
+      ...context,
+      cwd: chainState.cwd,
+      trustedCwd: chainState.trustedCwd
+    };
+    const segmentVerdict = await evaluateSegment(segment, segmentContext, 0);
     combined = combined ? combineInternal(combined, segmentVerdict) : segmentVerdict;
+    chainState = updateChainState(segment, chainState);
   }
   return toVerdictResult(
     combined ?? askVerdict({
@@ -3442,7 +3537,8 @@ async function verdict(command, context) {
       signals: ["empty_segments"]
     }),
     trimmed,
-    context
+    context,
+    chainState.cwd
   );
 }
 
@@ -4907,10 +5003,25 @@ async function processApprovalPrompt(ctx, deps, prompt) {
   if (!approvalId) {
     return { continue: true };
   }
+  if (ctx.config.approvalSigning.required) {
+    const message = `Signed approval token required for ${approvalId}. Editor prompt approval is disabled in this configuration. Use agent-belay approve --approval-id ${approvalId} --token <signed-token>.`;
+    await deps.appendAudit(ctx, {
+      event: "approval",
+      kind: "approval",
+      verdict: "deny_pending_approval",
+      approvalId,
+      reason: "approval_prompt_signing_required",
+      summary: prompt
+    });
+    return {
+      continue: false,
+      user_message: message
+    };
+  }
   const recorded = await recordApproval({
     approvalId,
     config: ctx.config,
-    requireSignedToken: false,
+    requireSignedToken: ctx.config.approvalSigning.required,
     store: {
       loadPending: () => deps.loadApprovals(ctx, "pending-approvals.json"),
       loadApproved: () => deps.loadApprovals(ctx, "approved-approvals.json"),

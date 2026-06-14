@@ -99,6 +99,10 @@ export interface HealthSnapshot {
     judgeIssues: string[];
     judgeWarnings: string[];
     judgeNotes: string[];
+    containmentPosture: 'best-effort' | 'l1-full';
+    containmentWarnings: string[];
+    additionalRiskSignals: string[];
+    l1FullActive: boolean;
 }
 export interface ClassifyForReportResult {
     repoRoot: string;

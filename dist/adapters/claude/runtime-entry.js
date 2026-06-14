@@ -36,8 +36,15 @@ function mapClaudeToolName(toolName) {
     if (toolName === 'Task') {
         return 'subagent';
     }
-    if (toolName === 'Write' || toolName === 'Edit' || toolName === 'Delete') {
+    if (toolName === 'Write' ||
+        toolName === 'Edit' ||
+        toolName === 'Delete' ||
+        toolName === 'NotebookEdit' ||
+        toolName === 'MultiEdit') {
         return 'tool';
+    }
+    if (toolName.startsWith('mcp__')) {
+        return 'mcp';
     }
     return null;
 }
@@ -51,6 +58,9 @@ function normalizeClaudeToolPayload(toolName, payload) {
             tool_name: 'Shell',
             tool_input: { command },
         };
+    }
+    if (toolName === 'Task') {
+        return payload;
     }
     if (toolName === 'Edit') {
         const toolInput = payload.tool_input;
@@ -82,7 +92,23 @@ function normalizeClaudeToolPayload(toolName, payload) {
             tool_input: { path: filePath },
         };
     }
-    return payload;
+    if (toolName === 'NotebookEdit' || toolName === 'MultiEdit') {
+        const toolInput = payload.tool_input;
+        const input = toolInput && typeof toolInput === 'object' ? toolInput : null;
+        const directPath = typeof input?.file_path === 'string'
+            ? input.file_path
+            : typeof input?.path === 'string'
+                ? input.path
+                : null;
+        if (!directPath) {
+            return null;
+        }
+        return {
+            tool_name: toolName === 'NotebookEdit' ? 'Write' : 'StrReplace',
+            tool_input: { path: directPath },
+        };
+    }
+    return null;
 }
 export async function runBeforeSubmitPromptHook() {
     try {
@@ -140,7 +166,37 @@ export async function runToolGateHook(_eventName) {
         const deps = createDefaultGateRuntimeDeps();
         const toolName = String(payload.tool_name ?? '');
         const mappedKind = mapClaudeToolName(toolName);
+        if (mappedKind === 'mcp') {
+            await deps.appendAudit(ctx, {
+                event: 'preToolUse',
+                kind: 'tool',
+                verdict: 'deny_pending_approval',
+                reason: 'unsupported_mcp_tool',
+                mode: ctx.config.mode,
+                wouldBlock: true,
+                permission: 'deny',
+                summary: toolName,
+            });
+            const verdict = unnormalizedGateVerdict({
+                reason: 'unsupported_mcp_tool',
+                mode: ctx.config.mode,
+                user_message: 'agent-belay blocked this MCP tool because Claude MCP payloads are not normalized safely yet.',
+                agent_message: 'Belay denied this MCP tool because its payload shape is unsupported.',
+            });
+            jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict));
+            return;
+        }
         if (!mappedKind) {
+            await deps.appendAudit(ctx, {
+                event: 'preToolUse',
+                kind: 'tool',
+                verdict: 'deny_pending_approval',
+                reason: 'unmapped_tool',
+                mode: ctx.config.mode,
+                wouldBlock: true,
+                permission: 'deny',
+                summary: toolName,
+            });
             const verdict = unnormalizedGateVerdict({
                 reason: 'unmapped_tool',
                 mode: ctx.config.mode,
@@ -151,6 +207,26 @@ export async function runToolGateHook(_eventName) {
             return;
         }
         const normalizedPayload = normalizeClaudeToolPayload(toolName, payload);
+        if (!normalizedPayload) {
+            await deps.appendAudit(ctx, {
+                event: 'preToolUse',
+                kind: 'tool',
+                verdict: 'deny_pending_approval',
+                reason: 'normalization_failed',
+                mode: ctx.config.mode,
+                wouldBlock: true,
+                permission: 'deny',
+                summary: toolName,
+            });
+            const verdict = unnormalizedGateVerdict({
+                reason: 'normalization_failed',
+                mode: ctx.config.mode,
+                user_message: 'agent-belay could not normalize this Claude tool payload. Run agent-belay doctor, then retry.',
+                agent_message: 'Belay denied this action because the Claude tool payload could not be normalized.',
+            });
+            jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict));
+            return;
+        }
         const verdict = await evaluateGatedAction(ctx, deps, {
             kind: mappedKind,
             cwd,

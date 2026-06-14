@@ -34,7 +34,15 @@ export function inferWouldBlock(record: AuditRecord): boolean {
 
 export function recordStringField(
   record: AuditRecord,
-  field: 'effect' | 'reason' | 'permission' | 'verdict' | 'mode' | 'summary' | 'fingerprint' | 'location',
+  field:
+    | 'effect'
+    | 'reason'
+    | 'permission'
+    | 'verdict'
+    | 'mode'
+    | 'summary'
+    | 'fingerprint'
+    | 'location',
 ): string {
   const value = record[field]
   return typeof value === 'string' ? value : ''

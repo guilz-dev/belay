@@ -5,9 +5,18 @@ const TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g
 const APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi
 const TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi
-const AUTH_HEADER_PATTERN = /\bAuthorization:\s*\S+/gi
+const AUTH_HEADER_PATTERN = /(?<!["'])\bAuthorization:\s*(?:Bearer|Basic|Token)?\s*\S+/gi
+const DOUBLE_QUOTED_AUTH_HEADER_PATTERN = /"Authorization:\s*[^"]*"/gi
+const SINGLE_QUOTED_AUTH_HEADER_PATTERN = /'Authorization:\s*[^']*'/gi
+const GENERIC_AUTH_HEADER_PATTERN = /(?<!["'])\b(?:X-Api-Key|X-Auth-Token|Private-Token):\s*\S+/gi
+const DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN =
+  /"(X-Api-Key|X-Auth-Token|Private-Token):\s*[^"]*"/gi
+const SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN =
+  /'(X-Api-Key|X-Auth-Token|Private-Token):\s*[^']*'/gi
 const KEY_VALUE_SECRET_PATTERN =
   /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi
+const URL_CREDENTIALS_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/g
+const MYSQL_INLINE_PASSWORD_PATTERN = /(\s-p)([^\s]+)/g
 const HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g
 
 const DEFAULT_SCRUB_OPTIONS: Required<ScrubOptions> = {
@@ -15,7 +24,7 @@ const DEFAULT_SCRUB_OPTIONS: Required<ScrubOptions> = {
   maskBearerTokens: true,
   maskAuthHeaders: true,
   maskKeyValueSecrets: true,
-  maskHighEntropyStrings: false,
+  maskHighEntropyStrings: true,
 }
 
 function resolvedScrubOptions(options: ScrubOptions = {}): Required<ScrubOptions> {
@@ -41,15 +50,33 @@ export function scrubString(value: string, options: ScrubOptions = {}): string {
     scrubbed = scrubbed.replace(BEARER_PATTERN, 'Bearer <redacted>')
   }
   if (resolved.maskAuthHeaders) {
-    scrubbed = scrubbed.replace(AUTH_HEADER_PATTERN, 'Authorization: <redacted>')
+    scrubbed = scrubbed
+      .replace(DOUBLE_QUOTED_AUTH_HEADER_PATTERN, '"Authorization: <redacted>"')
+      .replace(SINGLE_QUOTED_AUTH_HEADER_PATTERN, "'Authorization: <redacted>'")
+      .replace(
+        DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN,
+        (_match, header: string) => `"${header}: <redacted>"`,
+      )
+      .replace(
+        SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN,
+        (_match, header: string) => `'${header}: <redacted>'`,
+      )
+      .replace(AUTH_HEADER_PATTERN, 'Authorization: <redacted>')
+      .replace(GENERIC_AUTH_HEADER_PATTERN, (match) => {
+        const separatorIndex = match.indexOf(':')
+        return `${match.slice(0, separatorIndex + 1)} <redacted>`
+      })
   }
   if (resolved.maskKeyValueSecrets) {
+    scrubbed = scrubbed
+      .replace(URL_CREDENTIALS_PATTERN, '$1<redacted>:<redacted>@')
+      .replace(MYSQL_INLINE_PASSWORD_PATTERN, '$1<redacted>')
     scrubbed = scrubbed.replace(KEY_VALUE_SECRET_PATTERN, (match) => {
-      const separatorIndex = Math.max(match.indexOf('='), match.indexOf(':'))
-      if (separatorIndex === -1) {
+      const separatorMatch = match.match(/\s*[:=]\s*/)
+      if (!separatorMatch || separatorMatch.index === undefined) {
         return '<secret>'
       }
-      return `${match.slice(0, separatorIndex + 1)}<redacted>`
+      return `${match.slice(0, separatorMatch.index)}${separatorMatch[0]}<redacted>`
     })
   }
   if (resolved.maskHighEntropyStrings) {

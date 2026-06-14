@@ -102,4 +102,15 @@ describe('doctorProject', () => {
     expect(report.dogfood?.active).toBe(true)
     expect(report.notes.some((note) => note.includes('Dogfood active'))).toBe(true)
   })
+
+  it('warns when containment posture is best-effort', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-posture-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(
+      report.warnings.some((warning) => warning.includes('Containment posture is best-effort')),
+    ).toBe(true)
+  })
 })

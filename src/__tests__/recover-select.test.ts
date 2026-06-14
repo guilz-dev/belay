@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { toAuditRecord } from '../core/audit-metrics.js'
 import {
-  recoverCandidatePriority,
   recordToRecoverTarget,
+  recoverCandidatePriority,
   selectRecoverTarget,
 } from '../core/recover-select.js'
 
