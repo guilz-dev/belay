@@ -81,7 +81,7 @@ export interface BelayPolicyConfig {
   // map to a known kind. 'deny' (default) is the fail-closed floor — an unmapped tool must not
   // silently bypass the gate (FN=0). 'allow' is the opt-out: pass the tool but record it to the
   // audit log for vocabulary learning (use only if fail-closed over-blocks in practice). See
-  // SPEC-v2.2 R-X1. Optional; runtime defaults to 'deny' when absent.
+  // unknownLocalEffect. Optional; runtime defaults to 'deny' when absent.
   codexUnmappedTool?: 'allow' | 'deny'
   /** R-V2: silent-pass rate below this triggers fence-drift warning (default 0.5). */
   fenceWarnThreshold: number

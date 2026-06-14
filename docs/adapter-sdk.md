@@ -105,5 +105,5 @@ logic in adapters — use `runtimeClassifierOptions` from gate-runtime.
 
 ## Stability
 
-See [SPEC-v1.0.md](./SPEC-v1.0.md) § Adapter SDK for the stable export list.
+See the **Stability** section above and [semver-policy.md](./ops/semver-policy.md) for the stable export list.
 Undocumented internals under `src/` may change in minor releases.

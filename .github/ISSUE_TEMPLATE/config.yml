@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/guilz-dev/belay/blob/main/SECURITY.md
+    about: Report suspected vulnerabilities privately instead of opening a public issue.
+  - name: Contribution and support guidance
+    url: https://github.com/guilz-dev/belay/blob/main/CONTRIBUTING.md
+    about: Read contribution expectations, issue-reporting guidance, and local verification steps.

@@ -185,12 +185,12 @@ export async function doctorProject(options = {}) {
                 }
             }
             // Codex adapter: shell gating VERIFIED end-to-end on Codex TUI (PreToolUse deny honored;
-            // SPEC-v2.2 R-X3 / G-B2). Surface only the residual caveats so users know the boundary.
+            // Codex TUI smoke / G-B2). Surface only the residual caveats so users know the boundary.
             warnings.push('Codex adapter: shell gating verified on Codex TUI (PreToolUse deny honored). Residual ' +
                 'caveats — only the shell (Bash) tool is confirmed; non-shell tool names (apply_patch ' +
                 'etc.) are best-guess mappings; unmapped tools ask with pending approval (R39); managed ' +
                 '(pre-trusted) deployment is not yet available; non-managed hooks require /hooks trust. ' +
-                'See docs/SPEC-v2.2.md R-X3.');
+                'See docs/adapter-sdk.md and docs/gates/G-B1-cursor-skill-ux.md.');
         }
         else {
             const settings = JSON.parse(await readFile(hooksPath, 'utf8'));

@@ -1,0 +1,88 @@
+name: Task
+description: Track a scoped piece of work that is not a bug report or a feature proposal.
+title: "[Task]: "
+labels:
+  - task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for scoped work items such as docs updates, refactors, release chores, follow-up cleanup, or other implementation tasks.
+
+        If you are reporting broken behavior, use **Bug report** instead.
+        If you are proposing a new capability, use **Feature request** instead.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked existing issues and did not find a duplicate task.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this task affect?
+      options:
+        - Shell classification / verdict engine
+        - CLI
+        - Cursor adapter
+        - Claude Code adapter
+        - Codex adapter
+        - Install / upgrade flow
+        - Docs
+        - Release / packaging
+        - Repo maintenance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Task summary
+      description: Describe the work item in one short paragraph.
+      placeholder: Update ..., refactor ..., document ..., or clean up ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why this matters
+      description: What problem, follow-up, or maintenance need does this task address?
+      placeholder: This is needed because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: List the expected scope or affected files/areas.
+      placeholder: |
+        - Update ...
+        - Adjust ...
+        - Verify ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Definition of done
+      description: What should be true when this task is complete?
+      placeholder: |
+        - Docs updated
+        - Tests added or updated
+        - Behavior verified
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to related issues, PRs, docs, or notes.

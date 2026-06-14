@@ -1,0 +1,91 @@
+name: Feature request
+description: Propose a new capability or an improvement to existing behavior.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement.
+
+        `belay` is intentionally narrow: it should stop only actions that are both irreversible and catastrophic, and stay out of the way otherwise. Proposals that fit that scope are much easier to evaluate and ship.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched for existing issues and did not find a duplicate proposal.
+          required: true
+        - label: I read the project framing in `README.md` and `CONTRIBUTING.md`.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which area would this proposal affect most?
+      options:
+        - Shell classification / verdict engine
+        - CLI
+        - Cursor adapter
+        - Claude Code adapter
+        - Codex adapter
+        - Install / upgrade flow
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user problem or workflow gap are you trying to solve?
+      placeholder: Today it is hard to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want to see.
+      placeholder: belay could ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_fit
+    attributes:
+      label: Why this fits belay
+      description: Explain how this aligns with belay's "restorability floor" scope instead of turning it into a general permission fence.
+      placeholder: This helps belay ask only when ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, adjacent ideas, or reasons not to do this.
+      placeholder: I also considered ...
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example commands / scenarios
+      description: Concrete examples make feature proposals easier to evaluate.
+      placeholder: |
+        - `belay ...`
+        - Agent tries to ...
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Are you interested in contributing this?
+      options:
+        - Yes, I can work on it.
+        - Maybe, with guidance.
+        - No, I am only proposing it.

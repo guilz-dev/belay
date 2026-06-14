@@ -1,0 +1,127 @@
+name: Bug report
+description: Report a reproducible bug, regression, false positive, or false negative.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a report.
+
+        Please use this form for reproducible bugs in `belay`, including:
+        - incorrect allow/block decisions
+        - CLI/runtime/adapters behaving unexpectedly
+        - documentation mismatches with shipped behavior
+
+        Do not use a public issue for suspected security vulnerabilities. Follow [`SECURITY.md`](https://github.com/guilz-dev/belay/blob/main/SECURITY.md) instead.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched for existing issues and did not find a duplicate.
+          required: true
+        - label: I understand this tracker is public and this report is not a private security disclosure.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project is affected?
+      options:
+        - Shell classification / verdict engine
+        - CLI
+        - Cursor adapter
+        - Claude Code adapter
+        - Codex adapter
+        - Install / upgrade flow
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug_kind
+    attributes:
+      label: What kind of bug is this?
+      options:
+        - Incorrectly blocked a safe/recoverable action
+        - Incorrectly allowed a risky/irreversible action
+        - Crash / error / broken command
+        - Regression from a previous version
+        - Documentation issue
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output from `belay --version` or the package version you installed.
+      placeholder: 0.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, Node version, and host runtime if relevant.
+      placeholder: macOS 15, zsh, Node 22, Cursor 1.x
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One short paragraph describing the problem.
+      placeholder: When I run `belay explain -- ...`, the command is classified as ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reproducible scenario.
+      placeholder: |
+        1. Install belay with ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: belay should ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the observed verdict, error, or mismatch.
+      placeholder: belay actually ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste `belay explain`, `belay doctor`, stack traces, or audit excerpts if available. Redact secrets.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, screenshots, related issues, or anything else that helps triage.

@@ -1,6 +1,6 @@
 # Semver policy (v1.0+)
 
-agent-belay follows [Semantic Versioning](https://semver.org/) from **1.0.0**.
+`belay` follows [Semantic Versioning](https://semver.org/) from **1.0.0**.
 
 ## Version components
 
@@ -20,7 +20,7 @@ security boundaries when L1/L2 are absent.
 - Do **not** label routine list maintenance as a security advisory unless it fixes
   an actual enforcement bypass in L1/L2 or approval logic.
 - Operators needing hard boundaries must enable **L1** (egress / sandbox) and/or **L2**
-  (transactional) per [guarantee-table.md](./guarantee-table.md).
+  (transactional) per [guarantee-table.md](../guarantee-table.md).
 
 ## Gate contract
 
@@ -35,11 +35,3 @@ migration code.
 
 Stable CLI surface (semver applies): `init`, `upgrade`, `doctor`, `explain`, `status`,
 `report`, `recover`, `approve`, `metrics`, `audit`, and config schema v4.
-
-## Release checklist
-
-1. `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
-2. Ubuntu + macOS CI green
-3. Update `CHANGELOG.md`
-4. Verify conformance scenarios still match `docs/guarantee-table.md`
-5. Rebuild `dist/` before publish
