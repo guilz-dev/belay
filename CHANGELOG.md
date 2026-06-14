@@ -6,10 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.2.0 — 2026-06-15
+
 ### Changed
 
 - **Verdict engine layout** — moved implementation from `src/core/v2/` to `src/core/verdict/` (no engine generation label)
-- **Classification trace** — `ClassifyResult.v2` renamed to `axes`; audit `by` label is `verdict` (schemaVersion 1|2 unchanged)
+- **Classification trace** — `ClassifyResult.v2` renamed to `axes` (`VerdictAxes`); audit `by` label is `verdict` (schemaVersion 1|2 unchanged)
+- **Audit compatibility** — legacy NDJSON records with `by: v2` normalize to `verdict` when parsed
+
+> **Note:** npm `0.1.2` was never published. Upgrading from `0.1.1` also includes the fixes listed under `0.1.2` below.
 
 ## 0.1.2 — 2026-06-14
 
