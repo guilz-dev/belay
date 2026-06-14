@@ -25,10 +25,11 @@ describe('simulate', () => {
       `${JSON.stringify({
         event: 'beforeShellExecution',
         kind: 'shell',
-        verdict: 'allow_flagged',
-        reason: 'unknown_local_effect',
-        summary: 'make build',
-        fingerprint: 'fp',
+        verdict: 'allow',
+        reason: 'tier1_restorable',
+        summary: 'make deploy',
+        fingerprint: 'fp-deploy',
+        command: 'make deploy',
       })}\n`,
       'utf8',
     )
@@ -38,7 +39,7 @@ describe('simulate', () => {
       candidatePath,
       `${JSON.stringify({
         version: 3,
-        policy: { unknownLocalEffect: 'deny' },
+        overrides: { external: ['make deploy'] },
       })}\n`,
       'utf8',
     )

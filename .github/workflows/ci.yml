@@ -33,6 +33,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Structural suite hard gate
+        run: pnpm test:structural
+
       - name: Test
         run: pnpm test:stable
 
@@ -64,6 +67,9 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Structural suite hard gate
+        run: pnpm test:structural
 
       - name: Test
         run: pnpm test:stable

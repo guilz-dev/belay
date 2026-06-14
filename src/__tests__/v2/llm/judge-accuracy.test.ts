@@ -53,7 +53,7 @@ interface AccuracyReport {
   }>
 }
 
-describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness (non-gate)', () => {
+describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness', () => {
   const model = 'gemma4:e2b'
   let report: AccuracyReport | null = null
 
@@ -85,6 +85,10 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness (non-gate)', () => {
         correct,
         reason: result.reason,
       })
+      expect(
+        actual,
+        `${sample.command} (${sample.category}): expected ${sample.expectedPermission}, got ${actual} (${result.reason})`,
+      ).toBe(sample.expectedPermission)
     }
 
     report = {
@@ -99,6 +103,9 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness (non-gate)', () => {
     }
 
     expect(report.total).toBe(TIER1_ACCURACY_CORPUS.length)
+    expect(report.falseNegatives, 'missed catastrophic commands').toBe(0)
+    expect(report.falsePositives, 'blocked recoverable commands').toBe(0)
+    expect(report.accuracy).toBe(1)
   }, 60_000)
 
   afterAll(async () => {

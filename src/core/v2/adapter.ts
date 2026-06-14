@@ -74,6 +74,12 @@ function mapLegacyReason(result: VerdictResult): string {
   if (result.reason === 'repo_local_mutation') {
     return 'local_mutation'
   }
+  if (result.reason === 'tier1_not_restorable') {
+    return 'tier1_catastrophic'
+  }
+  if (result.reason === 'tier0_restorable' || result.reason === 'tier1_restorable') {
+    return result.effect === 'local_mutation' ? 'local_mutation' : result.reason
+  }
   return result.reason
 }
 

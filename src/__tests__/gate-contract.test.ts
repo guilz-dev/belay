@@ -19,6 +19,7 @@ import {
   GateNormalizationError,
   normalizeGatedAction,
 } from '../core/gate-engine.js'
+import { createDeterministicJudgeStub } from '../core/v2/judge.js'
 
 describe('gate contract', () => {
   it('normalizes shell actions with contract version', () => {
@@ -50,7 +51,9 @@ describe('gate contract', () => {
       cwd: '/repo',
       command: 'git status',
     })
-    const result = await classifyGatedAction(action, DEFAULT_CONFIG_V3)
+    const result = await classifyGatedAction(action, DEFAULT_CONFIG_V3, {
+      tier1Judge: createDeterministicJudgeStub(),
+    })
     expect(result.verdict).toBe('allow')
   })
 

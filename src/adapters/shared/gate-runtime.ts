@@ -26,6 +26,7 @@ import {
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
 import {
+  APPROVAL_EXECUTION_LEASE_MS,
   type ApprovalStateFile,
   approvalCommandMatch,
   approvedApprovalsFile,
@@ -238,7 +239,17 @@ async function consumeApprovedApproval(
     await deps.writeApprovals(approved.filePath, approved.state)
     return null
   }
-  const [approval] = approved.state.approvals.splice(index, 1)
+
+  const approval = approved.state.approvals[index]
+  if (approval.executionLeaseExpiresAt) {
+    await deps.writeApprovals(approved.filePath, approved.state)
+    return approval
+  }
+
+  approved.state.approvals[index] = {
+    ...approval,
+    executionLeaseExpiresAt: new Date(Date.now() + APPROVAL_EXECUTION_LEASE_MS).toISOString(),
+  }
   await deps.writeApprovals(approved.filePath, approved.state)
   return approval
 }

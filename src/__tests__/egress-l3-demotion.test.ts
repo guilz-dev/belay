@@ -35,7 +35,10 @@ describe('egress proxy does not loosen the restorability floor', () => {
       'python -c "import urllib.request; urllib.request.urlopen(\'https://example.com\')"',
       cwd,
       repoRoot,
-      DEFAULT_CONFIG_V3,
+      {
+        ...DEFAULT_CONFIG_V3,
+        policy: { ...DEFAULT_CONFIG_V3.policy, unknownLocalEffect: 'deny' },
+      },
       { demoteL3External: true },
     )
     expect(result.verdict).toBe('deny_pending_approval')

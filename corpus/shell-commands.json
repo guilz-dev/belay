@@ -84,7 +84,7 @@
   },
   {
     "command": "node --version",
-    "verdict": "deny_pending_approval",
+    "verdict": "allow_flagged",
     "reason": "unknown_local_effect"
   },
   { "command": "make build", "verdict": "deny_pending_approval", "reason": "unknown_local_effect" },

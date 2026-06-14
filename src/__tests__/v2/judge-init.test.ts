@@ -63,12 +63,13 @@ describe('T11 init judge setup matrix', () => {
     ).rejects.toBeInstanceOf(JudgeEndpointRequiredError)
   })
 
-  it('defaults fresh init to local-ollama without cloud consent', async () => {
+  it('defaults fresh init to local ollama judge without explicit flags', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     const config = await loadConfigFile(repoRoot)
     expect(config.judge.provider).toBe('ollama')
     expect(config.judge.model).toBe('gemma4:e2b')
+    expect(config.judge.endpoint).toBe('http://localhost:11434')
   })
 
   it('writes local-ollama profile as version 4', async () => {
@@ -88,6 +89,30 @@ describe('T11 init judge setup matrix', () => {
     })
     expect(judge.provider).toBe('ollama')
     expect(judge.model).toBe('custom:7b')
+  })
+
+  it('supports claude/codex judge profiles as openai-compatible aliases', () => {
+    const claude = resolveJudgeConfig({ judgeProfile: 'claude' })
+    const codex = resolveJudgeConfig({ judgeProfile: 'codex' })
+    expect(claude.provider).toBe('openai-compatible')
+    expect(codex.provider).toBe('openai-compatible')
+    expect(claude.endpoint).toBe('https://api.openai.com/v1')
+    expect(codex.endpoint).toBe('https://api.openai.com/v1')
+  })
+
+  it('chooses adapter-matched default judge profile when fresh', () => {
+    const claudeDefault = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: false,
+      defaultJudgeProfile: 'claude',
+    })
+    const codexDefault = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: false,
+      defaultJudgeProfile: 'codex',
+    })
+    expect(claudeDefault.provider).toBe('openai-compatible')
+    expect(codexDefault.provider).toBe('openai-compatible')
   })
 
   it('requires consent for explicit openai-compatible provider', () => {

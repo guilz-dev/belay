@@ -2,6 +2,50 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const MAX_RESOLVE_DEPTH = 8
+const PNPM_BUILTIN_COMMANDS = new Set([
+  'add',
+  'audit',
+  'cache',
+  'config',
+  'deploy',
+  'dlx',
+  'exec',
+  'fetch',
+  'help',
+  'import',
+  'init',
+  'install',
+  'i',
+  'licenses',
+  'link',
+  'list',
+  'outdated',
+  'pack',
+  'patch',
+  'patch-commit',
+  'patch-remove',
+  'publish',
+  'prune',
+  'rebuild',
+  'remove',
+  'rm',
+  'store',
+  'unlink',
+  'update',
+  'up',
+  'why',
+])
+const PNPM_EXEC_LIKE_HEADS = new Set([
+  'vitest',
+  'vite',
+  'biome',
+  'eslint',
+  'jest',
+  'mocha',
+  'tsc',
+  'tsx',
+  'node',
+])
 
 export interface LauncherResolution {
   recipes: string[]
@@ -67,6 +111,17 @@ function npmScriptName(tokens: string[]): string | null {
   }
   if (launcher[0] === 'pnpm' && launcher[1] === 'run' && launcher[2]) {
     return launcher[2]
+  }
+  if (launcher[0] === 'pnpm' && launcher[1] === 'test') {
+    return 'test'
+  }
+  if (
+    launcher[0] === 'pnpm' &&
+    launcher[1] &&
+    !launcher[1].startsWith('-') &&
+    !PNPM_BUILTIN_COMMANDS.has(launcher[1])
+  ) {
+    return launcher[1]
   }
   if (launcher[0] === 'npm' && launcher[1] && launcher[1] !== 'run' && launcher[1] !== 'install') {
     return null
@@ -207,11 +262,37 @@ export function resolveLauncherRecipe(params: {
   const tokens = params.tokens
   const scriptName = npmScriptName(tokens)
   if (scriptName) {
-    return resolveNpmRecipe(params.cwd, params.repoRoot, scriptName, forwardedArgs(tokens))
+    const resolution = resolveNpmRecipe(
+      params.cwd,
+      params.repoRoot,
+      scriptName,
+      forwardedArgs(tokens),
+    )
+    if (
+      tokens[0] === 'pnpm' &&
+      tokens[1] &&
+      PNPM_EXEC_LIKE_HEADS.has(tokens[1]) &&
+      resolution.reason === 'npm_script_undefined'
+    ) {
+      return {
+        recipes: [tokens.slice(1).join(' ')],
+        opaque: false,
+        reason: 'pnpm_exec_like',
+      }
+    }
+    return resolution
   }
 
   if (tokens[0] === 'make' && tokens[1] && !tokens[1].startsWith('-')) {
     return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1])
+  }
+
+  if (tokens[0] === 'pnpm' && tokens[1] && PNPM_EXEC_LIKE_HEADS.has(tokens[1])) {
+    return {
+      recipes: [tokens.slice(1).join(' ')],
+      opaque: false,
+      reason: 'pnpm_exec_like',
+    }
   }
 
   return null

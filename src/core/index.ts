@@ -1,8 +1,10 @@
 export {
+  APPROVAL_EXECUTION_LEASE_MS,
   approvalCommandMatch,
   buildRetryInstruction,
   compactApprovals,
   createApprovalRecord,
+  isExecutionLeaseExpired,
   isExpired,
   mergeApprovalStates,
   nowIso,
@@ -103,4 +105,4 @@ export {
   classifyShell,
   verdict,
   verdictToClassifyResult,
-} from './v2/index.js'
+} from './v1/index.js'

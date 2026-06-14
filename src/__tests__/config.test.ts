@@ -198,10 +198,11 @@ describe('config migration', () => {
     expect(resolveControlPlaneDir(config)).toBe('/explicit/belay')
   })
 
-  it('uses fail-closed defaults for fresh installs', () => {
+  it('uses recoverable-first defaults for fresh installs', () => {
     expect(isFreshConfigInput({})).toBe(true)
     const merged = mergeConfig({})
-    expect(merged.policy.unknownLocalEffect).toBe('deny')
+    expect(merged.mode).toBe('audit')
+    expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
     expect(merged.policy.unparseableShell).toBe('deny')
     expect(merged.controlPlane.enabled).toBe(true)
     expect(merged.controlPlane.integrity).toBe('hash-pinned')

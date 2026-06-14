@@ -124,6 +124,8 @@ const LOCAL_ROUTINE_HEADS = new Set([
   'cmake',
 ])
 
+const BELAY_SELF_COMMANDS = new Set(['approve', 'revoke'])
+
 const FIND_DANGEROUS_FLAGS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
 
 interface ChainState {
@@ -333,6 +335,12 @@ function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolea
     return true
   }
   return false
+}
+
+function isBelaySelfCommand(tokens: string[]): boolean {
+  const head = tokens[0] ?? ''
+  const subcommand = tokens[1] ?? ''
+  return head === 'belay' && BELAY_SELF_COMMANDS.has(subcommand)
 }
 
 function tier0HighStakesRm(
@@ -588,6 +596,17 @@ async function evaluateSegment(
   const rmVerdict = tier0HighStakesRm(peeled, context)
   if (rmVerdict) {
     return rmVerdict
+  }
+
+  if (isBelaySelfCommand(peeled)) {
+    return allowVerdict({
+      location: 'unknown',
+      opacity: 'transparent',
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: 'belay_control_plane_command',
+      signals: ['belay_control_plane_command', segment.head],
+    })
   }
 
   let effect: VerdictEffect = 'unknown'

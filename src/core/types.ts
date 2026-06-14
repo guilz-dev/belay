@@ -93,6 +93,8 @@ export interface ApprovalRecord {
   createdAt: string
   expiresAt: string
   approvedAt?: string
+  /** Short-lived lease so duplicate hook invocations for one retry can share approval. */
+  executionLeaseExpiresAt?: string
   /** Original gated input for explain-last-ask (ApprovalState v2). */
   input?: string
   inputKind?: 'shell' | 'tool' | 'subagent'

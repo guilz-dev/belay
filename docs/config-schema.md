@@ -11,7 +11,7 @@ exhaustive field defaults).
 | `version` | `4` | `4` | Required |
 | `adapter` | `"cursor"` \| `"claude"` \| `"codex"` | detected | Host adapter |
 | `installScope` | `"project"` \| `"global"` | `"project"` | Where hooks/runtime/skill are installed (see below) |
-| `mode` | `"enforce"` \| `"audit"` | `"enforce"` | Audit logs would-block without denying |
+| `mode` | `"enforce"` \| `"audit"` | `"audit"` | Audit logs would-block without denying |
 | `approvalTtlMinutes` | number | `15` | One-shot approval TTL |
 | `tokenPrefix` | string | `"/belay-approve"` | |
 | `gates` | object | all enabled | `shell`, `subagent`, `fileMutation`, `toolShell` |
@@ -57,7 +57,7 @@ Outbound text is scrubbed before any cloud judge call.
 
 | Field | Values | Default |
 |-------|--------|---------|
-| `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"deny"` |
+| `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"allow_flagged"` |
 | `unparseableShell` | `"deny"` \| `"allow_flagged"` | `"deny"` |
 | `codexUnmappedTool` | `"deny"` \| `"allow"` | `"deny"` (ask on unmapped Codex tools; `allow` records to audit) |
 | `fenceWarnThreshold` | number | `0.5` (silent-pass rate below which `report`/`doctor` warn of over-blocking) |

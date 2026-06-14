@@ -115,6 +115,9 @@ function classifyAws(tokens: string[]): EgressClassification {
   if (/\bs3\s+rm\b/.test(joined)) {
     return 'destructive'
   }
+  if (/\bs3\s+mb\b/.test(joined)) {
+    return 'destructive'
+  }
   if (/\bs3\s+sync\b/.test(joined)) {
     return 'destructive'
   }

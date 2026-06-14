@@ -66,7 +66,7 @@ function parseArgs(argv: string[]) {
     sandboxSubcommand?: 'status'
     installScope?: 'project' | 'global'
     preset?: ConfigPresetName
-    judgeProfile?: 'local-ollama'
+    judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
     judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
     judgeModel?: string
     judgeEndpoint?: string
@@ -119,10 +119,10 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--judge-profile') {
       const next = rest[index + 1]
-      if (!next || next !== 'local-ollama') {
-        throw new Error('--judge-profile requires local-ollama.')
+      if (!next || !['local-ollama', 'cursor', 'claude', 'codex'].includes(next)) {
+        throw new Error('--judge-profile requires local-ollama, cursor, claude, or codex.')
       }
-      options.judgeProfile = 'local-ollama'
+      options.judgeProfile = next as 'local-ollama' | 'cursor' | 'claude' | 'codex'
       index += 1
       continue
     }
@@ -381,7 +381,7 @@ function printHelp() {
   process.stdout.write(`${c}
 
 Usage:
-  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
   ${c} init-wizard [--target <dir>]
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]

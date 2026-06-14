@@ -112,7 +112,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       )
       notes.push(`Config mode: ${loadedConfig.mode}`)
       notes.push(
-        'Verdict engine: v2 (location × opacity × effect × confidence). Shell gates use the v2 classifier; audit records include schemaVersion 2 axes when available.',
+        'Verdict engine: v1 namespace (location × opacity × effect × confidence). Current implementation is backed by the restored floor engine; audit records include schemaVersion 2 axes when available.',
       )
       const repoLocalDir = repoLocalStateDirFor(repoRoot, loadedConfig)
       if (loadedConfig.controlPlane.enabled) {

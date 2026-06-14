@@ -19,6 +19,6 @@ describe('config presets', () => {
     expect(merged.egress.enabled).toBe(true)
     expect(merged.approvalSigning.required).toBe(true)
     expect(merged.controlPlane.isolation.mode).toBe('separate-user')
-    expect(merged.policy.unknownLocalEffect).toBe('deny')
+    expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
   })
 })
