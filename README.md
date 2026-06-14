@@ -8,10 +8,10 @@
 
 [Documentation (日本語)](./docs/README.ja.md)
 
-`@guilz-dev/belay` hooks into agent runtimes (Cursor, Claude Code) and inspects
-each shell command, subagent launch, and file mutation *before* it runs. Most
-actions pass through untouched. Only the irreversible-and-catastrophic ones are
-held back for one-shot human approval — and every decision is written to an
+`@guilz-dev/belay` hooks into agent runtimes (Cursor, Claude Code, Codex) and
+inspects each shell command, subagent launch, and file mutation *before* it runs.
+Most actions pass through untouched. Only the irreversible-and-catastrophic ones
+are held back for one-shot human approval — and every decision is written to an
 audit log.
 
 <p align="center">
@@ -20,6 +20,29 @@ audit log.
 
 > **0.0.x early release** — APIs and behavior may change. Cursor and Claude Code
 > are the supported adapters; Codex is experimental.
+
+## Supported agents
+
+Belay works across three coding agents. Each one runs the **same classifier**,
+wired in through that agent's native **hook** mechanism — no agent-specific
+policy to maintain.
+
+| Agent | Status | Hook config | belay config |
+|-------|--------|-------------|--------------|
+| **Cursor** | Supported | `.cursor/hooks.json` | `.cursor/belay.config.json` |
+| **Claude Code** | Supported | `.claude/settings.json` | `.claude/belay.config.json` |
+| **Codex** | Experimental | `.codex/config.toml` | `.codex/belay.config.json` |
+
+Pick the adapter at install time with `--adapter cursor|claude|codex` (or let
+`init-wizard` prompt). On every install, Belay registers the same lifecycle
+hooks so shell, tool, subagent, and audit events all flow through one gate:
+
+| Hook event | belay hook | Role |
+|------------|-----------|------|
+| `PreToolUse` | `belay-tool-gate` | Gate shell commands, tool actions, file mutations |
+| `SubagentStart` | `belay-tool-gate` | Gate subagent launches (Codex; Cursor/Claude route via `PreToolUse`) |
+| `UserPromptSubmit` | `belay-before-submit` | Apply one-shot `/belay-approve` decisions |
+| `PostToolUse` | `belay-audit` | Append every decision to the audit log |
 
 ## Why
 
@@ -64,10 +87,10 @@ verdict and `overrides.allow` to whitelist commands you trust.
 
 ## How it works
 
-Belay registers hooks on the host runtime (`.cursor/hooks.json` or
-`.claude/settings.json`) and gates shell execution, subagent launches, and file
-mutations through one shared classifier. It always forms its own judgment — it
-does not trust an assessment supplied by the agent.
+Belay registers hooks on the host runtime (`.cursor/hooks.json`,
+`.claude/settings.json`, or `.codex/config.toml`) and gates shell execution,
+subagent launches, and file mutations through one shared classifier. It always
+forms its own judgment — it does not trust an assessment supplied by the agent.
 
 Every gated action gets one of three verdicts:
 
