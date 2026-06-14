@@ -40,6 +40,10 @@ Thumbs.db
 !.cursor/skills/verify-parallel/
 !.cursor/skills/verify-parallel/**
 
+# Skills CLI artifacts (installed by `npx skills add`; do not commit)
+.agents/
+skills-lock.json
+
 # Belay runtime artifacts (installed by `belay init`; do not commit)
 .cursor/belay/
 .cursor/belay.config.json

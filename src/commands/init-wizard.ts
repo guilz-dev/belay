@@ -11,24 +11,24 @@ export interface WizardAnswers {
   dogfood: boolean
 }
 
-function parseAdapter(value: string | undefined): AdapterName {
-  const normalized = (value ?? 'cursor').trim().toLowerCase()
+export function parseAdapter(value: string | undefined): AdapterName {
+  const normalized = (value?.trim() || 'cursor').toLowerCase()
   if (normalized === 'claude' || normalized === 'codex' || normalized === 'cursor') {
     return normalized
   }
   throw new Error(`Unknown adapter: ${value ?? '(empty)'}`)
 }
 
-function parseScope(value: string | undefined): 'project' | 'global' {
-  const normalized = (value ?? 'project').trim().toLowerCase()
+export function parseScope(value: string | undefined): 'project' | 'global' {
+  const normalized = (value?.trim() || 'project').toLowerCase()
   if (normalized === 'global' || normalized === 'project') {
     return normalized
   }
   throw new Error(`Unknown scope: ${value ?? '(empty)'}`)
 }
 
-function parseYesNo(value: string | undefined, defaultValue: boolean): boolean {
-  const normalized = (value ?? (defaultValue ? 'y' : 'n')).trim().toLowerCase()
+export function parseYesNo(value: string | undefined, defaultValue: boolean): boolean {
+  const normalized = (value?.trim() || (defaultValue ? 'y' : 'n')).toLowerCase()
   if (['y', 'yes', 'true', '1'].includes(normalized)) {
     return true
   }
