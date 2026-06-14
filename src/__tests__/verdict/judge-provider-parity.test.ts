@@ -6,17 +6,17 @@ import { verdict } from '../../core/verdict/verdict.js'
 import { verdictTestContext } from './helpers.js'
 
 const tier1False = {
-  external_change: false,
+  local_recoverable: true,
   destroys_outside_repo: false,
   destroys_history_or_secrets: false,
   reason: 'safe',
 }
 
 const tier1Catastrophic = {
-  external_change: true,
+  local_recoverable: false,
   destroys_outside_repo: false,
   destroys_history_or_secrets: false,
-  reason: 'external_change',
+  reason: 'remote_destructive',
 }
 
 function mockFetch(responseBody: unknown): typeof fetch {
@@ -117,7 +117,7 @@ describe('T15 openai-compatible provider parity', () => {
       text: 'git status',
       context: { cwd: '/repo', repoRoot: '/repo' },
     })
-    expect(result.external_change).toBe(true)
+    expect(result.local_recoverable).toBe(false)
     expect(result.reason).toBe('openai_compatible_auth_error')
     expect(judge.lastTrace?.fallbackReason).toBe('missing_api_key')
 
@@ -146,7 +146,7 @@ describe('T15 openai-compatible provider parity', () => {
       text: 'git status',
       context: { cwd: '/repo', repoRoot: '/repo' },
     })
-    expect(result.external_change).toBe(true)
+    expect(result.local_recoverable).toBe(false)
     expect(result.reason).toBe('openai_compatible_parse_error')
     expect(judge.lastTrace?.provider).toBe('fallback')
   })

@@ -104,7 +104,7 @@ describe('T14 outbound redaction', () => {
       context: { cwd: '/repo', repoRoot: '/repo' },
     })
     expect(cloudCalled).toBe(false)
-    expect(result.external_change).toBe(true)
+    expect(result.local_recoverable).toBe(false)
     expect(result.reason).toBe('outbound_scrub_failed')
     expect(judge.lastTrace?.provider).toBe('fallback')
   })

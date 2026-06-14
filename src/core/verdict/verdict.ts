@@ -1,11 +1,16 @@
-import path from 'node:path'
-import { relativeWithinRepo } from '../path-utils.js'
+import { resolveMutationTarget } from '../path-utils.js'
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
-import { analyzePathTargets, cwdRelative, resolveTrustedPath } from './containment.js'
+import {
+  analyzePathTargets,
+  cwdRelative,
+  isDestructiveHighStakesMutation,
+  resolveTrustedPath,
+  touchesProtectedRoot,
+} from './containment.js'
 import { classifyEgressTool } from './egress-classify.js'
 import { verdictFingerprint } from './fingerprint.js'
 import type { TracedTier1Judge } from './judge.js'
-import { prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
+import { mutationPrescanRequiresAsk, prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
 import { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
 import {
   allowFromCustomOverride,
@@ -361,7 +366,7 @@ function tier0HighStakesRm(
   tokens: string[],
   context: VerdictContext,
 ): InternalSegmentVerdict | null {
-  const head = tokens[0] ?? ''
+  const head = (tokens[0] ?? '').split('/').pop() ?? ''
   if (head !== 'rm') {
     return null
   }
@@ -384,33 +389,48 @@ function tier0HighStakesRm(
       signals: ['missing_trusted_cwd', ...analysis.signals],
     })
   }
-  if (analysis.isHighStakes) {
-    return askVerdict({
-      location: analysis.location,
-      opacity: 'transparent',
-      effect: 'local_mutation',
-      confidence: 'deterministic',
-      reason: 'high_stakes_path',
-      signals: ['high_stakes_path', ...analysis.signals],
-    })
-  }
   for (const target of targets) {
-    if (target === '~' || target.startsWith('~/') || target.startsWith('/')) {
-      const resolved = path.resolve(
-        target === '~' || target.startsWith('~/') ? (process.env.HOME ?? '/') : context.cwd,
-        target,
-      )
-      const relative = relativeWithinRepo(context.repoRoot, resolved)
-      if (relative === null) {
-        return askVerdict({
-          location: 'repo_outside',
-          opacity: 'transparent',
-          effect: 'local_mutation',
-          confidence: 'deterministic',
-          reason: 'repo_outside_mutation',
-          signals: ['repo_outside_mutation'],
-        })
+    const normalized = target.replace(/^['"]|['"]$/g, '')
+    if (normalized === '~' || normalized === '$HOME' || normalized.startsWith('~/')) {
+      return askVerdict({
+        location: 'repo_outside',
+        opacity: 'transparent',
+        effect: 'local_mutation',
+        confidence: 'deterministic',
+        reason: 'high_stakes_path',
+        signals: ['catastrophic_home_deletion', ...analysis.signals],
+      })
+    }
+  }
+  if (analysis.isHighStakes && analysis.signals.includes('high_stakes_path')) {
+    let destructiveHighStakes = false
+    for (const target of targets) {
+      const resolved =
+        resolveTrustedPath(target, context.cwd, context.trustedCwd) ??
+        resolveMutationTarget(target, context.cwd)
+      if (
+        resolved &&
+        isDestructiveHighStakesMutation(
+          head,
+          resolved,
+          context.repoRoot,
+          context.sensitivePaths,
+          context.protectedArtifactRoots,
+        )
+      ) {
+        destructiveHighStakes = true
+        break
       }
+    }
+    if (destructiveHighStakes) {
+      return askVerdict({
+        location: analysis.location,
+        opacity: 'transparent',
+        effect: 'local_mutation',
+        confidence: 'deterministic',
+        reason: 'high_stakes_path',
+        signals: ['high_stakes_path', ...analysis.signals],
+      })
     }
   }
   return null
@@ -633,6 +653,10 @@ async function evaluateSegment(
   }
 
   const pathArgs = extractPathArgs(peeled)
+  if (extractRedirectTargets(peeled).length > 0 && effect === 'read_only') {
+    effect = 'local_mutation'
+  }
+
   const pathAnalysis = analyzePathTargets({
     targets: pathArgs,
     cwd: context.cwd,
@@ -665,15 +689,58 @@ async function evaluateSegment(
     }
   }
 
-  if (pathAnalysis.isHighStakes) {
-    return askVerdict({
-      location: pathAnalysis.location,
-      opacity: 'transparent',
-      effect: 'local_mutation',
-      confidence: 'deterministic',
-      reason: 'high_stakes_path',
-      signals: pathAnalysis.signals,
-    })
+  if (
+    (effect === 'local_mutation' || effect === 'unknown') &&
+    context.protectedArtifactRoots &&
+    context.protectedArtifactRoots.length > 0
+  ) {
+    for (const target of pathArgs) {
+      const resolved =
+        resolveTrustedPath(target, context.cwd, context.trustedCwd) ??
+        resolveMutationTarget(target, context.cwd)
+      if (resolved && touchesProtectedRoot(resolved, context.protectedArtifactRoots)) {
+        return askVerdict({
+          location: pathAnalysis.location,
+          opacity: 'transparent',
+          effect: 'local_mutation',
+          confidence: 'deterministic',
+          reason: 'high_stakes_path',
+          signals: ['high_stakes_path', 'control_plane_path'],
+        })
+      }
+    }
+  }
+
+  if (effect === 'local_mutation' || effect === 'unknown') {
+    let destructiveHighStakes = false
+    for (const target of pathArgs) {
+      const resolved =
+        resolveTrustedPath(target, context.cwd, context.trustedCwd) ??
+        resolveMutationTarget(target, context.cwd)
+      if (
+        resolved &&
+        isDestructiveHighStakesMutation(
+          segment.head,
+          resolved,
+          context.repoRoot,
+          context.sensitivePaths,
+          context.protectedArtifactRoots,
+        )
+      ) {
+        destructiveHighStakes = true
+        break
+      }
+    }
+    if (destructiveHighStakes) {
+      return askVerdict({
+        location: pathAnalysis.location,
+        opacity: 'transparent',
+        effect: 'local_mutation',
+        confidence: 'deterministic',
+        reason: 'high_stakes_path',
+        signals: pathAnalysis.signals,
+      })
+    }
   }
 
   if (segment.head === 'find' && isFindDangerous(peeled)) {
@@ -687,16 +754,17 @@ async function evaluateSegment(
     })
   }
 
-  if (pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed') {
-    const outsideEffect: VerdictEffect =
-      effect === 'read_only' ? 'read_only' : effect === 'unknown' ? 'local_mutation' : effect
-    return askVerdict({
+  if (
+    effect === 'read_only' &&
+    (pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed')
+  ) {
+    return allowVerdict({
       location: pathAnalysis.location,
-      opacity: 'transparent',
-      effect: outsideEffect,
+      opacity,
+      effect: 'read_only',
       confidence: 'deterministic',
-      reason: 'repo_outside_mutation',
-      signals: ['repo_outside_mutation', ...pathAnalysis.signals],
+      reason: 'read_only',
+      signals: ['read_only', ...pathAnalysis.signals],
     })
   }
 
@@ -715,8 +783,38 @@ async function evaluateSegment(
     })
   }
 
+  const outsideMutation =
+    pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed'
+  const mutationPrescan =
+    (effect === 'local_mutation' || effect === 'unknown') && pathArgs.length > 0
+      ? mutationPrescanRequiresAsk({
+          targets: pathArgs,
+          cwd: context.cwd,
+          repoRoot: context.repoRoot,
+          trustedCwd: context.trustedCwd,
+          sensitivePaths: context.sensitivePaths,
+        })
+      : null
+  if (mutationPrescan) {
+    return askVerdict({
+      location:
+        pathAnalysis.location === 'unknown'
+          ? 'unknown'
+          : pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed'
+            ? pathAnalysis.location
+            : 'repo_local',
+      opacity,
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: 'tier1_catastrophic',
+      signals: ['tier1_catastrophic', mutationPrescan.reason],
+    })
+  }
   const needsTier1 =
-    effect === 'unknown' || TIER0_EXTERNAL_HEADS.has(segment.head) || egressClass === 'ambiguous'
+    effect === 'unknown' ||
+    TIER0_EXTERNAL_HEADS.has(segment.head) ||
+    egressClass === 'ambiguous' ||
+    (outsideMutation && effect !== 'read_only')
 
   let tier1Trace: JudgeTrace | undefined
   if (needsTier1) {
@@ -729,15 +827,34 @@ async function evaluateSegment(
     tier1Trace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
     if (tier1RequiresAsk(tier1)) {
       return askVerdict({
-        location: pathAnalysis.location === 'unknown' ? 'unknown' : 'repo_local',
+        location:
+          pathAnalysis.location === 'unknown'
+            ? 'unknown'
+            : pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed'
+              ? pathAnalysis.location
+              : 'repo_local',
         opacity,
-        effect: tier1.external_change ? 'remote_mutation' : effect,
+        effect: !tier1.local_recoverable ? 'remote_mutation' : effect,
         confidence: 'llm',
         reason: 'tier1_catastrophic',
         signals: ['tier1_catastrophic', tier1.reason],
         judgeTrace: tier1Trace,
       })
     }
+  }
+
+  if (outsideMutation && effect !== 'read_only') {
+    return withJudgeTrace(
+      allowVerdict({
+        location: pathAnalysis.location,
+        opacity,
+        effect: 'local_mutation',
+        confidence: tier1Trace ? 'llm' : 'deterministic',
+        reason: 'repo_outside_local_mutation',
+        signals: ['repo_outside_local_mutation', ...pathAnalysis.signals],
+      }),
+      tier1Trace,
+    )
   }
 
   if (

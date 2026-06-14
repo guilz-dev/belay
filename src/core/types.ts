@@ -2,7 +2,7 @@ import type { FsScopeAllowlistFile } from './capability/types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
-export type HookVerdict = 'allow' | 'allow_flagged' | 'deny_pending_approval'
+export type HookVerdict = 'allow' | 'allow_flagged' | 'deny_pending_approval' // concept: ask
 
 export type Reversibility = 'reversible' | 'recoverable_with_cost' | 'irreversible'
 
@@ -81,6 +81,8 @@ export interface ClassifierOptions {
   fsScopeAllowlist?: FsScopeAllowlistFile
   /** Test override: inject Tier1 judge without changing config.judge. */
   tier1Judge?: import('./verdict/types.js').Tier1Judge
+  /** When false, path resolution stays fail-closed (opaque cd chains). Default: Boolean(cwd). */
+  trustedCwd?: boolean
 }
 
 export interface ApprovalRecord {

@@ -9,6 +9,8 @@ Before contributing, read the two documents that govern every change:
 - [docs/CONCEPT.md](docs/CONCEPT.md) — what belay is (the restorability floor).
 - [docs/adr/ADR-002-concept-conformance.md](docs/adr/ADR-002-concept-conformance.md) — the rule
   every contribution must satisfy.
+- [docs/adr/tier0-retention-ledger.md](docs/adr/tier0-retention-ledger.md) — Tier0/MUST-ASK/MUST-ALLOW
+  catalog (M3).
 
 ---
 

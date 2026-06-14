@@ -68,8 +68,8 @@
   },
   {
     "command": "rm -rf /tmp/build",
-    "verdict": "deny_pending_approval",
-    "reason": "outside_repo_mutation"
+    "verdict": "allow_flagged",
+    "reason": "repo_outside_local_mutation"
   },
   {
     "command": "git push --force origin main",

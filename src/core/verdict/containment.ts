@@ -6,6 +6,9 @@ import {
   relativeWithinRepo,
   resolveMutationTarget,
 } from '../path-utils.js'
+
+export { isPersistentAgentPath } from './persistent-paths.js'
+
 import type { VerdictLocation } from './types.js'
 
 export interface PathTargetAnalysis {
@@ -77,6 +80,42 @@ export function isHighStakesPath(
     return true
   }
   return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))
+}
+
+const DESTRUCTIVE_MUTATION_HEADS = new Set([
+  'rm',
+  'shred',
+  'truncate',
+  'dd',
+  'chmod',
+  'chown',
+  'mv',
+  'cp',
+])
+
+/** ADR-002 M3: destructive shell head on git/sensitive path (not broad category ask). */
+export function isDestructiveMutationHead(head: string): boolean {
+  return DESTRUCTIVE_MUTATION_HEADS.has(head)
+}
+
+export function touchesProtectedRoot(resolvedPath: string, protectedRoots: string[]): boolean {
+  return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath) || root === resolvedPath)
+}
+
+export function isDestructiveHighStakesMutation(
+  head: string,
+  resolvedPath: string,
+  repoRoot: string,
+  sensitivePaths: string[],
+  protectedRoots: string[] = [],
+): boolean {
+  if (touchesProtectedRoot(resolvedPath, protectedRoots)) {
+    return true
+  }
+  if (!isDestructiveMutationHead(head)) {
+    return false
+  }
+  return isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, [])
 }
 
 export function analyzePathTargets(params: {

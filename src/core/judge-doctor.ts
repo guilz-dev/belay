@@ -92,7 +92,7 @@ export async function diagnoseJudge(
                 {
                   message: {
                     content: JSON.stringify({
-                      external_change: false,
+                      local_recoverable: true,
                       destroys_outside_repo: false,
                       destroys_history_or_secrets: false,
                       reason: 'doctor_dry_run',
@@ -153,7 +153,7 @@ export async function diagnoseJudge(
       new Response(
         JSON.stringify({
           response: JSON.stringify({
-            external_change: false,
+            local_recoverable: true,
             destroys_outside_repo: false,
             destroys_history_or_secrets: false,
             reason: 'doctor_warm',

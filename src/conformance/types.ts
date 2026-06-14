@@ -4,4 +4,6 @@ export interface LayerConformanceScenario {
   command: string
   permission: 'allow' | 'deny'
   reason?: string
+  kind?: 'shell' | 'tool'
+  toolPayload?: Record<string, unknown>
 }

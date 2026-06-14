@@ -131,6 +131,9 @@ Belay is a layered hook gate, not a static denylist. Higher layers are opt-in.
 - L3 command lists are **not security boundaries** by themselves — see
   [docs/ops/semver-policy.md](./docs/ops/semver-policy.md) and
   [docs/guarantee-table.md](./docs/guarantee-table.md).
+- At default L3, **local-recoverable mutations outside the repo** pass after Tier1
+  (e.g. IDE plan files). To deny repo-external writes at the OS boundary, enable L1-full
+  (`sandbox.runtime` ≠ `none`). Tier1 requires a working judge (local Ollama by default).
 - Adversarial resistance requires the full L1 stack:
   `belay init --preset l1-full-recommended`, verified with `belay sandbox status`.
 

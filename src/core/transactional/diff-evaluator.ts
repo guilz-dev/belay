@@ -41,24 +41,6 @@ function observedAssessment(
     signals.push('observed_deletions')
   }
 
-  if (
-    evaluation.categories.includes('repo_outside') ||
-    evaluation.categories.includes('control_plane') ||
-    evaluation.categories.includes('sensitive_path')
-  ) {
-    return {
-      reversibility: 'irreversible',
-      external: evaluation.categories.includes('repo_outside'),
-      blastRadius: evaluation.categories.includes('control_plane')
-        ? 'agent-belay control plane'
-        : evaluation.categories.includes('repo_outside')
-          ? 'outside the repository'
-          : 'sensitive path',
-      confidence: 1,
-      signals,
-    }
-  }
-
   if (evaluation.categories.includes('large_deletion')) {
     return {
       reversibility: 'irreversible',
@@ -93,11 +75,7 @@ export function evaluateTransactionalDiff(
   }
 
   const categoryList = [...categories]
-  const dangerous =
-    categoryList.includes('repo_outside') ||
-    categoryList.includes('control_plane') ||
-    categoryList.includes('sensitive_path') ||
-    categoryList.includes('large_deletion')
+  const dangerous = categoryList.includes('large_deletion')
 
   const base = {
     categories: categoryList,

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
   createDefaultGateRuntimeDeps,
@@ -11,7 +11,7 @@ import {
 import { createApprovalRecord } from '../core/approval.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
-import { classifyShellCore } from './helpers/shell-classify.js'
+import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 
@@ -35,7 +35,12 @@ function sandboxBrokerConfig(): BelayConfigV3 {
 }
 
 describe('capability gate runtime', () => {
+  beforeEach(() => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
+  })
+
   afterEach(async () => {
+    delete process.env.BELAY_DETERMINISTIC_JUDGE
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -87,10 +92,15 @@ describe('capability gate runtime', () => {
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
     const config = sandboxBrokerConfig()
-    const predicted = await classifyShellCore('cp README.md ../copy.txt', repoRoot, repoRoot, {
-      brokerFsScope: true,
-      unknownLocalEffect: 'allow_flagged',
-    })
+    const predicted = await classifyShellGated(
+      'cp README.md ../copy.txt',
+      repoRoot,
+      repoRoot,
+      config,
+      { unknownLocalEffect: 'allow_flagged' },
+    )
+    expect(predicted.verdict).toBe('deny_pending_approval')
+    expect(predicted.reason).toBe('outside_repo_mutation')
     const approval = createApprovalRecord({
       kind: 'shell',
       fingerprint: predicted.fingerprint,
@@ -120,6 +130,31 @@ describe('capability gate runtime', () => {
       kind: 'shell',
       cwd: repoRoot,
       command: 'cp README.md ../copy.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe('outside_repo_mutation')
+  })
+
+  it('denies outside-repo Write tool mutations when the broker is active', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-tool-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = sandboxBrokerConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      payload: {
+        tool_name: 'Write',
+        tool_input: { path: '../outside.txt', contents: 'hi' },
+      },
     })
 
     expect(verdict.permission).toBe('deny')

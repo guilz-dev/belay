@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   approvedApprovalsPath,
   loadApprovalState,
@@ -89,7 +89,12 @@ async function auditLogPath(repoRoot: string): Promise<string> {
 }
 
 describe('generated hook runtime', () => {
+  beforeEach(() => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
+  })
+
   afterEach(async () => {
+    delete process.env.BELAY_DETERMINISTIC_JUDGE
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -172,20 +177,21 @@ describe('generated hook runtime', () => {
     expect(auditRaw).toContain('"verdict":"allow_flagged"')
   })
 
-  it('denies relative repo-external shell mutations', async () => {
+  it('allows relative repo-external shell mutations under default L3 (ADR-002)', async () => {
     const repoRoot = await initIsolatedRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# test\n')
 
-    const deniedRedirect = await runRunner(repoRoot, 'belay-shell-gate', {
+    const allowedRedirect = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'echo hi > ../outside.txt',
       cwd: repoRoot,
     })
-    expect(JSON.parse(deniedRedirect.stdout).permission).toBe('deny')
+    expect(JSON.parse(allowedRedirect.stdout).permission).toBe('allow')
 
-    const deniedCopy = await runRunner(repoRoot, 'belay-shell-gate', {
+    const allowedCopy = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'cp README.md ../copy.txt',
       cwd: repoRoot,
     })
-    expect(JSON.parse(deniedCopy.stdout).permission).toBe('deny')
+    expect(JSON.parse(allowedCopy.stdout).permission).toBe('allow')
   })
 
   it('denies chained shell commands when a later segment is external', async () => {

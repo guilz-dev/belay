@@ -3,11 +3,30 @@ import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
 import {
   createDeterministicJudgeStub,
   createOpenAiCompatibleJudge,
+  tier1RequiresAsk,
 } from '../../core/verdict/judge.js'
 import { verdict } from '../../core/verdict/verdict.js'
 import { verdictTestContext } from './helpers.js'
 
 describe('T13 no silent loosen on provider change', () => {
+  it('tier1RequiresAsk treats destroys_history_or_secrets as ask', () => {
+    expect(
+      tier1RequiresAsk({
+        local_recoverable: true,
+        destroys_outside_repo: false,
+        destroys_history_or_secrets: true,
+        reason: 'authorized_keys',
+      }),
+    ).toBe(true)
+  })
+
+  it('routes shell redirects outside repo through Tier1', async () => {
+    const context = verdictTestContext({ judge: createDeterministicJudgeStub() })
+    const result = await verdict('echo hi > ../outside.txt', context)
+    expect(result.permission).toBe('allow')
+    expect(result.reason).toBe('repo_outside_local_mutation')
+  })
+
   it('keeps Tier0 high-stakes path ask with deterministic judge', async () => {
     const context = verdictTestContext({ judge: createDeterministicJudgeStub() })
     const result = await verdict('rm -rf .git', context)

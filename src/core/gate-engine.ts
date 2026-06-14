@@ -1,5 +1,8 @@
 import { allPathsAllowlisted } from './capability/allowlist.js'
-import { collectOutsideRepoPaths } from './capability/paths.js'
+import {
+  collectOutsideRepoPaths,
+  collectOutsideRepoPathsFromToolPayload,
+} from './capability/paths.js'
 import { classifySubagent } from './classify-subagent.js'
 import { classifyToolUse } from './classify-tool.js'
 import type { BelayConfigV3 } from './config.js'
@@ -120,26 +123,76 @@ export function normalizeGatedAction(params: {
   }
 }
 
-function applyShellPeripheralPolicy(
-  command: string,
-  action: GatedAction,
+function applySandboxFsScopeBoundary(
+  outsideRepoPaths: string[],
+  result: ClassifyResult,
+  options: ClassifierOptions,
+  hints: { redirect?: boolean } = {},
+): ClassifyResult {
+  if (!options.brokerFsScope) {
+    return result
+  }
+  if (outsideRepoPaths.length === 0) {
+    return result
+  }
+  if (options.fsScopeAllowlist && allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)) {
+    return result
+  }
+  if (result.verdict === 'deny_pending_approval') {
+    return result
+  }
+  const redirect =
+    hints.redirect === true ||
+    result.reason === 'read_only' ||
+    result.assessment.signals.includes('read_only') ||
+    result.reason === 'outside_repo_redirect'
+  return {
+    ...result,
+    verdict: 'deny_pending_approval',
+    reason: redirect ? 'outside_repo_redirect' : 'outside_repo_mutation',
+    assessment: {
+      ...result.assessment,
+      external: true,
+      reversibility: 'irreversible',
+      signals: [...result.assessment.signals, 'sandbox_boundary_expected'],
+    },
+  }
+}
+
+function applyFsScopePeripheralPolicy(
+  outsideRepoPaths: string[],
   result: ClassifyResult,
   options: ClassifierOptions,
 ): ClassifyResult {
-  if (
-    options.brokerFsScope &&
-    result.verdict === 'deny_pending_approval' &&
-    (result.reason === 'outside_repo_mutation' ||
-      result.reason === 'outside_repo_redirect' ||
-      result.reason === 'repo_outside_mutation' ||
-      result.axes?.location === 'repo_outside')
-  ) {
-    const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+  if (!options.brokerFsScope) {
+    return result
+  }
+  if (outsideRepoPaths.length === 0) {
+    return result
+  }
+  if (options.fsScopeAllowlist && allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)) {
     if (
-      outsideRepoPaths.length > 0 &&
-      options.fsScopeAllowlist &&
-      allPathsAllowlisted(outsideRepoPaths, options.fsScopeAllowlist)
+      result.verdict === 'deny_pending_approval' &&
+      (result.reason === 'outside_repo_mutation' ||
+        result.reason === 'outside_repo_redirect' ||
+        result.reason === 'repo_outside_mutation' ||
+        result.axes?.location === 'repo_outside')
     ) {
+      return {
+        ...result,
+        verdict: 'allow_flagged',
+        reason: 'capability_fs_hint',
+        assessment: {
+          ...result.assessment,
+          signals: [
+            ...result.assessment.signals,
+            'capability_fs_hint',
+            'sandbox_boundary_expected',
+          ],
+        },
+      }
+    }
+    if (result.verdict === 'allow' || result.verdict === 'allow_flagged') {
       return {
         ...result,
         verdict: 'allow_flagged',
@@ -158,6 +211,56 @@ function applyShellPeripheralPolicy(
   return result
 }
 
+function applySandboxOutsideBoundary(
+  command: string,
+  action: GatedAction,
+  result: ClassifyResult,
+  options: ClassifierOptions,
+): ClassifyResult {
+  const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+  return applySandboxFsScopeBoundary(outsideRepoPaths, result, options, {
+    redirect: command.includes('>'),
+  })
+}
+
+function applyShellPeripheralPolicy(
+  command: string,
+  action: GatedAction,
+  result: ClassifyResult,
+  options: ClassifierOptions,
+): ClassifyResult {
+  const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+  return applyFsScopePeripheralPolicy(outsideRepoPaths, result, options)
+}
+
+function outsideRepoPathsForToolAction(action: GatedAction): string[] {
+  const payload = action.payload ?? {}
+  const paths = new Set(
+    collectOutsideRepoPathsFromToolPayload(payload, action.cwd, action.repoRoot),
+  )
+  const command = shellCommandFromPayload(payload)
+  if (command) {
+    for (const resolved of collectOutsideRepoPaths(command, action.cwd, action.repoRoot)) {
+      paths.add(resolved)
+    }
+  }
+  return [...paths]
+}
+
+function applyToolSandboxPolicies(
+  action: GatedAction,
+  result: ClassifyResult,
+  options: ClassifierOptions,
+): ClassifyResult {
+  const outsideRepoPaths = outsideRepoPathsForToolAction(action)
+  const command = shellCommandFromPayload(action.payload ?? {})
+  let next = applySandboxFsScopeBoundary(outsideRepoPaths, result, options, {
+    redirect: command.includes('>'),
+  })
+  next = applyFsScopePeripheralPolicy(outsideRepoPaths, next, options)
+  return next
+}
+
 export async function classifyGatedAction(
   action: GatedAction,
   config: BelayConfigV3,
@@ -171,6 +274,7 @@ export async function classifyGatedAction(
       throw new GateNormalizationError('Shell gated action requires a command.')
     }
     let result = await classifyShell(command, action.cwd, action.repoRoot, config, options)
+    result = applySandboxOutsideBoundary(command, action, result, options)
     result = applyShellPeripheralPolicy(command, action, result, options)
     if (!action.agentAssessment) {
       return result
@@ -191,7 +295,27 @@ export async function classifyGatedAction(
     return classifySubagent(action.payload ?? {}, action.repoRoot, options)
   }
 
-  return classifyToolUse(action.payload ?? {}, action.repoRoot, action.cwd, config, options)
+  let result = await classifyToolUse(
+    action.payload ?? {},
+    action.repoRoot,
+    action.cwd,
+    config,
+    options,
+  )
+  result = applyToolSandboxPolicies(action, result, options)
+  if (!action.agentAssessment) {
+    return result
+  }
+  const merged = mergeAgentAssessment(result.assessment, action.agentAssessment)
+  if (!merged.mismatch) {
+    return { ...result, assessment: merged.assessment }
+  }
+  return {
+    ...result,
+    verdict: 'deny_pending_approval',
+    reason: 'agent_assessment_mismatch',
+    assessment: merged.assessment,
+  }
 }
 
 export async function classifyGatedActionAsync(
