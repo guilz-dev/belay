@@ -23,7 +23,7 @@ fi
 run_step "sync package version" node scripts/sync-version.mjs
 
 pkg_version="$(node -p "require('./package.json').version")"
-src_version="$(node --input-type=module -e "import { PACKAGE_VERSION } from './src/version.ts'; console.log(PACKAGE_VERSION)")"
+src_version="$(node -p "require('fs').readFileSync('src/version.ts','utf8').match(/PACKAGE_VERSION = '([^']+)'/)[1]")"
 if [[ "${pkg_version}" != "${src_version}" ]]; then
   echo "pre-release-check: package.json version (${pkg_version}) != src/version.ts (${src_version})" >&2
   exit 1
