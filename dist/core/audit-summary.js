@@ -105,7 +105,7 @@ export function detectFenceDrift(summary, options = {}) {
     }
     if (summary.silentPassRate < threshold) {
         warnings.push(`Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% threshold). ` +
-            'This may indicate over-blocking (fence-like behavior). Use agent-belay explain on recent asks to check for false positives.');
+            'This may indicate over-blocking (fence-like behavior). Use belay explain on recent asks to check for false positives.');
     }
     return { warnings, notes };
 }

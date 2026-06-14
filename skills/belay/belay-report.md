@@ -1,7 +1,7 @@
 Show audit visibility: ask/flag/allow counts, silent-pass rate, and recent asks.
 
 ```bash
-agent-belay report
+belay report
 ```
 
-For full install health plus audit summary, use `agent-belay status`.
+For full install health plus audit summary, use `belay status`.

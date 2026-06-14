@@ -4764,7 +4764,7 @@ async function evaluateGatedAction(ctx, deps, params) {
     const verdict2 = unnormalizedGateVerdict({
       reason: "normalization_failed",
       mode: ctx.config.mode,
-      user_message: "agent-belay could not normalize this gated action. Run agent-belay doctor, then retry.",
+      user_message: "belay could not normalize this gated action. Run belay doctor, then retry.",
       agent_message: "Belay denied this action because the hook payload could not be normalized."
     });
     await deps.appendAudit(ctx, {
@@ -4994,7 +4994,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
     permission: "deny",
     wouldBlock: true,
     approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run agent-belay explain or /belay why.`,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run belay explain or /belay why.`,
     agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`
   });
 }
@@ -5004,7 +5004,7 @@ async function processApprovalPrompt(ctx, deps, prompt) {
     return { continue: true };
   }
   if (ctx.config.approvalSigning.required) {
-    const message = `Signed approval token required for ${approvalId}. Editor prompt approval is disabled in this configuration. Use agent-belay approve --approval-id ${approvalId} --token <signed-token>.`;
+    const message = `Signed approval token required for ${approvalId}. Editor prompt approval is disabled in this configuration. Use belay approve --approval-id ${approvalId} --token <signed-token>.`;
     await deps.appendAudit(ctx, {
       event: "approval",
       kind: "approval",
@@ -5220,7 +5220,7 @@ async function runBeforeSubmitPromptHook() {
   } catch {
     jsonResponse({
       decision: "block",
-      reason: "agent-belay failed while processing approval state. Run agent-belay doctor, then retry."
+      reason: "belay failed while processing approval state. Run belay doctor, then retry."
     });
   }
 }
@@ -5257,7 +5257,7 @@ async function runToolGateHook(eventName) {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: "agent-belay failed while classifying this tool action. Run agent-belay doctor, then retry."
+        permissionDecisionReason: "belay failed while classifying this tool action. Run belay doctor, then retry."
       }
     });
   }
@@ -5282,7 +5282,7 @@ async function runShellGateHook() {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: "agent-belay failed while classifying this shell command. Run agent-belay doctor, then retry."
+        permissionDecisionReason: "belay failed while classifying this shell command. Run belay doctor, then retry."
       }
     });
   }
@@ -5296,7 +5296,7 @@ async function runAuditHook(eventName) {
     jsonResponse({});
   } catch (error) {
     console.error(
-      "agent-belay audit hook failed:",
+      "belay audit hook failed:",
       error instanceof Error ? error.message : String(error)
     );
     jsonResponse({});

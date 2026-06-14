@@ -161,17 +161,17 @@ resolve_node() {
 }
 
 fail_gate() {
-  printf '{"permission":"deny","user_message":"agent-belay could not resolve Node. Install or expose Node, run agent-belay doctor, then retry."}\\n'
+  printf '{"permission":"deny","user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}\\n'
   exit 0
 }
 
 fail_before_submit() {
-  printf '{"continue":false,"user_message":"agent-belay could not resolve Node. Install or expose Node, run agent-belay doctor, then retry."}\\n'
+  printf '{"continue":false,"user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}\\n'
   exit 0
 }
 
 fail_audit() {
-  echo "agent-belay: unable to resolve Node for audit hook" >&2
+  echo "belay: unable to resolve Node for audit hook" >&2
   printf '{}\\n'
   exit 0
 }
@@ -240,15 +240,15 @@ if /I "%HOOK_NAME%"=="belay-tool-gate" goto fail_gate
 goto fail_audit
 
 :fail_gate
-echo {"permission":"deny","user_message":"agent-belay could not resolve Node. Install or expose Node, run agent-belay doctor, then retry."}
+echo {"permission":"deny","user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}
 exit /b 0
 
 :fail_before_submit
-echo {"continue":false,"user_message":"agent-belay could not resolve Node. Install or expose Node, run agent-belay doctor, then retry."}
+echo {"continue":false,"user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}
 exit /b 0
 
 :fail_audit
-1>&2 echo agent-belay: unable to resolve Node for audit hook
+1>&2 echo belay: unable to resolve Node for audit hook
 echo {}
 exit /b 0
 `

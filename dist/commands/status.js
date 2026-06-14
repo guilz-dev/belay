@@ -28,7 +28,7 @@ export async function statusProject(options = {}) {
 export function formatStatusReport(report) {
     const { health } = report;
     const lines = [
-        `agent-belay status for ${report.repoRoot}`,
+        `belay status for ${report.repoRoot}`,
         `Adapter: ${health.adapter} (scope=${health.installScope})`,
         `Floor installed: ${health.floorInstalled ? 'yes' : 'no'}`,
         `Skill installed: ${health.skillInstalled ? 'yes' : 'no'}`,
@@ -41,7 +41,7 @@ export function formatStatusReport(report) {
             : []),
         ...(health.skillOnly
             ? [
-                'Skill-only mode: yes — hooks are missing or incomplete. Run `npx agent-belay init` to install the enforcement floor.',
+                'Skill-only mode: yes — hooks are missing or incomplete. Run `npx @guilz-dev/belay init` to install the enforcement floor.',
             ]
             : []),
         `Approval state: ${report.approvalStateDir}`,

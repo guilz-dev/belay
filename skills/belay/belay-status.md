@@ -1,9 +1,9 @@
 Show belay install health, pending approvals, dogfood metrics, and audit visibility.
 
 ```bash
-agent-belay status
+belay status
 ```
 
-For audit-only summary: `agent-belay report`. For recovery advice: `agent-belay recover`.
+For audit-only summary: `belay report`. For recovery advice: `belay recover`.
 
-If hooks are missing, suggest `npx agent-belay init` and `agent-belay doctor`.
+If hooks are missing, suggest `npx @guilz-dev/belay init` and `belay doctor`.

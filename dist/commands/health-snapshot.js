@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js';
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js';
+import { getAdapterLayout } from '../adapters/layouts/index.js';
 import { resolveScopedPaths } from '../adapters/layouts/scope.js';
 import { detectAdapterName, loadLayeredConfig } from '../config-io.js';
 import { diagnoseJudge } from '../core/judge-doctor.js';
@@ -50,8 +51,7 @@ async function managedHooksPresent(adapter, hooksPath, hooksDir, repoRoot) {
 export async function collectHealthSnapshot(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
     const adapter = options.adapter ?? detectAdapterName(repoRoot);
-    const { getAdapter } = await import('../adapters/registry.js');
-    const layout = getAdapter(adapter).layout;
+    const layout = getAdapterLayout(adapter);
     const configPath = layout.configPath(repoRoot);
     let configPresent = existsSync(configPath);
     let installScope = 'project';

@@ -1,14 +1,14 @@
 # init-wizard smoke (manual)
 
-Routine smoke for `agent-belay init-wizard` after install or wizard changes.
+Routine smoke for `belay init-wizard` after install or wizard changes.
 
 ## Steps
 
-1. In an empty git repo, run `npx agent-belay init-wizard`
+1. In an empty git repo, run `npx @guilz-dev/belay init-wizard`
 2. Choose adapter `cursor`, scope `project`, with skill `y`, dogfood `n`
 3. Confirm `.cursor/belay.config.json`, hooks, runtime, and skill are created
-4. Run `agent-belay doctor` — expect green floor (no skill-only warning)
-5. Run `agent-belay status` — `Floor installed: yes`
+4. Run `belay doctor` — expect green floor (no skill-only warning)
+5. Run `belay status` — `Floor installed: yes`
 
 ## Fail signals
 

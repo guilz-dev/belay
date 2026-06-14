@@ -4,7 +4,7 @@ import { cursorLayout } from './adapters/layouts/cursor.js'
 import { buildRunnerInvocation } from './adapters/layouts/scope.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from './core/config.js'
 
-export const PACKAGE_NAME = 'agent-belay'
+export { PACKAGE_NAME } from './branding.js'
 
 export const DEFAULT_CONFIG: BelayConfigV3 = DEFAULT_CONFIG_V3
 

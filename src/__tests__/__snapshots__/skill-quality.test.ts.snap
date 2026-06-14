@@ -4,7 +4,7 @@ exports[`SKILL.md quality (T20/T23) > T23: SKILL.md snapshot stays stable 1`] = 
 "---
 name: belay
 description: >-
-  Guides approval when agent-belay blocks a high-risk shell command, subagent launch,
+  Guides approval when belay blocks a high-risk shell command, subagent launch,
   or tool action. Use when an action is denied, blocked, or needs belay-approve, or when
   installing or checking belay hook health in a repository.
 disable-model-invocation: true
@@ -18,28 +18,28 @@ routes you to the CLI. It does not classify commands itself.
 
 ## Prerequisites
 
-Run \`npx agent-belay init\` in the project root before relying on enforcement.
+Run \`npx @guilz-dev/belay init\` in the project root before relying on enforcement.
 If you only installed this skill via \`npx skills add\`, approval instructions are
-available, but the runtime gate is not installed yet. Run \`agent-belay doctor\` to
+available, but the runtime gate is not installed yet. Run \`belay doctor\` to
 check whether hooks are present.
 
 ## When belay blocks an action
 
 1. Read the approval ID in the deny message.
-2. Approve once with \`/belay-approve <approval-id>\` or \`agent-belay approve <approval-id>\`.
+2. Approve once with \`/belay-approve <approval-id>\` or \`belay approve <approval-id>\`.
 3. Retry the original action unchanged.
 
-For why it was blocked, use \`/belay why <command>\` or \`agent-belay explain --command "<command>"\`.
-For the latest pending ask, use \`/belay explain\` or \`agent-belay explain\`.
-For install health and audit visibility, use \`/belay status\` or \`agent-belay status\`.
-For audit-only summary, use \`/belay report\` or \`agent-belay report\`.
-For recovery advice after a block, use \`/belay recover\` or \`agent-belay recover\`.
+For why it was blocked, use \`/belay why <command>\` or \`belay explain --command "<command>"\`.
+For the latest pending ask, use \`/belay explain\` or \`belay explain\`.
+For install health and audit visibility, use \`/belay status\` or \`belay status\`.
+For audit-only summary, use \`/belay report\` or \`belay report\`.
+For recovery advice after a block, use \`/belay recover\` or \`belay recover\`.
 
 ## Install or repair
 
-- Full install: \`npx agent-belay init --with-skill\`
-- Interactive wizard: \`npx agent-belay init-wizard\`
-- Health check: \`agent-belay doctor\`
+- Full install: \`npx @guilz-dev/belay init --with-skill\`
+- Interactive wizard: \`npx @guilz-dev/belay init-wizard\`
+- Health check: \`belay doctor\`
 
 Do not run init or doctor implicitly from this skill — only when the user asks.
 
@@ -47,11 +47,11 @@ Do not run init or doctor implicitly from this skill — only when the user asks
 
 | User intent | Command |
 | --- | --- |
-| Why was this blocked? | \`agent-belay explain --command "..."\` |
-| Explain latest pending ask | \`agent-belay explain\` |
-| Status / dogfood / audit visibility | \`agent-belay status\` |
-| Audit summary (read-only) | \`agent-belay report\` |
-| Recovery advice (advisory only) | \`agent-belay recover\` |
-| Approve once | \`agent-belay approve <id>\` |
+| Why was this blocked? | \`belay explain --command "..."\` |
+| Explain latest pending ask | \`belay explain\` |
+| Status / dogfood / audit visibility | \`belay status\` |
+| Audit summary (read-only) | \`belay report\` |
+| Recovery advice (advisory only) | \`belay recover\` |
+| Approve once | \`belay approve <id>\` |
 "
 `;

@@ -16,7 +16,7 @@ Include:
 
 ## Scope
 
-`agent-belay` is a runtime safety helper. Incorrect classification, approval
+`belay` is a runtime safety helper. Incorrect classification, approval
 matching mistakes, or bypasses in hook integration should be treated as
 security-relevant reports.
 
@@ -32,8 +32,8 @@ releases per [docs/semver-policy.md](docs/semver-policy.md).
 For operators targeting same-OS-user adversarial resistance:
 
 ```bash
-agent-belay init --preset l1-full-recommended
-agent-belay sandbox status
+belay init --preset l1-full-recommended
+belay sandbox status
 ```
 
 Requires external OS sandbox runtime + running egress proxy. See
@@ -45,7 +45,7 @@ Requires external OS sandbox runtime + running egress proxy. See
 
 - Repository source and secrets (`.env`, credentials paths)
 - Operator approval state (`pending-approvals.json`, `approved-approvals.json`)
-- User-level control plane at `~/.config/agent-belay/` when enabled
+- User-level control plane at `~/.config/belay/` when enabled
 - Audit logs under `.cursor/belay/` or `.claude/belay/`
 - Repo-local belay artifacts (config, hooks, runtime bundles) for either adapter
 
@@ -55,14 +55,14 @@ Requires external OS sandbox runtime + running egress proxy. See
 |----------|------------------|
 | Hook runtime (Node) | Runs with the IDE user's OS permissions |
 | Repo-local belay config (`.cursor/` or `.claude/`) | Writable by repo collaborators; protected from agent tool mutation by default |
-| Control plane (`~/.config/agent-belay/` or `%APPDATA%/agent-belay`) | User-level; must not be writable via gated shell/file tools |
+| Control plane (`~/.config/belay/` or `%APPDATA%/belay`) | User-level; must not be writable via gated shell/file tools |
 | Agent shell / tools | Untrusted; classified heuristically |
 
 ### Audit and recovery advisory (v2.3)
 
-- **`agent-belay report`** — read-only aggregation of hook audit logs (ask/flag/allow counts,
+- **`belay report`** — read-only aggregation of hook audit logs (ask/flag/allow counts,
   silent-pass rate). Does not introduce new stops or allows.
-- **`agent-belay recover`** — advisory recovery hints only; **never auto-executes** undo commands.
+- **`belay recover`** — advisory recovery hints only; **never auto-executes** undo commands.
   Input is primarily stored audit axes (`effect`, `location`, `assessment`). `--command` may
   re-invoke Tier1 classification (not recovery execution).
 - Advice is limited to redacted hook observations; manual operator actions outside the hook
@@ -74,7 +74,7 @@ Requires external OS sandbox runtime + running egress proxy. See
 - **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; overrides cannot bypass repo-local belay artifacts or the control plane.
 - **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, command substitution wrappers, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
-- **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `agent-belay upgrade` records runtime hashes; `doctor` verifies them.
+- **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records runtime hashes; `doctor` verifies them.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
 ### Egress chokepoint (v0.7, opt-in) — partial L1
@@ -144,7 +144,7 @@ sandbox) must enforce deny-all; belay brokers capability widening:
 - **Control-plane isolation** — `controlPlane.isolation` verifies that the agent process
   should not write approval state / signing keys; paired with `approvalSigning.required`
   for L1-full claims
-- **Adversarial claims** — only when `agent-belay sandbox status` reports
+- **Adversarial claims** — only when `belay sandbox status` reports
   `l1FullActive: true` **and** the external sandbox is actually engaged. See
   [`docs/guarantee-table.md`](docs/guarantee-table.md).
 
@@ -156,8 +156,8 @@ sandbox) must enforce deny-all; belay brokers capability widening:
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
 - Command substitution parsing does not cover `${...}` parameter expansion; complex quoting edge cases may still evade detection.
-- Hash-pinned integrity detects tampering only for files listed in the install manifest; manual edits require `agent-belay upgrade` to refresh hashes.
-- Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/agent-belay/` are not deleted automatically.
+- Hash-pinned integrity detects tampering only for files listed in the install manifest; manual edits require `belay upgrade` to refresh hashes.
+- Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/belay/` are not deleted automatically.
 - Cursor sandbox behavior for hooks writing outside the workspace should be validated on target hosts (see `docs/spikes/oq3-control-plane.md`).
 
 ## Response Expectations

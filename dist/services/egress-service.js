@@ -249,7 +249,7 @@ export async function egressEnv(options = {}) {
     if (!status.running) {
         return {
             ok: false,
-            message: 'Egress proxy is not running. Run agent-belay egress start first.',
+            message: 'Egress proxy is not running. Run belay egress start first.',
             env: {},
         };
     }
@@ -262,7 +262,7 @@ export async function egressEnv(options = {}) {
 }
 export function formatEgressStatusReport(report) {
     const lines = [
-        `agent-belay egress status for ${report.repoRoot}`,
+        `belay egress status for ${report.repoRoot}`,
         `Config enabled: ${report.enabled ? 'yes' : 'no'}`,
         `Running: ${report.running ? 'yes' : 'no'}`,
         `Listen: ${report.host}:${report.port}`,

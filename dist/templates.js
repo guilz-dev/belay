@@ -40,7 +40,7 @@ async function readRuntimeBundle(adapter = 'cursor') {
         return await readFile(bundlePath, 'utf8');
     }
     catch {
-        throw new Error('Runtime bundle missing. Run pnpm build before agent-belay init or upgrade.');
+        throw new Error('Runtime bundle missing. Run pnpm build before belay init or upgrade.');
     }
 }
 export async function renderRuntimeCore(adapter = 'cursor') {

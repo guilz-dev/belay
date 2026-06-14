@@ -14,8 +14,8 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from '../config-io.js'
-import { defaultControlPlaneDir } from '../core/config.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
+import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
 import { getManagedHookEntries } from '../defaults.js'
@@ -93,7 +93,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
       if (loadedConfig.version !== 4) {
         warnings.push(
-          `Config version is ${loadedConfig.version}; expected 4. Run agent-belay upgrade to migrate.`,
+          `Config version is ${loadedConfig.version}; expected 4. Run belay upgrade to migrate.`,
         )
       }
       const judgeDoctor = await diagnoseJudge(loadedConfig)
@@ -121,7 +121,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         const repoLocalApproved = path.join(repoLocalDir, 'approved-approvals.json')
         if (existsSync(repoLocalPending) || existsSync(repoLocalApproved)) {
           warnings.push(
-            'Repo-local approval files remain while control plane is enabled. Run agent-belay doctor --fix to archive them.',
+            'Repo-local approval files remain while control plane is enabled. Run belay doctor --fix to archive them.',
           )
         }
       } else {
@@ -135,15 +135,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
             existsSync(path.join(controlPlaneDir, 'approved-approvals.json'))
           if (hasApprovalFiles) {
             warnings.push(
-              `Control plane is disabled but approval files still exist at ${controlPlaneDir}. Run agent-belay doctor --fix to migrate and archive them.`,
+              `Control plane is disabled but approval files still exist at ${controlPlaneDir}. Run belay doctor --fix to migrate and archive them.`,
             )
           }
         }
       }
       if (loadedConfig.controlPlane.integrity === 'hash-pinned') {
-        notes.push(
-          'Integrity: hash-pinned (verify with agent-belay upgrade after runtime changes).',
-        )
+        notes.push('Integrity: hash-pinned (verify with belay upgrade after runtime changes).')
         const integrity = await verifyIntegrityManifest(repoRoot, activeLayout)
         if (!integrity.ok) {
           issues.push(
@@ -261,12 +259,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const runtimeVersions = await readRuntimeVersion(corePath)
     if (runtimeVersions.stamp && !runtimeVersions.stamp.startsWith(`${PACKAGE_VERSION}@`)) {
       warnings.push(
-        `Installed runtime stamp (${runtimeVersions.stamp}) differs from package (${PACKAGE_VERSION}). Run agent-belay upgrade.`,
+        `Installed runtime stamp (${runtimeVersions.stamp}) differs from package (${PACKAGE_VERSION}). Run belay upgrade.`,
       )
     }
     if (runtimeVersions.version && runtimeVersions.version !== PACKAGE_VERSION) {
       warnings.push(
-        `Installed runtime version (${runtimeVersions.version}) differs from package (${PACKAGE_VERSION}). Run agent-belay upgrade.`,
+        `Installed runtime version (${runtimeVersions.version}) differs from package (${PACKAGE_VERSION}). Run belay upgrade.`,
       )
     }
     if (runtimeVersions.stamp?.startsWith(`${PACKAGE_VERSION}@`)) {
@@ -312,7 +310,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         `Dogfood active: ${dogfood.gateEvents} gate events, ${dogfood.wouldBlockCount} would-block (${(dogfood.wouldBlockRate * 100).toFixed(1)}%).`,
       )
       if (dogfood.readyForEnforce) {
-        notes.push('Dogfood metrics suggest enforce mode is ready (agent-belay dogfood --enforce).')
+        notes.push('Dogfood metrics suggest enforce mode is ready (belay dogfood --enforce).')
       }
     } else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
       notes.push('Fail-closed policy is enabled in enforce mode.')
@@ -349,13 +347,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       )
       if (!egress.running) {
         warnings.push(
-          'Egress is enabled in config but the local proxy is not running. Run agent-belay egress start.',
+          'Egress is enabled in config but the local proxy is not running. Run belay egress start.',
         )
       } else {
         notes.push(`Egress proxy running (pid ${egress.pid}).`)
         if (egress.foreignProxy) {
           warnings.push(
-            `Egress listen port ${egress.host}:${egress.port} is occupied by another proxy${egress.boundRepoRoot ? ` for ${egress.boundRepoRoot}` : ''}. Do not use agent-belay egress env for this repository.`,
+            `Egress listen port ${egress.host}:${egress.port} is occupied by another proxy${egress.boundRepoRoot ? ` for ${egress.boundRepoRoot}` : ''}. Do not use belay egress env for this repository.`,
           )
         } else if (egress.repoRootMismatch) {
           warnings.push(
@@ -364,7 +362,6 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         }
       }
     }
-
   }
 
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: adapterName })
@@ -379,14 +376,14 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   if (health.skillOnly) {
     warnings.push(
       'Skill-only install detected: belay SKILL.md is present but hook floor is missing or incomplete. ' +
-        'This is advisory only — enforcement requires hooks. Run `npx agent-belay init` (or `agent-belay init-wizard`) ' +
-        'then `agent-belay doctor` to verify the floor.',
+        'This is advisory only — enforcement requires hooks. Run `npx @guilz-dev/belay init` (or `belay init-wizard`) ' +
+        'then `belay doctor` to verify the floor.',
     )
     notes.push(`Skill path: ${health.skillPath}`)
   }
   if (health.skillInstalled && !health.commandsInstalled && adapterName === 'cursor') {
     notes.push(
-      'Optional: install Cursor slash commands with `agent-belay init --with-skill` for /belay-approve routing.',
+      'Optional: install Cursor slash commands with `belay init --with-skill` for /belay-approve routing.',
     )
   }
 
@@ -407,7 +404,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = [
-    `agent-belay doctor for ${report.repoRoot}`,
+    `belay doctor for ${report.repoRoot}`,
     `Config: ${report.configPath}`,
     `Hooks: ${report.hooksPath}`,
     `Node: ${report.nodeResolution.ok ? report.nodeResolution.path : 'unresolved'}`,

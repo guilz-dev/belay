@@ -2,7 +2,7 @@ import path from 'node:path';
 import { cursorLayout } from './adapters/layouts/cursor.js';
 import { buildRunnerInvocation } from './adapters/layouts/scope.js';
 import { DEFAULT_CONFIG_V3 } from './core/config.js';
-export const PACKAGE_NAME = 'agent-belay';
+export { PACKAGE_NAME } from './branding.js';
 export const DEFAULT_CONFIG = DEFAULT_CONFIG_V3;
 function runnerCommand(platform, hooksDir, repoRoot, hookScript, ...args) {
     return buildRunnerInvocation(platform, hooksDir, repoRoot, hookScript, ...args);

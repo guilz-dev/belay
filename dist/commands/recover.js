@@ -64,7 +64,7 @@ export async function recoverProject(options = {}) {
 }
 export function formatRecoverReport(report) {
     const lines = [
-        `agent-belay recover for ${report.repoRoot}`,
+        `belay recover for ${report.repoRoot}`,
         '',
         'Disclaimer:',
         ...report.disclaimer.map((line) => `- ${line}`),

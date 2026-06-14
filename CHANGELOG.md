@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.0.1 — 2026-06-14
+
+First public release as **`@guilz-dev/belay`**. CLI command is **`belay`** (formerly internal `agent-belay`).
+GitHub repository: [guilz-dev/belay](https://github.com/guilz-dev/belay).
 
 ### Added
 
-- **SPEC v2.3** — `agent-belay report` (R-V1/R-V2 audit visibility + conservative fence-drift warnings at 0.5 threshold)
-- **SPEC v2.3** — `agent-belay recover` (R-R1/R-R2 advisory recovery guidance, show-don't-run)
+- **SPEC v2.3** — `belay report` (R-V1/R-V2 audit visibility + conservative fence-drift warnings at 0.5 threshold)
+- **SPEC v2.3** — `belay recover` (R-R1/R-R2 advisory recovery guidance, show-don't-run)
 - Skill front-door routes: `/belay report`, `/belay recover` (+ bundled command templates)
 - **SPEC v2.3** — review fixes: audit-based recover integration tests (T-R1/T-R2), conservative fence-drift warnings (0.5 threshold), `--command` Tier1 notice, SECURITY/guarantee-table updates
 - Installer test verifies all bundled slash command templates (report/recover included)
@@ -14,6 +17,8 @@
 
 ### Changed
 
+- **SPEC v2.3.1** — npm package renamed to `@guilz-dev/belay`; bin command is `belay`
+- README: tagline, 0.0.x early notice, Codex experimental, install via `npx @guilz-dev/belay`
 - README: `init-wizard`, `--scope project|global`, install-scope caveats, and Cursor slash command artifacts
 - SPEC-v2.2 / ROADMAP: WS-Skill marked implemented; G-B1 decision recorded (verification pending)
 - G-B1 gate doc: decision fixed, execution/result template for Cursor smoke
@@ -22,6 +27,8 @@
 ### Fixed
 
 - **SPEC v2.1.2** — Tier0 now catches docker registry publish via `--push` and `--output=type=registry` (R31/R32); fixes FN on `docker buildx build --push`
+
+## Unreleased
 
 ### Added (v2.1.1)
 - `init --judge-endpoint` for explicit cloud endpoint configuration
@@ -86,7 +93,7 @@
 - **[SPEC-v1.0.md](docs/SPEC-v1.0.md)** — stable 1.x commitments: layer guarantees, adapter SDK, semver policy
 - **`l1-full-recommended` preset** — signed + isolated control plane, sandbox, egress (`init --preset`)
 - **Guarantee table conformance** — scenario IDs in `src/conformance/guarantee-table.ts` + profile-specific tests
-- **Docs:** [adapter-sdk.md](docs/adapter-sdk.md), [semver-policy.md](docs/semver-policy.md), [config-schema-v3.md](docs/config-schema-v3.md)
+- **Docs:** [adapter-sdk.md](docs/adapter-sdk.md), [semver-policy.md](docs/semver-policy.md), [config-schema.md](docs/config-schema.md)
 
 ### Changed
 
@@ -105,8 +112,8 @@
 ### Added
 
 - **Sandbox capability broker (L1-full path, opt-in)** — `sandbox.enabled` integrates with external sandbox runtimes; belay brokers fs-outside capability via `fs-scope-allowlist.json`
-- `agent-belay sandbox status` — reports sandbox broker, control-plane isolation, and L1-full prerequisites
-- `agent-belay approve --scope path --path <abs-path>` — persist outside-repo path allowances (parallel to egress `--scope domain`)
+- `belay sandbox status` — reports sandbox broker, control-plane isolation, and L1-full prerequisites
+- `belay approve --scope path --path <abs-path>` — persist outside-repo path allowances (parallel to egress `--scope domain`)
 - **Control-plane trust domain** — `controlPlane.isolation` (`none` | `read-only-mount` | `separate-user`) with doctor/sandbox verification
 - **Layer conformance matrix** — `src/conformance/layer-profiles.ts` + tests for L3+L4 / partial L1 / L2 / L1-full profiles
 - [`docs/guarantee-table.md`](docs/guarantee-table.md) — per-configuration guarantee documentation
@@ -140,8 +147,8 @@
 ### Added
 
 - **Egress chokepoint (L1, opt-in)** — `egress.enabled` runs a local HTTP(S) proxy that observes outbound connections and blocks unknown destinations pending approval
-- `agent-belay egress start|stop|status|env` — manage the egress proxy process and print recommended `HTTP_PROXY` / `HTTPS_PROXY` variables
-- Egress approvals reuse the existing one-shot approval loop (`kind: egress`); `agent-belay approve --scope domain` persists host allowlist entries
+- `belay egress start|stop|status|env` — manage the egress proxy process and print recommended `HTTP_PROXY` / `HTTPS_PROXY` variables
+- Egress approvals reuse the existing one-shot approval loop (`kind: egress`); `belay approve --scope domain` persists host allowlist entries
 - **L3 demotion** — when egress is enabled with `demoteL3External`, external-command shell rules become `allow_flagged` hints (`l3_external_hint`) instead of `deny_pending_approval`; L1 proxy is the real external boundary
 - `explain` and `doctor` report egress layer status; doctor warns when egress is enabled but the proxy is not running
 
@@ -153,8 +160,8 @@
 
 ### Added
 
-- `agent-belay audit query|summarize|replay` — filter and replay audit NDJSON
-- `agent-belay simulate --config <path>` — dry-run config against recent audit history
+- `belay audit query|summarize|replay` — filter and replay audit NDJSON
+- `belay simulate --config <path>` — dry-run config against recent audit history
 - Layered config resolution (builtin → team → repo → protected)
 - Signed out-of-band approval tokens (`approvalSigning.required`) with notification hooks
 - Metrics v2 fields in audit summarize
@@ -170,8 +177,8 @@
 
 ### Added
 
-- `agent-belay dogfood` enables OQ1 audit + fail-closed policy (optional `--enforce`, `--force`, `--no-spike`)
-- `agent-belay init --dogfood` initializes with dogfood config
+- `belay dogfood` enables OQ1 audit + fail-closed policy (optional `--enforce`, `--force`, `--no-spike`)
+- `belay init --dogfood` initializes with dogfood config
 - `status` and `doctor` show dogfood readiness and OQ3 spike results (`oq3-spike-last.json`)
 - `docs/v0.3-remaining.md` — v0.3 line closure checklist (ship + operational validation)
 
@@ -179,10 +186,10 @@
 
 ### Added
 
-- `agent-belay metrics` — audit log analysis for OQ1 dogfood (`wouldBlock` rate, top reasons, enforce readiness)
+- `belay metrics` — audit log analysis for OQ1 dogfood (`wouldBlock` rate, top reasons, enforce readiness)
 - Gate audit records include `mode`, `wouldBlock`, and `permission` for dogfood measurement
 - `controlPlane.spikeOnPrompt` and `BELAY_OQ3_SPIKE=1` run OQ3 filesystem validation from `beforeSubmitPrompt`
-- `agent-belay doctor --fix` / `--dry-run` migrate or archive orphaned approval state files
+- `belay doctor --fix` / `--dry-run` migrate or archive orphaned approval state files
 - Reverse control-plane → repo-local approval migration when control plane is disabled
 - Nested and multiple `$(...)` / backtick substitution detection with escaped `\$(...)` support
 
@@ -235,7 +242,7 @@
 - Tool gates for Shell, Write, StrReplace, Delete
 - Additional subagent matchers (`computerUse`, `debug`, `explore`, `videoReview`, `bugbot`)
 - CLI commands: `upgrade`, `status`, `explain`, `revoke`
-- `agent-belay/core` package export
+- `belay/core` package export
 
 ### Changed
 - Runtime is esbuild-bundled instead of embedded template strings

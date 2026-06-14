@@ -1,4 +1,4 @@
-export declare const CODEX_HOOKS_BEGIN = "# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---";
+export declare const CODEX_HOOKS_BEGIN = "# --- BELAY MANAGED HOOKS BEGIN (managed by belay; do not edit) ---";
 export declare const CODEX_HOOKS_END = "# --- BELAY MANAGED HOOKS END ---";
 /**
  * Render belay's Codex lifecycle hooks as a marker-delimited TOML block for `.codex/config.toml`.

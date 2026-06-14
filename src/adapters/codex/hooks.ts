@@ -3,7 +3,7 @@ import path from 'node:path'
 import { buildRunnerInvocation } from '../layouts/scope.js'
 
 export const CODEX_HOOKS_BEGIN =
-  '# --- BELAY MANAGED HOOKS BEGIN (managed by agent-belay; do not edit) ---'
+  '# --- BELAY MANAGED HOOKS BEGIN (managed by belay; do not edit) ---'
 export const CODEX_HOOKS_END = '# --- BELAY MANAGED HOOKS END ---'
 
 const HOOK_TIMEOUT_SECONDS = 30

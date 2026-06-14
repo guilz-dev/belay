@@ -1,5 +1,5 @@
 import { type BelayConfigV3 } from './core/config.js';
-export declare const PACKAGE_NAME = "agent-belay";
+export { PACKAGE_NAME } from './branding.js';
 export declare const DEFAULT_CONFIG: BelayConfigV3;
 export type ManagedHookDefinition = {
     command: string;

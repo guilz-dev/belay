@@ -28,20 +28,21 @@ Repo: https://github.com/guilz-dev/belay （作成済み）
 
 - 内部 `package.json` は `1.0.0`（未公開）だったが、**npm に公開実績が無い**ため、正直な初公開として
   **`0.0.1` にリセット**する。
-- 以後の公開は 0.0.x で反復し、v2.3 の全機能（命綱 recovery / 可視化）が揃った時点で 0.x→ semver を進める。
+- 以後の公開は 0.0.x で反復し、安定化した時点で 0.x→ semver を進める。
 
 ## 2. v0.0.1 の中身（何を公開し、何を後送りにするか）
 
 **公開する（実装済み）**:
 - restorability floor（Tier0/Tier1、concept conformance: v2.1.2/v2.1.3/v2.1.4 反映済み）。
 - skill front-door + scope（v2.2: R-S1〜S5）。
+- WS-Visible（③ 可視化）: `belay report` / `/belay report`（read-only 監査要約）。
+- WS-Recover（① 命綱 recover）: `belay recover` / `/belay recover`（助言のみ・自動実行なし）。
 - adapters: **Cursor / Claude = 通常出荷、Codex = experimental 出荷**（doctor が残存注意点表示）。
 
-**後送り（v2.3 の残り・以降の 0.0.x）**:
-- WS-Visible（③ 可視化）/ WS-Recover（① 命綱 recover）。**v0.0.1 には含めない**。
+**後送り（以降の 0.0.x / v2.4）**:
 - ② 上流ディシプリン（v2.4 候補）。managed Codex / plugin 配布（出荷後）。
 
-> v0.0.1 は「**名前を確定し、床 + 配布を早期に出す**」リリース。命綱(recover)・可視化は次以降。
+> v0.0.1 は「**名前を確定し、床 + skill 知性層 + 配布を早期に出す**」リリース。
 > README/タグラインで「early / 0.0.x」「Codex experimental」を**正直に明示**する。
 
 ## 3. 改名要件
@@ -87,7 +88,7 @@ Repo: https://github.com/guilz-dev/belay （作成済み）
 ### R-PUB3 — 正直な README / タグライン（MUST）
 - タグライン: 「**LLM / AI SDK agent 向けの restorability floor（取り消せない×破滅的だけ止める）**」。
   ドメイン（AI agent）は**名前でなくタグライン**で示す（§ 命名方針）。
-- 0.0.x の早期性・**Codex experimental**・recover/可視化が未搭載であることを明示。
+- 0.0.x の早期性・**Codex experimental** を明示。report/recover は助言のみ（floor を代替しない）。
 - 安全境界（skill-only=助言 / `init` 必須）と scope（project 既定 / global 明示）を記載。
 
 ### R-PUB4 — 出荷前ゲート（v2.3 §7 の v0.0.1 適用）
@@ -101,7 +102,7 @@ Repo: https://github.com/guilz-dev/belay （作成済み）
 1. R-RN1〜R-RN5 反映（name/bin/repo/参照置換、skill/パスは `belay` 維持）。
 2. R-PUB1〜R-PUB4 充足（公開設定・ビルド・正直 README・出荷前ゲート緑）。
 3. `@guilz-dev/belay@0.0.1` を npm 公開、GitHub `guilz-dev/belay` に `v0.0.1` タグ。
-4. recover / 可視化 / ②ディシプリン は未搭載と明記（以降の 0.0.x / v2.4）。
+4. ② 上流ディシプリンは未搭載と明記（v2.4 候補）。report/recover は v0.0.1 に同梱。
 
 ## 参照
 - 親: [SPEC-v2.3.md](./SPEC-v2.3.md)（初 OSS リリース）

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { CLI_COMMAND } from './branding.js';
 import { approvePending } from './commands/approve.js';
 import { auditProject, formatAuditReport } from './commands/audit.js';
 import { doctorProject, formatDoctorReport } from './commands/doctor.js';
@@ -317,27 +318,28 @@ function parseArgs(argv) {
     return { command: command ?? 'help', options };
 }
 function printHelp() {
-    process.stdout.write(`agent-belay
+    const c = CLI_COMMAND;
+    process.stdout.write(`${c}
 
 Usage:
-  agent-belay init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
-  agent-belay init-wizard [--target <dir>]
+  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  ${c} init-wizard [--target <dir>]
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  agent-belay upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
-  agent-belay dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
-  agent-belay doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
-  agent-belay metrics [--target <dir>] [--json]
-  agent-belay report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
-  agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
+  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
+  ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
+  ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
+  ${c} metrics [--target <dir>] [--json]
+  ${c} report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
+  ${c} recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
     (--limit picks the Nth recover candidate after priority ranking: local_mutation first, then recency; 1 = highest priority, default 1)
-  agent-belay audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
-  agent-belay simulate --config <path> [--target <dir>] [--json]
-  agent-belay status [--target <dir>] [--json]
-  agent-belay explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
-  agent-belay egress <start|stop|status|env> [--target <dir>] [--json]
-  agent-belay sandbox status [--target <dir>] [--json]
-  agent-belay approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
-  agent-belay revoke <approval-id> [--target <dir>]
+  ${c} audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
+  ${c} simulate --config <path> [--target <dir>] [--json]
+  ${c} status [--target <dir>] [--json]
+  ${c} explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
+  ${c} egress <start|stop|status|env> [--target <dir>] [--json]
+  ${c} sandbox status [--target <dir>] [--json]
+  ${c} approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
+  ${c} revoke <approval-id> [--target <dir>]
 `);
 }
 async function main() {
@@ -372,7 +374,7 @@ async function main() {
                 result.withSkill ? 'skill extras enabled' : null,
                 result.dogfood ? 'dogfood mode enabled' : null,
             ].filter(Boolean);
-            process.stdout.write(`Initialized agent-belay in ${result.repoRoot} (${extras.join(', ')}).\n`);
+            process.stdout.write(`Initialized belay in ${result.repoRoot} (${extras.join(', ')}).\n`);
             return;
         }
         if (command === 'dogfood') {
@@ -397,7 +399,7 @@ async function main() {
             if (upgraded.policy.modelAssist.enabled) {
                 process.stderr.write('Warning: policy.modelAssist is enabled but is not wired to v2 Tier1. Use top-level judge instead.\n');
             }
-            process.stdout.write(`Upgraded agent-belay (${result.adapter}) in ${result.repoRoot}.\n`);
+            process.stdout.write(`Upgraded belay (${result.adapter}) in ${result.repoRoot}.\n`);
             return;
         }
         if (command === 'doctor') {

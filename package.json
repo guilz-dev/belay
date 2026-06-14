@@ -1,16 +1,16 @@
 {
-  "name": "agent-belay",
-  "version": "1.0.0",
+  "name": "@guilz-dev/belay",
+  "version": "0.0.1",
   "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/guilz-dev/agent-belay.git"
+    "url": "https://github.com/guilz-dev/belay.git"
   },
-  "homepage": "https://github.com/guilz-dev/agent-belay#readme",
+  "homepage": "https://github.com/guilz-dev/belay#readme",
   "bugs": {
-    "url": "https://github.com/guilz-dev/agent-belay/issues"
+    "url": "https://github.com/guilz-dev/belay/issues"
   },
   "keywords": [
     "agent",
@@ -28,7 +28,7 @@
   },
   "packageManager": "pnpm@10.29.3",
   "bin": {
-    "agent-belay": "./dist/cli.js"
+    "belay": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -43,7 +43,6 @@
   "files": [
     "dist",
     "skills",
-    "docs",
     "README.md",
     "LICENSE",
     "agent-belay-logo.png"

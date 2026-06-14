@@ -163,7 +163,7 @@ export async function evaluateGatedAction(ctx, deps, params) {
         const verdict = unnormalizedGateVerdict({
             reason: 'normalization_failed',
             mode: ctx.config.mode,
-            user_message: 'agent-belay could not normalize this gated action. Run agent-belay doctor, then retry.',
+            user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
             agent_message: 'Belay denied this action because the hook payload could not be normalized.',
         });
         await deps.appendAudit(ctx, {
@@ -403,7 +403,7 @@ async function gateDecisionToVerdict(ctx, deps, kind, result, auditExtras = {}) 
         permission: 'deny',
         wouldBlock: true,
         approvalId: approval.approvalId,
-        user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run agent-belay explain or /belay why.`,
+        user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run belay explain or /belay why.`,
         agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
     });
 }
@@ -414,7 +414,7 @@ export async function processApprovalPrompt(ctx, deps, prompt) {
     }
     if (ctx.config.approvalSigning.required) {
         const message = `Signed approval token required for ${approvalId}. Editor prompt approval is disabled in this configuration. ` +
-            `Use agent-belay approve --approval-id ${approvalId} --token <signed-token>.`;
+            `Use belay approve --approval-id ${approvalId} --token <signed-token>.`;
         await deps.appendAudit(ctx, {
             event: 'approval',
             kind: 'approval',

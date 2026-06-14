@@ -37,7 +37,7 @@ export function buildInitOptionsFromWizard(answers, targetDir) {
 export async function runInitWizard(options = {}) {
     const rl = readline.createInterface({ input, output });
     try {
-        output.write('agent-belay init wizard\n');
+        output.write('belay init wizard\n');
         const adapter = parseAdapter(await rl.question('Adapter (cursor/claude/codex) [cursor]: '));
         const scope = parseScope(await rl.question('Install scope (project/global) [project]: '));
         const withSkill = parseYesNo(await rl.question('Install SKILL.md and slash commands? (y/n) [y]: '), true);

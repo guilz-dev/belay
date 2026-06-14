@@ -19,7 +19,7 @@ and Result after a Cursor smoke run.
 | Date | TBD |
 | Cursor version | TBD |
 | OS | TBD |
-| agent-belay version | TBD |
+| belay version | TBD |
 
 ## Result
 
@@ -29,15 +29,15 @@ and Result after a Cursor smoke run.
 
 ## Procedure
 
-1. Install skill + commands: `agent-belay init --with-skill` (or `agent-belay init-wizard`)
+1. Install skill + commands: `belay init --with-skill` (or `belay init-wizard`)
 2. Confirm `disable-model-invocation: true` on `.cursor/skills/belay/SKILL.md`
 3. Verify explicit `/belay-approve`, `/belay why`, `/belay explain`, `/belay status` routing
    (via `.cursor/commands/belay-*.md`)
-4. Confirm deny hook messages link to `/belay why` or `agent-belay explain`
+4. Confirm deny hook messages link to `/belay why` or `belay explain`
 5. Record outcomes: commands vs skills role split, auto-invocation behavior
 
 ## Pass criteria
 
-- Explicit slash commands invoke the documented `agent-belay` CLI
+- Explicit slash commands invoke the documented `belay` CLI
 - Hook deny messages remain the primary approval path
 - No skill auto-invocation on routine turns when `disable-model-invocation: true`

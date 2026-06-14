@@ -99,7 +99,7 @@ describe('v0.2 operational commands', () => {
     expect(merged.version).toBe(4)
     expect(coreAfter.length).toBeGreaterThan(0)
     expect(coreAfter).toContain('RUNTIME_BUILD_STAMP')
-    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "1\.0\.0@/)
+    expect(coreAfter).toMatch(/RUNTIME_BUILD_STAMP = "0\.0\.1@/)
     expect(coreAfter).toContain('verdict')
   })
 

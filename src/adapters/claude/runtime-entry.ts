@@ -149,8 +149,7 @@ export async function runBeforeSubmitPromptHook() {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
         continue: false,
-        user_message:
-          'agent-belay failed while processing approval state. Run agent-belay doctor, then retry.',
+        user_message: 'belay failed while processing approval state. Run belay doctor, then retry.',
       },
     })
   }
@@ -181,7 +180,7 @@ export async function runShellGateHook() {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason:
-          'agent-belay failed while classifying this shell command. Run agent-belay doctor, then retry.',
+          'belay failed while classifying this shell command. Run belay doctor, then retry.',
       },
     })
   }
@@ -210,7 +209,7 @@ export async function runToolGateHook(_eventName: string) {
         reason: 'unsupported_mcp_tool',
         mode: ctx.config.mode,
         user_message:
-          'agent-belay blocked this MCP tool because Claude MCP payloads are not normalized safely yet.',
+          'belay blocked this MCP tool because Claude MCP payloads are not normalized safely yet.',
         agent_message: 'Belay denied this MCP tool because its payload shape is unsupported.',
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
@@ -230,8 +229,7 @@ export async function runToolGateHook(_eventName: string) {
       const verdict = unnormalizedGateVerdict({
         reason: 'unmapped_tool',
         mode: ctx.config.mode,
-        user_message:
-          'agent-belay does not recognize this tool action. Run agent-belay doctor, then retry.',
+        user_message: 'belay does not recognize this tool action. Run belay doctor, then retry.',
         agent_message: 'Belay denied this action because the tool could not be normalized.',
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
@@ -253,7 +251,7 @@ export async function runToolGateHook(_eventName: string) {
         reason: 'normalization_failed',
         mode: ctx.config.mode,
         user_message:
-          'agent-belay could not normalize this Claude tool payload. Run agent-belay doctor, then retry.',
+          'belay could not normalize this Claude tool payload. Run belay doctor, then retry.',
         agent_message:
           'Belay denied this action because the Claude tool payload could not be normalized.',
       })
@@ -273,7 +271,7 @@ export async function runToolGateHook(_eventName: string) {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason:
-          'agent-belay failed while classifying this tool action. Run agent-belay doctor, then retry.',
+          'belay failed while classifying this tool action. Run belay doctor, then retry.',
       },
     })
   }
@@ -288,7 +286,7 @@ export async function runAuditHook(eventName: string) {
     jsonResponse({})
   } catch (error) {
     console.error(
-      'agent-belay audit hook failed:',
+      'belay audit hook failed:',
       error instanceof Error ? error.message : String(error),
     )
     jsonResponse({})

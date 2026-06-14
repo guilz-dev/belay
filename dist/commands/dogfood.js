@@ -28,7 +28,7 @@ export async function dogfoodProject(options = {}) {
         unknownLocalEffect: updated.policy.unknownLocalEffect,
         message: [
             'Dogfood mode enabled: audit + policy.unknownLocalEffect deny.',
-            'Run agent-belay metrics after normal agent work, then agent-belay dogfood --enforce when ready.',
+            'Run belay metrics after normal agent work, then belay dogfood --enforce when ready.',
         ].join(' '),
     };
 }
@@ -45,7 +45,7 @@ async function promoteDogfoodToEnforce(repoRoot, configPath, force, adapter = 'c
             message: [
                 'Dogfood metrics do not recommend enforce yet.',
                 ...metrics.dogfood.notes,
-                'Re-run agent-belay metrics, tune overrides.allow, or pass --force to override.',
+                'Re-run belay metrics, tune overrides.allow, or pass --force to override.',
             ].join(' '),
         };
     }

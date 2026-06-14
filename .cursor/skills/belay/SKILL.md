@@ -28,9 +28,7 @@ check whether hooks are present.
 
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
-For install health and audit visibility, use `/belay status` or `belay status`.
-For audit-only summary, use `/belay report` or `belay report`.
-For recovery advice after a block, use `/belay recover` or `belay recover`.
+For install health, use `/belay status` or `belay status`.
 
 ## Install or repair
 
@@ -46,7 +44,5 @@ Do not run init or doctor implicitly from this skill — only when the user asks
 | --- | --- |
 | Why was this blocked? | `belay explain --command "..."` |
 | Explain latest pending ask | `belay explain` |
-| Status / dogfood / audit visibility | `belay status` |
-| Audit summary (read-only) | `belay report` |
-| Recovery advice (advisory only) | `belay recover` |
+| Status / dogfood | `belay status` |
 | Approve once | `belay approve <id>` |

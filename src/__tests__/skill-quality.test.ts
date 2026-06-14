@@ -38,7 +38,7 @@ describe('SKILL.md quality (T20/T23)', () => {
       expect(description.toLowerCase()).toContain(trigger)
     }
     expect(content).toContain('/belay why')
-    expect(content).toContain('agent-belay explain')
+    expect(content).toContain('belay explain')
   })
 
   it('T23: SKILL.md snapshot stays stable', async () => {

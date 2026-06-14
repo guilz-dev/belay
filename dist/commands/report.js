@@ -27,7 +27,7 @@ export async function reportProject(options = {}) {
 }
 export function formatReport(report) {
     const lines = [
-        `agent-belay report for ${report.repoRoot}`,
+        `belay report for ${report.repoRoot}`,
         `Audit log: ${report.auditLogPath}`,
         '',
         `Gate events: ${report.gateEvents}`,

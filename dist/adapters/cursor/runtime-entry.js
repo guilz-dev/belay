@@ -49,7 +49,7 @@ export async function runBeforeSubmitPromptHook() {
     catch {
         jsonResponse({
             continue: false,
-            user_message: 'agent-belay failed while processing approval state. Run agent-belay doctor, then retry.',
+            user_message: 'belay failed while processing approval state. Run belay doctor, then retry.',
         });
     }
 }
@@ -70,7 +70,7 @@ export async function runShellGateHook() {
     catch {
         jsonResponse({
             permission: 'deny',
-            user_message: 'agent-belay failed while classifying this shell command. Run agent-belay doctor, then retry.',
+            user_message: 'belay failed while classifying this shell command. Run belay doctor, then retry.',
         });
     }
 }
@@ -124,7 +124,7 @@ export async function runToolGateHook(eventName) {
     catch {
         jsonResponse({
             permission: 'deny',
-            user_message: 'agent-belay failed while classifying this tool action. Run agent-belay doctor, then retry.',
+            user_message: 'belay failed while classifying this tool action. Run belay doctor, then retry.',
         });
     }
 }
@@ -137,7 +137,7 @@ export async function runAuditHook(eventName) {
         jsonResponse({});
     }
     catch (error) {
-        console.error('agent-belay audit hook failed:', error instanceof Error ? error.message : String(error));
+        console.error('belay audit hook failed:', error instanceof Error ? error.message : String(error));
         jsonResponse({});
     }
 }

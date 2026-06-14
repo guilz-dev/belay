@@ -83,7 +83,7 @@ export function formatExplainReport(report) {
         ].filter((line) => line !== null)
         : [];
     const lines = [
-        `agent-belay explain for ${report.repoRoot}`,
+        `belay explain for ${report.repoRoot}`,
         ...(report.approvalId ? [`Pending approval: ${report.approvalId}`] : []),
         `Kind: ${report.kind}`,
         `Input: ${report.command}`,

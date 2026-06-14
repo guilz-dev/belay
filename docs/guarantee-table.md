@@ -1,6 +1,6 @@
 # Layer guarantee table (v1.0)
 
-This table states what agent-belay guarantees **per configuration**. Adversarial
+This table states what belay guarantees **per configuration**. Adversarial
 resistance is claimed **only** for the L1-full row when the external sandbox runtime
 actually enforces deny-all (container / seatbelt / landlock / Cursor sandbox).
 
@@ -17,21 +17,21 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 
 ## L1-full prerequisites
 
-All must be true for `agent-belay sandbox status` to report `l1FullActive: true`:
+All must be true for `belay sandbox status` to report `l1FullActive: true`:
 
 1. `sandbox.enabled: true` with a real external sandbox runtime (`runtime` ≠ `none`)
 2. `egress.enabled: true` and the egress proxy running for this repository
 3. `controlPlane.isolation.mode` is `read-only-mount` or `separate-user`, verified by doctor
 4. `approvalSigning.required: true`
 
-Recommended starting point: `agent-belay init --preset l1-full-recommended`.
+Recommended starting point: `belay init --preset l1-full-recommended`.
 
 ## Capability broker surfaces
 
 | Capability | Broker mechanism | Approval command |
 |------------|------------------|------------------|
-| Egress (HTTP/S) | Egress proxy + domain allowlist | `agent-belay approve <id> --scope domain` |
-| FS outside repo | Sandbox + fs-scope allowlist | `agent-belay approve <id> --scope path --path <abs-path>` |
+| Egress (HTTP/S) | Egress proxy + domain allowlist | `belay approve <id> --scope domain` |
+| FS outside repo | Sandbox + fs-scope allowlist | `belay approve <id> --scope path --path <abs-path>` |
 
 ## L3 classifier lists
 
@@ -46,7 +46,7 @@ security boundaries. See [semver-policy.md](./semver-policy.md).
 
 ## Skill intelligence layer (v2.3, advisory only)
 
-`agent-belay report` and `agent-belay recover` are **read-only advisory** commands. They do
+`belay report` and `belay recover` are **read-only advisory** commands. They do
 not change hook verdicts, auto-execute shell, or bypass the enforcement floor (ADR-002).
 
 | Surface | Behavior | Security note |

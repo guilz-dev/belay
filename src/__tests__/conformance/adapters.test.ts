@@ -205,7 +205,7 @@ describe('adapter conformance suite', () => {
             `${config.tokenPrefix} ${denied.approvalId}`,
           )
           expect(approval.continue).toBe(false)
-          expect(approval.user_message).toContain('agent-belay approve --approval-id')
+          expect(approval.user_message).toContain('belay approve --approval-id')
         })
       })
 

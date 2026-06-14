@@ -77,7 +77,7 @@ export async function recoverProject(options: RecoverOptions = {}): Promise<Reco
 
 export function formatRecoverReport(report: RecoverReport): string {
   const lines = [
-    `agent-belay recover for ${report.repoRoot}`,
+    `belay recover for ${report.repoRoot}`,
     '',
     'Disclaimer:',
     ...report.disclaimer.map((line) => `- ${line}`),

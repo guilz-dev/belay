@@ -22,7 +22,7 @@ export async function metricsProject(options = {}) {
 }
 export function formatMetricsReport(report) {
     const lines = [
-        `agent-belay metrics for ${report.auditLogPath}`,
+        `belay metrics for ${report.auditLogPath}`,
         `Schema: v${report.schemaVersion}`,
         `Gate events: ${report.gateEvents}`,
         `Would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,

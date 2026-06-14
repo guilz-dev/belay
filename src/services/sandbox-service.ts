@@ -117,7 +117,7 @@ export function createCapabilityApprovalStore(
 
 export function formatSandboxStatusReport(report: SandboxStatusReport): string {
   const lines = [
-    `agent-belay sandbox status for ${report.repoRoot}`,
+    `belay sandbox status for ${report.repoRoot}`,
     `Sandbox: ${report.sandboxEnabled ? 'enabled' : 'disabled'} (runtime=${report.sandboxRuntime})`,
     `Capability broker (fs-scope): ${report.brokerActive ? 'active' : 'inactive'}`,
     `FS-scope allowlist entries: ${report.fsScopeAllowlistCount}`,

@@ -39,7 +39,7 @@ export async function reportProject(options: ReportOptions = {}): Promise<AuditV
 
 export function formatReport(report: AuditVisibilityReport): string {
   const lines = [
-    `agent-belay report for ${report.repoRoot}`,
+    `belay report for ${report.repoRoot}`,
     `Audit log: ${report.auditLogPath}`,
     '',
     `Gate events: ${report.gateEvents}`,
