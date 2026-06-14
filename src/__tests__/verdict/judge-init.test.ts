@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfigFile } from '../../config-io.js'
 import { DEFAULT_CONFIG_V4, migrateConfig, normalizeConfig } from '../../core/config.js'
 import {
-  CloudJudgeConsentRequiredError,
   JudgeEndpointRequiredError,
   resolveInitJudgeConfig,
   resolveJudgeConfig,
@@ -14,6 +13,18 @@ import {
 import { initProject } from '../../installer.js'
 
 const tempDirs: string[] = []
+
+function mockStdinTTY(value: boolean): () => void {
+  const previous = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value })
+  return () => {
+    if (previous) {
+      Object.defineProperty(process.stdin, 'isTTY', previous)
+    } else {
+      Reflect.deleteProperty(process.stdin, 'isTTY')
+    }
+  }
+}
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-judge-init-'))
@@ -26,38 +37,65 @@ describe('T11 init judge setup matrix', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('writes openai-compatible provider with cloud consent and endpoint', async () => {
+  it('writes openai-compatible provider with cloud consent on interactive TTY', async () => {
+    const restoreTTY = mockStdinTTY(true)
+    const repoRoot = await createTempRepo()
+    try {
+      await initProject({
+        targetDir: repoRoot,
+        judgeProvider: 'openai-compatible',
+        judgeEndpoint: 'https://api.openai.com/v1',
+        acceptCloudJudge: true,
+      })
+      const config = await loadConfigFile(repoRoot)
+      expect(config.version).toBe(4)
+      expect(config.judge.provider).toBe('openai-compatible')
+      expect(config.judge.providerId).toBe('openai')
+      expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
+      expect(config.judge.model).toBe('gpt-4.1-mini')
+      expect(config.judge.cloudConsent?.accepted).toBe(true)
+      expect(config.judge.cloudConsent?.by).toBe('tty')
+    } finally {
+      restoreTTY()
+    }
+  })
+
+  it('does not record cloud consent for accept-cloud-judge in non-interactive mode', async () => {
+    const restoreTTY = mockStdinTTY(false)
+    const repoRoot = await createTempRepo()
+    try {
+      await initProject({
+        targetDir: repoRoot,
+        judgeProvider: 'openai-compatible',
+        judgeEndpoint: 'https://api.openai.com/v1',
+        acceptCloudJudge: true,
+      })
+      const config = await loadConfigFile(repoRoot)
+      expect(config.judge.providerId).toBe('openai')
+      expect(config.judge.cloudConsent?.accepted).toBeUndefined()
+    } finally {
+      restoreTTY()
+    }
+  })
+
+  it('saves openai-compatible without cloud consent (fail-closed at runtime)', async () => {
     const repoRoot = await createTempRepo()
     await initProject({
       targetDir: repoRoot,
       judgeProvider: 'openai-compatible',
       judgeEndpoint: 'https://api.openai.com/v1',
-      acceptCloudJudge: true,
     })
     const config = await loadConfigFile(repoRoot)
-    expect(config.version).toBe(4)
     expect(config.judge.provider).toBe('openai-compatible')
-    expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
-    expect(config.judge.model).toBe('auto')
+    expect(config.judge.cloudConsent?.accepted).toBeUndefined()
   })
 
-  it('rejects openai-compatible without cloud consent', async () => {
+  it('rejects cursor without endpoint', async () => {
     const repoRoot = await createTempRepo()
     await expect(
       initProject({
         targetDir: repoRoot,
-        judgeProvider: 'openai-compatible',
-        judgeEndpoint: 'https://api.openai.com/v1',
-      }),
-    ).rejects.toBeInstanceOf(CloudJudgeConsentRequiredError)
-  })
-
-  it('rejects openai-compatible without endpoint', async () => {
-    const repoRoot = await createTempRepo()
-    await expect(
-      initProject({
-        targetDir: repoRoot,
-        judgeProvider: 'openai-compatible',
+        judgeProviderId: 'cursor',
         acceptCloudJudge: true,
       }),
     ).rejects.toBeInstanceOf(JudgeEndpointRequiredError)
@@ -100,7 +138,7 @@ describe('T11 init judge setup matrix', () => {
     expect(codex.endpoint).toBe('https://api.openai.com/v1')
   })
 
-  it('chooses adapter-matched default judge profile when fresh', () => {
+  it('defaults fresh init to local regardless of adapter profile hint', () => {
     const claudeDefault = resolveInitJudgeConfig({
       isFresh: true,
       hasExplicitJudgeFlags: false,
@@ -111,19 +149,42 @@ describe('T11 init judge setup matrix', () => {
       hasExplicitJudgeFlags: false,
       defaultJudgeProfile: 'codex',
     })
-    expect(claudeDefault.provider).toBe('openai-compatible')
-    expect(codexDefault.provider).toBe('openai-compatible')
+    expect(claudeDefault.provider).toBe('ollama')
+    expect(claudeDefault.providerId).toBe('local')
+    expect(codexDefault.provider).toBe('ollama')
+    expect(codexDefault.providerId).toBe('local')
   })
 
-  it('requires consent for explicit openai-compatible provider', () => {
-    expect(() =>
-      resolveInitJudgeConfig({
-        isFresh: true,
-        hasExplicitJudgeFlags: true,
-        judgeProvider: 'openai-compatible',
-        judgeEndpoint: 'https://api.example.com/v1',
-      }),
-    ).toThrow(CloudJudgeConsentRequiredError)
+  it('maps --judge-provider cursor to cursor providerId without OpenAI default', () => {
+    const judge = resolveJudgeConfig({
+      judgeProvider: 'cursor',
+      judgeEndpoint: 'https://api.cursor.example/v1',
+    })
+    expect(judge.providerId).toBe('cursor')
+    expect(judge.endpoint).toBe('https://api.cursor.example/v1')
+    expect(judge.endpoint).not.toContain('api.openai.com')
+  })
+
+  it('requires explicit consent flag for legacy resolveInitJudgeConfig without saving consent', () => {
+    const judge = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: true,
+      judgeProvider: 'openai-compatible',
+      judgeEndpoint: 'https://api.example.com/v1',
+    })
+    expect(judge.cloudConsent?.accepted).toBeUndefined()
+  })
+
+  it('records init cloud consent from capability approval id', () => {
+    const judge = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: true,
+      judgeProviderId: 'openai',
+      judgeEndpoint: 'https://api.openai.com/v1',
+      cloudConsentApprovalId: 'approval-init',
+    })
+    expect(judge.cloudConsent?.accepted).toBe(true)
+    expect(judge.cloudConsent?.by).toBe('capability-approval:approval-init')
   })
 
   it('migrates deprecated cursor provider to openai-compatible', () => {

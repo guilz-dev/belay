@@ -337,10 +337,22 @@ function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolea
   return false
 }
 
+function isBelayJudgeSelfCommand(tokens: string[]): boolean {
+  return (
+    tokens[0] === 'belay' &&
+    tokens[1] === 'judge' &&
+    (tokens[2] === 'use' ||
+      tokens[2] === 'status' ||
+      tokens[2] === 'list' ||
+      tokens[2] === 'test' ||
+      tokens[2] === 'consent')
+  )
+}
+
 function isBelaySelfCommand(tokens: string[]): boolean {
   const head = tokens[0] ?? ''
   const subcommand = tokens[1] ?? ''
-  return head === 'belay' && BELAY_SELF_COMMANDS.has(subcommand)
+  return head === 'belay' && (BELAY_SELF_COMMANDS.has(subcommand) || isBelayJudgeSelfCommand(tokens))
 }
 
 function tier0HighStakesRm(

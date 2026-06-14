@@ -52,10 +52,13 @@ export interface InitOptions {
   preset?: import('./presets.js').ConfigPresetName
   judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
+  judgeProviderId?: 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
   judgeModel?: string
   judgeEndpoint?: string
+  judgeCredentialMode?: 'project' | 'apiKey'
   /** Acknowledge cloud judge egress + redaction limits (R19). Required for openai-compatible provider. */
   acceptCloudJudge?: boolean
+  cloudConsentApprovalId?: string
   /** When true, skip writing judge config (used when user declines cloud consent). */
   skipJudgeWrite?: boolean
 }

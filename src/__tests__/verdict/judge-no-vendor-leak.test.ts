@@ -26,12 +26,12 @@ describe('T16 no default base / no vendor leak', () => {
     }
   })
 
-  it('requires endpoint for openai-compatible init', () => {
+  it('requires endpoint for cursor init', () => {
     expect(() =>
       resolveInitJudgeConfig({
         isFresh: true,
         hasExplicitJudgeFlags: true,
-        judgeProvider: 'openai-compatible',
+        judgeProviderId: 'cursor',
         acceptCloudJudge: true,
       }),
     ).toThrow(JudgeEndpointRequiredError)
@@ -49,6 +49,7 @@ describe('T16 no default base / no vendor leak', () => {
       },
     })
     expect(config.judge.provider).toBe('openai-compatible')
+    expect(config.judge.providerId).toBe('cursor')
     expect(config.judge.endpoint).toBeNull()
   })
 })

@@ -7,6 +7,10 @@ import type {
   UnknownLocalEffectPolicy,
   UnparseableShellPolicy,
 } from './types.js'
+import {
+  getJudgeProviderSpec,
+  inferProviderIdFromConfig,
+} from './verdict/judge-catalog.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -102,16 +106,39 @@ export interface BelayRedactionConfig {
 
 export type JudgeProvider = 'ollama' | 'openai-compatible'
 
+export type JudgeProviderId = 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
+
+export type JudgeCredentialMode = 'project' | 'apiKey'
+
+export type JudgeCredentialRef = `store:judge` | `env:${string}`
+
+export interface JudgeCredentialConfig {
+  mode: JudgeCredentialMode
+  ref?: JudgeCredentialRef
+}
+
+export interface JudgeCloudConsent {
+  accepted: boolean
+  at: string
+  providerId: JudgeProviderId
+  endpoint: string
+  by: string
+}
+
 export interface BelayJudgeConfig {
   provider: JudgeProvider
+  providerId?: JudgeProviderId
   model: string
   timeoutMs: number
   endpoint: string | null
   keepAlive: string | null
+  cloudConsent?: JudgeCloudConsent
+  credential?: JudgeCredentialConfig
 }
 
 export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
   provider: 'ollama',
+  providerId: 'local',
   model: 'gemma4:e2b',
   endpoint: 'http://localhost:11434',
   timeoutMs: 25000,
@@ -120,7 +147,8 @@ export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
 
 export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig = {
   provider: 'openai-compatible',
-  model: 'auto',
+  providerId: 'openai',
+  model: 'gpt-4.1-mini',
   timeoutMs: 8000,
   endpoint: null,
   keepAlive: null,
@@ -442,7 +470,8 @@ export function normalizeJudgeProvider(
 function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
   const judge = raw.judge as (Partial<BelayJudgeConfig> & { provider?: string }) | undefined
   if (judge?.provider) {
-    const provider = normalizeJudgeProvider(judge.provider)
+    const rawProvider = String(judge.provider)
+    const provider = normalizeJudgeProvider(rawProvider)
     const base =
       provider === 'openai-compatible'
         ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
@@ -451,6 +480,7 @@ function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
       ...base,
       ...judge,
       provider,
+      ...(rawProvider === 'cursor' ? { providerId: 'cursor' as const } : {}),
     })
   }
   return { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
@@ -462,22 +492,83 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
     provider === 'openai-compatible'
       ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
       : DEFAULT_JUDGE_LOCAL_OLLAMA
-  const model =
+
+  let providerId: JudgeProviderId =
+    judge.providerId && getJudgeProviderSpec(judge.providerId)
+      ? judge.providerId
+      : inferProviderIdFromConfig({ ...judge, provider })
+
+  const spec = getJudgeProviderSpec(providerId)
+  if (spec && spec.driver !== provider) {
+    providerId = inferProviderIdFromConfig({ ...judge, provider })
+  }
+
+  const catalogSpec = getJudgeProviderSpec(providerId)
+  let model =
     typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
+  if (model === 'auto' && catalogSpec?.defaultModel) {
+    model = catalogSpec.defaultModel
+  }
+  if (!model && catalogSpec?.defaultModel) {
+    model = catalogSpec.defaultModel
+  }
+
   const timeoutMs =
     typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
-  return {
+
+  let endpoint: string | null =
+    typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null
+  if (!endpoint && catalogSpec?.defaultEndpoint) {
+    endpoint = catalogSpec.defaultEndpoint
+  }
+
+  const normalized: BelayJudgeConfig = {
     provider,
+    providerId,
     model,
     timeoutMs,
-    endpoint:
-      typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null,
+    endpoint,
     keepAlive:
       provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
         ? judge.keepAlive.trim()
         : provider === 'ollama'
           ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
           : null,
+  }
+
+  if (judge.cloudConsent?.accepted) {
+    normalized.cloudConsent = {
+      accepted: true,
+      at: judge.cloudConsent.at,
+      providerId: judge.cloudConsent.providerId ?? providerId,
+      endpoint: judge.cloudConsent.endpoint,
+      by: judge.cloudConsent.by,
+    }
+  }
+
+  if (judge.credential?.mode === 'project' || judge.credential?.mode === 'apiKey') {
+    normalized.credential = {
+      mode: judge.credential.mode,
+      ...(judge.credential.ref ? { ref: judge.credential.ref } : {}),
+    }
+  }
+
+  return normalized
+}
+
+export function rejectTeamLayerJudgeSecrets(
+  judge: Partial<BelayJudgeConfig> | undefined,
+  source: 'team' | 'repo',
+): void {
+  if (source !== 'team' || !judge) {
+    return
+  }
+  if (judge.credential?.mode === 'apiKey') {
+    throw new Error('team config cannot set judge.credential.mode to apiKey.')
+  }
+  const raw = judge as { credential?: { key?: string } }
+  if (raw.credential && 'key' in raw.credential && raw.credential.key) {
+    throw new Error('team config cannot contain inline judge credential keys.')
   }
 }
 

@@ -203,6 +203,7 @@ export interface OpenAiCompatibleJudgeOptions {
   modelResolved: string
   timeoutMs: number
   apiKey?: string
+  resolveApiKey?: () => Promise<{ key: string | null; source: string | null }>
   sensitivePaths: string[]
   scrubOptions: ScrubOptions
   fetchImpl?: typeof fetch
@@ -243,8 +244,9 @@ export function createOpenAiCompatibleJudge(
         return failClosedVerdict('outbound_scrub_failed')
       }
 
-      const { resolveJudgeApiKey } = await import('../judge-api-key.js')
-      const resolvedKey = resolveJudgeApiKey()
+      const resolvedKey = options.resolveApiKey
+        ? await options.resolveApiKey()
+        : { key: options.apiKey ?? null, source: null }
       const apiKey = options.apiKey ?? resolvedKey.key
       if (!apiKey) {
         judge.lastTrace = {

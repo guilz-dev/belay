@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildInitOptionsFromWizard,
   parseAdapter,
-  parseJudgeProfile,
+  parseJudgeProviderId,
   parseScope,
   parseYesNo,
 } from '../commands/init-wizard.js'
@@ -12,9 +12,8 @@ describe('init wizard', () => {
   it('uses bracket defaults when the user presses Enter', () => {
     expect(parseAdapter('')).toBe('cursor')
     expect(parseScope('')).toBe('project')
-    expect(parseJudgeProfile('', 'cursor')).toBe('cursor')
-    expect(parseJudgeProfile('', 'claude')).toBe('claude')
-    expect(parseJudgeProfile('', 'codex')).toBe('codex')
+    expect(parseJudgeProviderId('', 'local')).toBe('local')
+    expect(parseJudgeProviderId('', 'openai')).toBe('openai')
     expect(parseYesNo('', true)).toBe(true)
     expect(parseYesNo('', false)).toBe(false)
   })
@@ -26,7 +25,8 @@ describe('init wizard', () => {
           adapter: 'codex',
           scope: 'global',
           withSkill: true,
-          judgeProfile: 'cursor',
+          judgeProviderId: 'openai',
+          acceptCloud: true,
           dogfood: true,
         },
         '/tmp/repo',
@@ -36,7 +36,8 @@ describe('init wizard', () => {
       adapter: 'codex',
       scope: 'global',
       withSkill: true,
-      judgeProfile: 'cursor',
+      judgeProviderId: 'openai',
+      acceptCloudJudge: true,
       dogfood: true,
     })
   })

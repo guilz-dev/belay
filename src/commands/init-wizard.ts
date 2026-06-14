@@ -3,12 +3,20 @@ import readline from 'node:readline/promises'
 
 import { initProject } from '../installer.js'
 import type { AdapterName, InitOptions } from '../types.js'
+import {
+  isJudgeProviderId,
+  JUDGE_PROVIDER_IDS,
+  type JudgeProviderId,
+} from '../core/verdict/judge-catalog.js'
 
 export interface WizardAnswers {
   adapter: AdapterName
   scope: 'project' | 'global'
   withSkill: boolean
-  judgeProfile: 'local-ollama' | 'cursor' | 'claude' | 'codex'
+  judgeProviderId: JudgeProviderId
+  judgeCredentialMode?: 'project' | 'apiKey'
+  judgeEndpoint?: string
+  acceptCloud: boolean
   dogfood: boolean
 }
 
@@ -39,20 +47,12 @@ export function parseYesNo(value: string | undefined, defaultValue: boolean): bo
   return defaultValue
 }
 
-export function parseJudgeProfile(
-  value: string | undefined,
-  defaultProfile: 'local-ollama' | 'cursor' | 'claude' | 'codex',
-): 'local-ollama' | 'cursor' | 'claude' | 'codex' {
-  const normalized = (value?.trim() || defaultProfile).toLowerCase()
-  if (
-    normalized === 'local-ollama' ||
-    normalized === 'cursor' ||
-    normalized === 'claude' ||
-    normalized === 'codex'
-  ) {
+export function parseJudgeProviderId(value: string | undefined, defaultId: JudgeProviderId): JudgeProviderId {
+  const normalized = (value?.trim() || defaultId).toLowerCase()
+  if (isJudgeProviderId(normalized)) {
     return normalized
   }
-  throw new Error(`Unknown judge profile: ${value ?? '(empty)'}`)
+  throw new Error(`Unknown judge provider: ${value ?? '(empty)'}`)
 }
 
 export function buildInitOptionsFromWizard(
@@ -64,7 +64,10 @@ export function buildInitOptionsFromWizard(
     adapter: answers.adapter,
     scope: answers.scope,
     withSkill: answers.withSkill,
-    judgeProfile: answers.judgeProfile,
+    judgeProviderId: answers.judgeProviderId,
+    judgeEndpoint: answers.judgeEndpoint,
+    judgeCredentialMode: answers.judgeCredentialMode,
+    acceptCloudJudge: answers.acceptCloud,
     dogfood: answers.dogfood,
   }
 }
@@ -79,20 +82,72 @@ export async function runInitWizard(options: { targetDir?: string } = {}) {
       await rl.question('Install SKILL.md and slash commands? [y | n] (y): '),
       true,
     )
-    // Show Tier1 judge choice explicitly so init defaults are visible in wizard UX.
-    const defaultJudgeProfile = adapter
-    const judgeProfile = parseJudgeProfile(
+    const judgeProviderId = parseJudgeProviderId(
       await rl.question(
-        `Tier1 judge profile [cursor | claude | codex | local-ollama] (${defaultJudgeProfile}): `,
+        `Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (local): `,
       ),
-      defaultJudgeProfile,
+      'local',
     )
-    return initProject(
-      buildInitOptionsFromWizard(
-        { adapter, scope, withSkill, judgeProfile, dogfood: false },
-        options.targetDir,
-      ),
+
+    let judgeCredentialMode: 'project' | 'apiKey' | undefined
+    let judgeEndpoint: string | undefined
+    let acceptCloud = false
+
+    const isCloud = judgeProviderId !== 'local'
+    if (isCloud) {
+      judgeCredentialMode = parseYesNo(
+        await rl.question('Use project env for credentials? [y=project | n=apiKey] (y): '),
+        true,
+      )
+        ? 'project'
+        : 'apiKey'
+
+      if (judgeProviderId === 'cursor' || judgeProviderId === 'custom') {
+        judgeEndpoint = (await rl.question('Judge endpoint URL (required): ')).trim()
+      }
+
+      if (judgeCredentialMode === 'apiKey') {
+        const key = await rl.question('Paste API key (hidden input not available in all shells): ')
+        if (key.trim()) {
+          process.env.BELAY_WIZARD_JUDGE_KEY = key.trim()
+        }
+      }
+
+      acceptCloud = parseYesNo(
+        await rl.question(
+          'Accept cloud judge egress (redacted commands leave the repo)? [y | n] (n): ',
+        ),
+        false,
+      )
+    }
+
+    const initOptions = buildInitOptionsFromWizard(
+      {
+        adapter,
+        scope,
+        withSkill,
+        judgeProviderId,
+        judgeCredentialMode,
+        judgeEndpoint,
+        acceptCloud,
+        dogfood: false,
+      },
+      options.targetDir,
     )
+
+    const result = await initProject(initOptions)
+
+    if (process.env.BELAY_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
+      const { writeJudgeCredentialStore } = await import('../core/credential-store.js')
+      const { loadConfigFile, repoLocalStateDirFor } = await import('../config-io.js')
+      const { belayStateDir } = await import('../core/config.js')
+      const config = await loadConfigFile(result.repoRoot, result.adapter)
+      const stateDir = belayStateDir(config, repoLocalStateDirFor(result.repoRoot, config))
+      await writeJudgeCredentialStore(stateDir, process.env.BELAY_WIZARD_JUDGE_KEY)
+      delete process.env.BELAY_WIZARD_JUDGE_KEY
+    }
+
+    return result
   } finally {
     rl.close()
   }

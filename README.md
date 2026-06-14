@@ -236,11 +236,12 @@ Notable settings:
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges
   them back. File-mutation tools and shell redirects cannot write control-plane
   paths while it is enabled.
-- **Cloud judge** — for `judge.provider: "openai-compatible"`, set
-  `judge.endpoint` and provide `BELAY_JUDGE_API_KEY` (or `OPENAI_API_KEY`), or
-  opt in with
-  `belay init --judge-provider openai-compatible --judge-endpoint <url> --accept-cloud-judge`.
-  Fresh installs default to local Ollama (`local-ollama`).
+- **Cloud judge** — switch with `belay judge use openai` (or `cursor`, `openrouter`,
+  `custom`). Set `judge.endpoint` where required, provide API keys via env or
+  `belay judge use --credential apiKey --key-stdin`. Record egress consent via
+  interactive `belay judge use … --accept-cloud` or `belay judge consent` → `belay approve`
+  → `belay judge use … --cloud-consent-approval-id` (`--accept-cloud` has no effect in non-interactive mode).
+  Fresh installs default to local Ollama (`belay judge use local`).
 
 ## Command reference
 
@@ -263,6 +264,13 @@ belay egress <start|stop|status|env>
 belay sandbox status
 belay approve <approval-id> [--scope once|domain|path]
 belay revoke <approval-id>
+belay judge status
+belay judge list
+belay judge use <local|openai|cursor|openrouter|custom> [--model <id>] [--endpoint <url>]
+           [--accept-cloud] [--cloud-consent-approval-id <id>]
+           [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
+belay judge test
+belay judge consent <provider-id> [--endpoint <url>]
 ```
 
 ## Coexisting with existing hooks

@@ -3,6 +3,10 @@ import { fileURLToPath } from 'node:url'
 
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
+import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
+import { resolveJudgeCredential } from '../judge-api-key.js'
+import { repoLocalStateDirFor } from '../../config-io.js'
+import { getJudgeProviderSpec } from './judge-catalog.js'
 import {
   createDeterministicJudgeStub,
   createFailClosedJudge,
@@ -45,10 +49,22 @@ export async function loadPinnedJudgeModels(): Promise<{
   }
 }
 
-export function resolveCloudModel(
+export function resolveJudgeModel(judge: BelayJudgeConfig): { requested: string; resolved: string } {
+  const requested = judge.model
+  if (requested === 'auto') {
+    const spec = judge.providerId ? getJudgeProviderSpec(judge.providerId) : null
+    const resolved =
+      process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || spec?.defaultModel || 'gpt-4.1-mini'
+    return { requested, resolved }
+  }
+  return { requested, resolved: requested }
+}
+
+/** @deprecated Use resolveJudgeModel */
+export const resolveCloudModel = (
   requested: string,
   pinned: { autoResolved: string },
-): { requested: string; resolved: string } {
+): { requested: string; resolved: string } => {
   if (requested === 'auto') {
     const envResolved = process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim()
     return {
@@ -59,15 +75,18 @@ export function resolveCloudModel(
   return { requested, resolved: requested }
 }
 
-/** @deprecated Use resolveCloudModel */
+/** @deprecated Use resolveJudgeModel */
 export const resolveCursorModel = resolveCloudModel
 
 export function createJudgeFromConfig(
   config: BelayConfigV4,
-  options: { pinnedModels?: { autoResolved: string } } = {},
+  options: { pinnedModels?: { autoResolved: string }; repoRoot?: string } = {},
 ): TracedTier1Judge {
   const judgeConfig = config.judge
   const provider = normalizeJudgeProvider(judgeConfig.provider)
+  const catalogSpec = judgeConfig.providerId
+    ? getJudgeProviderSpec(judgeConfig.providerId)
+    : null
 
   if (provider === 'openai-compatible') {
     const endpoint = judgeConfig.endpoint?.trim()
@@ -79,8 +98,20 @@ export function createJudgeFromConfig(
         modelResolved: judgeConfig.model,
       })
     }
-    const pinned = options.pinnedModels ?? { autoResolved: 'composer-2.5' }
-    const { resolved } = resolveCloudModel(judgeConfig.model, pinned)
+
+    if (isCloudJudgeConfig(judgeConfig) && !hasValidCloudConsent(judgeConfig)) {
+      return createFailClosedJudge({
+        reason: 'openai_compatible_consent_missing',
+        fallbackReason: 'cloud_consent_missing',
+        modelRequested: judgeConfig.model,
+        modelResolved: judgeConfig.model,
+      })
+    }
+
+    const { resolved } = resolveJudgeModel(judgeConfig)
+    const repoRoot = options.repoRoot ?? process.cwd()
+    const repoLocalStateDir = repoLocalStateDirFor(repoRoot, config)
+
     return createOpenAiCompatibleJudge({
       endpoint,
       modelRequested: judgeConfig.model,
@@ -88,6 +119,14 @@ export function createJudgeFromConfig(
       timeoutMs: judgeConfig.timeoutMs,
       sensitivePaths: config.classifier.sensitivePaths,
       scrubOptions: scrubOptionsFromConfig(config),
+      resolveApiKey: async () =>
+        resolveJudgeCredential({
+          judge: judgeConfig,
+          catalogSpec: catalogSpec ?? undefined,
+          repoRoot,
+          repoLocalStateDir,
+          config,
+        }),
     })
   }
 
@@ -104,5 +143,6 @@ export function createJudgeFromConfig(
 }
 
 export function judgeConfigSummary(judge: BelayJudgeConfig): string {
-  return `${judge.provider}/${judge.model}`
+  const id = judge.providerId ?? judge.provider
+  return `${id}/${judge.model}`
 }

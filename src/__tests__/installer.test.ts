@@ -154,7 +154,7 @@ describe('agent-belay installer', () => {
 
     const report = await doctorProject({ targetDir: repoRoot })
     expect(report.warnings.some((warning) => warning.includes('modelAssist'))).toBe(false)
-    expect(report.notes.some((note) => note.includes('Judge provider: ollama'))).toBe(true)
+    expect(report.notes.some((note) => note.includes('Judge driver: ollama'))).toBe(true)
   })
 
   it('fails before writing files when hooks.json is malformed', async () => {
