@@ -11,7 +11,7 @@ exhaustive field defaults).
 | `version` | `4` | `4` | Required |
 | `adapter` | `"cursor"` \| `"claude"` \| `"codex"` | detected | Host adapter |
 | `installScope` | `"project"` \| `"global"` | `"project"` | Where hooks/runtime/skill are installed (see below) |
-| `mode` | `"enforce"` \| `"audit"` | `"audit"` | Audit logs would-block without denying |
+| `mode` | `"enforce"` \| `"audit"` | `"enforce"` | Audit logs would-block without denying |
 | `approvalTtlMinutes` | number | `15` | One-shot approval TTL |
 | `tokenPrefix` | string | `"/belay-approve"` | |
 | `gates` | object | all enabled | `shell`, `subagent`, `fileMutation`, `toolShell` |

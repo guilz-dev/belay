@@ -70,7 +70,7 @@ Requires external OS sandbox runtime + running egress proxy. See
 
 ### Mitigations in v0.4
 
-- **Fresh-install defaults** — `mode: audit`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` (Tier1-recoverable unknowns run with audit flag); `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for stricter `unknownLocalEffect: deny`. Control plane defaults to enabled.
+- **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` (Tier1-recoverable unknowns run with audit flag); `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and stricter `unknownLocalEffect: deny`. Control plane defaults to enabled.
 - **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; overrides cannot bypass repo-local belay artifacts or the control plane.
 - **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, command substitution wrappers, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.

@@ -336,7 +336,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
 
 export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
   version: 4,
-  mode: 'audit',
+  mode: DEFAULT_CONFIG_V2.mode,
   approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
   tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
   gates: { ...DEFAULT_CONFIG_V2.gates },

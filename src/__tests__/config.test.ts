@@ -201,7 +201,7 @@ describe('config migration', () => {
   it('uses recoverable-first defaults for fresh installs', () => {
     expect(isFreshConfigInput({})).toBe(true)
     const merged = mergeConfig({})
-    expect(merged.mode).toBe('audit')
+    expect(merged.mode).toBe('enforce')
     expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
     expect(merged.policy.unparseableShell).toBe('deny')
     expect(merged.controlPlane.enabled).toBe(true)
