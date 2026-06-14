@@ -24,18 +24,22 @@ describe('T12 doctor judge matrix', () => {
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'openai-compatible',
-        model: 'auto',
+        providerId: 'openai',
+        model: 'gpt-4.1-mini',
         timeoutMs: 8000,
         endpoint: 'https://api.example.com/v1',
         keepAlive: null,
+        cloudConsent: {
+          accepted: true,
+          at: '2026-01-01T00:00:00.000Z',
+          providerId: 'openai',
+          endpoint: 'https://api.example.com/v1',
+          by: 'test',
+        },
       },
     })
     const report = await diagnoseJudge(config)
-    expect(
-      report.issues.some(
-        (issue) => issue.includes('BELAY_JUDGE_API_KEY') || issue.includes('OPENAI_API_KEY'),
-      ),
-    ).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('API key'))).toBe(true)
     if (previousBelay) {
       process.env.BELAY_JUDGE_API_KEY = previousBelay
     }
@@ -49,7 +53,8 @@ describe('T12 doctor judge matrix', () => {
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'openai-compatible',
-        model: 'auto',
+        providerId: 'cursor',
+        model: 'composer-2.5',
         timeoutMs: 8000,
         endpoint: null,
         keepAlive: null,

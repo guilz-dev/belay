@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { applyConfigPreset, type ConfigPresetName } from '../presets.js'
 import type { BelayConfigV3 } from './config.js'
-import { DEFAULT_CONFIG_V3, mergeConfig } from './config.js'
+import { DEFAULT_CONFIG_V3, mergeConfig, rejectTeamLayerJudgeSecrets } from './config.js'
 
 export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'protected'
 
@@ -76,6 +76,10 @@ export function resolveLayeredConfig(params: {
     const teamRaw = teamFile.preset
       ? applyConfigPreset(teamFile.preset, teamFile.config ?? {})
       : (teamFile.config ?? params.teamConfig)
+    rejectTeamLayerJudgeSecrets(
+      (teamRaw as { judge?: Parameters<typeof rejectTeamLayerJudgeSecrets>[0] }).judge,
+      'team',
+    )
     config = mergeConfigLayer(config, asV3Layer(teamRaw))
     provenance.push({
       path: params.teamConfigPath ?? teamConfigPath(),

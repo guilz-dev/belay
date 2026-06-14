@@ -1,9 +1,11 @@
+import { repoLocalStateDirFor } from '../config-io.js'
 import type { BelayConfigV4 } from './config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js'
-import { resolveJudgeApiKey } from './judge-api-key.js'
-import { assertJudgeEndpoint } from './judge-config.js'
+import { resolveJudgeCredential } from './judge-api-key.js'
+import { assertJudgeEndpoint, hasValidCloudConsent, isCloudJudgeConfig } from './judge-config.js'
 import { createOllamaJudge, createOpenAiCompatibleJudge } from './verdict/judge.js'
-import { loadPinnedJudgeModels, resolveCloudModel } from './verdict/judge-factory.js'
+import { getJudgeProviderSpec } from './verdict/judge-catalog.js'
+import { resolveJudgeModel } from './verdict/judge-factory.js'
 
 export interface JudgeDoctorResult {
   issues: string[]
@@ -11,14 +13,20 @@ export interface JudgeDoctorResult {
   notes: string[]
 }
 
-export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorResult> {
+export async function diagnoseJudge(
+  config: BelayConfigV4,
+  repoRoot: string = process.cwd(),
+): Promise<JudgeDoctorResult> {
   const issues: string[] = []
   const warnings: string[] = []
   const notes: string[] = []
   const judge = config.judge
   const provider = normalizeJudgeProvider(judge.provider)
+  const providerId = judge.providerId ?? (provider === 'ollama' ? 'local' : 'openai')
+  const catalogSpec = getJudgeProviderSpec(providerId)
 
-  notes.push(`Judge provider: ${provider}`)
+  notes.push(`Judge providerId: ${providerId}`)
+  notes.push(`Judge driver: ${provider}`)
   notes.push(`Judge model requested: ${judge.model}`)
 
   if (config.policy.modelAssist.enabled) {
@@ -28,6 +36,14 @@ export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorR
   }
 
   if (provider === 'openai-compatible') {
+    if (isCloudJudgeConfig(judge) && !hasValidCloudConsent(judge)) {
+      issues.push(
+        'Cloud judge consent is not recorded. Tier1 cloud judge will fail closed until consent is granted.',
+      )
+    } else if (judge.cloudConsent?.accepted) {
+      notes.push(`Cloud consent: accepted ${judge.cloudConsent.at} by ${judge.cloudConsent.by}`)
+    }
+
     warnings.push(
       'Cloud judge egress is enabled. Commands are redacted (R23) before send, but path structure and intent may still leave the repo.',
     )
@@ -41,20 +57,26 @@ export async function diagnoseJudge(config: BelayConfigV4): Promise<JudgeDoctorR
       return { issues, warnings, notes }
     }
 
-    const keyInfo = resolveJudgeApiKey()
+    const repoLocalDir = repoLocalStateDirFor(repoRoot, config)
+    const keyInfo = await resolveJudgeCredential({
+      judge,
+      catalogSpec: catalogSpec ?? undefined,
+      repoRoot,
+      repoLocalStateDir: repoLocalDir,
+      config,
+    })
     if (!keyInfo.key) {
       issues.push(
-        'BELAY_JUDGE_API_KEY / OPENAI_API_KEY is not set. Tier1 cloud judge will fail closed to ask.',
+        'Judge API key is not set for the configured credential mode. Tier1 cloud judge will fail closed to ask.',
       )
     } else {
-      notes.push(`API key source: ${keyInfo.source}`)
+      notes.push(`Credential: ${keyInfo.mode} → ${keyInfo.source}`)
     }
 
-    const pinnedModels = await loadPinnedJudgeModels()
-    const resolved = resolveCloudModel(judge.model, pinnedModels['openai-compatible'])
+    const resolved = resolveJudgeModel(judge)
     notes.push(`Resolved model: ${resolved.resolved}`)
 
-    if (keyInfo.key && judge.endpoint?.trim()) {
+    if (keyInfo.key && judge.endpoint?.trim() && hasValidCloudConsent(judge)) {
       const traced = createOpenAiCompatibleJudge({
         endpoint: judge.endpoint.trim(),
         modelRequested: judge.model,

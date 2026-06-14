@@ -16,7 +16,11 @@ import {
 } from './config-io.js'
 import { isFreshConfigInput, mergeConfig, normalizeConfig } from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
-import { resolveInitJudgeConfig } from './core/judge-config.js'
+import {
+  hasValidCloudConsent,
+  isCloudJudgeConfig,
+  resolveInitJudgeConfig,
+} from './core/judge-config.js'
 import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
@@ -153,19 +157,36 @@ async function applyInitJudgeConfig(
   const isFresh = isFreshConfigInput(existingConfig)
   const mergedConfig = await loadConfigFile(repoRoot, adapterName)
   const hasExplicitJudgeFlags =
-    options.judgeProfile || options.judgeProvider || options.judgeModel || options.judgeEndpoint
+    options.judgeProfile ||
+    options.judgeProvider ||
+    options.judgeProviderId ||
+    options.judgeModel ||
+    options.judgeEndpoint
   const judge = resolveInitJudgeConfig({
     isFresh,
     hasExplicitJudgeFlags: Boolean(hasExplicitJudgeFlags),
     judgeProfile: options.judgeProfile,
     judgeProvider: options.judgeProvider,
+    judgeProviderId: options.judgeProviderId,
     judgeModel: options.judgeModel,
     judgeEndpoint: options.judgeEndpoint,
     acceptCloudJudge: options.acceptCloudJudge,
+    interactiveConsent: Boolean(options.acceptCloudJudge && process.stdin.isTTY),
+    cloudConsentApprovalId: options.cloudConsentApprovalId,
     existingJudge: mergedConfig.judge,
-    defaultJudgeProfile: adapterName,
   })
+  if (options.judgeCredentialMode) {
+    judge.credential =
+      options.judgeCredentialMode === 'apiKey'
+        ? { mode: 'apiKey', ref: 'store:judge' }
+        : { mode: 'project' }
+  }
   const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge })
+  if (isCloudJudgeConfig(configWithJudge.judge) && !hasValidCloudConsent(configWithJudge.judge)) {
+    process.stderr.write(
+      'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
+    )
+  }
   await writeConfigFile(repoRoot, configWithJudge, adapterName)
 }
 

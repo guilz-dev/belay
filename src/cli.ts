@@ -71,6 +71,14 @@ function parseArgs(argv: string[]) {
     judgeModel?: string
     judgeEndpoint?: string
     acceptCloudJudge?: boolean
+    judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'consent'
+    judgeUseProvider?: string
+    acceptCloud?: boolean
+    cloudConsentApprovalId?: string
+    credentialMode?: 'project' | 'apiKey'
+    keyStdin?: boolean
+    keyEnv?: string
+    judgeTimeoutMs?: number
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -118,6 +126,9 @@ function parseArgs(argv: string[]) {
       continue
     }
     if (token === '--judge-profile') {
+      process.stderr.write(
+        'Warning: --judge-profile is deprecated; use belay judge use <provider-id> after init.\n',
+      )
       const next = rest[index + 1]
       if (!next || !['local-ollama', 'cursor', 'claude', 'codex'].includes(next)) {
         throw new Error('--judge-profile requires local-ollama, cursor, claude, or codex.')
@@ -155,6 +166,50 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--accept-cloud-judge') {
       options.acceptCloudJudge = true
+      continue
+    }
+    if (token === '--accept-cloud') {
+      options.acceptCloud = true
+      continue
+    }
+    if (token === '--cloud-consent-approval-id') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--cloud-consent-approval-id requires an approval id.')
+      }
+      options.cloudConsentApprovalId = next
+      index += 1
+      continue
+    }
+    if (token === '--credential') {
+      const next = rest[index + 1]
+      if (!next || !['project', 'apiKey'].includes(next)) {
+        throw new Error('--credential requires project or apiKey.')
+      }
+      options.credentialMode = next as 'project' | 'apiKey'
+      index += 1
+      continue
+    }
+    if (token === '--key-stdin') {
+      options.keyStdin = true
+      continue
+    }
+    if (token === '--key-env') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--key-env requires an environment variable name.')
+      }
+      options.keyEnv = next
+      index += 1
+      continue
+    }
+    if (token === '--timeout') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--timeout requires milliseconds.')
+      }
+      options.judgeTimeoutMs = Number(next)
+      index += 1
       continue
     }
     if (token === '--json') {
@@ -366,6 +421,27 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('sandbox requires subcommand: status')
     }
+    if (command === 'judge' && !options.judgeSubcommand) {
+      if (
+        token === 'status' ||
+        token === 'list' ||
+        token === 'use' ||
+        token === 'test' ||
+        token === 'consent'
+      ) {
+        options.judgeSubcommand = token
+        continue
+      }
+      throw new Error('judge requires subcommand: status, list, use, test, or consent')
+    }
+    if (
+      command === 'judge' &&
+      (options.judgeSubcommand === 'use' || options.judgeSubcommand === 'consent') &&
+      !options.judgeUseProvider
+    ) {
+      options.judgeUseProvider = token
+      continue
+    }
     if ((command === 'revoke' || command === 'approve') && !options.approvalId) {
       options.approvalId = token
       continue
@@ -397,6 +473,9 @@ Usage:
   ${c} explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
+  ${c} judge <status|list|use|test|consent> [--target <dir>] [--json]
+  ${c} judge use <provider-id> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
+  ${c} judge consent <provider-id> [--endpoint <url>]
   ${c} approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
 `)
@@ -473,6 +552,33 @@ async function main() {
         )
       }
       process.stdout.write(`Upgraded belay (${result.adapter}) in ${result.repoRoot}.\n`)
+      return
+    }
+
+    if (command === 'judge') {
+      const { runJudgeCommand } = await import('./commands/judge.js')
+      if (!options.judgeSubcommand) {
+        throw new Error('judge requires subcommand: status, list, use, or test')
+      }
+      const result = await runJudgeCommand({
+        targetDir: options.targetDir,
+        json: options.json,
+        subcommand: options.judgeSubcommand,
+        providerId: options.judgeUseProvider,
+        model: options.judgeModel,
+        endpoint: options.judgeEndpoint,
+        timeoutMs: options.judgeTimeoutMs,
+        acceptCloud: options.acceptCloud,
+        cloudConsentApprovalId: options.cloudConsentApprovalId,
+        credentialMode: options.credentialMode,
+        keyStdin: options.keyStdin,
+        keyEnv: options.keyEnv,
+      })
+      if (options.json && typeof result === 'object') {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      } else {
+        process.stdout.write(`${String(result)}\n`)
+      }
       return
     }
 

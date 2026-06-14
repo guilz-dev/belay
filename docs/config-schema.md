@@ -43,15 +43,22 @@ explicit opt-in (`--scope`).
 
 | Field | Values | Default |
 |-------|--------|---------|
-| `provider` | `"ollama"` \| `"openai-compatible"` | `"ollama"` |
-| `model` | string \| `"auto"` | `"gemma4:e2b"` (ollama) |
-| `endpoint` | URL | `http://localhost:11434` (ollama); **required** for `openai-compatible` |
-| `timeoutMs` | number | `25000` (ollama) |
-| `keepAlive` | string | `"30m"` (ollama) |
+| `provider` | `"ollama"` \| `"openai-compatible"` | `"ollama"` (driver; legacy readers use this) |
+| `providerId` | `"local"` \| `"openai"` \| `"cursor"` \| `"openrouter"` \| `"custom"` | inferred from `provider` / `endpoint` |
+| `model` | string | catalog default per `providerId` |
+| `endpoint` | URL \| `null` | catalog default; **required** for `cursor` / `custom` |
+| `timeoutMs` | number | `25000` (ollama) / `8000` (cloud) |
+| `keepAlive` | string | `"30m"` (ollama only) |
+| `cloudConsent` | object | unset until TTY or capability approval records egress opt-in |
+| `credential` | `{ mode: "project" }` \| `{ mode: "apiKey", ref: "store:judge" \| "env:NAME" }` | env / project keys; never in team config as `apiKey` |
 
-Fresh default is **local-ollama** (no egress). `openai-compatible` (cloud) requires explicit
-consent via `init --accept-cloud-judge`; API key is read from env, never stored in config.
-Outbound text is scrubbed before any cloud judge call.
+Fresh default is **local** (`providerId: local`, Ollama). Switch providers with
+`belay judge use <provider-id>` (no re-init). Cloud egress requires recorded
+`cloudConsent` (interactive TTY with `--accept-cloud`, or `judge_cloud_consent`
+capability approval); `--accept-cloud` is ignored in non-interactive mode.
+API keys: env vars, or `belay judge use --credential apiKey --key-stdin`.
+Outbound text is scrubbed before any cloud judge call. Non-TTY consent:
+`belay judge consent <provider-id>` → `belay approve <id>` → `belay judge use … --cloud-consent-approval-id <id>`.
 
 ## `policy`
 

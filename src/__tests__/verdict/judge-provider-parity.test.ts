@@ -214,7 +214,8 @@ describe('T15 openai-compatible provider parity', () => {
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'openai-compatible',
-        model: 'auto',
+        providerId: 'cursor',
+        model: 'composer-2.5',
         endpoint: null,
         timeoutMs: 8000,
         keepAlive: null,
