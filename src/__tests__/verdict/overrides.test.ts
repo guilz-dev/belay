@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { mergeConfig } from '../../core/config.js'
 import { classifyShell } from '../../core/verdict/adapter.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 describe('config overrides', () => {
   const fixtureRoot = path.join(import.meta.dirname, 'fixtures')
@@ -54,7 +54,7 @@ describe('config overrides', () => {
 describe('protected artifact roots', () => {
   it('treats controlPlaneDir as a protected root in verdict context', async () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
-    const ctx = v2TestContext({
+    const ctx = verdictTestContext({
       protectedArtifactRoots: [controlPlaneDir],
     })
     const { verdict } = await import('../../core/verdict/verdict.js')

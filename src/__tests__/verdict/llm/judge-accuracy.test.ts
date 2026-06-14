@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createOllamaJudge } from '../../../core/verdict/judge.js'
 import { verdict } from '../../../core/verdict/verdict.js'
-import { v2TestContext } from '../helpers.js'
+import { verdictTestContext } from '../helpers.js'
 
 async function ollamaAvailable(): Promise<boolean> {
   try {
@@ -58,7 +58,7 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness', () => {
   let report: AccuracyReport | null = null
 
   it('measures Tier1 floor accuracy on fixed corpus', async () => {
-    const context = v2TestContext({
+    const context = verdictTestContext({
       judge: createOllamaJudge({ model }),
     })
     const cases: AccuracyReport['cases'] = []

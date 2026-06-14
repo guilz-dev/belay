@@ -27,10 +27,10 @@ describe('gate-runtime integration', () => {
     }
   }
 
-  it('allows git status through v2 engine', async () => {
+  it('allows git status through verdict engine', async () => {
     vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
 
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-v2-gate-'))
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-verdict-gate-'))
     const configPath = path.join(repoRoot, '.belay', 'config.json')
     await mkdir(path.dirname(configPath), { recursive: true })
     await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')
@@ -57,10 +57,10 @@ describe('gate-runtime integration', () => {
     expect(auditEvents[0]?.location).toBe('repo_local')
   })
 
-  it('blocks rm -rf .git and creates v2 audit trace', async () => {
+  it('blocks rm -rf .git and creates verdict audit trace', async () => {
     vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
 
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-v2-gate-'))
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-verdict-gate-'))
     const configPath = path.join(repoRoot, '.belay', 'config.json')
     await mkdir(path.dirname(configPath), { recursive: true })
     await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')

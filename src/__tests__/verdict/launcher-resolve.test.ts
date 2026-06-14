@@ -4,10 +4,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveLauncherRecipe } from '../../core/verdict/launcher-resolve.js'
 import { verdict } from '../../core/verdict/verdict.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 describe('launcher-resolve', () => {
-  const ctx = v2TestContext()
+  const ctx = verdictTestContext()
   const tempDirs: string[] = []
 
   afterEach(async () => {

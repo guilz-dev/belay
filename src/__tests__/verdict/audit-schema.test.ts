@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterAuditRecords } from '../../core/audit-query.js'
+import { filterAuditRecords, toAuditRecord } from '../../core/audit-query.js'
 import type { AuditRecord } from '../../core/audit-types.js'
 
 describe('audit schema', () => {
@@ -29,5 +29,10 @@ describe('audit schema', () => {
     const filtered = filterAuditRecords([sample], { opacity: 'transparent' })
     expect(filtered).toHaveLength(1)
     expect(filterAuditRecords([sample], { opacity: 'opaque' })).toHaveLength(0)
+  })
+
+  it('normalizes legacy by: v2 to verdict when parsing audit records', () => {
+    const legacy = toAuditRecord({ ...sample, by: 'v2' })
+    expect(legacy.by).toBe('verdict')
   })
 })

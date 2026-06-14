@@ -123,7 +123,7 @@ export function formatExplainReport(report: ExplainReport): string {
     ...(result.axes
       ? [
           '',
-          'v2 axes:',
+          'verdict axes:',
           `  location: ${result.axes.location}`,
           `  opacity: ${result.axes.opacity}`,
           `  effect: ${result.axes.effect}`,

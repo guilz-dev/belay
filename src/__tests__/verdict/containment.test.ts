@@ -1,10 +1,10 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { analyzePathTargets, resolveTrustedPath } from '../../core/verdict/containment.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 describe('containment', () => {
-  const ctx = v2TestContext()
+  const ctx = verdictTestContext()
 
   it('resolves repo-local paths with trusted cwd', () => {
     const resolved = resolveTrustedPath('package.json', ctx.cwd, true)

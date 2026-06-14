@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { verdict } from '../../core/verdict/verdict.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 const CATASTROPHIC_CORES = [
   'rm -rf .git',
@@ -41,7 +41,7 @@ const MUST_ALLOW = [
 ]
 
 describe('structural suite', () => {
-  const context = v2TestContext()
+  const context = verdictTestContext()
 
   describe('MUST-ASK catastrophic bypass equivalence', () => {
     const cases: Array<{ name: string; command: string }> = []

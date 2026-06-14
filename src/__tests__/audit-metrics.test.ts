@@ -50,7 +50,7 @@ describe('audit-metrics', () => {
     expect(report.dogfood.notes.join(' ')).toContain('Dogfood config detected')
   })
 
-  it('aggregates v2 audit axes when present', () => {
+  it('aggregates verdict audit axes when present', () => {
     const report = computeAuditMetrics([
       {
         event: 'beforeShellExecution',

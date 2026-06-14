@@ -4,7 +4,7 @@ import type { VerdictContext } from '../../core/verdict/types.js'
 
 const FIXTURE_ROOT = path.join(import.meta.dirname, 'fixtures')
 
-export function v2TestContext(overrides: Partial<VerdictContext> = {}): VerdictContext {
+export function verdictTestContext(overrides: Partial<VerdictContext> = {}): VerdictContext {
   return {
     cwd: FIXTURE_ROOT,
     repoRoot: FIXTURE_ROOT,
