@@ -23,6 +23,18 @@ export function inferWouldBlock(record) {
     }
     return record.verdict === 'deny_pending_approval';
 }
+export function recordStringField(record, field) {
+    const value = record[field];
+    return typeof value === 'string' ? value : '';
+}
+export function isSilentPassRecord(record) {
+    const permission = recordStringField(record, 'permission');
+    const verdict = recordStringField(record, 'verdict');
+    return (permission === 'allow' ||
+        permission === 'allow_flagged' ||
+        verdict === 'allow' ||
+        verdict === 'allow_flagged');
+}
 export function filterAuditRecords(records, filter = {}) {
     const sinceMs = parseTimestamp(filter.since);
     const untilMs = parseTimestamp(filter.until);

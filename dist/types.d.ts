@@ -1,6 +1,7 @@
 export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, BelayControlPlaneConfig, BelayEgressConfig, BelayMode, BelayOverridesConfig, BelayPolicyConfig, BelayRedactionConfig, BelaySandboxConfig, BelayTransactionalConfig, UnknownLocalEffectPolicy, } from './core/config.js';
 export type { ApprovalRecord, ApprovalStateFile, Assessment, ClassifyResult, HookVerdict, } from './core/types.js';
 import type { InstallScope } from './adapters/layouts/scope.js';
+import type { RecentAskEntry } from './core/audit-summary.js';
 import type { BelayEgressConfig, BelayOverridesConfig, BelayPolicyConfig, BelaySandboxConfig } from './core/config.js';
 import type { ApprovalRecord, ClassifyResult } from './core/types.js';
 export interface HookEntry {
@@ -139,15 +140,13 @@ export interface AuditVisibilityReport {
     auditLogPath: string;
     gateEvents: number;
     askCount: number;
+    enforceAskCount: number;
+    auditAskCount: number;
+    unknownModeAskCount: number;
     flagCount: number;
     allowCount: number;
     silentPassRate: number;
-    recentAsks: Array<{
-        timestamp?: string;
-        summary: string;
-        reason: string;
-        tier: 'Tier0' | 'Tier1' | 'deterministic';
-    }>;
+    recentAsks: RecentAskEntry[];
     warnings: string[];
     notes: string[];
 }

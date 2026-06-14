@@ -1,55 +1,13 @@
 import path from 'node:path';
-import { filterAuditRecords, inferWouldBlock, isApprovalRecorded, isGateRecord, parseTimestamp, } from '../core/audit-query.js';
-import { buildRecoverAdvice } from '../core/recover-advice.js';
+import { loadConfigFile } from '../config-io.js';
+import { buildRecoverAdvice, RECOVER_DISCLAIMER } from '../core/recover-advice.js';
 import { probeGitState } from '../core/recover-git-probe.js';
+import { selectRecoverTarget } from '../core/recover-select.js';
 import { loadAuditRecords } from './audit.js';
 import { classifyForReport } from './classify-for-report.js';
-function isRecoverCandidate(record) {
-    if (!isGateRecord(record) || isApprovalRecorded(record)) {
-        return false;
-    }
-    if (inferWouldBlock(record)) {
-        return true;
-    }
-    const effect = typeof record.effect === 'string' ? record.effect : '';
-    return effect === 'local_mutation' || effect === 'external_effect';
-}
-function recordToTarget(record) {
-    return {
-        timestamp: record.timestamp,
-        fingerprint: typeof record.fingerprint === 'string' ? record.fingerprint : undefined,
-        summary: typeof record.summary === 'string' ? record.summary : '',
-        reason: typeof record.reason === 'string' ? record.reason : 'unknown',
-        effect: typeof record.effect === 'string' ? record.effect : undefined,
-        location: typeof record.location === 'string' ? record.location : undefined,
-        permission: typeof record.permission === 'string' ? record.permission : undefined,
-        assessment: record.assessment,
-    };
-}
-function selectRecoverTarget(records, options) {
-    const filtered = filterAuditRecords(records, {
-        since: options.since,
-        fingerprint: options.fingerprint,
-    });
-    const candidates = filtered.filter(isRecoverCandidate);
-    if (candidates.length === 0) {
-        return null;
-    }
-    candidates.sort((left, right) => {
-        const leftMs = parseTimestamp(left.timestamp) ?? 0;
-        const rightMs = parseTimestamp(right.timestamp) ?? 0;
-        return rightMs - leftMs;
-    });
-    const limit = options.limit ?? 1;
-    const index = Math.min(limit, candidates.length) - 1;
-    const selected = candidates[index] ?? candidates[0];
-    if (!selected) {
-        return null;
-    }
-    return recordToTarget(selected);
-}
 export async function recoverProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
+    const config = await loadConfigFile(repoRoot);
     let target = null;
     const extraWarnings = [];
     if (options.command) {
@@ -78,15 +36,17 @@ export async function recoverProject(options = {}) {
             repoRoot,
             recoverable: false,
             confidence: 'medium',
-            disclaimer: buildRecoverAdvice({
-                repoRoot,
-                target: { summary: '', reason: 'unknown' },
-            }).disclaimer,
+            disclaimer: [...RECOVER_DISCLAIMER],
             advice: ['No recoverable audit events found in the selected window.'],
             warnings: ['Specify --fingerprint, --since, or --command to narrow recovery advice.'],
         };
     }
-    const advice = buildRecoverAdvice({ repoRoot, target, git });
+    const advice = buildRecoverAdvice({
+        repoRoot,
+        target,
+        git,
+        minAssessmentConfidence: config.policy.confidenceThresholds.flag,
+    });
     return {
         repoRoot,
         target: {

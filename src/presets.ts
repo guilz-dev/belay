@@ -7,11 +7,11 @@ export const CONFIG_PRESETS: Record<ConfigPresetName, Partial<BelayConfigV3>> = 
   strict: {
     mode: 'enforce',
     policy: {
+      ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: 'deny',
       unparseableShell: 'deny',
       confidenceThresholds: { allow: 0.9, flag: 0.8 },
       modelAssist: { enabled: false },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
     },
     sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
   },
@@ -21,22 +21,20 @@ export const CONFIG_PRESETS: Record<ConfigPresetName, Partial<BelayConfigV3>> = 
   'audit-first': {
     mode: 'audit',
     policy: {
+      ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: 'deny',
       unparseableShell: 'deny',
       confidenceThresholds: { allow: 0.88, flag: 0.72 },
       modelAssist: { enabled: false },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
     },
     sandbox: { ...DEFAULT_CONFIG_V3.sandbox },
   },
   'l1-full-recommended': {
     mode: 'enforce',
     policy: {
-      unknownLocalEffect: 'deny',
-      unparseableShell: 'deny',
+      ...DEFAULT_CONFIG_V3.policy,
       confidenceThresholds: { ...DEFAULT_CONFIG_V3.policy.confidenceThresholds },
       modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional },
     },
     sandbox: {
       enabled: true,

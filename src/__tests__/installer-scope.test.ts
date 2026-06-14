@@ -33,6 +33,7 @@ async function createTempHome() {
 
 describe('installer scope (T29)', () => {
   afterEach(async () => {
+    vi.restoreAllMocks()
     process.env.HOME = originalHome
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })

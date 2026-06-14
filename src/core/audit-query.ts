@@ -32,6 +32,25 @@ export function inferWouldBlock(record: AuditRecord): boolean {
   return record.verdict === 'deny_pending_approval'
 }
 
+export function recordStringField(
+  record: AuditRecord,
+  field: 'effect' | 'reason' | 'permission' | 'verdict' | 'mode' | 'summary' | 'fingerprint' | 'location',
+): string {
+  const value = record[field]
+  return typeof value === 'string' ? value : ''
+}
+
+export function isSilentPassRecord(record: AuditRecord): boolean {
+  const permission = recordStringField(record, 'permission')
+  const verdict = recordStringField(record, 'verdict')
+  return (
+    permission === 'allow' ||
+    permission === 'allow_flagged' ||
+    verdict === 'allow' ||
+    verdict === 'allow_flagged'
+  )
+}
+
 export function filterAuditRecords(
   records: AuditRecord[],
   filter: AuditFilter = {},

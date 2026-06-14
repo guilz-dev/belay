@@ -4,6 +4,7 @@ import {
   isApprovalRecorded,
   isGateRecord,
   parseTimestamp,
+  recordStringField,
 } from './audit-query.js'
 import type { AuditFilter, AuditRecord } from './audit-types.js'
 
@@ -19,25 +20,62 @@ export interface RecentAskEntry {
 export interface AuditVisibilitySummary {
   gateEvents: number
   askCount: number
+  enforceAskCount: number
+  auditAskCount: number
+  unknownModeAskCount: number
   flagCount: number
   allowCount: number
   silentPassRate: number
   recentAsks: RecentAskEntry[]
 }
 
-export const DEFAULT_SILENT_PASS_THRESHOLD = 0.98
+export const DEFAULT_SILENT_PASS_THRESHOLD = 0.5
 export const MIN_GATE_EVENTS_FOR_FENCE_DRIFT = 20
 
+export interface FenceDriftOptions {
+  threshold?: number
+}
+
+function isTier0Reason(reason: string): boolean {
+  return reason.startsWith('tier0_') || reason === 'external_effect'
+}
+
 export function inferAuditTier(record: AuditRecord): AuditTier {
+  const savedConfidence = typeof record.confidence === 'string' ? record.confidence : ''
   const reason = typeof record.reason === 'string' ? record.reason : ''
-  const confidence = typeof record.confidence === 'string' ? record.confidence : ''
-  if (reason.startsWith('tier0_') || reason === 'external_effect') {
+
+  if (savedConfidence === 'llm') {
+    return 'Tier1'
+  }
+  if (savedConfidence === 'deterministic') {
+    return isTier0Reason(reason) ? 'Tier0' : 'deterministic'
+  }
+
+  if (isTier0Reason(reason)) {
     return 'Tier0'
   }
-  if (confidence === 'llm' || reason === 'unknown_local_effect') {
+  if (reason === 'unknown_local_effect') {
     return 'Tier1'
   }
   return 'deterministic'
+}
+
+export function formatAskBreakdown(
+  summary: Pick<
+    AuditVisibilitySummary,
+    'askCount' | 'enforceAskCount' | 'auditAskCount' | 'unknownModeAskCount'
+  >,
+  indent = '',
+): string[] {
+  const lines = [
+    `${indent}Ask (would-block): ${summary.askCount}`,
+    `${indent}  enforce (blocked): ${summary.enforceAskCount}`,
+    `${indent}  audit (would-block only): ${summary.auditAskCount}`,
+  ]
+  if (summary.unknownModeAskCount > 0) {
+    lines.push(`${indent}  mode unknown (legacy): ${summary.unknownModeAskCount}`)
+  }
+  return lines
 }
 
 function isGateEventRecord(record: AuditRecord): boolean {
@@ -54,6 +92,9 @@ export function summarizeAuditVisibility(
   const recentAskLimit = options.recentAskLimit ?? 10
 
   let askCount = 0
+  let enforceAskCount = 0
+  let auditAskCount = 0
+  let unknownModeAskCount = 0
   let flagCount = 0
   let allowCount = 0
   const recentAsks: RecentAskEntry[] = []
@@ -61,6 +102,14 @@ export function summarizeAuditVisibility(
   for (const record of gateRecords) {
     if (inferWouldBlock(record)) {
       askCount += 1
+      const recordMode = recordStringField(record, 'mode')
+      if (recordMode === 'enforce') {
+        enforceAskCount += 1
+      } else if (recordMode === 'audit') {
+        auditAskCount += 1
+      } else {
+        unknownModeAskCount += 1
+      }
       recentAsks.push({
         timestamp: record.timestamp,
         summary: typeof record.summary === 'string' ? record.summary : '',
@@ -88,6 +137,9 @@ export function summarizeAuditVisibility(
   return {
     gateEvents,
     askCount,
+    enforceAskCount,
+    auditAskCount,
+    unknownModeAskCount,
     flagCount,
     allowCount,
     silentPassRate,
@@ -97,8 +149,9 @@ export function summarizeAuditVisibility(
 
 export function detectFenceDrift(
   summary: Pick<AuditVisibilitySummary, 'gateEvents' | 'silentPassRate'>,
-  threshold = DEFAULT_SILENT_PASS_THRESHOLD,
+  options: FenceDriftOptions = {},
 ): { warnings: string[]; notes: string[] } {
+  const threshold = options.threshold ?? DEFAULT_SILENT_PASS_THRESHOLD
   const warnings: string[] = []
   const notes: string[] = []
 
@@ -115,8 +168,8 @@ export function detectFenceDrift(
 
   if (summary.silentPassRate < threshold) {
     warnings.push(
-      `Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% expected). ` +
-        'This may indicate over-blocking (fence-like behavior). Review recent asks with agent-belay report.',
+      `Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% threshold). ` +
+        'This may indicate over-blocking (fence-like behavior). Use agent-belay explain on recent asks to check for false positives.',
     )
   }
 

@@ -16,6 +16,8 @@ export interface RecoverAdviceInput {
   repoRoot: string
   target: RecoverTargetInput
   git?: GitProbeResult
+  /** Assessment confidence below this skips specific recovery commands (defaults to flag threshold). */
+  minAssessmentConfidence?: number
 }
 
 export interface RecoverAdviceResult {
@@ -123,8 +125,52 @@ function localMutationAdvice(target: RecoverTargetInput, git?: GitProbeResult): 
   return advice.filter((line) => !containsDeniedRecoveryPattern(line))
 }
 
+function isLowConfidenceAssessment(
+  target: RecoverTargetInput,
+  minAssessmentConfidence?: number,
+): boolean {
+  if (typeof target.assessment?.confidence !== 'number' || minAssessmentConfidence === undefined) {
+    return false
+  }
+  return target.assessment.confidence < minAssessmentConfidence
+}
+
+type NoCommandReason = 'low_assessment' | 'insufficient_signal' | 'no_safe_command'
+
+const NO_COMMAND_ADVICE: Record<NoCommandReason, string[]> = {
+  low_assessment: [
+    'No reliable recovery path can be determined from the observed assessment confidence.',
+    'Review the audit entry and your VCS or backups manually before attempting undo steps.',
+  ],
+  insufficient_signal: [
+    'Insufficient signal to suggest a safe recovery path.',
+    'Review the audit entry and your VCS or backups manually before attempting undo steps.',
+  ],
+  no_safe_command: [
+    'No safe, specific recovery command can be suggested from the observed audit record.',
+    'Inspect git history, backups, or hosting provider recovery tools manually.',
+  ],
+}
+
+function noCommandRecoverResult(
+  disclaimer: string[],
+  reason: NoCommandReason,
+  extraWarnings: string[] = [],
+): RecoverAdviceResult {
+  return {
+    recoverable: false,
+    confidence: 'medium',
+    disclaimer,
+    advice: NO_COMMAND_ADVICE[reason],
+    warnings:
+      extraWarnings.length > 0
+        ? extraWarnings
+        : ['Low confidence — no specific recovery commands are suggested.'],
+  }
+}
+
 export function buildRecoverAdvice(input: RecoverAdviceInput): RecoverAdviceResult {
-  const { target, git } = input
+  const { target, git, minAssessmentConfidence } = input
   const warnings: string[] = []
   const disclaimer = [...RECOVER_DISCLAIMER]
 
@@ -154,6 +200,10 @@ export function buildRecoverAdvice(input: RecoverAdviceInput): RecoverAdviceResu
     }
   }
 
+  if (isLowConfidenceAssessment(target, minAssessmentConfidence)) {
+    return noCommandRecoverResult(disclaimer, 'low_assessment')
+  }
+
   const advice: string[] = [SHOW_DONT_RUN_LEAD]
 
   if (
@@ -165,33 +215,12 @@ export function buildRecoverAdvice(input: RecoverAdviceInput): RecoverAdviceResu
     advice.push(...localMutationAdvice(target, git))
     warnings.push('Effect axis was unclear — showing conservative file/git guidance only.')
   } else {
-    return {
-      recoverable: false,
-      confidence: 'medium',
-      disclaimer,
-      advice: [
-        'Insufficient signal to suggest a safe recovery path.',
-        'Review the audit entry and your VCS or backups manually before attempting undo steps.',
-      ],
-      warnings: ['Low confidence — no specific recovery commands are suggested.'],
-    }
+    return noCommandRecoverResult(disclaimer, 'insufficient_signal')
   }
 
   const filteredAdvice = advice.filter((line) => !containsDeniedRecoveryPattern(line))
   if (filteredAdvice.length <= 1) {
-    return {
-      recoverable: false,
-      confidence: 'medium',
-      disclaimer,
-      advice: [
-        'No safe, specific recovery command can be suggested from the observed audit record.',
-        'Inspect git history, backups, or hosting provider recovery tools manually.',
-      ],
-      warnings:
-        warnings.length > 0
-          ? warnings
-          : ['Low confidence — no specific recovery commands are suggested.'],
-    }
+    return noCommandRecoverResult(disclaimer, 'no_safe_command', warnings)
   }
 
   return {
@@ -204,9 +233,5 @@ export function buildRecoverAdvice(input: RecoverAdviceInput): RecoverAdviceResu
 }
 
 function inferWouldBlockFromTarget(target: RecoverTargetInput): boolean {
-  return (
-    target.permission === 'ask' ||
-    target.reason.startsWith('tier0_') ||
-    target.reason === 'unknown_local_effect'
-  )
+  return target.permission === 'ask' || target.reason === 'unknown_local_effect'
 }

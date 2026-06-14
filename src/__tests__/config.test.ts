@@ -261,3 +261,12 @@ describe('migrateV2ToV3', () => {
     expect(fromV2.overrides.external).toEqual(['curl'])
   })
 })
+
+describe('policy defaults', () => {
+  it('keeps fenceWarnThreshold aligned with audit-summary default', async () => {
+    const { DEFAULT_SILENT_PASS_THRESHOLD } = await import('../core/audit-summary.js')
+    const { DEFAULT_CONFIG_V3, DEFAULT_FENCE_WARN_THRESHOLD } = await import('../core/config.js')
+    expect(DEFAULT_FENCE_WARN_THRESHOLD).toBe(DEFAULT_SILENT_PASS_THRESHOLD)
+    expect(DEFAULT_CONFIG_V3.policy.fenceWarnThreshold).toBe(DEFAULT_SILENT_PASS_THRESHOLD)
+  })
+})

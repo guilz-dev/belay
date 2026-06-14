@@ -1,12 +1,14 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { formatReport, reportProject } from '../commands/report.js'
+import { formatStatusReport, statusProject } from '../commands/status.js'
 import { toAuditRecord } from '../core/audit-metrics.js'
 import {
   detectFenceDrift,
+  formatAskBreakdown,
   inferAuditTier,
   summarizeAuditVisibility,
 } from '../core/audit-summary.js'
@@ -18,6 +20,7 @@ const VISIBILITY_FIXTURE = [
     event: 'beforeShellExecution',
     verdict: 'deny_pending_approval',
     wouldBlock: true,
+    mode: 'enforce',
     reason: 'tier0_external',
     summary: 'docker push myapp',
   },
@@ -27,9 +30,19 @@ const VISIBILITY_FIXTURE = [
     verdict: 'allow',
     wouldBlock: true,
     permission: 'allow',
+    mode: 'audit',
     reason: 'unknown_local_effect',
     confidence: 'llm',
     summary: 'npm install',
+  },
+  {
+    timestamp: '2026-01-02T05:00:00.000Z',
+    event: 'beforeShellExecution',
+    verdict: 'deny_pending_approval',
+    wouldBlock: true,
+    mode: 'enforce',
+    reason: 'tier0_external',
+    summary: 'docker push blocked',
   },
   {
     timestamp: '2026-01-03T00:00:00.000Z',
@@ -52,16 +65,29 @@ describe('audit visibility (T-V1)', () => {
     const records = VISIBILITY_FIXTURE.map((entry) => toAuditRecord(entry))
     const summary = summarizeAuditVisibility(records)
 
-    expect(summary.gateEvents).toBe(4)
-    expect(summary.askCount).toBe(2)
+    expect(summary.gateEvents).toBe(5)
+    expect(summary.askCount).toBe(3)
+    expect(summary.enforceAskCount).toBe(2)
+    expect(summary.auditAskCount).toBe(1)
+    expect(summary.unknownModeAskCount).toBe(0)
     expect(summary.flagCount).toBe(1)
     expect(summary.allowCount).toBe(2)
-    expect(summary.silentPassRate).toBeCloseTo(0.75)
-    expect(summary.recentAsks[0]?.summary).toBe('npm install')
-    expect(summary.recentAsks[1]?.summary).toBe('docker push myapp')
+    expect(summary.silentPassRate).toBeCloseTo(0.6)
+    expect(summary.recentAsks[0]?.summary).toBe('docker push blocked')
+    expect(summary.recentAsks[1]?.summary).toBe('npm install')
+    expect(summary.recentAsks[2]?.summary).toBe('docker push myapp')
   })
 
-  it('infers audit tiers', () => {
+  it('infers audit tiers with saved confidence first, then reason fallback', () => {
+    expect(inferAuditTier(toAuditRecord({ reason: 'tier0_external', confidence: 'deterministic' }))).toBe(
+      'Tier0',
+    )
+    expect(
+      inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'llm' })),
+    ).toBe('Tier1')
+    expect(
+      inferAuditTier(toAuditRecord({ reason: 'routine', confidence: 'deterministic' })),
+    ).toBe('deterministic')
     expect(inferAuditTier(toAuditRecord({ reason: 'tier0_external' }))).toBe('Tier0')
     expect(
       inferAuditTier(toAuditRecord({ reason: 'unknown_local_effect', confidence: 'llm' })),
@@ -80,9 +106,87 @@ describe('audit visibility (T-V1)', () => {
       ...summary,
     })
 
-    expect(text).toContain('Ask (would-block): 2')
-    expect(text).toContain('Silent-pass rate: 75.0%')
+    expect(text).toContain('Ask (would-block): 3')
+    expect(text).toContain('enforce (blocked): 2')
+    expect(text).toContain('audit (would-block only): 1')
+    expect(text).toContain('Silent-pass rate: 60.0%')
     expect(text).toContain('docker push myapp')
+  })
+
+  it('counts legacy asks without mode separately', () => {
+    const records = [
+      ...VISIBILITY_FIXTURE,
+      {
+        timestamp: '2026-01-05T00:00:00.000Z',
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        reason: 'tier0_external',
+        summary: 'legacy ask without mode',
+      },
+    ].map((entry) => toAuditRecord(entry))
+    const summary = summarizeAuditVisibility(records)
+
+    expect(summary.askCount).toBe(4)
+    expect(summary.unknownModeAskCount).toBe(1)
+    const text = formatReport({
+      repoRoot: '/repo',
+      auditLogPath: '/repo/belay/audit.ndjson',
+      warnings: [],
+      notes: [],
+      ...summary,
+    })
+    expect(text).toContain('mode unknown (legacy): 1')
+  })
+
+  it('formats ask breakdown helper with optional legacy bucket', () => {
+    expect(
+      formatAskBreakdown({
+        askCount: 3,
+        enforceAskCount: 2,
+        auditAskCount: 1,
+        unknownModeAskCount: 0,
+      }),
+    ).toEqual([
+      'Ask (would-block): 3',
+      '  enforce (blocked): 2',
+      '  audit (would-block only): 1',
+    ])
+    expect(
+      formatAskBreakdown({
+        askCount: 4,
+        enforceAskCount: 2,
+        auditAskCount: 1,
+        unknownModeAskCount: 1,
+      }),
+    ).toContain('  mode unknown (legacy): 1')
+  })
+
+  it('includes enforce/audit breakdown in status output', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-status-visibility-'))
+    try {
+      await initProject({ targetDir: tempDir })
+      await writeFile(
+        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        `${JSON.stringify({
+          timestamp: '2026-01-01T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          mode: 'enforce',
+          reason: 'tier0_external',
+          summary: 'docker push myapp',
+        })}\n`,
+        'utf8',
+      )
+
+      const status = await statusProject({ targetDir: tempDir })
+      const text = formatStatusReport(status)
+      expect(text).toContain('enforce (blocked): 1')
+      expect(text).toContain('audit (would-block only): 0')
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('serializes reportProject output as stable JSON (T-V1)', async () => {
@@ -108,6 +212,7 @@ describe('audit visibility (T-V1)', () => {
 
       expect(parsed.gateEvents).toBe(1)
       expect(parsed.askCount).toBe(1)
+      expect(parsed.unknownModeAskCount).toBe(1)
       expect(parsed.flagCount).toBe(0)
       expect(parsed.allowCount).toBe(0)
       expect(parsed.silentPassRate).toBe(0)
@@ -118,12 +223,58 @@ describe('audit visibility (T-V1)', () => {
       await rm(tempDir, { recursive: true, force: true })
     }
   })
+  it('uses policy.fenceWarnThreshold from config in reportProject', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-report-threshold-'))
+    try {
+      await initProject({ targetDir: tempDir })
+      const configPath = path.join(tempDir, '.cursor', 'belay.config.json')
+      const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+        policy: Record<string, unknown>
+      }
+      config.policy.fenceWarnThreshold = 0.7
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+
+      const auditLines = Array.from({ length: 25 }, (_, index) =>
+        JSON.stringify({
+          timestamp: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+          event: 'beforeShellExecution',
+          verdict: index < 10 ? 'deny_pending_approval' : 'allow',
+          wouldBlock: index < 10,
+          mode: 'enforce',
+          reason: index < 10 ? 'tier0_external' : 'routine',
+          summary: `cmd-${index}`,
+        }),
+      ).join('\n')
+      await writeFile(
+        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        `${auditLines}\n`,
+        'utf8',
+      )
+
+      const report = await reportProject({ targetDir: tempDir })
+      expect(report.silentPassRate).toBeCloseTo(0.6)
+      expect(report.warnings.some((line) => line.includes('below 70% threshold'))).toBe(true)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('fence drift warnings (T-V2)', () => {
-  it('warns when silent-pass rate is below threshold with enough samples', () => {
-    const drift = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.9 })
+  it('warns when silent-pass rate is clearly below threshold with enough samples', () => {
+    const drift = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.4 })
     expect(drift.warnings.some((line) => line.includes('Silent-pass rate'))).toBe(true)
+    expect(drift.warnings.some((line) => line.includes('false positives'))).toBe(true)
+  })
+
+  it('does not warn at 0.97 silent-pass rate (legitimate ask-heavy repos)', () => {
+    const drift = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.97 })
+    expect(drift.warnings).toHaveLength(0)
+  })
+
+  it('does not warn at 0.9 silent-pass rate with default conservative threshold', () => {
+    const drift = detectFenceDrift({ gateEvents: 25, silentPassRate: 0.9 })
+    expect(drift.warnings).toHaveLength(0)
   })
 
   it('defers fence drift judgment when sample size is small', () => {
@@ -146,9 +297,10 @@ describe('fence drift warnings (T-V2)', () => {
         JSON.stringify({
           timestamp: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
           event: 'beforeShellExecution',
-          verdict: index < 5 ? 'deny_pending_approval' : 'allow',
-          wouldBlock: index < 5,
-          reason: index < 5 ? 'tier0_external' : 'routine',
+          verdict: index < 15 ? 'deny_pending_approval' : 'allow',
+          wouldBlock: index < 15,
+          mode: index < 15 ? 'enforce' : 'enforce',
+          reason: index < 15 ? 'tier0_external' : 'routine',
           summary: `cmd-${index}`,
         }),
       ).join('\n')

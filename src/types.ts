@@ -22,6 +22,7 @@ export type {
 } from './core/types.js'
 
 import type { InstallScope } from './adapters/layouts/scope.js'
+import type { RecentAskEntry } from './core/audit-summary.js'
 import type {
   BelayEgressConfig,
   BelayOverridesConfig,
@@ -136,6 +137,10 @@ export interface HealthSnapshot {
   judgeIssues: string[]
   judgeWarnings: string[]
   judgeNotes: string[]
+  containmentPosture: 'best-effort' | 'l1-full'
+  containmentWarnings: string[]
+  additionalRiskSignals: string[]
+  l1FullActive: boolean
 }
 
 export interface ClassifyForReportResult {
@@ -181,15 +186,13 @@ export interface AuditVisibilityReport {
   auditLogPath: string
   gateEvents: number
   askCount: number
+  enforceAskCount: number
+  auditAskCount: number
+  unknownModeAskCount: number
   flagCount: number
   allowCount: number
   silentPassRate: number
-  recentAsks: Array<{
-    timestamp?: string
-    summary: string
-    reason: string
-    tier: 'Tier0' | 'Tier1' | 'deterministic'
-  }>
+  recentAsks: RecentAskEntry[]
   warnings: string[]
   notes: string[]
 }

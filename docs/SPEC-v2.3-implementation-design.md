@@ -119,11 +119,13 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
   - `auditLogPath: string`
   - `gateEvents: number`
   - `askCount: number`
+  - `enforceAskCount` / `auditAskCount` / `unknownModeAskCount`
   - `flagCount: number`
   - `allowCount: number`
   - `silentPassRate: number`
-  - `recentAsks: Array<{ timestamp?: string; summary: string; reason: string; tier: 'Tier0' | 'Tier1' | 'deterministic' }>`
+  - `recentAsks: RecentAskEntry[]`
   - `warnings: string[]`（R-V2 含む）
+  - `notes: string[]`（サンプル不足時の判定保留など）
 
 - `RecoverOptions`
   - `targetDir?: string`
@@ -153,31 +155,44 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 - 入力: `AuditRecord[]`（`parseAuditNdjson` + `toAuditRecord` 経由）
 - 集計:
   - `askCount`: `inferWouldBlock(record) === true`
+  - `enforceAskCount`: ask かつ `record.mode === 'enforce'`
+  - `auditAskCount`: ask かつ `record.mode === 'audit'`
+  - `unknownModeAskCount`: ask かつ `mode` 未記録（レガシー audit）
   - `flagCount`: `record.verdict === 'allow_flagged'`
   - `allowCount`: `record.verdict === 'allow'`
   - `silentPassRate = (allowCount + flagCount) / gateEvents`（`gateEvents===0` は 0）
 - `recentAsks`: ask 条件で抽出し、時刻降順・上限 `limit`
-- tier 推定:
-  - `reason` が `tier0_` 始まり、または `external_effect` なら `Tier0`
-  - `confidence==='llm'` または `reason==='unknown_local_effect'` なら `Tier1`
-  - それ以外 `deterministic`
+- tier 推定（**保存値優先・reason 文字列は最後**）:
+  - 第1: 監査の保存値 `confidence`（`llm`→Tier1）。
+  - `confidence=deterministic` のときは `reason` が `tier0_*`/`external_effect` なら Tier0、それ以外は表示 tier `deterministic`。
+  - 第2（保存値が無い古い record のみ）: `reason` が `tier0_`/`external_effect`→Tier0、
+    `unknown_local_effect`→Tier1、それ以外 deterministic、と**フォールバック**で推定。
 
 2. formatter
 - `src/commands/report.ts` に `formatReport()` を実装し、人間可読出力を作る。
 - 必須表示:
-  - ask/flag/allow 件数
+  - ask/flag/allow 件数（ask は enforce/audit 内訳付き）
   - silent-pass 率（%）
   - 直近 ask（summary, reason, tier）
 
 ### 5.2 R-V2: fence 化自己診断
 
-`audit-summary.ts` に `detectFenceDrift(summary, threshold)` を実装:
+> 注意（概念）: 「98% 黙過」は**典型利用の集計上の北極星**であって、per-repo・per-window の
+> 不変条件ではない。デプロイ/push を多用する repo は**正当に** ask 率が高くなる。したがって
+> `silentPassRate < 0.98` を絶対閾値にすると、**正しく働く belay を fence と誤警報**する。
+> さらに真の fence 信号は「ask 率が高い」ではなく「**復元可能なものを ask している(偽陽性)**」で、
+> silent-pass 率はその弱い代理に過ぎない。よって R-V2 は**報告主体・警告は保守的**に倒す。
 
-- 既定閾値: `silentPassRate < 0.98` で warning（SPEC の「98% 黙過」文脈に整合）
-- サンプル数保護: `gateEvents < 20` では「判定保留」メモのみ（誤警報回避）
-- 出力先:
-  - `report` の `warnings`
-  - `doctor` へも warning 連携（`src/commands/doctor.ts`）
+`audit-summary.ts` に `detectFenceDrift(summary, options)` を実装:
+
+- **常に silent-pass 率を report の主要数値として表示する**（fence でないことを「見せる」のが主目的）。
+- **warning は保守的に**:
+  - 既定閾値 `silentPassRate < 0.5`（= 明白な過剰ブロックのみ。0.98 のような近接値で断定しない）。
+  - 閾値は `policy.fenceWarnThreshold`（既定 0.5）で設定可能。`report` が config から読み込む。
+  - 可能なら**下降トレンド**（前回比で silent-pass が大きく低下）も補助シグナルにする（**未実装・v2.4 候補**）。
+- サンプル数保護: `gateEvents < 20` では警告を出さず「判定保留」メモのみ（誤警報回避）。
+- warning 文言は「fence 化の*可能性*。`belay explain` で偽陽性を確認」と**断定を避ける**。
+- 出力先: `report` の `warnings` / `doctor` へも warning 連携（`src/commands/doctor.ts`）。
 
 ### 5.3 R-R1: recover 助言エンジン
 
@@ -188,27 +203,39 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 
 処理フロー:
 
-1) 対象イベント選定
-- gate event のみ対象。
-- 優先条件:
-  - `inferWouldBlock(record)===true`
-  - もしくは `effect` が `local_mutation` / `external_effect`
-- `--fingerprint` 指定時は一致レコード優先。
+1) 対象イベント選定（**命綱の急所＝復元可能な falls を優先**）
+- gate event のみ対象。`--fingerprint` / `--command` 明示時はそれを最優先。
+- 自動選定の優先順位（**復元できるものを先に**）:
+  1. **`effect=local_mutation`（多くは allow 済み・git で戻せる）** ← recover が最も役立つ。
+     ユーザが「通したが後悔した」破壊的ローカル操作はここ。
+  2. その他の最近の破壊的候補。
+  3. `inferWouldBlock(record)===true`（ask/external）── recover は主に「ブロック済み」「不可逆」
+     と返す側。**ここを先頭にしない**（ask されたものは定義上ほぼ復元不能で、命綱の急所ではない）。
+- 根拠: belay が**通した**復元可能なミスこそ命綱が受け止める「落下」。**止めた**もの（external/
+  catastrophic）は復元不能が大半。
 
 2) 情報ソース
-- 第1: 監査記録の `effect/location/permission/reason/assessment`
+- 第1: 監査記録の `effect/location/permission/reason/assessment`（`confidence`/`by` 含む）
 - 第2: summary ベースの補助（文脈提示のみ）
 - `reclassify` は第3フォールバック（必須ではない）
+- **部分視界の明示（MUST・SPEC R-R1）**: 助言は **belay が hook で観測した範囲**（redact 済み audit）
+  に基づく。`RecoverReport.disclaimer` に「手動ターミナル操作・redact された詳細は見えない」旨を
+  **固定で含める**。
 
-3) 助言生成（allowlist 方式）
+3) 助言生成（allowlist 方式・非破壊優先）
 - `effect=local_mutation`:
   - ファイル系復元を優先（`git restore -- <path>`, 必要時 `git checkout -- <path>`）
   - コミット後は `git revert <commit>`
+  - **不可逆な手段は出さない**（`reset --hard` 等は deny-list で禁止。T-R4）。
 - `effect=external_effect`:
   - 原則「取り消し不能の可能性」を明示
   - 虚偽の復元案を出さない
 - `reason` が remote 破壊・exfiltration 系:
   - 明示的に「復元不能」を返す
+- **低確信の扱い（MUST・SPEC R-R1「低確信案は出さない」）**: `confidence` が high/medium に
+  満たない（=確かな復元経路が定まらない）場合は、**コマンド候補を出さず** `recoverable` を
+  慎重側にし、「**確実な復元手段が判定できない**（手動確認を）」と返す。`RecoverReport.confidence`
+  は high|medium のみで、low は「案を出さない」へ写像する。
 
 4) show-don't-run
 - 出力文は「候補」「実行前確認」「自己責任」を固定フレーミング化。
@@ -232,6 +259,7 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 
 ### 新規追加
 - `src/core/audit-summary.ts`
+- `src/core/recover-select.ts`
 - `src/commands/report.ts`
 - `src/core/recover-advice.ts`
 - `src/core/recover-git-probe.ts`（任意だが推奨）
@@ -239,6 +267,7 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 - `skills/belay/belay-report.md`（または status に統合）
 - `skills/belay/belay-recover.md`
 - `src/__tests__/audit-visibility.test.ts`
+- `src/__tests__/recover-select.test.ts`
 - `src/__tests__/recover.test.ts`
 
 ### 既存更新
@@ -260,7 +289,9 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 - report text 出力と json 出力の両方を検証。
 
 ### T-V2（fence 化警告）
-- silent-pass を閾値未満にする fixture を用意。
+- 既定閾値 `0.5` 未満（かつ `gateEvents>=20`）の fixture で warning を検証。
+- `silentPassRate=0.97` では warning が出ないこと（正当な ask 多用 repo の偽警報防止）。
+- `gateEvents<20` は note のみ（判定保留）。
 - `report.warnings` と `doctor.warnings` の双方に警告が載ることを検証。
 
 ### T-R1（正しい復元案）
@@ -298,8 +329,9 @@ agent-belay recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--com
 - **最大リスク**: recover が誤案内して被害拡大。
   - 対策: allowlist 方式、不能時は「不能」と明示、低確信案は出さない。
 
-- **第2リスク**: R-V2 の誤警報ノイズ。
-  - 対策: 最低サンプル数条件（`gateEvents>=20`）を必須にする。
+- **第2リスク**: R-V2 の誤警報（正しく働く belay を fence と誤判定）。
+  - 対策: silent-pass 率は**報告主体**、警告は**保守的閾値（既定 0.5・設定可能）** + 最低サンプル
+    数（`gateEvents>=20`）+ 断定回避の文言。0.98 のような近接絶対値で fence 断定しない（§5.2）。
 
 - **第3リスク**: status/report の責務混線。
   - 対策: 監査可視化は report に集約し、status は運用状態表示に限定。

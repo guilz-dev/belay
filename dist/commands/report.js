@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfigFile } from '../config-io.js';
-import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js';
+import { detectFenceDrift, formatAskBreakdown, summarizeAuditVisibility } from '../core/audit-summary.js';
 import { loadAuditRecords } from './audit.js';
 export async function reportProject(options = {}) {
     const repoRoot = path.resolve(options.targetDir ?? process.cwd());
@@ -14,7 +14,9 @@ export async function reportProject(options = {}) {
     const summary = summarizeAuditVisibility(records, filter, {
         recentAskLimit: options.limit ?? 10,
     });
-    const drift = detectFenceDrift(summary);
+    const drift = detectFenceDrift(summary, {
+        threshold: config.policy.fenceWarnThreshold,
+    });
     return {
         repoRoot,
         auditLogPath,
@@ -29,7 +31,7 @@ export function formatReport(report) {
         `Audit log: ${report.auditLogPath}`,
         '',
         `Gate events: ${report.gateEvents}`,
-        `Ask (would-block): ${report.askCount}`,
+        ...formatAskBreakdown(report),
         `Flag (allow_flagged): ${report.flagCount}`,
         `Allow (silent pass): ${report.allowCount}`,
         `Silent-pass rate: ${(report.silentPassRate * 100).toFixed(1)}%`,

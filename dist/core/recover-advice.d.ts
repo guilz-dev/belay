@@ -14,6 +14,8 @@ export interface RecoverAdviceInput {
     repoRoot: string;
     target: RecoverTargetInput;
     git?: GitProbeResult;
+    /** Assessment confidence below this skips specific recovery commands (defaults to flag threshold). */
+    minAssessmentConfidence?: number;
 }
 export interface RecoverAdviceResult {
     recoverable: boolean;

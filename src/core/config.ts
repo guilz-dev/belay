@@ -83,6 +83,8 @@ export interface BelayPolicyConfig {
   // audit log for vocabulary learning (use only if fail-closed over-blocks in practice). See
   // SPEC-v2.2 R-X1. Optional; runtime defaults to 'deny' when absent.
   codexUnmappedTool?: 'allow' | 'deny'
+  /** R-V2: silent-pass rate below this triggers fence-drift warning (default 0.5). */
+  fenceWarnThreshold: number
 }
 
 export interface BelayOverridesConfig {
@@ -201,6 +203,11 @@ export type BelayConfigV3 = BelayConfigV4
 export type BelayConfig = BelayConfigV4
 
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+import { DEFAULT_SILENT_PASS_THRESHOLD } from './audit-summary.js'
+
+/** @deprecated Use DEFAULT_SILENT_PASS_THRESHOLD from audit-summary.js */
+export const DEFAULT_FENCE_WARN_THRESHOLD = DEFAULT_SILENT_PASS_THRESHOLD
+
 export const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds = {
   allow: 0.88,
   flag: 0.72,
@@ -228,6 +235,7 @@ export const LEGACY_POLICY_V3: BelayPolicyConfig = {
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
   transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 }
 
 /** Fresh v0.4+ install defaults (fail-closed). */
@@ -238,6 +246,7 @@ export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
   transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 }
 
 export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
@@ -752,6 +761,12 @@ export function normalizeConfig(
             ? 'allow_flagged'
             : DEFAULT_POLICY_V3.unparseableShell,
       codexUnmappedTool: v4.policy?.codexUnmappedTool === 'allow' ? 'allow' : 'deny',
+      fenceWarnThreshold:
+        typeof v4.policy?.fenceWarnThreshold === 'number' &&
+        v4.policy.fenceWarnThreshold > 0 &&
+        v4.policy.fenceWarnThreshold <= 1
+          ? v4.policy.fenceWarnThreshold
+          : DEFAULT_FENCE_WARN_THRESHOLD,
       confidenceThresholds: {
         allow:
           typeof v4.policy?.confidenceThresholds?.allow === 'number'

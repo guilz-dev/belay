@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
+const GIT_PROBE_TIMEOUT_MS = 5_000;
 const READ_ONLY_GIT_COMMANDS = new Set([
     'rev-parse --is-inside-work-tree',
     'status --porcelain',
@@ -15,6 +16,7 @@ async function runGit(repoRoot, args) {
             cwd: repoRoot,
             encoding: 'utf8',
             maxBuffer: 1024 * 1024,
+            timeout: GIT_PROBE_TIMEOUT_MS,
         });
         return { ok: true, stdout: stdout.trimEnd() };
     }

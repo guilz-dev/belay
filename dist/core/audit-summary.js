@@ -1,16 +1,36 @@
-import { filterAuditRecords, inferWouldBlock, isApprovalRecorded, isGateRecord, parseTimestamp, } from './audit-query.js';
-export const DEFAULT_SILENT_PASS_THRESHOLD = 0.98;
+import { filterAuditRecords, inferWouldBlock, isApprovalRecorded, isGateRecord, parseTimestamp, recordStringField, } from './audit-query.js';
+export const DEFAULT_SILENT_PASS_THRESHOLD = 0.5;
 export const MIN_GATE_EVENTS_FOR_FENCE_DRIFT = 20;
+function isTier0Reason(reason) {
+    return reason.startsWith('tier0_') || reason === 'external_effect';
+}
 export function inferAuditTier(record) {
+    const savedConfidence = typeof record.confidence === 'string' ? record.confidence : '';
     const reason = typeof record.reason === 'string' ? record.reason : '';
-    const confidence = typeof record.confidence === 'string' ? record.confidence : '';
-    if (reason.startsWith('tier0_') || reason === 'external_effect') {
+    if (savedConfidence === 'llm') {
+        return 'Tier1';
+    }
+    if (savedConfidence === 'deterministic') {
+        return isTier0Reason(reason) ? 'Tier0' : 'deterministic';
+    }
+    if (isTier0Reason(reason)) {
         return 'Tier0';
     }
-    if (confidence === 'llm' || reason === 'unknown_local_effect') {
+    if (reason === 'unknown_local_effect') {
         return 'Tier1';
     }
     return 'deterministic';
+}
+export function formatAskBreakdown(summary, indent = '') {
+    const lines = [
+        `${indent}Ask (would-block): ${summary.askCount}`,
+        `${indent}  enforce (blocked): ${summary.enforceAskCount}`,
+        `${indent}  audit (would-block only): ${summary.auditAskCount}`,
+    ];
+    if (summary.unknownModeAskCount > 0) {
+        lines.push(`${indent}  mode unknown (legacy): ${summary.unknownModeAskCount}`);
+    }
+    return lines;
 }
 function isGateEventRecord(record) {
     return isGateRecord(record) && !isApprovalRecorded(record);
@@ -20,12 +40,25 @@ export function summarizeAuditVisibility(records, filter = {}, options = {}) {
     const gateRecords = filtered.filter(isGateEventRecord);
     const recentAskLimit = options.recentAskLimit ?? 10;
     let askCount = 0;
+    let enforceAskCount = 0;
+    let auditAskCount = 0;
+    let unknownModeAskCount = 0;
     let flagCount = 0;
     let allowCount = 0;
     const recentAsks = [];
     for (const record of gateRecords) {
         if (inferWouldBlock(record)) {
             askCount += 1;
+            const recordMode = recordStringField(record, 'mode');
+            if (recordMode === 'enforce') {
+                enforceAskCount += 1;
+            }
+            else if (recordMode === 'audit') {
+                auditAskCount += 1;
+            }
+            else {
+                unknownModeAskCount += 1;
+            }
             recentAsks.push({
                 timestamp: record.timestamp,
                 summary: typeof record.summary === 'string' ? record.summary : '',
@@ -50,13 +83,17 @@ export function summarizeAuditVisibility(records, filter = {}, options = {}) {
     return {
         gateEvents,
         askCount,
+        enforceAskCount,
+        auditAskCount,
+        unknownModeAskCount,
         flagCount,
         allowCount,
         silentPassRate,
         recentAsks: recentAsks.slice(0, recentAskLimit),
     };
 }
-export function detectFenceDrift(summary, threshold = DEFAULT_SILENT_PASS_THRESHOLD) {
+export function detectFenceDrift(summary, options = {}) {
+    const threshold = options.threshold ?? DEFAULT_SILENT_PASS_THRESHOLD;
     const warnings = [];
     const notes = [];
     if (summary.gateEvents === 0) {
@@ -67,8 +104,8 @@ export function detectFenceDrift(summary, threshold = DEFAULT_SILENT_PASS_THRESH
         return { warnings, notes };
     }
     if (summary.silentPassRate < threshold) {
-        warnings.push(`Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% expected). ` +
-            'This may indicate over-blocking (fence-like behavior). Review recent asks with agent-belay report.');
+        warnings.push(`Silent-pass rate is ${(summary.silentPassRate * 100).toFixed(1)}% (below ${(threshold * 100).toFixed(0)}% threshold). ` +
+            'This may indicate over-blocking (fence-like behavior). Use agent-belay explain on recent asks to check for false positives.');
     }
     return { warnings, notes };
 }

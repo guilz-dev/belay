@@ -39,6 +39,11 @@ import path3 from "node:path";
 
 // src/core/config.ts
 import path from "node:path";
+
+// src/core/audit-summary.ts
+var DEFAULT_SILENT_PASS_THRESHOLD = 0.5;
+
+// src/core/config.ts
 var DEFAULT_JUDGE_LOCAL_OLLAMA = {
   provider: "ollama",
   model: "gemma4:e2b",
@@ -53,6 +58,7 @@ var DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
   endpoint: null,
   keepAlive: null
 };
+var DEFAULT_FENCE_WARN_THRESHOLD = DEFAULT_SILENT_PASS_THRESHOLD;
 var DEFAULT_CONFIDENCE_THRESHOLDS = {
   allow: 0.88,
   flag: 0.72
@@ -76,7 +82,8 @@ var LEGACY_POLICY_V3 = {
   unparseableShell: "allow_flagged",
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
-  transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD
 };
 var DEFAULT_POLICY_V3 = {
   unknownLocalEffect: "deny",
@@ -84,7 +91,8 @@ var DEFAULT_POLICY_V3 = {
   codexUnmappedTool: "deny",
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
-  transactional: { ...DEFAULT_TRANSACTIONAL_V3 }
+  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD
 };
 var DEFAULT_OVERRIDES_V3 = {
   allow: [],
@@ -449,6 +457,7 @@ function normalizeConfig(config) {
       unknownLocalEffect: v4.policy?.unknownLocalEffect === "deny" ? "deny" : v4.policy?.unknownLocalEffect === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unknownLocalEffect,
       unparseableShell: v4.policy?.unparseableShell === "deny" ? "deny" : v4.policy?.unparseableShell === "allow_flagged" ? "allow_flagged" : DEFAULT_POLICY_V3.unparseableShell,
       codexUnmappedTool: v4.policy?.codexUnmappedTool === "allow" ? "allow" : "deny",
+      fenceWarnThreshold: typeof v4.policy?.fenceWarnThreshold === "number" && v4.policy.fenceWarnThreshold > 0 && v4.policy.fenceWarnThreshold <= 1 ? v4.policy.fenceWarnThreshold : DEFAULT_FENCE_WARN_THRESHOLD,
       confidenceThresholds: {
         allow: typeof v4.policy?.confidenceThresholds?.allow === "number" ? v4.policy.confidenceThresholds.allow : DEFAULT_CONFIDENCE_THRESHOLDS.allow,
         flag: typeof v4.policy?.confidenceThresholds?.flag === "number" ? v4.policy.confidenceThresholds.flag : DEFAULT_CONFIDENCE_THRESHOLDS.flag
@@ -1077,11 +1086,11 @@ var CONFIG_PRESETS = {
   strict: {
     mode: "enforce",
     policy: {
+      ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: "deny",
       unparseableShell: "deny",
       confidenceThresholds: { allow: 0.9, flag: 0.8 },
-      modelAssist: { enabled: false },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+      modelAssist: { enabled: false }
     },
     sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
   },
@@ -1091,22 +1100,20 @@ var CONFIG_PRESETS = {
   "audit-first": {
     mode: "audit",
     policy: {
+      ...DEFAULT_CONFIG_V3.policy,
       unknownLocalEffect: "deny",
       unparseableShell: "deny",
       confidenceThresholds: { allow: 0.88, flag: 0.72 },
-      modelAssist: { enabled: false },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+      modelAssist: { enabled: false }
     },
     sandbox: { ...DEFAULT_CONFIG_V3.sandbox }
   },
   "l1-full-recommended": {
     mode: "enforce",
     policy: {
-      unknownLocalEffect: "deny",
-      unparseableShell: "deny",
+      ...DEFAULT_CONFIG_V3.policy,
       confidenceThresholds: { ...DEFAULT_CONFIG_V3.policy.confidenceThresholds },
-      modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist },
-      transactional: { ...DEFAULT_CONFIG_V3.policy.transactional }
+      modelAssist: { ...DEFAULT_CONFIG_V3.policy.modelAssist }
     },
     sandbox: {
       enabled: true,

@@ -62,6 +62,8 @@ export interface BelayPolicyConfig {
     modelAssist: BelayModelAssistConfig;
     transactional: BelayTransactionalConfig;
     codexUnmappedTool?: 'allow' | 'deny';
+    /** R-V2: silent-pass rate below this triggers fence-drift warning (default 0.5). */
+    fenceWarnThreshold: number;
 }
 export interface BelayOverridesConfig {
     allow: string[];
@@ -147,7 +149,8 @@ export interface BelayConfigV4 {
 /** @deprecated Use BelayConfigV4 */
 export type BelayConfigV3 = BelayConfigV4;
 export type BelayConfig = BelayConfigV4;
-/** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+/** @deprecated Use DEFAULT_SILENT_PASS_THRESHOLD from audit-summary.js */
+export declare const DEFAULT_FENCE_WARN_THRESHOLD = 0.5;
 export declare const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds;
 export declare const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig;
 export declare const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig;

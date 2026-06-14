@@ -10,6 +10,7 @@ import type { AdapterName } from '../adapters/layouts/types.js'
 import { detectAdapterName, loadLayeredConfig } from '../config-io.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
 import { getManagedHookEntries } from '../defaults.js'
+import { sandboxStatus } from '../services/sandbox-service.js'
 import type { HealthSnapshot, HealthSnapshotOptions } from '../types.js'
 
 function skillCandidates(adapter: AdapterName, repoRoot: string): string[] {
@@ -80,18 +81,51 @@ export async function collectHealthSnapshot(
   let judgeIssues: string[] = []
   let judgeWarnings: string[] = []
   let judgeNotes: string[] = []
+  let containmentPosture: HealthSnapshot['containmentPosture'] = 'best-effort'
+  let containmentWarnings: string[] = []
+  let additionalRiskSignals: string[] = []
+  let l1FullActive = false
+  let loadedConfig: Awaited<ReturnType<typeof loadLayeredConfig>>['config'] | null = null
 
   if (configPresent) {
     try {
       const layered = await loadLayeredConfig(repoRoot, adapter)
+      loadedConfig = layered.config
       installScope = layered.config.installScope === 'global' ? 'global' : 'project'
       const judgeDoctor = await diagnoseJudge(layered.config)
       judgeIssues = judgeDoctor.issues
       judgeWarnings = judgeDoctor.warnings
       judgeNotes = judgeDoctor.notes
+      const sandbox = await sandboxStatus({ targetDir: repoRoot })
+      l1FullActive = sandbox.l1FullActive
+      containmentPosture = l1FullActive ? 'l1-full' : 'best-effort'
+
+      if (!layered.config.sandbox.enabled || layered.config.sandbox.runtime === 'none') {
+        containmentWarnings.push('sandbox runtime is not enabled')
+      }
+      if (!layered.config.egress.enabled) {
+        containmentWarnings.push('egress proxy is not enabled')
+      } else if (!sandbox.l1Full.egressProxyRunning) {
+        containmentWarnings.push('egress proxy is not running for this repository')
+      }
+      if (layered.config.controlPlane.isolation.mode === 'none') {
+        containmentWarnings.push('control-plane isolation mode is none')
+      }
+      if (!layered.config.approvalSigning.required) {
+        containmentWarnings.push('approval signing is not required')
+      }
+      if (layered.config.judge.provider === 'openai-compatible') {
+        additionalRiskSignals.push(
+          'cloud judge enabled: redacted command text may be sent to an external provider',
+        )
+      }
     } catch {
       configPresent = false
     }
+  }
+
+  if (!configPresent) {
+    containmentWarnings = ['belay config is missing or unreadable']
   }
 
   const scopedPaths = resolveScopedPaths(layout, installScope, repoRoot)
@@ -160,5 +194,9 @@ export async function collectHealthSnapshot(
     judgeIssues,
     judgeWarnings,
     judgeNotes,
+    containmentPosture,
+    containmentWarnings,
+    additionalRiskSignals,
+    l1FullActive,
   }
 }

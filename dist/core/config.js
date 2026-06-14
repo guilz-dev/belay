@@ -16,6 +16,9 @@ export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE = {
 /** @deprecated Use DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE */
 export const DEFAULT_JUDGE_CURSOR_COMPOSER = DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE;
 /** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
+import { DEFAULT_SILENT_PASS_THRESHOLD } from './audit-summary.js';
+/** @deprecated Use DEFAULT_SILENT_PASS_THRESHOLD from audit-summary.js */
+export const DEFAULT_FENCE_WARN_THRESHOLD = DEFAULT_SILENT_PASS_THRESHOLD;
 export const DEFAULT_CONFIDENCE_THRESHOLDS = {
     allow: 0.88,
     flag: 0.72,
@@ -40,6 +43,7 @@ export const LEGACY_POLICY_V3 = {
     confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
     modelAssist: { ...DEFAULT_MODEL_ASSIST },
     transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+    fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 };
 /** Fresh v0.4+ install defaults (fail-closed). */
 export const DEFAULT_POLICY_V3 = {
@@ -49,6 +53,7 @@ export const DEFAULT_POLICY_V3 = {
     confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
     modelAssist: { ...DEFAULT_MODEL_ASSIST },
     transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
+    fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 };
 export const DEFAULT_OVERRIDES_V3 = {
     allow: [],
@@ -476,6 +481,11 @@ export function normalizeConfig(config) {
                     ? 'allow_flagged'
                     : DEFAULT_POLICY_V3.unparseableShell,
             codexUnmappedTool: v4.policy?.codexUnmappedTool === 'allow' ? 'allow' : 'deny',
+            fenceWarnThreshold: typeof v4.policy?.fenceWarnThreshold === 'number' &&
+                v4.policy.fenceWarnThreshold > 0 &&
+                v4.policy.fenceWarnThreshold <= 1
+                ? v4.policy.fenceWarnThreshold
+                : DEFAULT_FENCE_WARN_THRESHOLD,
             confidenceThresholds: {
                 allow: typeof v4.policy?.confidenceThresholds?.allow === 'number'
                     ? v4.policy.confidenceThresholds.allow

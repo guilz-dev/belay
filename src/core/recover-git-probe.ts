@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+const GIT_PROBE_TIMEOUT_MS = 5_000
 
 export interface GitProbeResult {
   inWorkTree: boolean
@@ -26,6 +27,7 @@ async function runGit(repoRoot: string, args: string[]): Promise<{ ok: boolean; 
       cwd: repoRoot,
       encoding: 'utf8',
       maxBuffer: 1024 * 1024,
+      timeout: GIT_PROBE_TIMEOUT_MS,
     })
     return { ok: true, stdout: stdout.trimEnd() }
   } catch {

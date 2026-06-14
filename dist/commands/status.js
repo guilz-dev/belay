@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { belayStateDir, countExpiredPending, loadApprovalState, loadConfigFile, pendingApprovalsPath, repoLocalStateDirFor, } from '../config-io.js';
+import { formatAskBreakdown } from '../core/audit-summary.js';
 import { compactApprovals } from '../core/approval.js';
 import { loadOperationalInsights } from '../operational-insights.js';
 import { collectHealthSnapshot } from './health-snapshot.js';
@@ -46,7 +47,7 @@ export function formatStatusReport(report) {
         '',
         'Audit visibility:',
         `  Gate events: ${report.visibility.gateEvents}`,
-        `  Ask (would-block): ${report.visibility.askCount}`,
+        ...formatAskBreakdown(report.visibility, '  '),
         `  Flag (allow_flagged): ${report.visibility.flagCount}`,
         `  Allow (silent pass): ${report.visibility.allowCount}`,
         `  Silent-pass rate: ${(report.visibility.silentPassRate * 100).toFixed(1)}%`,

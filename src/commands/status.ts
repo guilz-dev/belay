@@ -8,6 +8,7 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from '../config-io.js'
+import { formatAskBreakdown } from '../core/audit-summary.js'
 import { compactApprovals } from '../core/approval.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
@@ -43,6 +44,13 @@ export function formatStatusReport(report: StatusReport): string {
     `Adapter: ${health.adapter} (scope=${health.installScope})`,
     `Floor installed: ${health.floorInstalled ? 'yes' : 'no'}`,
     `Skill installed: ${health.skillInstalled ? 'yes' : 'no'}`,
+    `Containment posture: ${health.containmentPosture}`,
+    ...(health.containmentWarnings.length > 0
+      ? [`Containment warnings: ${health.containmentWarnings.join('; ')}`]
+      : []),
+    ...(health.additionalRiskSignals.length > 0
+      ? [`Additional risk signals: ${health.additionalRiskSignals.join('; ')}`]
+      : []),
     ...(health.skillOnly
       ? [
           'Skill-only mode: yes — hooks are missing or incomplete. Run `npx agent-belay init` to install the enforcement floor.',
@@ -58,7 +66,7 @@ export function formatStatusReport(report: StatusReport): string {
     '',
     'Audit visibility:',
     `  Gate events: ${report.visibility.gateEvents}`,
-    `  Ask (would-block): ${report.visibility.askCount}`,
+    ...formatAskBreakdown(report.visibility, '  '),
     `  Flag (allow_flagged): ${report.visibility.flagCount}`,
     `  Allow (silent pass): ${report.visibility.allowCount}`,
     `  Silent-pass rate: ${(report.visibility.silentPassRate * 100).toFixed(1)}%`,
