@@ -225,8 +225,9 @@ load.
 
 Notable settings:
 
-- **`policy.unknownLocalEffect: "deny"`** — fail-closed classification for
-  unrecognized local commands.
+- **`policy.unknownLocalEffect: "allow_flagged"`** (fresh default) — after Tier1
+  says recoverable, structurally unknown local commands run with an audit flag. Use
+  `"deny"` (via `belay dogfood`) to ask on those commands instead.
 - **`classifier.strictChains: true`** (default) — scans every `&&`, `|`, and `;`
   segment and keeps the strictest verdict. Override lists match exact command or
   segment keys only.
