@@ -5,11 +5,11 @@ import {
   createOpenAiCompatibleJudge,
 } from '../../core/verdict/judge.js'
 import { verdict } from '../../core/verdict/verdict.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 describe('T13 no silent loosen on provider change', () => {
   it('keeps Tier0 high-stakes path ask with deterministic judge', async () => {
-    const context = v2TestContext({ judge: createDeterministicJudgeStub() })
+    const context = verdictTestContext({ judge: createDeterministicJudgeStub() })
     const result = await verdict('rm -rf .git', context)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('high_stakes_path')
@@ -36,7 +36,7 @@ describe('T13 no silent loosen on provider change', () => {
       scrubOptions: config.redaction,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     })
-    const context = v2TestContext({ judge })
+    const context = verdictTestContext({ judge })
     const result = await verdict('aws s3 mb s3://new-bucket', context)
     expect(result.permission).toBe('ask')
   })

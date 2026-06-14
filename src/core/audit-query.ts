@@ -2,7 +2,11 @@ import type { ApprovalRoundTrip, AuditFilter, AuditRecord } from './audit-types.
 import { GATE_EVENTS } from './audit-types.js'
 
 export function toAuditRecord(value: Record<string, unknown>): AuditRecord {
-  return value as AuditRecord
+  const record = { ...value } as AuditRecord
+  if (record.by === 'v2') {
+    record.by = 'verdict'
+  }
+  return record
 }
 
 export function parseTimestamp(value?: string): number | null {

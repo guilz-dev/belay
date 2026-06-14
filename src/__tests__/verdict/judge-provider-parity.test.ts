@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
 import { createOllamaJudge, createOpenAiCompatibleJudge } from '../../core/verdict/judge.js'
 import { createJudgeFromConfig } from '../../core/verdict/judge-factory.js'
 import { verdict } from '../../core/verdict/verdict.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 const tier1False = {
   external_change: false,
@@ -47,11 +47,11 @@ describe('T15 openai-compatible provider parity', () => {
     })
 
     const cloudResult = await verdict('mystery-cli deploy --force', {
-      ...v2TestContext(),
+      ...verdictTestContext(),
       judge: cloudJudge,
     })
     const ollamaResult = await verdict('mystery-cli deploy --force', {
-      ...v2TestContext(),
+      ...verdictTestContext(),
       judge: ollamaJudge,
     })
 
@@ -80,7 +80,7 @@ describe('T15 openai-compatible provider parity', () => {
       fetchImpl: mockFetch({ response: JSON.stringify(tier1False) }),
     })
 
-    const context = v2TestContext({ unknownLocalEffect: 'allow_flagged' })
+    const context = verdictTestContext({ unknownLocalEffect: 'allow_flagged' })
     const cloudResult = await verdict('mystery-cli deploy', {
       ...context,
       judge: cloudJudge,
@@ -157,7 +157,7 @@ describe('T15 openai-compatible provider parity', () => {
       fetchImpl: mockFetch({ response: 'not-json' }),
     })
     const result = await verdict('mystery-cli deploy --force', {
-      ...v2TestContext(),
+      ...verdictTestContext(),
       judge: ollamaJudge,
     })
     expect(result.permission).toBe('ask')
@@ -228,7 +228,7 @@ describe('T15 openai-compatible provider parity', () => {
     expect(result.reason).toBe('openai_compatible_endpoint_missing')
     expect(judge.lastTrace?.fallbackReason).toBe('missing_endpoint')
     const gated = await verdict('mystery-cli deploy --force', {
-      ...v2TestContext(),
+      ...verdictTestContext(),
       judge,
     })
     expect(gated.permission).toBe('ask')

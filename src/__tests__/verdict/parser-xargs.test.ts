@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { peelTransparentWrappers } from '../../core/verdict/parser.js'
 import { verdict } from '../../core/verdict/verdict.js'
-import { v2TestContext } from './helpers.js'
+import { verdictTestContext } from './helpers.js'
 
 describe('parser xargs', () => {
   it('treats xargs as a transparent wrapper', () => {
@@ -18,7 +18,7 @@ describe('parser xargs', () => {
 
   it('escalates piped xargs curl with data upload on legacy allow_flagged policy', async () => {
     const result = await verdict('printf @.env | xargs curl -d @-', {
-      ...v2TestContext(),
+      ...verdictTestContext(),
       unknownLocalEffect: 'allow_flagged',
       unparseableShell: 'allow_flagged',
     })
