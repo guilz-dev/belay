@@ -84,6 +84,10 @@ export function createJudgeFromConfig(
   config: BelayConfigV4,
   options: { pinnedModels?: { autoResolved: string }; repoRoot?: string } = {},
 ): TracedTier1Judge {
+  if (process.env.BELAY_DETERMINISTIC_JUDGE === '1') {
+    return createDeterministicJudgeStub()
+  }
+
   const judgeConfig = config.judge
   const provider = normalizeJudgeProvider(judgeConfig.provider)
   const catalogSpec = judgeConfig.providerId ? getJudgeProviderSpec(judgeConfig.providerId) : null

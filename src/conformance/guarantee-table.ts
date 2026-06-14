@@ -103,10 +103,22 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       reason: 'external_effect',
     },
     {
+      // L1-full only: shell + tool paths use classifyGatedAction + brokerFsScope.
       id: 'l1f-deny-outside-repo',
       command: 'echo hi > ../../outside.txt',
       permission: 'deny',
       reason: 'outside_repo_redirect',
+    },
+    {
+      id: 'l1f-deny-outside-repo-write',
+      kind: 'tool',
+      command: '',
+      toolPayload: {
+        tool_name: 'Write',
+        tool_input: { path: '../../outside.txt', contents: 'hi' },
+      },
+      permission: 'deny',
+      reason: 'outside_repo_mutation',
     },
   ],
 }

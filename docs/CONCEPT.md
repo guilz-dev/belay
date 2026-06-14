@@ -26,7 +26,8 @@ The rope catches only on a fall. Because a fall is survivable, they can climb bo
 The question is not “is this dangerous?” but only “**if this were a mistake, could it be undone?**”
 
 - Merge on red tests / sloppy commits / delete files inside the repo → undoable → **allow**
-- `drop db` / `git push --force` / production deploy / destruction outside the repo → not undoable → **block (hand to a human)**
+- `drop db` / `git push --force` / production deploy / persistent secrets & agent config → not undoable → **block (hand to a human)**
+- Local-recoverable repo-outside edits (e.g. IDE plan files) → **allow after Tier1** at default L3
 
 This is the destination of storyline §212. “Is it dangerous?” lives only in subjective human judgment,
 but “can it be undone?” is largely objective — decidable from the nature of the action and environment.
@@ -60,19 +61,19 @@ verdict(command, cwd, repoRoot):
   ── Tier0: deterministic (code). Only structurally certain cases. Uses cwd ──
     git push / remote operations        → not-restorable (ask)   ※ remote is outside snapshot
     other git (local)                   → restorable (allow)     ※ undoable via git snapshot
-    FS mutation (rm/mv/cp/dd/truncate/tee/shred / redirect >):
-        resolve targets via cwd+repoRoot+realpath
-        ├ outside repo (home/system/other) → not-restorable (ask)
-        ├ relative path × unknown cwd      → not-restorable (ask)  ※ conservative default
-        └ all inside repo                  → restorable (allow)     ※ undoable via fs snapshot
+    control-plane mutation              → not-restorable (ask)   ※ tamper-resistance (M3 ledger)
+    FS mutation on high-stakes paths    → not-restorable (ask)   ※ .git / ~ / protected roots
+    FS mutation inside repo             → restorable (allow)     ※ undoable via fs snapshot
+    repo-outside local mutation         → undecided → Tier1      ※ NOT a broad Tier0 ask (ADR-002)
     otherwise                           → undecided → Tier1
 
-  ── Tier1: local LLM (gemma4:e2b). Only non-enumerable semantics. One flat factual question ──
-    “Does this command CHANGE (create / modify / delete / send) state outside the local machine and its git repo?” yes/no
-        yes → not-restorable (ask)
-        no  → restorable (allow)
-    ※ reads (describe/list/get/SELECT/GET) do not CHANGE → no
-    ※ do not ask compound “is it restorable?” — that gives the model room to rationalize
+  ── Tier1: local LLM. Non-enumerable semantics. Flat factual schema ──
+    local_recoverable: can a mistaken effect be undone locally (snapshots / re-fetch / re-create)?
+    destroys_history_or_secrets: does it wipe git history, secrets, or persistent agent config?
+        !local_recoverable OR destroys_history_or_secrets → not-restorable (ask)
+        else → restorable (allow)
+    ※ reads (describe/list/get/SELECT/HTTP GET) do not CHANGE → local_recoverable
+    ※ IDE plan files under the user home are local documents → allow (MUST-ALLOW catalog)
 
   ── fallback ──
     judge down / timeout → ask (escalate safe side; open region)
@@ -80,12 +81,17 @@ verdict(command, cwd, repoRoot):
   floor:  any not-restorable → ask  /  all restorable → allow (~98%)
 ```
 
+**Layer note (ADR-001):** default L3+L4 lets repo-outside *local-recoverable* mutations through
+after Tier1. **L1-full** (`sandbox.runtime` engaged) adds a separate OS boundary in
+`gate-engine`: outside-repo writes/redirects deny unless fs-scope allowlisted — this is
+containment, not the restorability floor itself. See [`docs/guarantee-table.md`](./guarantee-table.md).
+
 ### Why the split was decided by measurement
 
 | Detector | Responsibility | Why (measured rationale) |
 |---|---|---|
-| **Tier0 (deterministic)** | git remote ops, path containment | LLM **rationalized** `git push --force` as “git, so undoable.” Git remote behavior and path arithmetic are **documented facts** — code catches them reliably, independent of LLM mood |
-| **Tier1 (LLM)** | DB / cloud / network / remote mutation | Open region where enumeration breaks (infinite new DB clients, CLIs, SaaS). 2B correctly returned ask on warm runs for `dropdb` / `terraform` / `aws s3 rm` / `kubectl delete` / `curl POST` / `npm publish` / `redis FLUSHALL` |
+| **Tier0 (deterministic)** | git remote ops, control plane, high-stakes paths | LLM **rationalized** `git push --force` as “git, so undoable.” Git remote behavior and path arithmetic are **documented facts** — code catches them reliably, independent of LLM mood |
+| **Tier1 (LLM)** | DB / cloud / network / repo-outside recoverability | Open region where enumeration breaks. Distinguishes `Write ~/.cursor/plans/foo` (allow) from `Write ~/.ssh/authorized_keys` (ask) |
 | **fallback** | open region when judge absent | floor does not break; defaults safe |
 
 This is not “2B hits everything” but “**2B owns only what 2B hits; structural judgments deterministic code picks up**.”
@@ -94,14 +100,14 @@ Architecture shaped for a small on-device model.
 ### Tier1 prompt design (important — keep it a flat fact)
 
 Compound questions give the model room to rationalize (force push slipped through as “git is undoable; assume remote away”).
-So Tier1 gets **one flat factual question**:
+So Tier1 gets **structured factual fields**, not a single vague question:
 
-> Does this command CHANGE (create / modify / delete / send) the state of any system
-> OUTSIDE the local machine and its git repository? Reading or querying an external system
-> (describe / list / get / SELECT / HTTP GET) does NOT change it. If unsure, yes.
+> Assess whether a mistaken run could be undone **locally** (filesystem/git snapshots, re-download, re-create).
+> Flag `destroys_history_or_secrets` for `.git` deletion, credential paths, shell startup files, crontab/launchd, etc.
+> Reading or querying an external system does NOT change local state. If unsure about recoverability, mark not recoverable.
 
-Explicitly marking “read external only” as CHANGE=no removed false positives on `aws ec2 describe` (measured).
-Structured output: `{external_change: boolean, reason: string}`.
+Structured output: `{local_recoverable: boolean, destroys_outside_repo: boolean, destroys_history_or_secrets: boolean, reason: string}`.
+Legacy `external_change` responses are mapped for compatibility.
 
 ---
 

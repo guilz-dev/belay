@@ -10,3 +10,10 @@ export const CAPABILITY_APPROVAL_REASONS = new Set<string>([
 export function shouldSkipBrokerApprovedOnce(brokerActive: boolean, reason: string): boolean {
   return brokerActive && FS_SCOPE_REASONS.has(reason)
 }
+
+export function shouldSkipBrokerApprovedRecord(
+  brokerActive: boolean,
+  approvalReason: string | undefined,
+): boolean {
+  return brokerActive && approvalReason !== undefined && FS_SCOPE_REASONS.has(approvalReason)
+}

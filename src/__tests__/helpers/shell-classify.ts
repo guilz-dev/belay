@@ -1,3 +1,4 @@
+import { isCapabilityBrokerDemotionActive } from '../../core/capability/broker.js'
 import { type BelayConfigV3, mergeConfig } from '../../core/config.js'
 import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
 import { classifyGatedAction } from '../../core/gate-engine.js'
@@ -37,6 +38,7 @@ export async function classifyShellGated(
   config: BelayConfigV3,
   options: ClassifierOptions = {},
 ) {
+  const brokerFsScope = options.brokerFsScope ?? isCapabilityBrokerDemotionActive(config)
   return classifyGatedAction(
     {
       contractVersion: GATE_CONTRACT_VERSION,
@@ -48,6 +50,7 @@ export async function classifyShellGated(
     config,
     {
       ...options,
+      brokerFsScope,
       tier1Judge: options.tier1Judge ?? createDeterministicJudgeStub(),
     },
   )

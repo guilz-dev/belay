@@ -1,14 +1,44 @@
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
+import type { GuaranteeScenario } from '../../conformance/guarantee-table.js'
 import { GUARANTEE_SCENARIOS, GUARANTEE_TABLE_ROWS } from '../../conformance/guarantee-table.js'
 import type { LayerProfileId } from '../../conformance/types.js'
 import { DEFAULT_CONFIG_V3 } from '../../core/config.js'
+import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
+import { classifyGatedAction } from '../../core/gate-engine.js'
 import { isTransactionalEligible } from '../../core/transactional/index.js'
-import { classifyShellCore } from '../helpers/shell-classify.js'
+import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
+import { classifyShellCore, classifyShellGated } from '../helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
+
+async function classifyScenario(profile: LayerProfileId, scenario: GuaranteeScenario) {
+  if (scenario.kind === 'tool') {
+    return classifyGatedAction(
+      {
+        contractVersion: GATE_CONTRACT_VERSION,
+        kind: 'tool',
+        repoRoot,
+        cwd,
+        payload: scenario.toolPayload ?? {},
+      },
+      DEFAULT_CONFIG_V3,
+      {
+        brokerFsScope: true,
+        tier1Judge: createDeterministicJudgeStub(),
+      },
+    )
+  }
+  if (profile === 'l1-full') {
+    return classifyShellGated(scenario.command, cwd, repoRoot, DEFAULT_CONFIG_V3, {
+      brokerFsScope: true,
+      unknownLocalEffect: 'deny',
+    })
+  }
+  return classifyShellCore(scenario.command, cwd, repoRoot)
+}
 
 describe('guarantee table conformance', () => {
   it('documents four configuration profiles', () => {
@@ -29,9 +59,11 @@ describe('guarantee table conformance', () => {
   })
 
   it('keeps machine-readable scenarios aligned with the shell classifier', async () => {
-    for (const scenarios of Object.values(GUARANTEE_SCENARIOS)) {
+    for (const [profile, scenarios] of Object.entries(GUARANTEE_SCENARIOS) as Array<
+      [LayerProfileId, (typeof GUARANTEE_SCENARIOS)[LayerProfileId]]
+    >) {
       for (const scenario of scenarios) {
-        const result = await classifyShellCore(scenario.command, cwd, repoRoot)
+        const result = await classifyScenario(profile, scenario)
         expect(result.verdict === 'deny_pending_approval' ? 'deny' : 'allow').toBe(
           scenario.permission,
         )

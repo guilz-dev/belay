@@ -9,6 +9,7 @@ import {
   isCapabilityBrokerDemotionActive,
   loadFsScopeAllowlistSync,
   shouldSkipBrokerApprovedOnce,
+  shouldSkipBrokerApprovedRecord,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
@@ -462,11 +463,23 @@ async function gateDecisionToVerdict(
   }
 
   const brokerActive = isCapabilityBrokerDemotionActive(ctx.config)
-  const approved =
-    TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) ||
-    shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
-      ? null
-      : await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
+  let approved: Awaited<ReturnType<typeof consumeApprovedApproval>> = null
+  if (
+    !TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) &&
+    !shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
+  ) {
+    const approvedState = await deps.loadApprovals(ctx, 'approved-approvals.json')
+    approvedState.state = compactApprovals(approvedState.state)
+    const matchedApproval = approvedState.state.approvals.find(
+      (entry) =>
+        entry.kind === kind &&
+        entry.fingerprint === result.fingerprint &&
+        entry.repoRoot === ctx.repoRoot,
+    )
+    if (!shouldSkipBrokerApprovedRecord(brokerActive, matchedApproval?.reason)) {
+      approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
+    }
+  }
   if (approved) {
     await deps.appendAudit(ctx, {
       ...gateBase,

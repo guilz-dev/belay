@@ -5,6 +5,17 @@ import { createJudgeFromConfig } from './judge-factory.js'
 import type { Tier1Judge, VerdictContext, VerdictResult } from './types.js'
 import { verdict } from './verdict.js'
 
+export function resolveClassifierTrustedCwd(
+  cwd: string,
+  options?: Pick<ClassifierOptions, 'trustedCwd'>,
+  explicit?: boolean,
+): boolean {
+  if (explicit !== undefined) {
+    return explicit
+  }
+  return options?.trustedCwd ?? Boolean(cwd)
+}
+
 export function buildVerdictContext(params: {
   cwd: string
   repoRoot: string
@@ -21,7 +32,7 @@ export function buildVerdictContext(params: {
   return {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
-    trustedCwd: params.trustedCwd ?? Boolean(params.cwd),
+    trustedCwd: resolveClassifierTrustedCwd(params.cwd, params.options, params.trustedCwd),
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
     protectedArtifactRoots:
       protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,

@@ -26,10 +26,14 @@ export interface VerdictResult {
 }
 
 export interface Tier1Verdict {
-  external_change: boolean
-  destroys_outside_repo: boolean
+  /** true = undoable via git/fs snapshot or trivial local revert (ADR-002 local-recoverable). */
+  local_recoverable: boolean
   destroys_history_or_secrets: boolean
   reason: string
+  /** @deprecated Legacy LLM field; parsed only for migration. */
+  external_change?: boolean
+  /** @deprecated Unused in decision logic. */
+  destroys_outside_repo?: boolean
 }
 
 export interface Tier1EvaluateInput {

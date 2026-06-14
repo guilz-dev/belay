@@ -107,8 +107,8 @@ describe('launcher-resolve', () => {
 
   it('classifies npm forwarded args against the effective invocation', async () => {
     const result = await verdict('npm run build -- --outDir ../published', ctx)
-    expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('repo_outside_mutation')
+    expect(result.permission).toBe('allow')
+    expect(result.reason).toBe('repo_outside_local_mutation')
   })
 
   it('allows pnpm vitest run under fail-closed defaults', async () => {

@@ -13,8 +13,12 @@ export {
   isCapabilityBrokerDemotionActive,
   isSandboxBrokerEnabled,
 } from './broker.js'
-export { collectOutsideRepoPaths } from './paths.js'
-export { FS_SCOPE_REASONS, shouldSkipBrokerApprovedOnce } from './reasons.js'
+export { collectOutsideRepoPaths, collectOutsideRepoPathsFromToolPayload } from './paths.js'
+export {
+  FS_SCOPE_REASONS,
+  shouldSkipBrokerApprovedOnce,
+  shouldSkipBrokerApprovedRecord,
+} from './reasons.js'
 export type {
   CapabilityApprovalScope,
   FsScopeAllowlistEntry,

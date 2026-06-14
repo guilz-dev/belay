@@ -26,7 +26,8 @@ belay は **YOLO モードで動かすエージェントのための、復元可
 問いは「これは危険か?」ではなく「**もし間違いだったら、戻せるか?**」だけ。
 
 - テスト赤でマージ / 雑なコミット / repo内のファイル削除 → 戻せる → **通す**
-- `drop db` / `git push --force` / 本番デプロイ / repo外の破壊 → 戻せない → **止める(人に渡す)**
+- `drop db` / `git push --force` / 本番デプロイ / 秘密・永続エージェント設定 → 戻せない → **止める(人に渡す)**
+- ローカル復元可能な repo 外編集(例: IDE plan 文書) → デフォルト L3 では **Tier1 後に通す**
 
 storyline 212 の到達点。「危険か」は主観で人の頭の中にしかないが、「戻せるか」はほぼ客観で、
 行動と環境の性質として判定できる。
@@ -63,19 +64,19 @@ verdict(command, cwd, repoRoot):
   ── Tier0:決定論(コード)。構造的に確実なものだけ。cwd を使う ──
     git push / リモート操作        → not-restorable (ask)   ※remote は snapshot 外
     git その他(ローカル)          → restorable (allow)     ※git snapshot で戻せる
-    FS変更系(rm/mv/cp/dd/truncate/tee/shred / リダイレクト >):
-        対象を cwd+repoRoot+realpath で解決し
-        ├ repo外(home/system/他)   → not-restorable (ask)
-        ├ 相対パス × cwd不明        → not-restorable (ask)  ※保守的に倒す
-        └ 全て repo内               → restorable (allow)     ※fs snapshot で戻せる
+    control-plane 変更            → not-restorable (ask)   ※改ざん耐性(M3 台帳)
+    高リスクパスへの FS 変更      → not-restorable (ask)   ※ .git / ~ / 保護ルート
+    repo 内の FS 変更             → restorable (allow)     ※fs snapshot で戻せる
+    repo 外のローカル変更         → 判断保留 → Tier1      ※ Tier0 一括 ask ではない(ADR-002)
     上記以外                        → 判断保留 → Tier1 へ
 
-  ── Tier1:ローカル LLM(gemma4:e2b)。列挙不能な意味だけ。平坦な事実1問 ──
-    「この操作は local machine + repo の外の状態を CHANGE するか?」 yes/no
-        yes → not-restorable (ask)
-        no  → restorable (allow)
-    ※読み取り(describe/list/get/SELECT/GET)は CHANGE しない → no
-    ※複合判断(restorable か?)は聞かない。合理化の逃げ道を与えない
+  ── Tier1:ローカル LLM。列挙不能な意味。平坦な事実スキーマ ──
+    local_recoverable: 誤実行をローカルで戻せるか(snapshot / 再取得 / 再作成)?
+    destroys_history_or_secrets: git 履歴・秘密・永続エージェント設定を壊すか?
+        !local_recoverable OR destroys_history_or_secrets → not-restorable (ask)
+        else → restorable (allow)
+    ※読み取り(describe/list/get/SELECT/HTTP GET)は CHANGE しない → local_recoverable
+    ※ユーザ home 配下の IDE plan ファイルはローカル文書 → allow(MUST-ALLOW 台帳)
 
   ── fallback ──
     judge 落ち / タイムアウト → ask(安全側 escalate。開放領域なので)
@@ -83,12 +84,17 @@ verdict(command, cwd, repoRoot):
   床:  どれかが not-restorable → ask  /  全て restorable → allow(98%)
 ```
 
+**レイヤ注記(ADR-001):** デフォルト L3+L4 では Tier1 後に repo 外の*ローカル復元可能*変更を通す。
+**L1-full** (`sandbox.runtime` 有効) は `gate-engine` で OS 境界を追加し、fs-scope 未許可の
+repo 外書き込み/リダイレクトを deny する — これは封じ込めであり床そのものではない。
+[`docs/guarantee-table.md`](./guarantee-table.md) を参照。
+
 ### 役割分担が「実測で」決まった理由
 
 | 検出器 | 担当 | なぜそこか(実測の根拠) |
 |---|---|---|
-| **Tier0(決定論)** | git のリモート操作、パス包含 | LLM が `git push --force` を「git だから戻せる」と**合理化して見逃した**。git のリモート挙動とパス算術は**文書化された事実**で、コードで確実に拾える。LLM の機嫌に依らない |
-| **Tier1(LLM)** | DB / クラウド / ネットワーク / リモートの変更 | 列挙が破綻する開放領域(新しい DB クライアント・CLI・SaaS が無限に増える)。2B が `dropdb`/`terraform`/`aws s3 rm`/`kubectl delete`/`curl POST`/`npm publish`/`redis FLUSHALL` を warm で全部正しく ask 判定 |
+| **Tier0(決定論)** | git リモート操作、control plane、高リスクパス | LLM が `git push --force` を「git だから戻せる」と**合理化して見逃した**。git のリモート挙動とパス算術は**文書化された事実**で、コードで確実に拾える。LLM の機嫌に依らない |
+| **Tier1(LLM)** | DB / クラウド / ネットワーク / repo 外の復元可能性 | 列挙が破綻する開放領域。`Write ~/.cursor/plans/foo`(allow) と `Write ~/.ssh/authorized_keys`(ask) を区別 |
 | **fallback** | judge 不在時の開放領域 | judge が落ちても床は壊れず、安全側に倒れる |
 
 これは「2Bでも当たる」ではなく「**2Bが当たる範囲だけ2Bに任せ、当たらない構造判断は決定論が拾う**」。
@@ -97,14 +103,14 @@ verdict(command, cwd, repoRoot):
 ### Tier1 のプロンプト設計(重要 ── 平坦な事実にする)
 
 複合判断はモデルに合理化の余地を与える(force push が「git は戻せる、リモートは仮定で消す」で
-すり抜けた実例)。だから Tier1 には**平坦な事実1問**だけを聞く:
+すり抜けた実例)。だから Tier1 には**構造化された事実フィールド**を使う:
 
-> Does this command CHANGE (create / modify / delete / send) the state of any system
-> OUTSIDE the local machine and its git repository? Reading or querying an external system
-> (describe / list / get / SELECT / HTTP GET) does NOT change it. If unsure, yes.
+> 誤実行を**ローカル**で戻せるか(filesystem/git snapshot、再ダウンロード、再作成)を評価する。
+> `.git` 削除、認証情報パス、シェル起動ファイル、crontab/launchd 等は `destroys_history_or_secrets`。
+> 外部システムの読み取りはローカル状態を変えない。復元可能性が不明なら not recoverable とする。
 
-「外部を読むだけ」を CHANGE=no と明示することで、`aws ec2 describe` の偽陽性が消えた(実測)。
-構造化出力(`{external_change: boolean, reason: string}`)で受ける。
+構造化出力: `{local_recoverable: boolean, destroys_outside_repo: boolean, destroys_history_or_secrets: boolean, reason: string}`。
+レガシー `external_change` は互換のためマップする。
 
 ---
 

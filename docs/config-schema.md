@@ -97,6 +97,12 @@ Outbound text is scrubbed before any cloud judge call. Non-TTY consent:
 | `runtime` | `"none"` \| `"cursor-sandbox"` \| `"container"` \| `"seatbelt"` \| `"landlock"` |
 | `denyNetworkByDefault` | `true` |
 
+When `enabled: true` and `runtime` is not `none`, `gate-engine` applies an fs-scope
+boundary: shell redirects and mutations targeting paths outside the repository deny unless
+the path is on the fs-scope allowlist (`belay approve <id> --scope path`). This is separate
+from the L3 restorability floor (repo-outside local-recoverable mutations are allowed at
+default L3 after Tier1 — see ADR-002).
+
 ## Presets
 
 Use `belay init --preset <name>` or the team config `preset` field:

@@ -40,6 +40,14 @@ const MUST_ALLOW = [
   'belay approve belay_deadbeef1234',
 ]
 
+const MUST_ASK_LEDGER = [
+  'echo x >> .env',
+  'echo x >> .env.example',
+  'echo x >> ~/.zshrc',
+  'echo x >> ~/.bashrc',
+  'echo x >> ~/.ssh/authorized_keys',
+]
+
 describe('structural suite', () => {
   const context = verdictTestContext()
 
@@ -62,6 +70,23 @@ describe('structural suite', () => {
     it.each(MUST_ALLOW)('%s → allow', async (command) => {
       const result = await verdict(command, context)
       expect(result.permission, `false deny for routine: ${command}`).toBe('allow')
+    })
+  })
+
+  describe('ADR-002 MUST-ASK ledger (sensitive / persistent redirects)', () => {
+    it.each(MUST_ASK_LEDGER)('%s → ask', async (command) => {
+      const result = await verdict(command, context)
+      expect(result.permission, `false allow for ledger: ${command}`).toBe('ask')
+      expect(result.signals).toContain('tier1_catastrophic')
+    })
+  })
+
+  describe('ADR-002 MUST-ALLOW ledger (benign repo-outside local)', () => {
+    it('allows Cursor plan redirect after Tier1', async () => {
+      const home = process.env.HOME ?? '/home/user'
+      const result = await verdict(`echo hi >> ${home}/.cursor/plans/foo.plan.md`, context)
+      expect(result.permission).toBe('allow')
+      expect(result.reason).toBe('repo_outside_local_mutation')
     })
   })
 
@@ -131,9 +156,10 @@ describe('structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
-    it('asks on outside-repo mutation after resolved cd chain', async () => {
+    it('allows outside-repo mutation after resolved cd chain when Tier1 says local-recoverable', async () => {
       const result = await verdict('cd /tmp && rm -rf foo', context)
-      expect(result.permission).toBe('ask')
+      expect(result.permission).toBe('allow')
+      expect(result.reason).toBe('repo_outside_local_mutation')
     })
 
     it('asks on mutation after opaque cd chain', async () => {
