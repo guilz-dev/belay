@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.1.1 — 2026-06-14
+
+### Fixed
+
+- **CLI** — add `--version` / `-V` and top-level `--help` for post-release `npx` verification
+- **Build** — sync `PACKAGE_VERSION` from `package.json` during `pnpm build`
+
 ## 0.1.0 — 2026-06-14
 
 ### Added
