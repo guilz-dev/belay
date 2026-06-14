@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.1.0 — 2026-06-14
+
+### Added
+
+- **Docs** — [CONCEPT.md](docs/CONCEPT.md) as the English concept source; [CONCEPT.ja.md](docs/CONCEPT.ja.md) translation; [docs/README.ja.md](docs/README.ja.md) index
+- **Docs** — [docs/ops/releasing.md](docs/ops/releasing.md) release procedure; ADR English/Japanese split under `docs/adr/`
+- **GitHub** — issue templates (bug, feature, task)
+
+### Changed
+
+- **Docs** — restructured around CONCEPT; retired legacy `SPEC-*` and version plan documents; streamlined [ROADMAP.md](docs/ROADMAP.md) and [README.md](README.md)
+- **Corpus** — align `curl` / `wget` read-only egress expectations with `egress_read` allow verdict
+
+### Fixed
+
+- Corpus CI regression after egress read classification (ADR-002 conformance)
+
 ## 0.0.1 — 2026-06-14
 
 First public release on npm as **`@guilz-dev/belay`**. CLI command: **`belay`**.  

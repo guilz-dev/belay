@@ -99,7 +99,7 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness (non-gate)', () => {
     }
 
     expect(report.total).toBe(TIER1_ACCURACY_CORPUS.length)
-  })
+  }, 60_000)
 
   afterAll(async () => {
     if (!report) {
