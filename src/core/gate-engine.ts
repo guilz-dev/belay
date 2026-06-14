@@ -8,7 +8,7 @@ import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
 import { mergeAgentAssessment } from './judgment.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
-import { classifyShell } from './v2/adapter.js'
+import { classifyShell } from './verdict/adapter.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -132,7 +132,7 @@ function applyShellPeripheralPolicy(
     (result.reason === 'outside_repo_mutation' ||
       result.reason === 'outside_repo_redirect' ||
       result.reason === 'repo_outside_mutation' ||
-      result.v2?.location === 'repo_outside')
+      result.axes?.location === 'repo_outside')
   ) {
     const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
     if (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { verdict } from '../../core/v2/verdict.js'
+import { verdict } from '../../core/verdict/verdict.js'
 import { v2TestContext } from './helpers.js'
 
 const CATASTROPHIC_CORES = [
@@ -40,7 +40,7 @@ const MUST_ALLOW = [
   'belay approve belay_deadbeef1234',
 ]
 
-describe('v2 structural suite', () => {
+describe('structural suite', () => {
   const context = v2TestContext()
 
   describe('MUST-ASK catastrophic bypass equivalence', () => {
@@ -155,7 +155,7 @@ describe('v2 structural suite', () => {
     })
   })
 
-  describe('v2.1.3 egress read/mutate (SPEC R33)', () => {
+  describe('egress read/mutate (SPEC R33)', () => {
     const MUST_ALLOW_EGRESS = [
       'curl https://example.com',
       'wget https://example.com/file',

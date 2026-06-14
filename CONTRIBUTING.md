@@ -58,10 +58,9 @@ esbuild-bundled runtimes from `dist/bundle/<adapter>-runtime.mjs`.
 Convenience: `make verify` (lint + typecheck + test), `make verify-parallel`.
 `pnpm test:stable` runs the suite 3× to catch order-dependent flakiness.
 
-## Architecture (v1 namespace)
+## Architecture
 
-- `src/core/v1/` — the public verdict engine namespace. Current implementation delegates to
-  `src/core/v2/`: **Tier0** (deterministic, owns FN=0) + **Tier1**
+- `src/core/verdict/` — the verdict engine: **Tier0** (deterministic, owns FN=0) + **Tier1**
   (local LLM for open-ended cases). This is the floor's brain.
 - `src/adapters/{cursor,claude,codex}/` — per-host hook wiring over a single shared
   `gate-runtime`. Adapters are thin and carry **no** judgment logic. See

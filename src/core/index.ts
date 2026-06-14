@@ -105,4 +105,4 @@ export {
   classifyShell,
   verdict,
   verdictToClassifyResult,
-} from './v1/index.js'
+} from './verdict/index.js'

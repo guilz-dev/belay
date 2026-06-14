@@ -2,11 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resolveLauncherRecipe } from '../../core/v2/launcher-resolve.js'
-import { verdict } from '../../core/v2/verdict.js'
+import { resolveLauncherRecipe } from '../../core/verdict/launcher-resolve.js'
+import { verdict } from '../../core/verdict/verdict.js'
 import { v2TestContext } from './helpers.js'
 
-describe('v2 launcher-resolve', () => {
+describe('launcher-resolve', () => {
   const ctx = v2TestContext()
   const tempDirs: string[] = []
 

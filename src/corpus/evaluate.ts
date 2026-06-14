@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import type { Assessment, HookVerdict } from '../core/types.js'
-import { classifyShell } from '../core/v2/adapter.js'
-import { createDeterministicJudgeStub } from '../core/v2/judge.js'
+import { classifyShell } from '../core/verdict/adapter.js'
+import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
 export interface CorpusCase {
   command: string

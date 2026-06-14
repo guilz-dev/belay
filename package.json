@@ -54,7 +54,7 @@
     "lint": "biome check src package.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md tsconfig.json tsconfig.build.json vitest.config.ts scripts docs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && vitest run",
-    "test:structural": "pnpm build && vitest run src/__tests__/v2/structural-suite.test.ts",
+    "test:structural": "pnpm build && vitest run src/__tests__/verdict/structural-suite.test.ts",
     "test:stable": "pnpm build && vitest run && vitest run && vitest run",
     "corpus": "pnpm build && node scripts/corpus.mjs"
   },

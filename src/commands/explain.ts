@@ -83,15 +83,15 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
 
 export function formatExplainReport(report: ExplainReport): string {
   const { result } = report
-  const judgeFields = result.v2
+  const judgeFields = result.axes
     ? [
-        result.v2.judgeProvider ? `  judgeProvider: ${result.v2.judgeProvider}` : null,
-        result.v2.judgeModelResolved ? `  judgeModel: ${result.v2.judgeModelResolved}` : null,
-        result.v2.judgeLatencyMs !== undefined
-          ? `  judgeLatencyMs: ${result.v2.judgeLatencyMs}`
+        result.axes.judgeProvider ? `  judgeProvider: ${result.axes.judgeProvider}` : null,
+        result.axes.judgeModelResolved ? `  judgeModel: ${result.axes.judgeModelResolved}` : null,
+        result.axes.judgeLatencyMs !== undefined
+          ? `  judgeLatencyMs: ${result.axes.judgeLatencyMs}`
           : null,
-        result.v2.judgeFallbackReason
-          ? `  judgeFallbackReason: ${result.v2.judgeFallbackReason}`
+        result.axes.judgeFallbackReason
+          ? `  judgeFallbackReason: ${result.axes.judgeFallbackReason}`
           : null,
       ].filter((line): line is string => line !== null)
     : []
@@ -120,15 +120,15 @@ export function formatExplainReport(report: ExplainReport): string {
     `Verdict: ${result.verdict}`,
     `Reason: ${result.reason}`,
     `Fingerprint: ${result.fingerprint}`,
-    ...(result.v2
+    ...(result.axes
       ? [
           '',
           'v2 axes:',
-          `  location: ${result.v2.location}`,
-          `  opacity: ${result.v2.opacity}`,
-          `  effect: ${result.v2.effect}`,
-          `  confidence: ${result.v2.confidence}`,
-          `  would: ${result.v2.would}`,
+          `  location: ${result.axes.location}`,
+          `  opacity: ${result.axes.opacity}`,
+          `  effect: ${result.axes.effect}`,
+          `  confidence: ${result.axes.confidence}`,
+          `  would: ${result.axes.would}`,
           ...(judgeFields.length > 0 ? ['judgeTrace:', ...judgeFields] : []),
         ]
       : []),

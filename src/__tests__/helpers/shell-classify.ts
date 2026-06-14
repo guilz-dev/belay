@@ -2,8 +2,8 @@ import { type BelayConfigV3, mergeConfig } from '../../core/config.js'
 import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
 import { classifyGatedAction } from '../../core/gate-engine.js'
 import type { ClassifierOptions } from '../../core/types.js'
-import { classifyShell } from '../../core/v2/adapter.js'
-import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
+import { classifyShell } from '../../core/verdict/adapter.js'
+import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
 
 export function shellTestConfig(overrides: Record<string, unknown> = {}): BelayConfigV3 {
   return mergeConfig(overrides)

@@ -128,13 +128,13 @@ export function verdictToClassifyResult(result: VerdictResult): ClassifyResult {
     assessment,
     normalizedCommand: result.commandRedacted,
     summary: result.commandRedacted,
-    v2: {
+    axes: {
       location: result.location,
       opacity: result.opacity,
       effect: result.effect,
       confidence: result.confidence,
       would: result.permission,
-      by: 'v2',
+      by: 'verdict',
       commandRedacted: result.commandRedacted,
       commandFingerprint: result.fingerprint,
       signals: result.signals,
@@ -153,7 +153,7 @@ export function verdictAuditFields(result: VerdictResult): Record<string, unknow
     effect: result.effect,
     confidence: result.confidence,
     would: result.permission,
-    by: 'v2',
+    by: 'verdict',
     signals: result.signals,
     ...judgeTraceAuditFields(result.judgeTrace),
   }

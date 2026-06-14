@@ -434,8 +434,8 @@ async function gateDecisionToVerdict(
     predictedAssessment: auditExtras.predictedAssessment,
     observedAssessment: auditExtras.observedAssessment,
     mode: ctx.config.mode,
-    schemaVersion: result.v2 ? 2 : 1,
-    ...(result.v2 ?? {}),
+    schemaVersion: result.axes ? 2 : 1,
+    ...(result.axes ?? {}),
     ...auditExtras.transactionalLayer,
   }
 

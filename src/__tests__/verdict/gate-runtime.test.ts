@@ -8,10 +8,10 @@ import {
   evaluateGatedAction,
 } from '../../adapters/shared/gate-runtime.js'
 import { mergeConfig } from '../../core/config.js'
-import { createDeterministicJudgeStub } from '../../core/v2/judge.js'
-import * as judgeFactory from '../../core/v2/judge-factory.js'
+import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
+import * as judgeFactory from '../../core/verdict/judge-factory.js'
 
-describe('gate-runtime v2 integration', () => {
+describe('gate-runtime integration', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
@@ -52,7 +52,7 @@ describe('gate-runtime v2 integration', () => {
     })
 
     expect(verdict.permission).toBe('allow')
-    expect(verdict.v2?.location).toBe('repo_local')
+    expect(verdict.axes?.location).toBe('repo_local')
     expect(auditEvents[0]?.schemaVersion).toBe(2)
     expect(auditEvents[0]?.location).toBe('repo_local')
   })
@@ -82,7 +82,7 @@ describe('gate-runtime v2 integration', () => {
     })
 
     expect(verdict.permission).toBe('deny')
-    expect(verdict.v2?.would).toBe('ask')
+    expect(verdict.axes?.would).toBe('ask')
     expect(auditEvents[0]?.effect).toBeDefined()
   })
 })

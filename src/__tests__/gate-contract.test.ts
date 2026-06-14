@@ -19,7 +19,7 @@ import {
   GateNormalizationError,
   normalizeGatedAction,
 } from '../core/gate-engine.js'
-import { createDeterministicJudgeStub } from '../core/v2/judge.js'
+import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
 describe('gate contract', () => {
   it('normalizes shell actions with contract version', () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
-import { createOllamaJudge, createOpenAiCompatibleJudge } from '../../core/v2/judge.js'
-import { createJudgeFromConfig } from '../../core/v2/judge-factory.js'
-import { verdict } from '../../core/v2/verdict.js'
+import { createOllamaJudge, createOpenAiCompatibleJudge } from '../../core/verdict/judge.js'
+import { createJudgeFromConfig } from '../../core/verdict/judge-factory.js'
+import { verdict } from '../../core/verdict/verdict.js'
 import { v2TestContext } from './helpers.js'
 
 const tier1False = {

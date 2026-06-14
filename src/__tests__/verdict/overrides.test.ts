@@ -2,10 +2,10 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 import { mergeConfig } from '../../core/config.js'
-import { classifyShell } from '../../core/v2/adapter.js'
+import { classifyShell } from '../../core/verdict/adapter.js'
 import { v2TestContext } from './helpers.js'
 
-describe('v2 config overrides', () => {
+describe('config overrides', () => {
   const fixtureRoot = path.join(import.meta.dirname, 'fixtures')
 
   it('honors overrides.allow for launcher commands', async () => {
@@ -51,13 +51,13 @@ describe('v2 config overrides', () => {
   })
 })
 
-describe('v2 protected artifact roots', () => {
+describe('protected artifact roots', () => {
   it('treats controlPlaneDir as a protected root in verdict context', async () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
     const ctx = v2TestContext({
       protectedArtifactRoots: [controlPlaneDir],
     })
-    const { verdict } = await import('../../core/v2/verdict.js')
+    const { verdict } = await import('../../core/verdict/verdict.js')
     const result = await verdict(`tee ${controlPlaneDir}/pending-approvals.json`, ctx)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('high_stakes_path')
