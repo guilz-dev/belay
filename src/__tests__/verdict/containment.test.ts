@@ -23,6 +23,19 @@ describe('containment', () => {
     expect(analysis.location).toBe('repo_local')
   })
 
+  it('marks repo-outside secret targets as high stakes', () => {
+    const analysis = analyzePathTargets({
+      targets: ['~/.env'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      trustedCwd: true,
+      sensitivePaths: ctx.sensitivePaths,
+    })
+    expect(analysis.isHighStakes).toBe(true)
+    expect(analysis.location).toBe('repo_outside')
+    expect(analysis.signals).toContain('high_stakes_path')
+  })
+
   it('returns unknown location without trusted cwd', () => {
     const analysis = analyzePathTargets({
       targets: ['foo.txt'],

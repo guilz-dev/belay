@@ -7,7 +7,9 @@ import {
   resolveMutationTarget,
 } from '../path-utils.js'
 
-export { isPersistentAgentPath } from './persistent-paths.js'
+import { isOutsideRepoSecretCredentialPath } from './persistent-paths.js'
+
+export { isOutsideRepoSecretCredentialPath, isPersistentAgentPath } from './persistent-paths.js'
 
 import type { VerdictLocation } from './types.js'
 
@@ -75,8 +77,10 @@ export function isHighStakesPath(
     return true
   }
   const relative = relativeWithinRepo(repoRoot, resolvedPath)
-  const checkPath = relative ?? resolvedPath
-  if (matchesSensitivePath(checkPath.replaceAll('\\', '/'), sensitivePaths)) {
+  if (relative !== null && matchesSensitivePath(relative.replaceAll('\\', '/'), sensitivePaths)) {
+    return true
+  }
+  if (relative === null && isOutsideRepoSecretCredentialPath(resolvedPath)) {
     return true
   }
   return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))

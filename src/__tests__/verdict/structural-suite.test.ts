@@ -43,9 +43,21 @@ const MUST_ALLOW = [
 const MUST_ASK_LEDGER = [
   'echo x >> .env',
   'echo x >> .env.example',
+  'echo x >> ~/.env',
+  'echo x >> ~/.env.local',
+  'echo x >> ~/secret.pem',
   'echo x >> ~/.zshrc',
   'echo x >> ~/.bashrc',
   'echo x >> ~/.ssh/authorized_keys',
+  'echo x >> ~/.ssh/id_ed25519',
+  'echo x >> ~/.aws/credentials',
+  'echo x >> ~/.git-credentials',
+  'echo x >> ~/.npmrc',
+  'echo x >> ~/.netrc',
+  'echo x >> ~/.kube/config',
+  'echo x >> ~/.docker/config.json',
+  'echo x >> ~/.gnupg/gpg.conf',
+  'echo x >> ~/.pypirc',
 ]
 
 describe('structural suite', () => {
@@ -79,12 +91,24 @@ describe('structural suite', () => {
       expect(result.permission, `false allow for ledger: ${command}`).toBe('ask')
       expect(result.signals).toContain('tier1_catastrophic')
     })
+
+    it('tags repo-outside .env redirect with the dedicated prescan signal', async () => {
+      const result = await verdict('echo x >> ~/.env', context)
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('outside_repo_secret_credential_path')
+    })
   })
 
   describe('ADR-002 MUST-ALLOW ledger (benign repo-outside local)', () => {
     it('allows Cursor plan redirect after Tier1', async () => {
       const home = process.env.HOME ?? '/home/user'
       const result = await verdict(`echo hi >> ${home}/.cursor/plans/foo.plan.md`, context)
+      expect(result.permission).toBe('allow')
+      expect(result.reason).toBe('repo_outside_local_mutation')
+    })
+
+    it('allows /tmp redirect after Tier1', async () => {
+      const result = await verdict('echo hi >> /tmp/benign.txt', context)
       expect(result.permission).toBe('allow')
       expect(result.reason).toBe('repo_outside_local_mutation')
     })

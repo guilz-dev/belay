@@ -3,7 +3,7 @@ import { relativeWithinRepo, resolveMutationTarget } from '../path-utils.js'
 import type { ScrubOptions } from '../types.js'
 import { resolveTrustedPath } from './containment.js'
 import { scrubOutboundForJudge } from './judge-outbound.js'
-import { isPersistentAgentPath } from './persistent-paths.js'
+import { isOutsideRepoSecretCredentialPath, isPersistentAgentPath } from './persistent-paths.js'
 import type { Tier1Judge, Tier1Verdict } from './types.js'
 
 const SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i]
@@ -115,13 +115,20 @@ export function prescanMutationTargets(params: MutationPrescanParams): Tier1Verd
       continue
     }
     const relative = relativeWithinRepo(params.repoRoot, resolved)
-    const checkPath = (relative ?? resolved).replaceAll('\\', '/')
-    if (matchesSensitivePath(checkPath, params.sensitivePaths)) {
+    if (relative !== null && matchesSensitivePath(relative.replaceAll('\\', '/'), params.sensitivePaths)) {
       return {
         local_recoverable: false,
         destroys_outside_repo: false,
         destroys_history_or_secrets: true,
         reason: 'sensitive_path_mutation',
+      }
+    }
+    if (relative === null && isOutsideRepoSecretCredentialPath(resolved)) {
+      return {
+        local_recoverable: false,
+        destroys_outside_repo: false,
+        destroys_history_or_secrets: true,
+        reason: 'outside_repo_secret_credential_path',
       }
     }
     if (isPersistentAgentPath(resolved)) {

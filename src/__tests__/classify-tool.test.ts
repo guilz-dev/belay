@@ -124,6 +124,23 @@ describe('classifyToolUse', () => {
     expect(result.reason).toBe('tier1_catastrophic')
   })
 
+  it('asks on outside-repo credential writes via structural prescan before Tier1', async () => {
+    const home = process.env.HOME ?? '/home/user'
+    const result = await classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: { path: path.join(home, '.npmrc'), contents: 'registry=https://example.com' },
+      },
+      repoRoot,
+      cwd,
+      config,
+      { tier1Judge: benignJudge },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.assessment.signals).toContain('outside_repo_secret_credential_path')
+  })
+
   it('flags routine in-repo file writes', async () => {
     const filePath = path.join(repoRoot, 'notes.txt')
     const result = await classifyToolUse(
