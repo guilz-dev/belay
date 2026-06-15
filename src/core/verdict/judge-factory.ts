@@ -6,6 +6,7 @@ import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
 import { detectJudgeRuntimeCapabilities } from '../judge-runtime-detection.js'
 import { resolveJudgeCredential } from '../judge-api-key.js'
 import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
+import { rejectDeprecatedJudgeModelAuto } from '../judge-model-policy.js'
 import {
   createClaudeCliJudge,
   createCodexCliJudge,
@@ -64,29 +65,30 @@ export function resolveJudgeModel(judge: BelayJudgeConfig): {
   requested: string
   resolved: string
 } {
+  rejectDeprecatedJudgeModelAuto(judge.model)
   const requested = judge.model
-  if (requested === 'auto') {
-    const spec = judge.providerId ? getJudgeProviderSpec(judge.providerId) : null
-    const resolved =
-      process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || spec?.defaultModel || requested
-    return { requested, resolved }
+  const envOverride = testJudgeModelOverride()
+  return { requested, resolved: envOverride || requested }
+}
+
+function testJudgeModelOverride(): string | undefined {
+  if (!process.env.VITEST && !process.env.VITEST_WORKER_ID) {
+    return undefined
   }
-  return { requested, resolved: requested }
+  return process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || undefined
 }
 
 /** @deprecated Use resolveJudgeModel */
 export const resolveCloudModel = (
   requested: string,
-  pinned: { autoResolved: string },
+  _pinned: { autoResolved: string },
 ): { requested: string; resolved: string } => {
-  if (requested === 'auto') {
-    const envResolved = process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim()
-    return {
-      requested,
-      resolved: envResolved || pinned.autoResolved,
-    }
+  rejectDeprecatedJudgeModelAuto(requested)
+  const envResolved = testJudgeModelOverride()
+  return {
+    requested,
+    resolved: envResolved || requested,
   }
-  return { requested, resolved: requested }
 }
 
 /** @deprecated Use resolveJudgeModel */

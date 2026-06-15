@@ -14,6 +14,7 @@ import {
   normalizeLegacyProviderId,
   warnRemovedProviderId,
 } from './verdict/judge-catalog.js'
+import { warnDeprecatedJudgeModelAuto } from './judge-model-policy.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -524,8 +525,12 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
   const rawProviderId = judge.providerId ? String(judge.providerId) : undefined
   if (rawProviderId && isRemovedProviderId(rawProviderId)) {
     warnRemovedProviderId(rawProviderId)
-    const model =
+    let model =
       typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
+    if (model === 'auto') {
+      warnDeprecatedJudgeModelAuto()
+      model = base.model
+    }
     const timeoutMs =
       typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
     const endpoint: string | null =
@@ -561,6 +566,7 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
   let model =
     typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
   if (model === 'auto' && catalogSpec?.defaultModel) {
+    warnDeprecatedJudgeModelAuto()
     model = catalogSpec.defaultModel
   }
   if (!model && catalogSpec?.defaultModel) {

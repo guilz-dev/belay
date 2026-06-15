@@ -1,6 +1,7 @@
 import type { AdapterName } from '../adapters/layouts/types.js'
 import type { BelayJudgeConfig, JudgeCloudConsent, JudgeProviderId } from './config.js'
 import { normalizeJudgeProvider } from './config.js'
+import { rejectDeprecatedJudgeModelAuto } from './judge-model-policy.js'
 import { detectJudgeRuntimeCapabilities } from './judge-runtime-detection.js'
 import {
   catalogRequiresEndpoint,
@@ -93,6 +94,9 @@ function resolveProviderIdFromFlags(input: ResolveJudgeConfigInput): JudgeProvid
 }
 
 export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJudgeConfig {
+  if (input.judgeModel !== undefined) {
+    rejectDeprecatedJudgeModelAuto(input.judgeModel)
+  }
   const providerIdFromFlags = resolveProviderIdFromFlags(input)
   if (providerIdFromFlags) {
     return resolveJudgeFromCatalog({

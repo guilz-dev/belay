@@ -24,6 +24,7 @@ import {
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
+import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import {
   getJudgeProviderSpec,
@@ -175,6 +176,10 @@ export async function judgeUse(options: JudgeCommandOptions) {
   }
 
   const before = { ...config.judge }
+
+  if (options.model !== undefined) {
+    rejectDeprecatedJudgeModelAuto(options.model)
+  }
 
   if (
     options.keyStdin &&

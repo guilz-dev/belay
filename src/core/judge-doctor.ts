@@ -5,6 +5,7 @@ import {
   discoverJudgeModels,
   modelPresenceFromDiscovery,
   type CheckJudgeModelPresenceResult,
+  type JudgeModelDiscoveryDeps,
 } from './judge-model-discovery.js'
 import { detectJudgeRuntimeCapabilities, resolveJudgeTransport } from './judge-runtime-detection.js'
 import { resolveJudgeCredential } from './judge-api-key.js'
@@ -26,9 +27,14 @@ export interface JudgeDoctorResult {
   modelCheck?: CheckJudgeModelPresenceResult
 }
 
+export interface DiagnoseJudgeOptions {
+  discoveryDeps?: JudgeModelDiscoveryDeps
+}
+
 export async function diagnoseJudge(
   config: BelayConfigV4,
   repoRoot: string = process.cwd(),
+  options: DiagnoseJudgeOptions = {},
 ): Promise<JudgeDoctorResult> {
   const issues: string[] = []
   const warnings: string[] = []
@@ -99,11 +105,14 @@ export async function diagnoseJudge(
   notes.push(`Resolved model: ${resolved.resolved}`)
 
   const endpoint = judge.endpoint ?? (providerId === 'ollama' ? 'http://127.0.0.1:11434' : null)
-  const discovery = await discoverJudgeModels({
-    providerId,
-    model: judge.model,
-    endpoint,
-  })
+  const discovery = await discoverJudgeModels(
+    {
+      providerId,
+      model: judge.model,
+      endpoint,
+    },
+    options.discoveryDeps,
+  )
   const modelCheck = modelPresenceFromDiscovery(discovery, judge.model)
   notes.push(`Model check: ${modelCheck.status} (source: ${modelCheck.source})`)
 

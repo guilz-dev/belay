@@ -14,6 +14,7 @@ import { revokeApproval } from './commands/revoke.js'
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
 import { loadConfigFile } from './config-io.js'
+import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
 import { initProject, upgradeProject } from './installer.js'
 import type { ConfigPresetName } from './presets.js'
 import {
@@ -163,8 +164,9 @@ function parseArgs(argv: string[]) {
     if (token === '--judge-model') {
       const next = rest[index + 1]
       if (!next) {
-        throw new Error('--judge-model requires a model id or auto.')
+        throw new Error('--judge-model requires a model id.')
       }
+      rejectDeprecatedJudgeModelAuto(next)
       options.judgeModel = next
       index += 1
       continue

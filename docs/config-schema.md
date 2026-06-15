@@ -70,11 +70,11 @@ Outbound text is scrubbed before any cloud judge call (HTTP and native CLI trans
 Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
 `belay judge use … --cloud-consent-approval-id <id>`.
 
-#### Known limitations
+#### Notes
 
-- **`model: auto`** — accepted on load and via `--judge-model auto`; fresh init never writes `auto`.
-- **Model discovery** — Vitest skips live CLI probes; production uses `judge-model-discovery.ts`.
-- **Interactive config** — `belay config` may re-run parts of init; use `belay config set` for judge-only edits on existing repos.
+- **`model: auto`** — legacy values normalize to the catalog default on load (warning); new `auto` input is rejected.
+- **Model discovery** — production uses `judge-model-discovery.ts`; unit tests mock probes. Optional live probe: `BELAY_LIVE_CLI_DISCOVERY=1`.
+- **Interactive config** — installed repos default to judge-only setup; full `init` setup remains available when hooks are missing or when declined.
 - **Transport vs consent** — HTTP requires endpoint + `cloudConsent`; native CLI transport does not.
 
 ### CLI examples (`belay config`)

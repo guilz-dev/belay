@@ -21,7 +21,6 @@ import {
   JUDGE_PROVIDER_IDS,
   resolveJudgeFromCatalog,
 } from '../../core/verdict/judge-catalog.js'
-import { resolveJudgeModel } from '../../core/verdict/judge-factory.js'
 import { initProject } from '../../installer.js'
 import {
   PLAN_DEFAULT_MODELS,
@@ -74,15 +73,18 @@ describe('Phase 1 plan — Foundation', () => {
       }
     })
 
-    it('resolveJudgeModel does not fall back to gpt-4.1-mini for codex auto', () => {
-      vi.stubEnv('BELAY_JUDGE_MODEL_RESOLVED', '')
-      const resolved = resolveJudgeModel({
-        ...DEFAULT_CONFIG_V4.judge,
-        providerId: 'codex' as (typeof DEFAULT_CONFIG_V4.judge)['providerId'],
-        model: 'auto',
+    it('normalizeConfig migrates judge.model auto to catalog default on load', () => {
+      const loaded = normalizeConfig({
+        ...DEFAULT_CONFIG_V4,
+        judge: {
+          ...DEFAULT_CONFIG_V4.judge,
+          providerId: 'codex' as (typeof DEFAULT_CONFIG_V4.judge)['providerId'],
+          provider: 'openai-compatible',
+          model: 'auto',
+        },
       })
-      expect(resolved.resolved).toBe(PLAN_DEFAULT_MODELS.codex)
-      expect(resolved.resolved).not.toBe('gpt-4.1-mini')
+      expect(loaded.judge.model).toBe(PLAN_DEFAULT_MODELS.codex)
+      expect(loaded.judge.model).not.toBe('gpt-4.1-mini')
     })
 
     it('fresh init never writes judge.model auto', async () => {

@@ -50,6 +50,7 @@ describe('T16 no default base / no vendor leak', () => {
     })
     expect(config.judge.provider).toBe('openai-compatible')
     expect(config.judge.providerId).toBe('cursor')
+    expect(config.judge.model).toBe('composer-2.5')
     expect(config.judge.endpoint).toBeNull()
   })
 })

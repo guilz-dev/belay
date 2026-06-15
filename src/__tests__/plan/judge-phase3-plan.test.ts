@@ -182,6 +182,23 @@ describe('Phase 3 plan — Runtime parity', () => {
       expect(report.notes.some((n) => /transport/i.test(n))).toBe(true)
     })
 
+    it('diagnoseJudge reports found model check when discovery deps return models', async () => {
+      const config = normalizeConfig({
+        ...DEFAULT_CONFIG_V4,
+        judge: resolveJudgeFromCatalog({
+          providerId: planProviderIdCast<Parameters<typeof resolveJudgeFromCatalog>[0]>('cursor'),
+        }),
+      })
+      const report = await diagnoseJudge(config, process.cwd(), {
+        discoveryDeps: {
+          allowCliDiscovery: true,
+          runCommand: async () => JSON.stringify([{ id: 'composer-2.5' }]),
+        },
+      })
+      expect(report.modelCheck?.status).toBe('found')
+      expect(report.notes.some((n) => /Model check: found/i.test(n))).toBe(true)
+    })
+
     it('resolveJudgeCredential exposes sourceKind', async () => {
       const { resolveJudgeCredential } = await import('../../core/judge-api-key.js')
       const config = normalizeConfig({

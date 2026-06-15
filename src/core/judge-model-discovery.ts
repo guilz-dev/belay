@@ -31,6 +31,18 @@ export interface CheckJudgeModelPresenceResult {
   source: string
 }
 
+export type JudgeModelDiscoveryRunCommand = (
+  command: string,
+  args: string[],
+  timeoutMs: number,
+) => Promise<string>
+
+export interface JudgeModelDiscoveryDeps {
+  runCommand?: JudgeModelDiscoveryRunCommand
+  fetch?: typeof fetch
+  allowCliDiscovery?: boolean
+}
+
 function providerIdFromInput(providerId: string): JudgeProviderId {
   const normalized = normalizeLegacyProviderId(providerId)
   if (normalized) {
@@ -39,11 +51,23 @@ function providerIdFromInput(providerId: string): JudgeProviderId {
   return inferProviderIdFromConfig({ providerId: providerId as BelayJudgeConfig['providerId'] })
 }
 
-function shouldAttemptCliDiscovery(): boolean {
+function defaultAllowCliDiscovery(): boolean {
   if (process.env.BELAY_JUDGE_DISABLE_CLI_TRANSPORT === '1') {
     return false
   }
   return !process.env.VITEST && !process.env.VITEST_WORKER_ID
+}
+
+function resolveDeps(deps?: JudgeModelDiscoveryDeps): {
+  runCommand: JudgeModelDiscoveryRunCommand
+  fetchImpl: typeof fetch
+  allowCliDiscovery: boolean
+} {
+  return {
+    runCommand: deps?.runCommand ?? runCommandCapture,
+    fetchImpl: deps?.fetch ?? fetch,
+    allowCliDiscovery: deps?.allowCliDiscovery ?? defaultAllowCliDiscovery(),
+  }
 }
 
 async function runCommandCapture(
@@ -80,14 +104,14 @@ async function runCommandCapture(
   })
 }
 
-function parseLineModelIds(raw: string): string[] {
+export function parseLineModelIds(raw: string): string[] {
   return raw
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
 }
 
-function parseJsonModelIds(raw: string): string[] {
+export function parseJsonModelIds(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw) as
       | Array<{ id?: string; name?: string; slug?: string }>
@@ -101,14 +125,14 @@ function parseJsonModelIds(raw: string): string[] {
   }
 }
 
-async function discoverCursorModels(): Promise<string[]> {
-  const raw = await runCommandCapture('cursor-agent', ['--list-models'], 2000)
+async function discoverCursorModels(runCommand: JudgeModelDiscoveryRunCommand): Promise<string[]> {
+  const raw = await runCommand('cursor-agent', ['--list-models'], 2000)
   const fromJson = parseJsonModelIds(raw)
   return fromJson.length > 0 ? fromJson : parseLineModelIds(raw)
 }
 
-async function discoverCodexModels(): Promise<string[]> {
-  const raw = await runCommandCapture('codex', ['debug', 'models'], 2000)
+async function discoverCodexModels(runCommand: JudgeModelDiscoveryRunCommand): Promise<string[]> {
+  const raw = await runCommand('codex', ['debug', 'models'], 2000)
   const parsed = parseJsonModelIds(raw)
   if (parsed.length > 0) {
     return parsed
@@ -116,13 +140,16 @@ async function discoverCodexModels(): Promise<string[]> {
   return parseLineModelIds(raw).filter((line) => line !== 'visibility=list')
 }
 
-async function discoverClaudeModels(endpoint: string | null): Promise<string[]> {
+async function discoverClaudeModels(
+  endpoint: string | null,
+  fetchImpl: typeof fetch,
+): Promise<string[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim() || process.env.BELAY_JUDGE_API_KEY?.trim()
   if (!apiKey) {
     return []
   }
   const base = (endpoint ?? 'https://api.anthropic.com').replace(/\/$/, '')
-  const response = await fetch(`${base}/v1/models`, {
+  const response = await fetchImpl(`${base}/v1/models`, {
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
@@ -140,13 +167,15 @@ async function discoverClaudeModels(endpoint: string | null): Promise<string[]> 
 
 export async function discoverJudgeModels(
   input: DiscoverJudgeModelsInput,
+  deps?: JudgeModelDiscoveryDeps,
 ): Promise<DiscoverJudgeModelsResult> {
+  const { runCommand, fetchImpl, allowCliDiscovery } = resolveDeps(deps)
   const providerId = providerIdFromInput(input.providerId)
   const source = MODEL_DISCOVERY_SOURCES[providerId]
 
   if (providerId === 'ollama' && input.endpoint) {
     try {
-      const response = await fetch(`${input.endpoint.replace(/\/$/, '')}/api/tags`, {
+      const response = await fetchImpl(`${input.endpoint.replace(/\/$/, '')}/api/tags`, {
         signal: AbortSignal.timeout(3000),
       })
       if (!response.ok) {
@@ -163,17 +192,17 @@ export async function discoverJudgeModels(
   }
 
   try {
-    if (!shouldAttemptCliDiscovery()) {
+    if (!allowCliDiscovery) {
       return { source, modelIds: [] }
     }
     if (providerId === 'cursor') {
-      return { source, modelIds: await discoverCursorModels() }
+      return { source, modelIds: await discoverCursorModels(runCommand) }
     }
     if (providerId === 'codex') {
-      return { source, modelIds: await discoverCodexModels() }
+      return { source, modelIds: await discoverCodexModels(runCommand) }
     }
     if (providerId === 'claude') {
-      return { source, modelIds: await discoverClaudeModels(input.endpoint) }
+      return { source, modelIds: await discoverClaudeModels(input.endpoint, fetchImpl) }
     }
   } catch {
     return { source, modelIds: [] }
@@ -188,8 +217,9 @@ export async function discoverJudgeModels(
 
 export async function checkJudgeModelPresence(
   input: DiscoverJudgeModelsInput,
+  deps?: JudgeModelDiscoveryDeps,
 ): Promise<CheckJudgeModelPresenceResult> {
-  const discovery = await discoverJudgeModels(input)
+  const discovery = await discoverJudgeModels(input, deps)
   return modelPresenceFromDiscovery(discovery, input.model)
 }
 
