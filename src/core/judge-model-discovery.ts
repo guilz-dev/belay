@@ -4,8 +4,8 @@ import type { BelayJudgeConfig } from './config.js'
 import {
   getJudgeProviderSpec,
   inferProviderIdFromConfig,
-  normalizeLegacyProviderId,
   type JudgeProviderId,
+  normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
 
 const MODEL_DISCOVERY_SOURCES: Record<JudgeProviderId, string> = {
@@ -232,9 +232,7 @@ export function modelPresenceFromDiscovery(
   }
 
   const requested = model.trim()
-  const found = discovery.modelIds.some(
-    (id) => id === requested || id.startsWith(`${requested}:`),
-  )
+  const found = discovery.modelIds.some((id) => id === requested || id.startsWith(`${requested}:`))
   return {
     status: found ? 'found' : 'missing',
     source: discovery.source,

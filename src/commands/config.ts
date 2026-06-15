@@ -1,6 +1,6 @@
+import path from 'node:path'
 import { stdin as input, stdout as output } from 'node:process'
 import readline from 'node:readline/promises'
-import path from 'node:path'
 
 import {
   loadConfigFile,
@@ -11,15 +11,20 @@ import {
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import type { BelayConfigV4, BelayJudgeConfig, JudgeCredentialRef } from '../core/config.js'
 import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
-import { writeJudgeCredentialStore, clearJudgeCredentialStore } from '../core/credential-store.js'
+import { clearJudgeCredentialStore, writeJudgeCredentialStore } from '../core/credential-store.js'
 import { refreshIntegrityIfPinned } from '../core/integrity.js'
-import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
-import { defaultJudgeProviderForAdapter, hasValidCloudConsent, isCloudJudgeConfig, resolveJudgeUsePatch } from '../core/judge-config.js'
 import {
-  JUDGE_PROVIDER_IDS,
+  defaultJudgeProviderForAdapter,
+  hasValidCloudConsent,
+  isCloudJudgeConfig,
+  resolveJudgeUsePatch,
+} from '../core/judge-config.js'
+import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
+import {
   isJudgeProviderId,
-  normalizeLegacyProviderId,
+  JUDGE_PROVIDER_IDS,
   type JudgeProviderId,
+  normalizeLegacyProviderId,
 } from '../core/verdict/judge-catalog.js'
 import { initProject } from '../installer.js'
 import type { AdapterName, InitOptions } from '../types.js'
@@ -233,7 +238,8 @@ async function applyJudgeSet(
     }
     const judge = normalizeJudgeConfig({
       ...config.judge,
-      credential: value === 'project' ? { mode: 'project' } : { mode: 'apiKey', ref: 'store:judge' },
+      credential:
+        value === 'project' ? { mode: 'project' } : { mode: 'apiKey', ref: 'store:judge' },
     })
     await persistJudge(repoRoot, config, judge, adapter)
     return judge
@@ -276,7 +282,9 @@ async function applyJudgeUnset(
     return judge
   }
 
-  throw new Error(`Cannot unset ${pathKey}; only judge.endpoint and judge.credential.ref are unsettable.`)
+  throw new Error(
+    `Cannot unset ${pathKey}; only judge.endpoint and judge.credential.ref are unsettable.`,
+  )
 }
 
 async function appendConfigAudit(
@@ -314,7 +322,9 @@ export async function runBelayConfigCredential(options: BelayConfigCredentialOpt
       mode: options.mode,
       by: 'belay config credential mode',
     })
-    return options.mode === 'project' ? 'Credential mode set to project.' : 'Credential mode set to apiKey.'
+    return options.mode === 'project'
+      ? 'Credential mode set to project.'
+      : 'Credential mode set to apiKey.'
   }
 
   if (options.action === 'set') {
@@ -481,10 +491,8 @@ export async function runBelayConfigFullInteractive(
       defaultJudgeProviderId,
     )
 
-    const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
-      ask,
-      judgeProviderId,
-    )
+    const { judgeCredentialMode, judgeEndpoint, acceptCloud } =
+      await collectCloudJudgeWizardAnswers(ask, judgeProviderId)
 
     const initOptions = buildInitOptionsFromConfigAnswers(
       {
@@ -530,10 +538,8 @@ export async function runBelayConfigJudgeOnlyInteractive(
       defaultJudgeProviderId,
     )
 
-    const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
-      ask,
-      judgeProviderId,
-    )
+    const { judgeCredentialMode, judgeEndpoint, acceptCloud } =
+      await collectCloudJudgeWizardAnswers(ask, judgeProviderId)
 
     const patch = resolveJudgeUsePatch(config.judge, {
       providerId: judgeProviderId,

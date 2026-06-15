@@ -14,8 +14,13 @@ import {
   mergeAndWriteConfig,
   writeConfigFile,
 } from './config-io.js'
-import { isFreshConfigInput, mergeConfig, normalizeConfig, type BelayJudgeConfig } from './core/config.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
+import {
+  type BelayJudgeConfig,
+  isFreshConfigInput,
+  mergeConfig,
+  normalizeConfig,
+} from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
 import {
   hasValidCloudConsent,

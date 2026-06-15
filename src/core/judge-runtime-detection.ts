@@ -1,12 +1,11 @@
 import { accessSync, constants } from 'node:fs'
 import path from 'node:path'
-
-import type { Tier1JudgeTransport } from './verdict/judge.js'
 import type { BelayJudgeConfig } from './config.js'
+import type { Tier1JudgeTransport } from './verdict/judge.js'
 import {
   inferProviderIdFromConfig,
-  normalizeLegacyProviderId,
   type JudgeProviderId,
+  normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
 
 export interface JudgeRuntimeCapabilities {

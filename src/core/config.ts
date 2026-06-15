@@ -1,5 +1,5 @@
 import path from 'node:path'
-
+import { warnDeprecatedJudgeModelAuto } from './judge-model-policy.js'
 import type {
   ClassifierOptions,
   ControlPlaneIntegrity,
@@ -14,7 +14,6 @@ import {
   normalizeLegacyProviderId,
   warnRemovedProviderId,
 } from './verdict/judge-catalog.js'
-import { warnDeprecatedJudgeModelAuto } from './judge-model-policy.js'
 
 export type BelayMode = 'enforce' | 'audit'
 

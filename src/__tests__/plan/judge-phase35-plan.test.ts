@@ -6,18 +6,17 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-import { loadConfigFile } from '../../config-io.js'
 import {
   resolveBelayConfigInteractiveMode,
   runBelayConfig,
   runBelayConfigInteractive,
   runBelayConfigJudgeOnlyInteractive,
 } from '../../commands/config.js'
-import { rejectDeprecatedJudgeModelAuto } from '../../core/judge-model-policy.js'
 import { judgeUse } from '../../commands/judge.js'
-import { initProject } from '../../installer.js'
+import { loadConfigFile } from '../../config-io.js'
+import { rejectDeprecatedJudgeModelAuto } from '../../core/judge-model-policy.js'
 import * as installer from '../../installer.js'
+import { initProject } from '../../installer.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -107,12 +106,7 @@ describe('Phase 3.5 plan — follow-ups', () => {
 
       await runBelayConfigJudgeOnlyInteractive({
         targetDir: dir,
-        prompts: [
-          'codex',
-          'y',
-          'https://api.openai.com/v1',
-          'y',
-        ],
+        prompts: ['codex', 'y', 'https://api.openai.com/v1', 'y'],
       })
 
       const config = await loadConfigFile(dir)

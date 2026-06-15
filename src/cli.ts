@@ -459,7 +459,11 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('config requires subcommand: list, get, set, unset, credential, or judge')
     }
-    if (command === 'config' && options.configSubcommand === 'credential' && !options.credentialAction) {
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'credential' &&
+      !options.credentialAction
+    ) {
       if (token === 'mode' || token === 'set' || token === 'clear') {
         options.credentialAction = token
         continue
@@ -488,7 +492,12 @@ function parseArgs(argv: string[]) {
       options.configKey = token
       continue
     }
-    if (command === 'config' && options.configSubcommand === 'set' && options.configKey && !options.configValue) {
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'set' &&
+      options.configKey &&
+      !options.configValue
+    ) {
       options.configValue = token
       continue
     }

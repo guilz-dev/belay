@@ -10,12 +10,12 @@ import { loadConfigFile } from '../../config-io.js'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
 import { resolveInitJudgeConfig } from '../../core/judge-config.js'
 import { diagnoseJudge } from '../../core/judge-doctor.js'
+import { tier1RequiresAsk } from '../../core/verdict/judge.js'
 import {
   catalogRequiresEndpoint,
   resolveJudgeFromCatalog,
 } from '../../core/verdict/judge-catalog.js'
 import { createJudgeFromConfig } from '../../core/verdict/judge-factory.js'
-import { tier1RequiresAsk } from '../../core/verdict/judge.js'
 import { initProject, upgradeProject } from '../../installer.js'
 import {
   PLAN_CLI_TRANSPORTS,
@@ -46,19 +46,18 @@ describe('Phase 3 plan — Runtime parity', () => {
       expect(typeof mod.discoverJudgeModels).toBe('function')
     })
 
-    it.each(PLAN_JUDGE_PROVIDER_IDS)(
-      'discoverJudgeModels returns source for provider %s',
-      async (providerId) => {
-        const { discoverJudgeModels } = await import('../../core/judge-model-discovery.js')
-        const result = await discoverJudgeModels({
-          providerId,
-          model: PLAN_MODEL_DISCOVERY_SOURCES[providerId] === 'ollama-tags' ? 'gemma4:e2b' : 'test',
-          endpoint: providerId === 'ollama' ? 'http://127.0.0.1:11434' : null,
-        })
-        expect(result.source).toBe(PLAN_MODEL_DISCOVERY_SOURCES[providerId])
-        expect(Array.isArray(result.modelIds)).toBe(true)
-      },
-    )
+    it.each(
+      PLAN_JUDGE_PROVIDER_IDS,
+    )('discoverJudgeModels returns source for provider %s', async (providerId) => {
+      const { discoverJudgeModels } = await import('../../core/judge-model-discovery.js')
+      const result = await discoverJudgeModels({
+        providerId,
+        model: PLAN_MODEL_DISCOVERY_SOURCES[providerId] === 'ollama-tags' ? 'gemma4:e2b' : 'test',
+        endpoint: providerId === 'ollama' ? 'http://127.0.0.1:11434' : null,
+      })
+      expect(result.source).toBe(PLAN_MODEL_DISCOVERY_SOURCES[providerId])
+      expect(Array.isArray(result.modelIds)).toBe(true)
+    })
 
     it('discoverJudgeModels reports found/missing/unverified status', async () => {
       const { checkJudgeModelPresence } = await import('../../core/judge-model-discovery.js')
@@ -102,35 +101,33 @@ describe('Phase 3 plan — Runtime parity', () => {
       expect(typeof mod.createClaudeCliJudge).toBe('function')
     })
 
-    it.each(['codex', 'cursor', 'claude'] as const)(
-      'createJudgeFromConfig selects %s-cli without API key when CLI available',
-      (providerId) => {
-        vi.stubEnv('BELAY_DETERMINISTIC_JUDGE', '')
-        delete process.env.BELAY_JUDGE_API_KEY
-        delete process.env.OPENAI_API_KEY
-        delete process.env.CURSOR_API_KEY
-        delete process.env.ANTHROPIC_API_KEY
+    it.each([
+      'codex',
+      'cursor',
+      'claude',
+    ] as const)('createJudgeFromConfig selects %s-cli without API key when CLI available', (providerId) => {
+      vi.stubEnv('BELAY_DETERMINISTIC_JUDGE', '')
+      delete process.env.BELAY_JUDGE_API_KEY
+      delete process.env.OPENAI_API_KEY
+      delete process.env.CURSOR_API_KEY
+      delete process.env.ANTHROPIC_API_KEY
 
-        const catalogJudge = resolveJudgeFromCatalog({
-          providerId: planProviderIdCast<Parameters<typeof resolveJudgeFromCatalog>[0]>(
-            providerId,
-          ),
-        })
-        const config = normalizeConfig({
-          ...DEFAULT_CONFIG_V4,
-          judge: {
-            ...catalogJudge,
-            endpoint: providerId === 'cursor' ? null : catalogJudge.endpoint,
-            credential: { mode: 'project' },
-          },
-        })
+      const catalogJudge = resolveJudgeFromCatalog({
+        providerId: planProviderIdCast<Parameters<typeof resolveJudgeFromCatalog>[0]>(providerId),
+      })
+      const config = normalizeConfig({
+        ...DEFAULT_CONFIG_V4,
+        judge: {
+          ...catalogJudge,
+          endpoint: providerId === 'cursor' ? null : catalogJudge.endpoint,
+          credential: { mode: 'project' },
+        },
+      })
 
-        const judge = createJudgeFromConfig(config, { repoRoot: process.cwd() })
-        const transport = (judge.lastTrace as { transport?: PlanCliTransport } | undefined)
-          ?.transport
-        expect(transport).toBe(`${providerId}-cli`)
-      },
-    )
+      const judge = createJudgeFromConfig(config, { repoRoot: process.cwd() })
+      const transport = (judge.lastTrace as { transport?: PlanCliTransport } | undefined)?.transport
+      expect(transport).toBe(`${providerId}-cli`)
+    })
 
     it('fail-closed when neither http nor cli transport is available', async () => {
       vi.stubEnv('BELAY_DETERMINISTIC_JUDGE', '')
@@ -223,31 +220,27 @@ describe('Phase 3 plan — Runtime parity', () => {
   describe('P3-4 transport-aware requiresEndpoint', () => {
     it('ollama never requires endpoint', () => {
       expect(
-        (
-          catalogRequiresEndpoint as (id: string, opts?: { transport?: string }) => boolean
-        )('ollama'),
+        (catalogRequiresEndpoint as (id: string, opts?: { transport?: string }) => boolean)(
+          'ollama',
+        ),
       ).toBe(false)
     })
 
     it('cursor does not require endpoint when CLI transport is available', () => {
       expect(
-        (
-          catalogRequiresEndpoint as (
-            id: 'cursor',
-            opts: { transport: string },
-          ) => boolean
-        )('cursor', { transport: 'cursor-cli' }),
+        (catalogRequiresEndpoint as (id: 'cursor', opts: { transport: string }) => boolean)(
+          'cursor',
+          { transport: 'cursor-cli' },
+        ),
       ).toBe(false)
     })
 
     it('cursor requires endpoint for HTTP transport', () => {
       expect(
-        (
-          catalogRequiresEndpoint as (
-            id: 'cursor',
-            opts: { transport: string },
-          ) => boolean
-        )('cursor', { transport: 'http' }),
+        (catalogRequiresEndpoint as (id: 'cursor', opts: { transport: string }) => boolean)(
+          'cursor',
+          { transport: 'http' },
+        ),
       ).toBe(true)
     })
 
@@ -346,10 +339,7 @@ describe('Phase 3 plan — Runtime parity', () => {
     })
 
     it('diagnoseJudge does not branch on isCloud label', async () => {
-      const doctorSource = await readFile(
-        path.join(repoRoot, 'src/core/judge-doctor.ts'),
-        'utf8',
-      )
+      const doctorSource = await readFile(path.join(repoRoot, 'src/core/judge-doctor.ts'), 'utf8')
       expect(doctorSource).not.toMatch(/isCloudProviderId/)
       expect(doctorSource).toMatch(/providerId/)
     })

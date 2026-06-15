@@ -340,8 +340,7 @@ export function resolveJudgeUsePatch(
 
   let judge = resolveJudgeFromCatalog({
     providerId: normalizedId,
-    model:
-      options.model ?? (existing.providerId === normalizedId ? existing.model : undefined),
+    model: options.model ?? (existing.providerId === normalizedId ? existing.model : undefined),
     endpoint:
       options.endpoint !== undefined
         ? options.endpoint
@@ -352,11 +351,14 @@ export function resolveJudgeUsePatch(
     keepAlive: existing.keepAlive,
   })
 
-  if (catalogRequiresEndpoint(normalizedId, {
-    transport: judge.endpoint?.trim()
-      ? 'http'
-      : (detectJudgeRuntimeCapabilities(normalizedId).cliTransport ?? 'unavailable'),
-  }) && !judge.endpoint?.trim()) {
+  if (
+    catalogRequiresEndpoint(normalizedId, {
+      transport: judge.endpoint?.trim()
+        ? 'http'
+        : (detectJudgeRuntimeCapabilities(normalizedId).cliTransport ?? 'unavailable'),
+    }) &&
+    !judge.endpoint?.trim()
+  ) {
     errors.push(`${normalizedId} requires --endpoint for HTTP transport.`)
   }
 

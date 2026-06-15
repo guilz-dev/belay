@@ -6,15 +6,14 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
-import { judgeStatus } from '../../commands/judge.js'
 import { doctorProject } from '../../commands/doctor.js'
+import { judgeStatus } from '../../commands/judge.js'
 import { formatStatusReport, statusProject } from '../../commands/status.js'
 import { loadConfigFile, repoLocalStateDirFor } from '../../config-io.js'
 import { belayStateDir } from '../../core/config.js'
 import { readJudgeCredentialStore } from '../../core/credential-store.js'
-import { initProject } from '../../installer.js'
 import { verdict } from '../../core/verdict/verdict.js'
+import { initProject } from '../../installer.js'
 import { verdictTestContext } from '../verdict/helpers.js'
 import { PLAN_BELAY_CONFIG_SUBCOMMANDS } from './plan-fixtures.js'
 

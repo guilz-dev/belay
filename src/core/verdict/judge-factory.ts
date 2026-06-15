@@ -3,15 +3,10 @@ import { fileURLToPath } from 'node:url'
 import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
-import { detectJudgeRuntimeCapabilities } from '../judge-runtime-detection.js'
 import { resolveJudgeCredential } from '../judge-api-key.js'
 import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
 import { rejectDeprecatedJudgeModelAuto } from '../judge-model-policy.js'
-import {
-  createClaudeCliJudge,
-  createCodexCliJudge,
-  createCursorCliJudge,
-} from './judge-cli.js'
+import { detectJudgeRuntimeCapabilities } from '../judge-runtime-detection.js'
 import {
   createDeterministicJudgeStub,
   createFailClosedJudge,
@@ -23,9 +18,10 @@ import {
   getJudgeProviderSpec,
   inferProviderIdFromConfig,
   isRemovedProviderId,
-  normalizeLegacyProviderId,
   type JudgeProviderId,
+  normalizeLegacyProviderId,
 } from './judge-catalog.js'
+import { createClaudeCliJudge, createCodexCliJudge, createCursorCliJudge } from './judge-cli.js'
 
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url)
 

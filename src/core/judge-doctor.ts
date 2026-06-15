@@ -1,16 +1,15 @@
 import { repoLocalStateDirFor } from '../config-io.js'
 import type { BelayConfigV4 } from './config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js'
-import {
-  discoverJudgeModels,
-  modelPresenceFromDiscovery,
-  type CheckJudgeModelPresenceResult,
-  type JudgeModelDiscoveryDeps,
-} from './judge-model-discovery.js'
-import { detectJudgeRuntimeCapabilities, resolveJudgeTransport } from './judge-runtime-detection.js'
 import { resolveJudgeCredential } from './judge-api-key.js'
 import { hasValidCloudConsent } from './judge-config.js'
-import { createJudgeFromConfig } from './verdict/judge-factory.js'
+import {
+  type CheckJudgeModelPresenceResult,
+  discoverJudgeModels,
+  type JudgeModelDiscoveryDeps,
+  modelPresenceFromDiscovery,
+} from './judge-model-discovery.js'
+import { detectJudgeRuntimeCapabilities, resolveJudgeTransport } from './judge-runtime-detection.js'
 import { createOllamaJudge, createOpenAiCompatibleJudge } from './verdict/judge.js'
 import {
   getJudgeProviderCapabilities,
@@ -18,7 +17,7 @@ import {
   isRemovedProviderId,
   normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
-import { resolveJudgeModel } from './verdict/judge-factory.js'
+import { createJudgeFromConfig, resolveJudgeModel } from './verdict/judge-factory.js'
 
 export interface JudgeDoctorResult {
   issues: string[]

@@ -5,8 +5,8 @@ import { detectJudgeRuntimeCapabilities } from './judge-runtime-detection.js'
 import {
   getJudgeProviderSpec,
   inferProviderIdFromConfig,
-  normalizeLegacyProviderId,
   type JudgeProviderSpec,
+  normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
 
 export type JudgeCredentialSourceKind = 'env' | 'store' | 'host-session' | 'missing'

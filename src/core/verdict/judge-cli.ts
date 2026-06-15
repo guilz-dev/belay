@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process'
 
 import type { ScrubOptions } from '../types.js'
-import { scrubOutboundForJudge } from './judge-outbound.js'
 import {
   buildTier1Prompt,
   parseTier1Json,
@@ -11,6 +10,7 @@ import {
   type TracedTier1Judge,
 } from './judge.js'
 import type { JudgeProviderId } from './judge-catalog.js'
+import { scrubOutboundForJudge } from './judge-outbound.js'
 
 export interface CliJudgeOptions {
   providerId: JudgeProviderId

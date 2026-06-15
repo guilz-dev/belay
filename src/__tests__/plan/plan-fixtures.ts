@@ -11,12 +11,14 @@ export const PLAN_DEFAULT_MODELS: Record<PlanJudgeProviderId, string> = {
   cursor: 'composer-2.5',
 }
 
-export const PLAN_HOST_DEFAULT_PROVIDER: Record<'cursor' | 'claude' | 'codex', PlanJudgeProviderId> =
-  {
-    cursor: 'cursor',
-    claude: 'claude',
-    codex: 'codex',
-  }
+export const PLAN_HOST_DEFAULT_PROVIDER: Record<
+  'cursor' | 'claude' | 'codex',
+  PlanJudgeProviderId
+> = {
+  cursor: 'cursor',
+  claude: 'claude',
+  codex: 'codex',
+}
 
 export const PLAN_PROVIDER_ADAPTERS: Record<PlanJudgeProviderId, string> = {
   ollama: 'ollama',

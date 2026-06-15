@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   checkJudgeModelPresence,
   discoverJudgeModels,
+  type JudgeModelDiscoveryDeps,
   modelPresenceFromDiscovery,
   parseJsonModelIds,
   parseLineModelIds,
-  type JudgeModelDiscoveryDeps,
 } from '../../core/judge-model-discovery.js'
 
 describe('judge-model-discovery', () => {
@@ -32,10 +32,7 @@ describe('judge-model-discovery', () => {
 
     it('returns found for ollama tag prefix match', () => {
       expect(
-        modelPresenceFromDiscovery(
-          { source: 'ollama-tags', modelIds: ['gemma4:e2b'] },
-          'gemma4',
-        ),
+        modelPresenceFromDiscovery({ source: 'ollama-tags', modelIds: ['gemma4:e2b'] }, 'gemma4'),
       ).toEqual({ status: 'found', source: 'ollama-tags' })
     })
 

@@ -50,19 +50,20 @@ describe('Phase 1 plan — Foundation', () => {
   })
 
   describe('P1-1 fresh init uses catalog default models (no gpt-4.1-mini / auto)', () => {
-    it.each(['cursor', 'claude', 'codex'] as const)(
-      'fresh init host %s uses plan default model and providerId',
-      async (host) => {
-        const repoRoot = await createTempRepo()
-        await initProject({ targetDir: repoRoot, adapter: host })
-        const config = await loadConfigFile(repoRoot)
-        const providerId = PLAN_HOST_DEFAULT_PROVIDER[host]
-        expect(config.judge.providerId).toBe(providerId)
-        expect(config.judge.model).toBe(PLAN_DEFAULT_MODELS[providerId])
-        expect(config.judge.model).not.toBe('auto')
-        expect(config.judge.model).not.toBe('gpt-4.1-mini')
-      },
-    )
+    it.each([
+      'cursor',
+      'claude',
+      'codex',
+    ] as const)('fresh init host %s uses plan default model and providerId', async (host) => {
+      const repoRoot = await createTempRepo()
+      await initProject({ targetDir: repoRoot, adapter: host })
+      const config = await loadConfigFile(repoRoot)
+      const providerId = PLAN_HOST_DEFAULT_PROVIDER[host]
+      expect(config.judge.providerId).toBe(providerId)
+      expect(config.judge.model).toBe(PLAN_DEFAULT_MODELS[providerId])
+      expect(config.judge.model).not.toBe('auto')
+      expect(config.judge.model).not.toBe('gpt-4.1-mini')
+    })
 
     it('resolveJudgeFromCatalog pins plan default models for all providers', () => {
       for (const providerId of PLAN_JUDGE_PROVIDER_IDS) {
@@ -178,18 +179,19 @@ describe('Phase 1 plan — Foundation', () => {
   })
 
   describe('P1-4 doctor does not probe Ollama when judge is not ollama', () => {
-    it.each(['cursor', 'claude', 'codex'] as const)(
-      'fresh %s init: doctor omits Ollama probe',
-      async (host) => {
-        const dir = await createTempRepo()
-        await initProject({ targetDir: dir, adapter: host })
-        const config = await loadConfigFile(dir)
-        const report = await diagnoseJudge(config, dir)
-        const combined = combinedDoctorText(report)
-        expect(combined).not.toContain('Ollama endpoint:')
-        expect(combined.toLowerCase()).not.toMatch(/ollama.*unreachable/)
-      },
-    )
+    it.each([
+      'cursor',
+      'claude',
+      'codex',
+    ] as const)('fresh %s init: doctor omits Ollama probe', async (host) => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: host })
+      const config = await loadConfigFile(dir)
+      const report = await diagnoseJudge(config, dir)
+      const combined = combinedDoctorText(report)
+      expect(combined).not.toContain('Ollama endpoint:')
+      expect(combined.toLowerCase()).not.toMatch(/ollama.*unreachable/)
+    })
   })
 
   describe('P1-5 re-init preserves cursor judge without endpoint', () => {
@@ -237,15 +239,16 @@ describe('Phase 1 plan — Foundation', () => {
   })
 
   describe('P1-7 host → provider mapping', () => {
-    it.each(['cursor', 'claude', 'codex'] as const)(
-      'fresh init adapter %s uses plan providerId',
-      async (host) => {
-        const dir = await createTempRepo()
-        await initProject({ targetDir: dir, adapter: host })
-        const config = await loadConfigFile(dir)
-        expect(config.judge.providerId).toBe(PLAN_HOST_DEFAULT_PROVIDER[host])
-      },
-    )
+    it.each([
+      'cursor',
+      'claude',
+      'codex',
+    ] as const)('fresh init adapter %s uses plan providerId', async (host) => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: host })
+      const config = await loadConfigFile(dir)
+      expect(config.judge.providerId).toBe(PLAN_HOST_DEFAULT_PROVIDER[host])
+    })
 
     it('resolveInitJudgeConfig maps each host to plan provider', () => {
       for (const host of ['cursor', 'claude', 'codex'] as const) {
