@@ -293,8 +293,10 @@ describe('Phase 2 plan — Config UX', () => {
 
     it('config interactive is separate entrypoint from init', async () => {
       const mod = await importConfigModule()
-      expect(mod.runBelayConfig).not.toBe(mod.runInitWizard)
-      expect(mod.runInitWizard).toBeUndefined()
+      expect(typeof mod.runBelayConfigInteractive).toBe('function')
+      expect(typeof mod.runBelayConfigFullInteractive).toBe('function')
+      expect(typeof mod.runBelayConfigJudgeOnlyInteractive).toBe('function')
+      expect('runInitWizard' in mod).toBe(false)
     })
   })
 })
