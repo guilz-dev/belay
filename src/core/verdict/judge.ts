@@ -115,7 +115,10 @@ export function prescanMutationTargets(params: MutationPrescanParams): Tier1Verd
       continue
     }
     const relative = relativeWithinRepo(params.repoRoot, resolved)
-    if (relative !== null && matchesSensitivePath(relative.replaceAll('\\', '/'), params.sensitivePaths)) {
+    if (
+      relative !== null &&
+      matchesSensitivePath(relative.replaceAll('\\', '/'), params.sensitivePaths)
+    ) {
       return {
         local_recoverable: false,
         destroys_outside_repo: false,
