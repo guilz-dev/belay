@@ -6,6 +6,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Changed
+
+- **`belay config`** — new primary UI for judge settings (`list`, `get`, `set`, `unset`, `credential`, `judge`) and interactive setup. Replaces `init-wizard`.
+- **`init-wizard`** — removed; invoking it exits non-zero with a `belay config` hint.
+- **Doctor / status / SKILL.md** — guide to `belay config` when hooks or config are missing (not `init-wizard`).
+- **Dogfood self-command** — `belay config get|list|set judge.*|unset judge.*|credential` allowed without approval.
+
+- **Judge providers** — catalog is `ollama`, `codex`, `claude`, `cursor` (removed `openrouter` / `custom`). Read-time aliases: `local` → `ollama`, `openai` → `codex`.
+- **Fresh init defaults** — judge `providerId` follows host adapter (`cursor` / `claude` / `codex`), not local Ollama. Default models: `gemma4:e2b`, `gpt-5.3-codex-high`, `claude-sonnet-4-6`, `composer-2.5`.
+- **Fresh init credential** — writes `judge.credential.mode: project` by default.
+- **Native CLI judge transport** — `codex` / `cursor` / `claude` can run Tier1 via host CLI (`*-cli` transport) without API keys when the CLI is on PATH; outbound text is scrubbed before send.
+- **`belay judge status` / `test` / doctor** — show transport, credential `sourceKind`, and live model check (`found` / `missing` / `unverified`).
+- **`--migrate-judge-default`** — opt-in migration of implicit factory-default `ollama` to the host-matched provider on `belay init` / `belay upgrade` (audit: `judge_provider_changed`).
+- **`judge.model: auto`** — rejected on new input (`--judge-model`, `belay config set`, `belay judge use`). Legacy config values are normalized to the catalog default on load with a warning (lazy migration until next persist).
+- **Interactive `belay config`** — on installed repos (`floorInstalled`), defaults to judge-only setup without re-running `init`; full setup remains available.
+- **Model discovery tests** — unit tests mock CLI/API probes; optional live probe via `BELAY_LIVE_CLI_DISCOVERY=1` (not run in CI).
+- **`BELAY_JUDGE_MODEL_RESOLVED`** — honored only under Vitest for test overrides; ignored in normal CLI runs.
+
+### Changed (earlier in unreleased)
+
+- **`claude` driver** — config uses `anthropic`; Tier1 uses `claude-cli` when the Claude CLI is available, otherwise fail-closed.
+
+### Fixed
+
+- **Re-init** — preserving an existing `cursor` judge with `endpoint: null` no longer throws on second `belay init`.
+- **Doctor** — Ollama probe runs only when `providerId` is `ollama`.
+- **Legacy configs** — removed `openrouter` / `custom` `providerId` values emit a warning on load and are preserved until `belay config set judge.providerId` migrates; Tier1 fails closed until then.
+
 ## 0.2.0 — 2026-06-15
 
 ### Changed

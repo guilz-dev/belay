@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfigFile } from '../../config-io.js'
 import { DEFAULT_CONFIG_V4, migrateConfig, normalizeConfig } from '../../core/config.js'
 import {
-  JudgeEndpointRequiredError,
+  defaultJudgeProviderForAdapter,
   resolveInitJudgeConfig,
   resolveJudgeConfig,
 } from '../../core/judge-config.js'
@@ -50,9 +50,9 @@ describe('T11 init judge setup matrix', () => {
       const config = await loadConfigFile(repoRoot)
       expect(config.version).toBe(4)
       expect(config.judge.provider).toBe('openai-compatible')
-      expect(config.judge.providerId).toBe('openai')
+      expect(config.judge.providerId).toBe('codex')
       expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
-      expect(config.judge.model).toBe('gpt-4.1-mini')
+      expect(config.judge.model).toBe('gpt-5.3-codex-high')
       expect(config.judge.cloudConsent?.accepted).toBe(true)
       expect(config.judge.cloudConsent?.by).toBe('tty')
     } finally {
@@ -71,7 +71,7 @@ describe('T11 init judge setup matrix', () => {
         acceptCloudJudge: true,
       })
       const config = await loadConfigFile(repoRoot)
-      expect(config.judge.providerId).toBe('openai')
+      expect(config.judge.providerId).toBe('codex')
       expect(config.judge.cloudConsent?.accepted).toBeUndefined()
     } finally {
       restoreTTY()
@@ -90,24 +90,36 @@ describe('T11 init judge setup matrix', () => {
     expect(config.judge.cloudConsent?.accepted).toBeUndefined()
   })
 
-  it('rejects cursor without endpoint', async () => {
+  it('allows cursor without endpoint on explicit init', async () => {
     const repoRoot = await createTempRepo()
-    await expect(
-      initProject({
-        targetDir: repoRoot,
-        judgeProviderId: 'cursor',
-        acceptCloudJudge: true,
-      }),
-    ).rejects.toBeInstanceOf(JudgeEndpointRequiredError)
+    await initProject({
+      targetDir: repoRoot,
+      judgeProviderId: 'cursor',
+      acceptCloudJudge: true,
+    })
+    const config = await loadConfigFile(repoRoot)
+    expect(config.judge.providerId).toBe('cursor')
+    expect(config.judge.endpoint).toBeNull()
   })
 
-  it('defaults fresh init to local ollama judge without explicit flags', async () => {
+  it('defaults fresh init to cursor judge when adapter is cursor', async () => {
     const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    await initProject({ targetDir: repoRoot, adapter: 'cursor' })
     const config = await loadConfigFile(repoRoot)
-    expect(config.judge.provider).toBe('ollama')
-    expect(config.judge.model).toBe('gemma4:e2b')
-    expect(config.judge.endpoint).toBe('http://localhost:11434')
+    expect(config.judge.provider).toBe('openai-compatible')
+    expect(config.judge.providerId).toBe('cursor')
+    expect(config.judge.model).toBe('composer-2.5')
+    expect(config.judge.endpoint).toBeNull()
+    expect(config.judge.credential?.mode).toBe('project')
+  })
+
+  it('defaults fresh init to claude judge when adapter is claude', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, adapter: 'claude' })
+    const config = await loadConfigFile(repoRoot)
+    expect(config.judge.providerId).toBe('claude')
+    expect(config.judge.provider).toBe('anthropic')
+    expect(config.judge.endpoint).toBeNull()
   })
 
   it('writes local-ollama profile as version 4', async () => {
@@ -129,30 +141,44 @@ describe('T11 init judge setup matrix', () => {
     expect(judge.model).toBe('custom:7b')
   })
 
-  it('supports claude/codex judge profiles as openai-compatible aliases', () => {
+  it('supports claude/codex judge profiles from catalog', () => {
     const claude = resolveJudgeConfig({ judgeProfile: 'claude' })
     const codex = resolveJudgeConfig({ judgeProfile: 'codex' })
-    expect(claude.provider).toBe('openai-compatible')
+    expect(claude.provider).toBe('anthropic')
     expect(codex.provider).toBe('openai-compatible')
-    expect(claude.endpoint).toBe('https://api.openai.com/v1')
-    expect(codex.endpoint).toBe('https://api.openai.com/v1')
+    expect(claude.endpoint).toBeNull()
+    expect(codex.endpoint).toBeNull()
   })
 
-  it('defaults fresh init to local regardless of adapter profile hint', () => {
+  it('defaults fresh init by adapter when no explicit judge flags', () => {
+    const cursorDefault = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: false,
+      adapter: 'cursor',
+    })
     const claudeDefault = resolveInitJudgeConfig({
       isFresh: true,
       hasExplicitJudgeFlags: false,
-      defaultJudgeProfile: 'claude',
+      adapter: 'claude',
     })
     const codexDefault = resolveInitJudgeConfig({
       isFresh: true,
       hasExplicitJudgeFlags: false,
-      defaultJudgeProfile: 'codex',
+      adapter: 'codex',
     })
-    expect(claudeDefault.provider).toBe('ollama')
-    expect(claudeDefault.providerId).toBe('local')
-    expect(codexDefault.provider).toBe('ollama')
-    expect(codexDefault.providerId).toBe('local')
+    expect(cursorDefault.providerId).toBe('cursor')
+    expect(cursorDefault.provider).toBe('openai-compatible')
+    expect(claudeDefault.providerId).toBe('claude')
+    expect(claudeDefault.provider).toBe('anthropic')
+    expect(codexDefault.providerId).toBe('codex')
+    expect(codexDefault.provider).toBe('openai-compatible')
+    expect(cursorDefault.credential?.mode).toBe('project')
+  })
+
+  it('maps adapter to default judge provider id', () => {
+    expect(defaultJudgeProviderForAdapter('cursor')).toBe('cursor')
+    expect(defaultJudgeProviderForAdapter('claude')).toBe('claude')
+    expect(defaultJudgeProviderForAdapter('codex')).toBe('codex')
   })
 
   it('maps --judge-provider cursor to cursor providerId without OpenAI default', () => {
@@ -179,7 +205,7 @@ describe('T11 init judge setup matrix', () => {
     const judge = resolveInitJudgeConfig({
       isFresh: true,
       hasExplicitJudgeFlags: true,
-      judgeProviderId: 'openai',
+      judgeProviderId: 'codex',
       judgeEndpoint: 'https://api.openai.com/v1',
       cloudConsentApprovalId: 'approval-init',
     })

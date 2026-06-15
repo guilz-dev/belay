@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, migrateConfig } from '../../core/config.js'
-import { JudgeEndpointRequiredError, resolveInitJudgeConfig } from '../../core/judge-config.js'
+import { resolveInitJudgeConfig } from '../../core/judge-config.js'
 import * as judgeModule from '../../core/verdict/judge.js'
 
 describe('T16 no default base / no vendor leak', () => {
@@ -26,15 +26,15 @@ describe('T16 no default base / no vendor leak', () => {
     }
   })
 
-  it('requires endpoint for cursor init', () => {
-    expect(() =>
-      resolveInitJudgeConfig({
-        isFresh: true,
-        hasExplicitJudgeFlags: true,
-        judgeProviderId: 'cursor',
-        acceptCloudJudge: true,
-      }),
-    ).toThrow(JudgeEndpointRequiredError)
+  it('allows cursor init without endpoint', () => {
+    const judge = resolveInitJudgeConfig({
+      isFresh: true,
+      hasExplicitJudgeFlags: true,
+      judgeProviderId: 'cursor',
+      acceptCloudJudge: true,
+    })
+    expect(judge.providerId).toBe('cursor')
+    expect(judge.endpoint).toBeNull()
   })
 
   it('normalizes migrated cursor provider without endpoint', () => {
@@ -50,6 +50,7 @@ describe('T16 no default base / no vendor leak', () => {
     })
     expect(config.judge.provider).toBe('openai-compatible')
     expect(config.judge.providerId).toBe('cursor')
+    expect(config.judge.model).toBe('composer-2.5')
     expect(config.judge.endpoint).toBeNull()
   })
 })

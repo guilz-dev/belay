@@ -52,7 +52,7 @@ export interface InitOptions {
   preset?: import('./presets.js').ConfigPresetName
   judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
-  judgeProviderId?: 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
+  judgeProviderId?: 'ollama' | 'codex' | 'claude' | 'cursor' | 'local' | 'openai'
   judgeModel?: string
   judgeEndpoint?: string
   judgeCredentialMode?: 'project' | 'apiKey'
@@ -61,6 +61,8 @@ export interface InitOptions {
   cloudConsentApprovalId?: string
   /** When true, skip writing judge config (used when user declines cloud consent). */
   skipJudgeWrite?: boolean
+  /** Opt-in: migrate implicit factory-default ollama judge to host default provider. */
+  migrateJudgeDefault?: boolean
 }
 
 export interface UpgradeOptions {
@@ -68,6 +70,8 @@ export interface UpgradeOptions {
   withSkill?: boolean
   adapter?: AdapterName
   scope?: InstallScope
+  /** Opt-in: migrate implicit factory-default ollama judge to host default provider. */
+  migrateJudgeDefault?: boolean
 }
 
 export interface DoctorOptions {

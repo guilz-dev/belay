@@ -115,7 +115,12 @@ describe('installer scope (T29)', () => {
   it('doctor passes after global install', async () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot, scope: 'global', withSkill: true })
+    await initProject({
+      targetDir: repoRoot,
+      scope: 'global',
+      withSkill: true,
+      judgeProviderId: 'ollama',
+    })
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ models: [{ name: 'gemma4:e2b' }] }), { status: 200 }),

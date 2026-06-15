@@ -2,8 +2,6 @@ import path from 'node:path'
 import { stdin as input, stdout as output } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 
-import { getAdapterLayout } from '../adapters/layouts/index.js'
-import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import {
   configPathFor,
   loadApprovalState,
@@ -17,7 +15,7 @@ import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { BelayConfigV4, BelayJudgeConfig } from '../core/config.js'
 import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
 import { writeJudgeCredentialStore } from '../core/credential-store.js'
-import { runtimeIntegrityFiles, writeIntegrityManifest } from '../core/integrity.js'
+import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import { resolveJudgeCredential } from '../core/judge-api-key.js'
 import { ensurePendingJudgeCloudConsentApproval } from '../core/judge-cloud-consent.js'
 import {
@@ -26,13 +24,17 @@ import {
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
+import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
+import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import {
   getJudgeProviderSpec,
   isJudgeProviderId,
   JUDGE_CATALOG,
   JUDGE_PROVIDER_IDS,
+  normalizeLegacyProviderId,
 } from '../core/verdict/judge-catalog.js'
 import { resolveJudgeModel } from '../core/verdict/judge-factory.js'
+import { readKeyFromStdin } from './stdin-key.js'
 
 export interface JudgeCommandOptions {
   targetDir?: string
@@ -51,14 +53,6 @@ export interface JudgeCommandOptions {
 
 export function isInteractiveTTY(): boolean {
   return Boolean(input.isTTY && output.isTTY)
-}
-
-async function readKeyFromStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of input) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
-  return Buffer.concat(chunks).toString('utf8').trim()
 }
 
 async function confirmCloudConsent(endpoint: string): Promise<boolean> {
@@ -102,17 +96,6 @@ function formatJudgeDiff(before: BelayJudgeConfig, after: BelayJudgeConfig): str
   return lines.join('\n')
 }
 
-async function refreshIntegrityIfPinned(repoRoot: string, config: BelayConfigV4): Promise<void> {
-  if (config.controlPlane.integrity !== 'hash-pinned') {
-    return
-  }
-  const adapter = resolveAdapterName(config)
-  const layout = getAdapterLayout(adapter)
-  const installScope = config.installScope === 'global' ? 'global' : 'project'
-  const scoped = resolveScopedPaths(layout, installScope, repoRoot)
-  await writeIntegrityManifest(repoRoot, layout, runtimeIntegrityFiles(layout, scoped))
-}
-
 export async function judgeStatus(options: JudgeCommandOptions = {}) {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
@@ -127,13 +110,15 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
     config,
   })
   const { resolved } = resolveJudgeModel(judge)
+  const transport = resolveJudgeTransport(judge)
 
   const lines = [
     `Judge providerId : ${judge.providerId ?? '(inferred)'}`,
     `Judge driver     : ${judge.provider}`,
+    `Transport        : ${transport}`,
     `Endpoint         : ${judge.endpoint ?? '(none)'}`,
     `Model            : ${resolved} (requested: ${judge.model})`,
-    `Credential       : ${credential.mode}${credential.source ? ` → ${credential.source}` : ''} ${credential.key ? '✓ set' : '✗ missing'}`,
+    `Credential       : ${credential.mode} (${credential.sourceKind})${credential.source ? ` → ${credential.source}` : ''} ${credential.key ? '✓ set' : '✗ missing'}`,
     `Cloud consent    : ${
       judge.cloudConsent?.accepted
         ? `accepted ${judge.cloudConsent.at} by ${judge.cloudConsent.by}`
@@ -149,6 +134,7 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
       endpoint: judge.endpoint,
       model: judge.model,
       modelResolved: resolved,
+      transport,
       credential,
       cloudConsent: judge.cloudConsent ?? null,
       cloudJudgeActive: isCloudJudgeConfig(judge) && hasValidCloudConsent(judge),
@@ -175,7 +161,7 @@ export function judgeList(options: JudgeCommandOptions = {}) {
   return entries
     .map(
       (entry) =>
-        `${entry.id} (${entry.cloud ? 'cloud' : 'local'}) driver=${entry.driver} model=${entry.defaultModel} endpoint=${entry.defaultEndpoint ?? 'required'}`,
+        `${entry.id} (${entry.cloud ? 'cloud' : 'local'}) driver=${entry.driver} model=${entry.defaultModel} endpoint=${entry.defaultEndpoint ?? 'optional'}`,
     )
     .join('\n')
 }
@@ -190,6 +176,10 @@ export async function judgeUse(options: JudgeCommandOptions) {
   }
 
   const before = { ...config.judge }
+
+  if (options.model !== undefined) {
+    rejectDeprecatedJudgeModelAuto(options.model)
+  }
 
   if (
     options.keyStdin &&
@@ -323,7 +313,8 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
   if (!providerId || !isJudgeProviderId(providerId)) {
     throw new Error(`judge consent requires --provider-id: ${JUDGE_PROVIDER_IDS.join(', ')}`)
   }
-  const spec = getJudgeProviderSpec(providerId)
+  const canonicalProviderId = normalizeLegacyProviderId(providerId)!
+  const spec = getJudgeProviderSpec(canonicalProviderId)
   if (!spec?.isCloud) {
     throw new Error(
       `judge consent applies only to cloud providers (${JUDGE_PROVIDER_IDS.filter((id) => JUDGE_CATALOG[id].isCloud).join(', ')}).`,
@@ -332,19 +323,19 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
   const endpoint =
     options.endpoint?.trim() || config.judge.endpoint?.trim() || spec.defaultEndpoint || ''
   if (!endpoint) {
-    throw new Error(`${providerId} requires --endpoint for cloud consent request.`)
+    throw new Error(`${canonicalProviderId} requires --endpoint for cloud consent request.`)
   }
 
   const { approvalId, created } = await ensurePendingJudgeCloudConsentApproval({
     repoRoot,
     config,
-    providerId,
+    providerId: canonicalProviderId,
     endpoint,
   })
   const lines = [
     `Cloud consent approval ${created ? 'created' : 'reused'}: ${approvalId}`,
     `Approve: belay approve ${approvalId}`,
-    `Then: belay judge use ${providerId} --endpoint ${endpoint} --cloud-consent-approval-id ${approvalId}`,
+    `Then: belay judge use ${canonicalProviderId} --endpoint ${endpoint} --cloud-consent-approval-id ${approvalId}`,
   ]
   if (options.json) {
     return { approvalId, created, providerId, endpoint, reason: JUDGE_CLOUD_CONSENT_REASON }
@@ -356,10 +347,13 @@ export async function judgeTest(options: JudgeCommandOptions = {}) {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const diagnosis = await diagnoseJudge(config, repoRoot)
+  const modelCheck = diagnosis.modelCheck
   if (options.json) {
-    return diagnosis
+    return { ...diagnosis, modelCheck }
   }
   return [
+    `Model check: ${modelCheck?.status ?? 'unverified'}`,
+    `Model source: ${modelCheck?.source ?? 'unknown'}`,
     ...diagnosis.notes.map((n) => `Note: ${n}`),
     ...diagnosis.warnings.map((w) => `Warning: ${w}`),
     ...diagnosis.issues.map((i) => `Issue: ${i}`),

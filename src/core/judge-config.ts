@@ -1,36 +1,42 @@
+import type { AdapterName } from '../adapters/layouts/types.js'
 import type { BelayJudgeConfig, JudgeCloudConsent, JudgeProviderId } from './config.js'
 import { normalizeJudgeProvider } from './config.js'
+import { rejectDeprecatedJudgeModelAuto } from './judge-model-policy.js'
+import { detectJudgeRuntimeCapabilities } from './judge-runtime-detection.js'
 import {
-  type JudgeProviderId as CatalogId,
   catalogRequiresEndpoint,
   getJudgeProviderSpec,
   isCloudProviderId,
   isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
+  normalizeLegacyProviderId,
   resolveJudgeFromCatalog,
 } from './verdict/judge-catalog.js'
 
 export type JudgeProfileName = 'local-ollama' | 'cursor' | 'claude' | 'codex'
 
 const PROFILE_TO_PROVIDER_ID: Record<JudgeProfileName, JudgeProviderId> = {
-  'local-ollama': 'local',
+  'local-ollama': 'ollama',
   cursor: 'cursor',
-  claude: 'openai',
-  codex: 'openai',
+  claude: 'claude',
+  codex: 'codex',
 }
 
 export const JUDGE_PROFILE_LOCAL_OLLAMA: BelayJudgeConfig = resolveJudgeFromCatalog({
-  providerId: 'local',
+  providerId: 'ollama',
 })
 
-export const JUDGE_PROFILE_CURSOR: BelayJudgeConfig = {
-  ...resolveJudgeFromCatalog({ providerId: 'openai' }),
-  model: 'auto',
-}
+export const JUDGE_PROFILE_CURSOR: BelayJudgeConfig = resolveJudgeFromCatalog({
+  providerId: 'cursor',
+})
 
-export const JUDGE_PROFILE_CLAUDE: BelayJudgeConfig = { ...JUDGE_PROFILE_CURSOR }
+export const JUDGE_PROFILE_CLAUDE: BelayJudgeConfig = resolveJudgeFromCatalog({
+  providerId: 'claude',
+})
 
-export const JUDGE_PROFILE_CODEX: BelayJudgeConfig = { ...JUDGE_PROFILE_CURSOR }
+export const JUDGE_PROFILE_CODEX: BelayJudgeConfig = resolveJudgeFromCatalog({
+  providerId: 'codex',
+})
 
 export const JUDGE_PROFILES: Record<JudgeProfileName, BelayJudgeConfig> = {
   'local-ollama': JUDGE_PROFILE_LOCAL_OLLAMA,
@@ -39,10 +45,24 @@ export const JUDGE_PROFILES: Record<JudgeProfileName, BelayJudgeConfig> = {
   codex: JUDGE_PROFILE_CODEX,
 }
 
+/** Default Tier1 judge catalog id for a host adapter (fresh init, no explicit judge flags). */
+export function defaultJudgeProviderForAdapter(adapter: AdapterName): JudgeProviderId {
+  if (adapter === 'cursor') {
+    return 'cursor'
+  }
+  if (adapter === 'claude') {
+    return 'claude'
+  }
+  if (adapter === 'codex') {
+    return 'codex'
+  }
+  return 'cursor'
+}
+
 export interface ResolveJudgeConfigInput {
   judgeProfile?: JudgeProfileName
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
-  judgeProviderId?: JudgeProviderId
+  judgeProviderId?: JudgeProviderId | string
   judgeModel?: string
   judgeEndpoint?: string
   existingJudge?: BelayJudgeConfig
@@ -52,22 +72,35 @@ function warnDeprecated(message: string): void {
   process.stderr.write(`Warning: ${message}\n`)
 }
 
-export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJudgeConfig {
-  if (input.judgeProviderId && isJudgeProviderId(input.judgeProviderId)) {
-    return resolveJudgeFromCatalog({
-      providerId: input.judgeProviderId,
-      model: input.judgeModel,
-      endpoint: input.judgeEndpoint,
-    })
+function resolveProviderIdFromFlags(input: ResolveJudgeConfigInput): JudgeProviderId | null {
+  if (input.judgeProviderId) {
+    const normalized = normalizeLegacyProviderId(String(input.judgeProviderId))
+    if (normalized) {
+      return normalized
+    }
   }
-
   if (input.judgeProvider) {
     const rawProvider = input.judgeProvider
     const provider = normalizeJudgeProvider(rawProvider)
-    const providerId: CatalogId =
-      rawProvider === 'cursor' ? 'cursor' : provider === 'ollama' ? 'local' : 'openai'
+    if (rawProvider === 'cursor') {
+      return 'cursor'
+    }
+    if (provider === 'ollama') {
+      return 'ollama'
+    }
+    return 'codex'
+  }
+  return null
+}
+
+export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJudgeConfig {
+  if (input.judgeModel !== undefined) {
+    rejectDeprecatedJudgeModelAuto(input.judgeModel)
+  }
+  const providerIdFromFlags = resolveProviderIdFromFlags(input)
+  if (providerIdFromFlags) {
     return resolveJudgeFromCatalog({
-      providerId,
+      providerId: providerIdFromFlags,
       model: input.judgeModel,
       endpoint: input.judgeEndpoint,
     })
@@ -75,23 +108,14 @@ export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJu
 
   if (input.judgeProfile) {
     warnDeprecated(
-      `--judge-profile is deprecated; use belay judge use <provider-id> (${JUDGE_PROVIDER_IDS.join(', ')}).`,
+      `--judge-profile is deprecated; use belay config set judge.providerId <provider-id> (${JUDGE_PROVIDER_IDS.join(', ')}).`,
     )
     const providerId = PROFILE_TO_PROVIDER_ID[input.judgeProfile]
-    const base = resolveJudgeFromCatalog({
+    return resolveJudgeFromCatalog({
       providerId,
       model: input.judgeModel,
       endpoint: input.judgeEndpoint,
     })
-    if (input.judgeProfile === 'cursor') {
-      return {
-        ...base,
-        providerId: 'cursor',
-        model: input.judgeModel ?? 'composer-2.5',
-        endpoint: input.judgeEndpoint?.trim() ?? null,
-      }
-    }
-    return base
   }
 
   if (input.existingJudge) {
@@ -110,10 +134,10 @@ export class CloudJudgeConsentRequiredError extends Error {
       )
     }
     if (details?.key !== false) {
-      parts.push('Set provider API keys via env or belay judge use --credential apiKey.')
+      parts.push('Set provider API keys via env or belay config credential set --key-stdin.')
     }
     if (details?.localFallback !== false) {
-      parts.push('Use belay judge use local for local-only Tier1.')
+      parts.push('Use belay config set judge.providerId ollama for local-only Tier1.')
     }
     super(parts.join(' '))
     this.name = 'CloudJudgeConsentRequiredError'
@@ -123,7 +147,7 @@ export class CloudJudgeConsentRequiredError extends Error {
 export class JudgeEndpointRequiredError extends Error {
   constructor(providerId?: JudgeProviderId) {
     super(
-      providerId === 'cursor' || providerId === 'custom'
+      providerId
         ? `${providerId} judge requires --endpoint (or judge.endpoint in config).`
         : 'openai-compatible judge requires --judge-endpoint (or judge.endpoint in config). No default cloud base URL is applied.',
     )
@@ -135,7 +159,7 @@ export function isCloudJudgeConfig(judge: BelayJudgeConfig): boolean {
   if (judge.providerId) {
     return isCloudProviderId(judge.providerId)
   }
-  return judge.provider === 'openai-compatible'
+  return judge.provider === 'openai-compatible' || judge.provider === 'anthropic'
 }
 
 export function hasValidCloudConsent(judge: BelayJudgeConfig): boolean {
@@ -145,20 +169,75 @@ export function hasValidCloudConsent(judge: BelayJudgeConfig): boolean {
   if (!judge.endpoint?.trim()) {
     return false
   }
-  const providerId = judge.providerId ?? (judge.provider === 'ollama' ? 'local' : 'openai')
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : judge.provider === 'ollama'
+        ? 'ollama'
+        : 'codex'
   return (
     judge.cloudConsent.endpoint === judge.endpoint.trim() &&
-    judge.cloudConsent.providerId === providerId
+    normalizeLegacyProviderId(judge.cloudConsent.providerId) === providerId
+  )
+}
+
+export function isImplicitLocalJudge(judge: BelayJudgeConfig): boolean {
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : judge.provider === 'ollama'
+        ? 'ollama'
+        : null
+  if (providerId !== 'ollama') {
+    return false
+  }
+  if (judge.cloudConsent?.accepted) {
+    return false
+  }
+  const factoryDefault = resolveJudgeFromCatalog({ providerId: 'ollama' })
+  const endpoint = judge.endpoint?.trim() ?? factoryDefault.endpoint
+  const defaultEndpoint = factoryDefault.endpoint?.trim()
+  const endpointMatches =
+    !judge.endpoint ||
+    endpoint === defaultEndpoint ||
+    endpoint === 'http://127.0.0.1:11434' ||
+    endpoint === 'http://localhost:11434'
+  return judge.provider === 'ollama' && judge.model === factoryDefault.model && endpointMatches
+}
+
+export function migrateImplicitLocalJudgeIfNeeded(
+  existingJudge: BelayJudgeConfig,
+  adapter: AdapterName,
+): BelayJudgeConfig | null {
+  if (!isImplicitLocalJudge(existingJudge)) {
+    return null
+  }
+  return applyFreshInitDefaults(
+    resolveJudgeFromCatalog({ providerId: defaultJudgeProviderForAdapter(adapter) }),
   )
 }
 
 export function assertJudgeEndpoint(judge: BelayJudgeConfig): void {
-  const providerId = judge.providerId ?? (judge.provider === 'ollama' ? 'local' : 'openai')
-  if (catalogRequiresEndpoint(providerId) && !judge.endpoint?.trim()) {
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : judge.provider === 'ollama'
+        ? 'ollama'
+        : 'codex'
+  const transport = judge.endpoint?.trim()
+    ? 'http'
+    : (detectJudgeRuntimeCapabilities(providerId).cliTransport ?? 'http')
+  if (catalogRequiresEndpoint(providerId, { transport }) && !judge.endpoint?.trim()) {
     throw new JudgeEndpointRequiredError(providerId)
   }
-  if (judge.provider === 'openai-compatible' && !judge.endpoint?.trim()) {
-    throw new JudgeEndpointRequiredError(providerId)
+}
+
+function applyFreshInitDefaults(judge: BelayJudgeConfig): BelayJudgeConfig {
+  const endpoint = process.env.BELAY_JUDGE_ENDPOINT?.trim()
+  return {
+    ...judge,
+    ...(endpoint ? { endpoint } : {}),
+    credential: { mode: 'project' },
   }
 }
 
@@ -167,14 +246,14 @@ export function resolveInitJudgeConfig(input: {
   hasExplicitJudgeFlags: boolean
   judgeProfile?: JudgeProfileName
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
-  judgeProviderId?: JudgeProviderId
+  judgeProviderId?: JudgeProviderId | string
   judgeModel?: string
   judgeEndpoint?: string
   acceptCloudJudge?: boolean
   interactiveConsent?: boolean
   cloudConsentApprovalId?: string
   existingJudge?: BelayJudgeConfig
-  defaultJudgeProfile?: JudgeProfileName
+  adapter?: AdapterName
 }): BelayJudgeConfig {
   if (input.hasExplicitJudgeFlags) {
     const judge = resolveJudgeConfig({
@@ -199,19 +278,22 @@ export function resolveInitJudgeConfig(input: {
   }
 
   if (!input.isFresh && input.existingJudge) {
-    const judge = resolveJudgeConfig({ existingJudge: input.existingJudge })
-    assertJudgeEndpoint(judge)
-    return judge
+    return resolveJudgeConfig({ existingJudge: input.existingJudge })
   }
 
-  return resolveJudgeConfig({ judgeProviderId: 'local' })
+  const adapter = input.adapter ?? 'cursor'
+  const judge = resolveJudgeConfig({ judgeProviderId: defaultJudgeProviderForAdapter(adapter) })
+  return applyFreshInitDefaults(judge)
 }
 
 export function applyCloudConsent(
   judge: BelayJudgeConfig,
   params: { by: string },
 ): BelayJudgeConfig {
-  const providerId = judge.providerId ?? 'openai'
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : 'codex'
   const endpoint = judge.endpoint?.trim()
   if (!endpoint) {
     return judge
@@ -227,7 +309,7 @@ export function applyCloudConsent(
 }
 
 export interface JudgeUseOptions {
-  providerId: JudgeProviderId
+  providerId: JudgeProviderId | string
   model?: string
   endpoint?: string
   timeoutMs?: number
@@ -245,32 +327,39 @@ export function resolveJudgeUsePatch(
 ): { judge: BelayJudgeConfig; warnings: string[]; errors: string[] } {
   const warnings: string[] = []
   const errors: string[] = []
-  const spec = getJudgeProviderSpec(options.providerId)
+  const normalizedId = normalizeLegacyProviderId(String(options.providerId))
+  if (!normalizedId) {
+    errors.push(`Unknown judge provider id: ${options.providerId}`)
+    return { judge: existing, warnings, errors }
+  }
+  const spec = getJudgeProviderSpec(normalizedId)
   if (!spec) {
     errors.push(`Unknown judge provider id: ${options.providerId}`)
     return { judge: existing, warnings, errors }
   }
 
   let judge = resolveJudgeFromCatalog({
-    providerId: options.providerId,
-    model:
-      options.model ?? (existing.providerId === options.providerId ? existing.model : undefined),
+    providerId: normalizedId,
+    model: options.model ?? (existing.providerId === normalizedId ? existing.model : undefined),
     endpoint:
       options.endpoint !== undefined
         ? options.endpoint
-        : existing.providerId === options.providerId
+        : existing.providerId === normalizedId
           ? existing.endpoint
           : undefined,
     timeoutMs: options.timeoutMs ?? existing.timeoutMs,
     keepAlive: existing.keepAlive,
   })
 
-  if (catalogRequiresEndpoint(options.providerId) && !judge.endpoint?.trim()) {
-    errors.push(`${options.providerId} requires --endpoint.`)
-  }
-
-  if (options.providerId === 'custom' && !judge.model?.trim()) {
-    errors.push('custom requires --model.')
+  if (
+    catalogRequiresEndpoint(normalizedId, {
+      transport: judge.endpoint?.trim()
+        ? 'http'
+        : (detectJudgeRuntimeCapabilities(normalizedId).cliTransport ?? 'unavailable'),
+    }) &&
+    !judge.endpoint?.trim()
+  ) {
+    errors.push(`${normalizedId} requires --endpoint for HTTP transport.`)
   }
 
   if (options.credentialMode === 'apiKey') {
@@ -290,7 +379,7 @@ export function resolveJudgeUsePatch(
     spec.isCloud &&
     (!existing.cloudConsent?.accepted ||
       existing.cloudConsent.endpoint !== judge.endpoint?.trim() ||
-      existing.cloudConsent.providerId !== options.providerId)
+      normalizeLegacyProviderId(existing.cloudConsent.providerId) !== normalizedId)
 
   if (spec.isCloud && needsNewConsent) {
     if (options.cloudConsentApprovalId) {
@@ -318,3 +407,6 @@ export function resolveJudgeUsePatch(
 
   return { judge, warnings, errors }
 }
+
+// Re-export for callers that validate provider ids
+export { isJudgeProviderId }

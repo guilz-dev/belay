@@ -14,11 +14,18 @@ import {
   mergeAndWriteConfig,
   writeConfigFile,
 } from './config-io.js'
-import { isFreshConfigInput, mergeConfig, normalizeConfig } from './core/config.js'
+import { appendCliAuditEvent } from './core/audit-io.js'
+import {
+  type BelayJudgeConfig,
+  isFreshConfigInput,
+  mergeConfig,
+  normalizeConfig,
+} from './core/config.js'
 import { runtimeIntegrityFiles, writeIntegrityManifest } from './core/integrity.js'
 import {
   hasValidCloudConsent,
   isCloudJudgeConfig,
+  migrateImplicitLocalJudgeIfNeeded,
   resolveInitJudgeConfig,
 } from './core/judge-config.js'
 import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
@@ -140,21 +147,34 @@ function resolveAdapterName(options: InitOptions | UpgradeOptions, repoRoot?: st
   return 'cursor'
 }
 
+async function auditJudgeMigrationIfNeeded(
+  repoRoot: string,
+  adapterName: AdapterName,
+  before: BelayJudgeConfig,
+  after: BelayJudgeConfig,
+  by: string,
+): Promise<void> {
+  if (before.providerId === after.providerId && before.provider === after.provider) {
+    return
+  }
+  const config = await loadConfigFile(repoRoot, adapterName)
+  await appendCliAuditEvent(repoRoot, config, {
+    event: 'judge_provider_changed',
+    from: { providerId: before.providerId, provider: before.provider },
+    to: { providerId: after.providerId, provider: after.provider },
+    by,
+  })
+}
+
 async function applyInitJudgeConfig(
   repoRoot: string,
   adapterName: AdapterName,
   options: InitOptions,
+  isFreshBeforeInstall: boolean,
 ): Promise<void> {
   if (options.skipJudgeWrite) {
     return
   }
-  const layout = getAdapter(adapterName).layout
-  const configPath = layout.configPath(repoRoot)
-  let existingConfig: unknown = {}
-  if (await pathExists(configPath)) {
-    existingConfig = JSON.parse(await readFile(configPath, 'utf8'))
-  }
-  const isFresh = isFreshConfigInput(existingConfig)
   const mergedConfig = await loadConfigFile(repoRoot, adapterName)
   const hasExplicitJudgeFlags =
     options.judgeProfile ||
@@ -163,7 +183,7 @@ async function applyInitJudgeConfig(
     options.judgeModel ||
     options.judgeEndpoint
   const judge = resolveInitJudgeConfig({
-    isFresh,
+    isFresh: isFreshBeforeInstall,
     hasExplicitJudgeFlags: Boolean(hasExplicitJudgeFlags),
     judgeProfile: options.judgeProfile,
     judgeProvider: options.judgeProvider,
@@ -174,20 +194,38 @@ async function applyInitJudgeConfig(
     interactiveConsent: Boolean(options.acceptCloudJudge && process.stdin.isTTY),
     cloudConsentApprovalId: options.cloudConsentApprovalId,
     existingJudge: mergedConfig.judge,
+    adapter: adapterName,
   })
+  const migrated =
+    options.migrateJudgeDefault === true
+      ? migrateImplicitLocalJudgeIfNeeded(mergedConfig.judge, adapterName)
+      : null
+  let finalJudge = migrated ?? judge
   if (options.judgeCredentialMode) {
-    judge.credential =
-      options.judgeCredentialMode === 'apiKey'
-        ? { mode: 'apiKey', ref: 'store:judge' }
-        : { mode: 'project' }
+    finalJudge = {
+      ...finalJudge,
+      credential:
+        options.judgeCredentialMode === 'apiKey'
+          ? { mode: 'apiKey', ref: 'store:judge' }
+          : { mode: 'project' },
+    }
   }
-  const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge })
+  const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge: finalJudge })
   if (isCloudJudgeConfig(configWithJudge.judge) && !hasValidCloudConsent(configWithJudge.judge)) {
     process.stderr.write(
       'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
     )
   }
   await writeConfigFile(repoRoot, configWithJudge, adapterName)
+  if (migrated) {
+    await auditJudgeMigrationIfNeeded(
+      repoRoot,
+      adapterName,
+      mergedConfig.judge,
+      finalJudge,
+      options.migrateJudgeDefault ? 'belay init --migrate-judge-default' : 'belay init',
+    )
+  }
 }
 
 async function refreshIntegrityManifest(repoRoot: string, adapterName: AdapterName): Promise<void> {
@@ -204,8 +242,18 @@ export async function initProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const adapterName = resolveAdapterName(options, repoRoot)
   const adapter = getAdapter(adapterName)
+  const configPath = adapter.layout.configPath(repoRoot)
+  let isFreshBeforeInstall = true
+  if (await pathExists(configPath)) {
+    try {
+      const raw = await readFile(configPath, 'utf8')
+      isFreshBeforeInstall = isFreshConfigInput(JSON.parse(raw))
+    } catch {
+      isFreshBeforeInstall = false
+    }
+  }
   const result = await adapter.install(repoRoot, options)
-  await applyInitJudgeConfig(repoRoot, adapterName, options)
+  await applyInitJudgeConfig(repoRoot, adapterName, options, isFreshBeforeInstall)
   if (options.preset) {
     const existing = await loadConfigFile(repoRoot, adapterName)
     const presetConfig = mergeConfig(applyConfigPreset(options.preset))
@@ -230,6 +278,21 @@ export async function upgradeProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const adapterName = resolveAdapterName(options, repoRoot)
   await getAdapter(adapterName).upgrade(repoRoot, options)
+  if (options.migrateJudgeDefault === true) {
+    const mergedConfig = await loadConfigFile(repoRoot, adapterName)
+    const migrated = migrateImplicitLocalJudgeIfNeeded(mergedConfig.judge, adapterName)
+    if (migrated) {
+      const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge: migrated })
+      await writeConfigFile(repoRoot, configWithJudge, adapterName)
+      await auditJudgeMigrationIfNeeded(
+        repoRoot,
+        adapterName,
+        mergedConfig.judge,
+        migrated,
+        'belay upgrade --migrate-judge-default',
+      )
+    }
+  }
   await refreshIntegrityManifest(repoRoot, adapterName)
   return { repoRoot, adapter: adapterName }
 }

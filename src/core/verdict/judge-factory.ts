@@ -5,6 +5,8 @@ import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
 import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
 import { resolveJudgeCredential } from '../judge-api-key.js'
 import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
+import { rejectDeprecatedJudgeModelAuto } from '../judge-model-policy.js'
+import { detectJudgeRuntimeCapabilities } from '../judge-runtime-detection.js'
 import {
   createDeterministicJudgeStub,
   createFailClosedJudge,
@@ -12,7 +14,14 @@ import {
   createOpenAiCompatibleJudge,
   type TracedTier1Judge,
 } from './judge.js'
-import { getJudgeProviderSpec } from './judge-catalog.js'
+import {
+  getJudgeProviderSpec,
+  inferProviderIdFromConfig,
+  isRemovedProviderId,
+  type JudgeProviderId,
+  normalizeLegacyProviderId,
+} from './judge-catalog.js'
+import { createClaudeCliJudge, createCodexCliJudge, createCursorCliJudge } from './judge-cli.js'
 
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url)
 
@@ -52,33 +61,66 @@ export function resolveJudgeModel(judge: BelayJudgeConfig): {
   requested: string
   resolved: string
 } {
+  rejectDeprecatedJudgeModelAuto(judge.model)
   const requested = judge.model
-  if (requested === 'auto') {
-    const spec = judge.providerId ? getJudgeProviderSpec(judge.providerId) : null
-    const resolved =
-      process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || spec?.defaultModel || 'gpt-4.1-mini'
-    return { requested, resolved }
+  const envOverride = testJudgeModelOverride()
+  return { requested, resolved: envOverride || requested }
+}
+
+function testJudgeModelOverride(): string | undefined {
+  if (!process.env.VITEST && !process.env.VITEST_WORKER_ID) {
+    return undefined
   }
-  return { requested, resolved: requested }
+  return process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || undefined
 }
 
 /** @deprecated Use resolveJudgeModel */
 export const resolveCloudModel = (
   requested: string,
-  pinned: { autoResolved: string },
+  _pinned: { autoResolved: string },
 ): { requested: string; resolved: string } => {
-  if (requested === 'auto') {
-    const envResolved = process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim()
-    return {
-      requested,
-      resolved: envResolved || pinned.autoResolved,
-    }
+  rejectDeprecatedJudgeModelAuto(requested)
+  const envResolved = testJudgeModelOverride()
+  return {
+    requested,
+    resolved: envResolved || requested,
   }
-  return { requested, resolved: requested }
 }
 
 /** @deprecated Use resolveJudgeModel */
 export const resolveCursorModel = resolveCloudModel
+
+function providerIdFromJudge(judge: BelayJudgeConfig): JudgeProviderId {
+  if (judge.providerId) {
+    const normalized = normalizeLegacyProviderId(judge.providerId)
+    if (normalized) {
+      return normalized
+    }
+  }
+  return inferProviderIdFromConfig(judge)
+}
+
+function createCliJudgeForProvider(
+  providerId: Exclude<JudgeProviderId, 'ollama'>,
+  judgeConfig: BelayJudgeConfig,
+  config: BelayConfigV4,
+): TracedTier1Judge {
+  const { resolved } = resolveJudgeModel(judgeConfig)
+  const options = {
+    modelRequested: judgeConfig.model,
+    modelResolved: resolved,
+    timeoutMs: judgeConfig.timeoutMs,
+    sensitivePaths: config.classifier.sensitivePaths,
+    scrubOptions: scrubOptionsFromConfig(config),
+  }
+  if (providerId === 'codex') {
+    return createCodexCliJudge(options)
+  }
+  if (providerId === 'cursor') {
+    return createCursorCliJudge(options)
+  }
+  return createClaudeCliJudge(options)
+}
 
 export function createJudgeFromConfig(
   config: BelayConfigV4,
@@ -89,17 +131,36 @@ export function createJudgeFromConfig(
   }
 
   const judgeConfig = config.judge
+  if (judgeConfig.providerId && isRemovedProviderId(String(judgeConfig.providerId))) {
+    const { resolved } = resolveJudgeModel(judgeConfig)
+    return createFailClosedJudge({
+      reason: 'judge_provider_removed',
+      fallbackReason: 'provider_migration_required',
+      modelRequested: judgeConfig.model,
+      modelResolved: resolved,
+    })
+  }
+
   const provider = normalizeJudgeProvider(judgeConfig.provider)
-  const catalogSpec = judgeConfig.providerId ? getJudgeProviderSpec(judgeConfig.providerId) : null
+  const providerId = providerIdFromJudge(judgeConfig)
+  const catalogSpec = getJudgeProviderSpec(providerId)
+  const { resolved } = resolveJudgeModel(judgeConfig)
+  const runtime = detectJudgeRuntimeCapabilities(providerId)
 
   if (provider === 'openai-compatible') {
     const endpoint = judgeConfig.endpoint?.trim()
+    if (!endpoint && runtime.cliTransport) {
+      if (providerId === 'codex' || providerId === 'cursor') {
+        return createCliJudgeForProvider(providerId, judgeConfig, config)
+      }
+    }
+
     if (!endpoint) {
       return createFailClosedJudge({
         reason: 'openai_compatible_endpoint_missing',
         fallbackReason: 'missing_endpoint',
         modelRequested: judgeConfig.model,
-        modelResolved: judgeConfig.model,
+        modelResolved: resolved,
       })
     }
 
@@ -108,11 +169,10 @@ export function createJudgeFromConfig(
         reason: 'openai_compatible_consent_missing',
         fallbackReason: 'cloud_consent_missing',
         modelRequested: judgeConfig.model,
-        modelResolved: judgeConfig.model,
+        modelResolved: resolved,
       })
     }
 
-    const { resolved } = resolveJudgeModel(judgeConfig)
     const repoRoot = options.repoRoot ?? process.cwd()
     const repoLocalStateDir = repoLocalStateDirFor(repoRoot, config)
 
@@ -143,7 +203,30 @@ export function createJudgeFromConfig(
     })
   }
 
-  return createDeterministicJudgeStub()
+  if (provider === 'anthropic') {
+    if (runtime.cliTransport) {
+      return createClaudeCliJudge({
+        modelRequested: judgeConfig.model,
+        modelResolved: resolved,
+        timeoutMs: judgeConfig.timeoutMs,
+        sensitivePaths: config.classifier.sensitivePaths,
+        scrubOptions: scrubOptionsFromConfig(config),
+      })
+    }
+    return createFailClosedJudge({
+      reason: 'anthropic_not_implemented',
+      fallbackReason: 'anthropic_runtime_unavailable',
+      modelRequested: judgeConfig.model,
+      modelResolved: resolved,
+    })
+  }
+
+  return createFailClosedJudge({
+    reason: 'unsupported_judge_provider',
+    fallbackReason: 'unsupported_provider',
+    modelRequested: judgeConfig.model,
+    modelResolved: resolved,
+  })
 }
 
 export function judgeConfigSummary(judge: BelayJudgeConfig): string {

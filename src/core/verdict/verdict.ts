@@ -354,11 +354,35 @@ function isBelayJudgeSelfCommand(tokens: string[]): boolean {
   )
 }
 
+function isBelayConfigSelfCommand(tokens: string[]): boolean {
+  if (tokens[0] !== 'belay' || tokens[1] !== 'config') {
+    return false
+  }
+  const sub = tokens[2]
+  if (!sub) {
+    return true
+  }
+  if (sub === 'list' || sub === 'get' || sub === 'judge') {
+    return true
+  }
+  if (sub === 'credential') {
+    return true
+  }
+  if (sub === 'set' || sub === 'unset') {
+    const pathKey = tokens[3] ?? ''
+    return pathKey.startsWith('judge.')
+  }
+  return false
+}
+
 function isBelaySelfCommand(tokens: string[]): boolean {
   const head = tokens[0] ?? ''
   const subcommand = tokens[1] ?? ''
   return (
-    head === 'belay' && (BELAY_SELF_COMMANDS.has(subcommand) || isBelayJudgeSelfCommand(tokens))
+    head === 'belay' &&
+    (BELAY_SELF_COMMANDS.has(subcommand) ||
+      isBelayJudgeSelfCommand(tokens) ||
+      isBelayConfigSelfCommand(tokens))
   )
 }
 

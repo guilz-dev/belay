@@ -14,6 +14,7 @@ import { revokeApproval } from './commands/revoke.js'
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
 import { loadConfigFile } from './config-io.js'
+import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
 import { initProject, upgradeProject } from './installer.js'
 import type { ConfigPresetName } from './presets.js'
 import {
@@ -71,6 +72,7 @@ function parseArgs(argv: string[]) {
     judgeModel?: string
     judgeEndpoint?: string
     acceptCloudJudge?: boolean
+    migrateJudgeDefault?: boolean
     judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'consent'
     judgeUseProvider?: string
     acceptCloud?: boolean
@@ -79,6 +81,10 @@ function parseArgs(argv: string[]) {
     keyStdin?: boolean
     keyEnv?: string
     judgeTimeoutMs?: number
+    configSubcommand?: 'list' | 'get' | 'set' | 'unset' | 'credential' | 'judge'
+    configKey?: string
+    configValue?: string
+    credentialAction?: 'mode' | 'set' | 'clear'
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -127,7 +133,7 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--judge-profile') {
       process.stderr.write(
-        'Warning: --judge-profile is deprecated; use belay judge use <provider-id> after init.\n',
+        'Warning: --judge-profile is deprecated; use belay config set judge.providerId <id> after init.\n',
       )
       const next = rest[index + 1]
       if (!next || !['local-ollama', 'cursor', 'claude', 'codex'].includes(next)) {
@@ -158,14 +164,19 @@ function parseArgs(argv: string[]) {
     if (token === '--judge-model') {
       const next = rest[index + 1]
       if (!next) {
-        throw new Error('--judge-model requires a model id or auto.')
+        throw new Error('--judge-model requires a model id.')
       }
+      rejectDeprecatedJudgeModelAuto(next)
       options.judgeModel = next
       index += 1
       continue
     }
     if (token === '--accept-cloud-judge') {
       options.acceptCloudJudge = true
+      continue
+    }
+    if (token === '--migrate-judge-default') {
+      options.migrateJudgeDefault = true
       continue
     }
     if (token === '--accept-cloud') {
@@ -434,6 +445,62 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('judge requires subcommand: status, list, use, test, or consent')
     }
+    if (command === 'config' && !options.configSubcommand) {
+      if (
+        token === 'list' ||
+        token === 'get' ||
+        token === 'set' ||
+        token === 'unset' ||
+        token === 'credential' ||
+        token === 'judge'
+      ) {
+        options.configSubcommand = token
+        continue
+      }
+      throw new Error('config requires subcommand: list, get, set, unset, credential, or judge')
+    }
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'credential' &&
+      !options.credentialAction
+    ) {
+      if (token === 'mode' || token === 'set' || token === 'clear') {
+        options.credentialAction = token
+        continue
+      }
+      throw new Error('config credential requires action: mode, set, or clear')
+    }
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'credential' &&
+      options.credentialAction === 'mode' &&
+      !options.credentialMode
+    ) {
+      if (token === 'project' || token === 'apiKey') {
+        options.credentialMode = token
+        continue
+      }
+      throw new Error('config credential mode requires project or apiKey')
+    }
+    if (
+      command === 'config' &&
+      (options.configSubcommand === 'get' ||
+        options.configSubcommand === 'set' ||
+        options.configSubcommand === 'unset') &&
+      !options.configKey
+    ) {
+      options.configKey = token
+      continue
+    }
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'set' &&
+      options.configKey &&
+      !options.configValue
+    ) {
+      options.configValue = token
+      continue
+    }
     if (
       command === 'judge' &&
       (options.judgeSubcommand === 'use' || options.judgeSubcommand === 'consent') &&
@@ -457,10 +524,18 @@ function printHelp() {
   process.stdout.write(`${c}
 
 Usage:
-  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
-  ${c} init-wizard [--target <dir>]
+  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--migrate-judge-default] [--with-skill] [--dogfood]
+  ${c} config [--target <dir>] [--json]
+  ${c} config list|get|set|unset|judge [--target <dir>] [--json]
+  ${c} config get <judge.path> [--target <dir>] [--json]
+  ${c} config set <judge.path> <value> [--target <dir>]
+  ${c} config unset <judge.path> [--target <dir>]
+  ${c} config credential mode <project|apiKey> [--target <dir>]
+  ${c} config credential set [--key-stdin] [--key-env <NAME>] [--target <dir>]
+  ${c} config credential clear [--target <dir>]
+  (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
+  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
@@ -474,8 +549,8 @@ Usage:
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
   ${c} judge <status|list|use|test|consent> [--target <dir>] [--json]
-  ${c} judge use <provider-id> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
-  ${c} judge consent <provider-id> [--endpoint <url>]
+  ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
+  ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
 `)
@@ -494,12 +569,12 @@ async function main() {
       return
     }
 
-    if (command === 'init-wizard') {
-      const { runInitWizard } = await import('./commands/init-wizard.js')
-      const result = await runInitWizard({ targetDir: options.targetDir })
-      process.stdout.write(
-        `Initialized belay in ${result.repoRoot}${result.withSkill ? ' (with skill)' : ''}.\n`,
+    const DEPRECATED_COMMANDS = new Set(['init-wizard'])
+    if (DEPRECATED_COMMANDS.has(command)) {
+      process.stderr.write(
+        `${command} is removed. Use \`belay config\` for interactive setup, or \`belay init\` for non-interactive install.\n`,
       )
+      process.exitCode = 1
       return
     }
 
@@ -516,6 +591,7 @@ async function main() {
         judgeModel: options.judgeModel,
         judgeEndpoint: options.judgeEndpoint,
         acceptCloudJudge: options.acceptCloudJudge,
+        migrateJudgeDefault: options.migrateJudgeDefault,
       })
       const extras = [
         `adapter=${result.adapter}`,
@@ -544,6 +620,7 @@ async function main() {
         withSkill: options.withSkill,
         adapter: options.adapter,
         scope: options.installScope,
+        migrateJudgeDefault: options.migrateJudgeDefault,
       })
       const upgraded = await loadConfigFile(result.repoRoot, result.adapter)
       if (upgraded.policy.modelAssist.enabled) {
@@ -576,6 +653,43 @@ async function main() {
       })
       if (options.json && typeof result === 'object') {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      } else {
+        process.stdout.write(`${String(result)}\n`)
+      }
+      return
+    }
+
+    if (command === 'config') {
+      if (options.configSubcommand === 'credential') {
+        if (!options.credentialAction) {
+          throw new Error('config credential requires action: mode, set, or clear')
+        }
+        const { runBelayConfigCredential } = await import('./commands/config.js')
+        const result = await runBelayConfigCredential({
+          targetDir: options.targetDir,
+          action: options.credentialAction,
+          mode: options.credentialMode,
+          keyStdin: options.keyStdin,
+          keyEnv: options.keyEnv,
+        })
+        process.stdout.write(`${String(result)}\n`)
+        return
+      }
+      const { runBelayConfig } = await import('./commands/config.js')
+      const result = await runBelayConfig({
+        targetDir: options.targetDir,
+        subcommand: options.configSubcommand,
+        path: options.configKey,
+        value: options.configValue,
+        json: options.json,
+      })
+      if (options.json && typeof result === 'object') {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      } else if (typeof result === 'object' && result && 'repoRoot' in result) {
+        const initResult = result as { repoRoot: string; withSkill?: boolean }
+        process.stdout.write(
+          `Initialized belay in ${initResult.repoRoot}${initResult.withSkill ? ' (with skill)' : ''}.\n`,
+        )
       } else {
         process.stdout.write(`${String(result)}\n`)
       }

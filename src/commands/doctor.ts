@@ -68,6 +68,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   if (!existsSync(configPath)) {
     issues.push(`Missing config: ${configPath}`)
+    notes.push(
+      'No belay config found. Run `belay config` for interactive setup, or `belay init` for non-interactive install.',
+    )
   } else {
     try {
       const rawConfig = JSON.parse(await readFile(configPath, 'utf8')) as {
@@ -376,7 +379,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   if (health.skillOnly) {
     warnings.push(
       'Skill-only install detected: belay SKILL.md is present but hook floor is missing or incomplete. ' +
-        'This is advisory only — enforcement requires hooks. Run `npx @guilz-dev/belay init` (or `belay init-wizard`) ' +
+        'This is advisory only — enforcement requires hooks. Run `belay config` (or `belay init`) ' +
         'then `belay doctor` to verify the floor.',
     )
     notes.push(`Skill path: ${health.skillPath}`)

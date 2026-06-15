@@ -41,24 +41,54 @@ explicit opt-in (`--scope`).
 
 ## `judge` (Tier1 provider)
 
+Terminology: **provider** = 社名・サービス名 (judge.providerId); **driver** = API
+compatibility layer (`judge.provider`); **host** = install target (`config.adapter`).
+
 | Field | Values | Default |
 |-------|--------|---------|
-| `provider` | `"ollama"` \| `"openai-compatible"` | `"ollama"` (driver; legacy readers use this) |
-| `providerId` | `"local"` \| `"openai"` \| `"cursor"` \| `"openrouter"` \| `"custom"` | inferred from `provider` / `endpoint` |
+| `provider` | `"ollama"` \| `"openai-compatible"` \| `"anthropic"` | catalog driver per `providerId` |
+| `providerId` | `"ollama"` \| `"codex"` \| `"claude"` \| `"cursor"` | host-matched on fresh init |
 | `model` | string | catalog default per `providerId` |
-| `endpoint` | URL \| `null` | catalog default; **required** for `cursor` / `custom` |
+| `endpoint` | URL \| `null` | catalog default; optional for cloud providers in v1 |
 | `timeoutMs` | number | `25000` (ollama) / `8000` (cloud) |
 | `keepAlive` | string | `"30m"` (ollama only) |
 | `cloudConsent` | object | unset until TTY or capability approval records egress opt-in |
-| `credential` | `{ mode: "project" }` \| `{ mode: "apiKey", ref: "store:judge" \| "env:NAME" }` | env / project keys; never in team config as `apiKey` |
+| `credential` | `{ mode: "project" }` \| `{ mode: "apiKey", ref: "store:judge" \| "env:NAME" }` | `project` on fresh init; never `apiKey` in team config |
 
-Fresh default is **local** (`providerId: local`, Ollama). Switch providers with
-`belay judge use <provider-id>` (no re-init). Cloud egress requires recorded
-`cloudConsent` (interactive TTY with `--accept-cloud`, or `judge_cloud_consent`
-capability approval); `--accept-cloud` is ignored in non-interactive mode.
-API keys: env vars, or `belay judge use --credential apiKey --key-stdin`.
-Outbound text is scrubbed before any cloud judge call. Non-TTY consent:
-`belay judge consent <provider-id>` → `belay approve <id>` → `belay judge use … --cloud-consent-approval-id <id>`.
+Legacy read aliases: `local` → `ollama`, `openai` → `codex` (normalized on load; not written on fresh init).
+
+Fresh default follows **host** (`config.adapter`): `cursor` → `cursor`, `claude` → `claude`,
+`codex` → `codex`. Prefer **`belay config`** (interactive) or `belay config set judge.providerId <id>`
+for judge changes. `belay judge use` remains a secondary path. Cloud egress requires recorded
+`cloudConsent` (during `belay config`, interactive TTY with `--accept-cloud`, or capability
+approval); `--accept-cloud` is ignored in non-interactive mode. API keys: env vars, or
+`belay config credential set --key-stdin`. Cloud providers may use native CLI transport
+without `judge.endpoint` when the host CLI is available; HTTP transport requires endpoint
+and recorded `cloudConsent`. Use `--migrate-judge-default` on `belay init` / `belay upgrade`
+to opt in to migrating an implicit factory-default `ollama` judge to the host default provider.
+Outbound text is scrubbed before any cloud judge call (HTTP and native CLI transports).
+Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
+`belay judge use … --cloud-consent-approval-id <id>`.
+
+#### Notes
+
+- **`model: auto`** — legacy values normalize to the catalog default on load (warning); new `auto` input is rejected.
+- **Model discovery** — production uses `judge-model-discovery.ts`; unit tests mock probes. Optional live probe: `BELAY_LIVE_CLI_DISCOVERY=1`.
+- **Interactive config** — installed repos default to judge-only setup; full `init` setup remains available when hooks are missing or when declined.
+- **Transport vs consent** — HTTP requires endpoint + `cloudConsent`; native CLI transport does not.
+
+### CLI examples (`belay config`)
+
+```bash
+belay config                              # interactive setup (primary)
+belay config list
+belay config get judge.model
+belay config set judge.providerId codex
+belay config unset judge.endpoint
+belay config credential mode project
+belay config credential set --key-stdin
+belay config judge                        # same summary as belay judge status
+```
 
 ## `policy`
 

@@ -1,31 +1,31 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildInitOptionsFromWizard,
+  buildInitOptionsFromConfigAnswers,
   parseAdapter,
   parseJudgeProviderId,
   parseScope,
   parseYesNo,
-} from '../commands/init-wizard.js'
+} from '../commands/config.js'
 
-describe('init wizard', () => {
+describe('belay config parsers', () => {
   it('uses bracket defaults when the user presses Enter', () => {
     expect(parseAdapter('')).toBe('cursor')
     expect(parseScope('')).toBe('project')
-    expect(parseJudgeProviderId('', 'local')).toBe('local')
-    expect(parseJudgeProviderId('', 'openai')).toBe('openai')
+    expect(parseJudgeProviderId('', 'ollama')).toBe('ollama')
+    expect(parseJudgeProviderId('', 'openai')).toBe('codex')
     expect(parseYesNo('', true)).toBe(true)
     expect(parseYesNo('', false)).toBe(false)
   })
 
-  it('maps wizard answers to InitOptions', () => {
+  it('maps config wizard answers to InitOptions', () => {
     expect(
-      buildInitOptionsFromWizard(
+      buildInitOptionsFromConfigAnswers(
         {
           adapter: 'codex',
           scope: 'global',
           withSkill: true,
-          judgeProviderId: 'openai',
+          judgeProviderId: 'codex',
           acceptCloud: true,
           dogfood: true,
         },
@@ -36,7 +36,7 @@ describe('init wizard', () => {
       adapter: 'codex',
       scope: 'global',
       withSkill: true,
-      judgeProviderId: 'openai',
+      judgeProviderId: 'codex',
       acceptCloudJudge: true,
       dogfood: true,
     })

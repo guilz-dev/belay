@@ -25,11 +25,20 @@ If genuinely ambiguous about recoverability or persistent harm, answer false.
 Command/code:
 `
 
+export type Tier1JudgeTransport =
+  | 'http'
+  | 'ollama-http'
+  | 'codex-cli'
+  | 'cursor-cli'
+  | 'claude-cli'
+  | 'unavailable'
+
 export interface Tier1JudgeTrace {
-  provider: 'openai-compatible' | 'ollama' | 'fallback'
+  provider: 'openai-compatible' | 'ollama' | 'anthropic' | 'fallback'
   modelRequested: string
   modelResolved: string
   latencyMs: number
+  transport?: Tier1JudgeTransport
   outboundRedacted?: boolean
   fallbackReason?: string
 }
@@ -58,7 +67,11 @@ function parseLocalRecoverable(parsed: Partial<Tier1Verdict>): boolean | null {
   return null
 }
 
-function parseTier1Json(raw: string): Tier1Verdict | null {
+export function buildTier1Prompt(text: string): string {
+  return `${TIER1_PROMPT}${text}`
+}
+
+export function parseTier1Json(raw: string): Tier1Verdict | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Tier1Verdict>
     const localRecoverable = parseLocalRecoverable(parsed)

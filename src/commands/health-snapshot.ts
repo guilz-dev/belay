@@ -80,6 +80,45 @@ async function managedHooksPresent(
   return managedEntries.every(({ definition }) => content.includes(definition.command))
 }
 
+/** Lightweight floor check without judge doctor / sandbox probes. */
+export async function isBelayFloorInstalled(
+  options: { targetDir?: string; adapter?: AdapterName } = {},
+): Promise<boolean> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const adapter: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
+  const layout = getAdapterLayout(adapter)
+  const configPath = layout.configPath(repoRoot)
+  if (!existsSync(configPath)) {
+    return false
+  }
+
+  let installScope: 'project' | 'global' = 'project'
+  try {
+    const layered = await loadLayeredConfig(repoRoot, adapter)
+    installScope = layered.config.installScope === 'global' ? 'global' : 'project'
+  } catch {
+    return false
+  }
+
+  const scopedPaths = resolveScopedPaths(layout, installScope, repoRoot)
+  const hooksPath = scopedPaths.hooksSettingsPath
+  const hooksDir = scopedPaths.hooksDir
+  const corePath = path.join(scopedPaths.runtimeDir, 'core.mjs')
+  const runtimePresent = existsSync(corePath)
+  const runnerPresent =
+    existsSync(path.join(hooksDir, 'belay-runner')) ||
+    existsSync(path.join(hooksDir, 'belay-runner.cmd'))
+  if (!existsSync(hooksPath) || !runnerPresent || !runtimePresent) {
+    return false
+  }
+
+  try {
+    return await managedHooksPresent(adapter, hooksPath, hooksDir, repoRoot)
+  } catch {
+    return false
+  }
+}
+
 export async function collectHealthSnapshot(
   options: HealthSnapshotOptions = {},
 ): Promise<HealthSnapshot> {

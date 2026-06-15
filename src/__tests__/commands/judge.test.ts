@@ -41,21 +41,22 @@ describe('belay judge command', () => {
 
   it('lists catalog providers', () => {
     const listing = judgeList() as string
-    expect(listing).toContain('local')
-    expect(listing).toContain('openai')
-    expect(listing).toContain('openrouter')
-    expect(listing).not.toContain('anthropic')
+    expect(listing).toContain('ollama')
+    expect(listing).toContain('codex')
+    expect(listing).toContain('claude')
+    expect(listing).toContain('cursor')
+    expect(listing).not.toContain('openrouter')
   })
 
-  it('switches to local without cloud consent', async () => {
+  it('switches to ollama without cloud consent', async () => {
     const repoRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot, judgeProviderId: 'openai', acceptCloudJudge: true })
+    await initProject({ targetDir: repoRoot, judgeProviderId: 'codex', acceptCloudJudge: true })
     await judgeUse({
       targetDir: repoRoot,
-      providerId: 'local',
+      providerId: 'ollama',
     })
     const config = await loadConfigFile(repoRoot)
-    expect(config.judge.providerId).toBe('local')
+    expect(config.judge.providerId).toBe('ollama')
     expect(config.judge.provider).toBe('ollama')
   })
 
@@ -63,11 +64,11 @@ describe('belay judge command', () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     const status = (await judgeStatus({ targetDir: repoRoot })) as string
-    expect(status).toContain('providerId : local')
-    expect(status).toContain('driver     : ollama')
+    expect(status).toContain('providerId : cursor')
+    expect(status).toContain('driver     : openai-compatible')
   })
 
-  it('rejects cursor without endpoint on use', async () => {
+  it('allows cursor without endpoint on use', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     await expect(
@@ -75,10 +76,10 @@ describe('belay judge command', () => {
         targetDir: repoRoot,
         providerId: 'cursor',
       }),
-    ).rejects.toThrow(/requires --endpoint/)
+    ).resolves.toBeDefined()
   })
 
-  it('rejects custom without model on use', async () => {
+  it('rejects unknown provider on use', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     await expect(
@@ -87,7 +88,7 @@ describe('belay judge command', () => {
         providerId: 'custom',
         endpoint: 'https://proxy.example.com/v1',
       }),
-    ).rejects.toThrow(/custom requires --model/)
+    ).rejects.toThrow(/provider-id/)
   })
 
   it('rejects --accept-cloud in non-interactive mode for cloud providers', async () => {
@@ -98,7 +99,8 @@ describe('belay judge command', () => {
       await expect(
         judgeUse({
           targetDir: repoRoot,
-          providerId: 'openai',
+          providerId: 'codex',
+          endpoint: 'https://api.example.com/v1',
           acceptCloud: true,
         }),
       ).rejects.toThrow(/--accept-cloud has no effect/)
@@ -112,7 +114,7 @@ describe('belay judge command', () => {
     await initProject({ targetDir: repoRoot })
     await judgeUse({
       targetDir: repoRoot,
-      providerId: 'local',
+      providerId: 'ollama',
       model: 'gemma4:e2b',
     })
     const config = await loadConfigFile(repoRoot)

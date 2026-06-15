@@ -13,6 +13,12 @@ describe('belay judge self-command gate', () => {
     'belay judge list',
     'belay judge test',
     'belay judge consent openai',
+    'belay config',
+    'belay config list',
+    'belay config get judge.model',
+    'belay config set judge.providerId cursor',
+    'belay config unset judge.endpoint',
+    'belay config credential mode project',
   ])('allows %s without approval', async (command) => {
     const result = await verdict(command, context)
     expect(result.permission).toBe('allow')
@@ -22,5 +28,10 @@ describe('belay judge self-command gate', () => {
   it('does not treat unrelated belay commands as judge self-commands', async () => {
     const result = await verdict('belay doctor', context)
     expect(result.reason).not.toBe('belay_control_plane_command')
+  })
+
+  it('does not allow belay config set on non-judge paths', async () => {
+    const result = await verdict('belay config set gates.mode enforce', context)
+    expect(result.permission).not.toBe('allow')
   })
 })
