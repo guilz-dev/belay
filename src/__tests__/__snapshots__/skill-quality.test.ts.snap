@@ -32,10 +32,10 @@ you to the CLI. It does not classify commands itself.
 
 ## Prerequisites
 
-Run \`npx @guilz-dev/belay init\` in the project root before relying on enforcement.
-If you only installed this skill via \`npx skills add\`, approval instructions are
-available, but the runtime gate is not installed yet. Run \`belay doctor\` to
-check whether hooks are present.
+\`npx skills add\` installs this skill only — the runtime gate is **not installed**
+until hooks are configured. Run \`belay config\` in the project root for interactive
+setup (or \`npx @guilz-dev/belay init\` for non-interactive install). Run
+\`belay doctor\` to check whether hooks are present.
 
 ## When belay blocks an action
 
@@ -51,16 +51,17 @@ For recovery advice after a block, use \`/belay recover\` or \`belay recover\`.
 
 ## Install or repair
 
-- Full install: \`npx @guilz-dev/belay init --with-skill\`
-- Interactive wizard: \`npx @guilz-dev/belay init-wizard\`
+- Interactive setup: \`belay config\`
+- Non-interactive install: \`npx @guilz-dev/belay init --with-skill\`
 - Health check: \`belay doctor\`
 
-Do not run init or doctor implicitly from this skill — only when the user asks.
+Do not run init, config, or doctor implicitly from this skill — only when the user asks.
 
 ## CLI mapping
 
 | User intent | Command |
 | --- | --- |
+| Set up or change judge settings | \`belay config\` |
 | Why was this blocked? | \`belay explain --command "..."\` |
 | Explain latest pending ask | \`belay explain\` |
 | Status / dogfood / audit visibility | \`belay status\` |

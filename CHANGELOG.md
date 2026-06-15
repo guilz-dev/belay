@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **`belay config`** — new primary UI for judge settings (`list`, `get`, `set`, `unset`, `credential`, `judge`) and interactive setup. Replaces `init-wizard`.
+- **`init-wizard`** — removed; invoking it exits non-zero with a `belay config` hint.
+- **Doctor / status / SKILL.md** — guide to `belay config` when hooks or config are missing (not `init-wizard`).
+- **Dogfood self-command** — `belay config get|list|set judge.*|unset judge.*|credential` allowed without approval.
+
 - **Judge providers** — catalog is `ollama`, `codex`, `claude`, `cursor` (removed `openrouter` / `custom`). Read-time aliases: `local` → `ollama`, `openai` → `codex`.
 - **Fresh init defaults** — judge `providerId` follows host adapter (`cursor` / `claude` / `codex`), not local Ollama. Default models: `gemma4:e2b`, `gpt-5.3-codex-high`, `claude-sonnet-4-6`, `composer-2.5`.
 - **Fresh init credential** — writes `judge.credential.mode: project` by default.

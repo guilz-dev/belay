@@ -51,9 +51,9 @@ export function formatStatusReport(report: StatusReport): string {
     ...(health.additionalRiskSignals.length > 0
       ? [`Additional risk signals: ${health.additionalRiskSignals.join('; ')}`]
       : []),
-    ...(health.skillOnly
+    ...(!health.floorInstalled
       ? [
-          'Skill-only mode: yes — hooks are missing or incomplete. Run `npx @guilz-dev/belay init` to install the enforcement floor.',
+          'Enforcement floor missing or incomplete. Run `belay config` for interactive setup, or `npx @guilz-dev/belay init` for non-interactive install.',
         ]
       : []),
     `Approval state: ${report.approvalStateDir}`,

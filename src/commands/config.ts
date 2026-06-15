@@ -1,0 +1,486 @@
+import { stdin as input, stdout as output } from 'node:process'
+import readline from 'node:readline/promises'
+import path from 'node:path'
+
+import {
+  loadConfigFile,
+  repoLocalStateDirFor,
+  resolveAdapterName,
+  writeConfigFile,
+} from '../config-io.js'
+import { appendCliAuditEvent } from '../core/audit-io.js'
+import type { BelayConfigV4, BelayJudgeConfig, JudgeCredentialRef } from '../core/config.js'
+import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
+import { writeJudgeCredentialStore, clearJudgeCredentialStore } from '../core/credential-store.js'
+import { refreshIntegrityIfPinned } from '../core/integrity.js'
+import { defaultJudgeProviderForAdapter, hasValidCloudConsent, isCloudJudgeConfig, resolveJudgeUsePatch } from '../core/judge-config.js'
+import {
+  JUDGE_PROVIDER_IDS,
+  isJudgeProviderId,
+  normalizeLegacyProviderId,
+  type JudgeProviderId,
+} from '../core/verdict/judge-catalog.js'
+import { initProject } from '../installer.js'
+import type { AdapterName, InitOptions } from '../types.js'
+import { judgeStatus } from './judge.js'
+
+export const BELAY_CONFIG_SUBCOMMANDS = [
+  'list',
+  'get',
+  'set',
+  'unset',
+  'credential',
+  'judge',
+] as const
+
+export type BelayConfigSubcommand = (typeof BELAY_CONFIG_SUBCOMMANDS)[number]
+
+const JUDGE_CONFIG_PATHS = [
+  'judge.providerId',
+  'judge.provider',
+  'judge.model',
+  'judge.endpoint',
+  'judge.timeoutMs',
+  'judge.credential.mode',
+  'judge.credential.ref',
+] as const
+
+export interface BelayConfigOptions {
+  targetDir?: string
+  subcommand?: BelayConfigSubcommand
+  path?: string
+  value?: string
+  json?: boolean
+}
+
+export interface BelayConfigCredentialOptions {
+  targetDir?: string
+  action: 'mode' | 'set' | 'clear'
+  mode?: 'project' | 'apiKey'
+  keyStdin?: boolean
+  keyEnv?: string
+}
+
+export interface ConfigWizardAnswers {
+  adapter: AdapterName
+  scope: 'project' | 'global'
+  withSkill: boolean
+  judgeProviderId: JudgeProviderId
+  judgeCredentialMode?: 'project' | 'apiKey'
+  judgeEndpoint?: string
+  acceptCloud: boolean
+  dogfood: boolean
+}
+
+export function parseAdapter(value: string | undefined): AdapterName {
+  const normalized = (value?.trim() || 'cursor').toLowerCase()
+  if (normalized === 'claude' || normalized === 'codex' || normalized === 'cursor') {
+    return normalized
+  }
+  throw new Error(`Unknown adapter: ${value ?? '(empty)'}`)
+}
+
+export function parseScope(value: string | undefined): 'project' | 'global' {
+  const normalized = (value?.trim() || 'project').toLowerCase()
+  if (normalized === 'global' || normalized === 'project') {
+    return normalized
+  }
+  throw new Error(`Unknown scope: ${value ?? '(empty)'}`)
+}
+
+export function parseYesNo(value: string | undefined, defaultValue: boolean): boolean {
+  const normalized = (value?.trim() || (defaultValue ? 'y' : 'n')).toLowerCase()
+  if (['y', 'yes', 'true', '1'].includes(normalized)) {
+    return true
+  }
+  if (['n', 'no', 'false', '0'].includes(normalized)) {
+    return false
+  }
+  return defaultValue
+}
+
+export function parseJudgeProviderId(
+  value: string | undefined,
+  defaultId: JudgeProviderId | string,
+): JudgeProviderId {
+  const normalized = (value?.trim() || defaultId).toLowerCase()
+  const canonical = normalizeLegacyProviderId(normalized)
+  if (canonical) {
+    return canonical
+  }
+  throw new Error(`Unknown judge provider: ${value ?? '(empty)'}`)
+}
+
+export function buildInitOptionsFromWizard(
+  answers: ConfigWizardAnswers,
+  targetDir?: string,
+): InitOptions {
+  return {
+    targetDir,
+    adapter: answers.adapter,
+    scope: answers.scope,
+    withSkill: answers.withSkill,
+    judgeProviderId: answers.judgeProviderId,
+    judgeEndpoint: answers.judgeEndpoint,
+    judgeCredentialMode: answers.judgeCredentialMode,
+    acceptCloudJudge: answers.acceptCloud,
+    dogfood: answers.dogfood,
+  }
+}
+
+function assertJudgeConfigPath(pathKey: string | undefined): string {
+  if (!pathKey?.startsWith('judge.')) {
+    throw new Error(`belay config only supports judge.* paths (got ${pathKey ?? '(empty)'}).`)
+  }
+  return pathKey
+}
+
+function getJudgeField(judge: BelayJudgeConfig, pathKey: string): unknown {
+  if (pathKey === 'judge.providerId') return judge.providerId ?? null
+  if (pathKey === 'judge.provider') return judge.provider
+  if (pathKey === 'judge.model') return judge.model
+  if (pathKey === 'judge.endpoint') return judge.endpoint ?? null
+  if (pathKey === 'judge.timeoutMs') return judge.timeoutMs
+  if (pathKey === 'judge.credential.mode') return judge.credential?.mode ?? null
+  if (pathKey === 'judge.credential.ref') return judge.credential?.ref ?? null
+  throw new Error(`Unknown judge config path: ${pathKey}`)
+}
+
+function listJudgeFields(judge: BelayJudgeConfig): Record<string, unknown> {
+  const entries: Record<string, unknown> = {}
+  for (const key of JUDGE_CONFIG_PATHS) {
+    entries[key] = getJudgeField(judge, key)
+  }
+  return entries
+}
+
+function warnCloudConsentIfNeeded(judge: BelayJudgeConfig): void {
+  if (isCloudJudgeConfig(judge) && !hasValidCloudConsent(judge)) {
+    process.stderr.write(
+      'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
+    )
+  }
+}
+
+async function persistJudge(
+  repoRoot: string,
+  config: BelayConfigV4,
+  judge: BelayJudgeConfig,
+  adapter: ReturnType<typeof resolveAdapterName>,
+): Promise<BelayConfigV4> {
+  const updated: BelayConfigV4 = { ...config, judge: normalizeJudgeConfig(judge) }
+  await writeConfigFile(repoRoot, updated, adapter)
+  await refreshIntegrityIfPinned(repoRoot, updated)
+  return updated
+}
+
+async function applyJudgeSet(
+  repoRoot: string,
+  config: BelayConfigV4,
+  pathKey: string,
+  rawValue: string,
+): Promise<BelayJudgeConfig> {
+  const adapter = resolveAdapterName(config)
+  const value = rawValue.trim()
+
+  if (pathKey === 'judge.providerId') {
+    if (!isJudgeProviderId(value)) {
+      throw new Error(`Unknown judge provider id: ${value}`)
+    }
+    const patch = resolveJudgeUsePatch(config.judge, { providerId: value })
+    if (patch.errors.length > 0) {
+      throw new Error(patch.errors.join(' '))
+    }
+    const updated = await persistJudge(repoRoot, config, patch.judge, adapter)
+    warnCloudConsentIfNeeded(updated.judge)
+    return updated.judge
+  }
+
+  if (pathKey === 'judge.model') {
+    const judge = normalizeJudgeConfig({ ...config.judge, model: value })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.endpoint') {
+    const endpoint = value === 'null' || value === '' ? null : value
+    const judge = normalizeJudgeConfig({ ...config.judge, endpoint })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.timeoutMs') {
+    const timeoutMs = Number(value)
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error('judge.timeoutMs must be a positive number.')
+    }
+    const judge = normalizeJudgeConfig({ ...config.judge, timeoutMs })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.provider') {
+    throw new Error('judge.provider is derived from providerId; use judge.providerId instead.')
+  }
+
+  if (pathKey === 'judge.credential.mode') {
+    if (value !== 'project' && value !== 'apiKey') {
+      throw new Error('judge.credential.mode must be project or apiKey.')
+    }
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      credential: value === 'project' ? { mode: 'project' } : { mode: 'apiKey', ref: 'store:judge' },
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.credential.ref') {
+    if (value !== 'store:judge' && !value.startsWith('env:')) {
+      throw new Error('judge.credential.ref must be store:judge or env:NAME.')
+    }
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      credential: { mode: 'apiKey', ref: value as JudgeCredentialRef },
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  throw new Error(`Unknown judge config path: ${pathKey}`)
+}
+
+async function applyJudgeUnset(
+  repoRoot: string,
+  config: BelayConfigV4,
+  pathKey: string,
+): Promise<BelayJudgeConfig> {
+  const adapter = resolveAdapterName(config)
+
+  if (pathKey === 'judge.endpoint') {
+    const judge = normalizeJudgeConfig({ ...config.judge, endpoint: null })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.credential.ref') {
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      credential: config.judge.credential?.mode === 'apiKey' ? { mode: 'apiKey' } : undefined,
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  throw new Error(`Cannot unset ${pathKey}; only judge.endpoint and judge.credential.ref are unsettable.`)
+}
+
+async function readKeyFromStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of input) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf8').trim()
+}
+
+export async function runBelayConfigCredential(options: BelayConfigCredentialOptions) {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
+  const adapter = resolveAdapterName(config)
+
+  if (options.action === 'mode') {
+    if (options.mode !== 'project' && options.mode !== 'apiKey') {
+      throw new Error('credential mode requires project or apiKey.')
+    }
+    const judge =
+      options.mode === 'project'
+        ? normalizeJudgeConfig({ ...config.judge, credential: { mode: 'project' } })
+        : normalizeJudgeConfig({
+            ...config.judge,
+            credential: options.keyEnv
+              ? { mode: 'apiKey', ref: `env:${options.keyEnv}` }
+              : { mode: 'apiKey', ref: 'store:judge' },
+          })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return options.mode === 'project' ? 'Credential mode set to project.' : 'Credential mode set to apiKey.'
+  }
+
+  if (options.action === 'set') {
+    let key: string | undefined
+    if (options.keyStdin) {
+      key = await readKeyFromStdin()
+      if (!key) {
+        throw new Error('--key-stdin requires a non-empty API key on stdin.')
+      }
+    }
+    if (options.keyEnv) {
+      const judge = normalizeJudgeConfig({
+        ...config.judge,
+        credential: { mode: 'apiKey', ref: `env:${options.keyEnv}` },
+      })
+      await persistJudge(repoRoot, config, judge, adapter)
+      return `Credential ref set to env:${options.keyEnv}.`
+    }
+    if (!key) {
+      throw new Error('credential set requires --key-stdin or --key-env.')
+    }
+    const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
+    await writeJudgeCredentialStore(stateDir, key)
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      credential: { mode: 'apiKey', ref: 'store:judge' },
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return 'API key stored in belay credential store.'
+  }
+
+  if (options.action === 'clear') {
+    const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
+    await clearJudgeCredentialStore(stateDir)
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      credential: config.judge.credential?.mode === 'project' ? { mode: 'project' } : undefined,
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return 'Stored API key cleared.'
+  }
+
+  throw new Error('credential requires action: mode, set, or clear.')
+}
+
+export async function runBelayConfigInteractive(options: { targetDir?: string } = {}) {
+  const rl = readline.createInterface({ input, output })
+  try {
+    output.write('belay config\n')
+    const adapter = parseAdapter(await rl.question('Adapter [cursor | claude | codex] (cursor): '))
+    const scope = parseScope(await rl.question('Install scope [project | global] (project): '))
+    const withSkill = parseYesNo(
+      await rl.question('Install SKILL.md and slash commands? [y | n] (y): '),
+      true,
+    )
+    const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
+    const judgeProviderId = parseJudgeProviderId(
+      await rl.question(
+        `Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `,
+      ),
+      defaultJudgeProviderId,
+    )
+
+    let judgeCredentialMode: 'project' | 'apiKey' | undefined
+    let judgeEndpoint: string | undefined
+    let acceptCloud = false
+
+    const isCloud = judgeProviderId !== 'ollama'
+    if (isCloud) {
+      judgeCredentialMode = parseYesNo(
+        await rl.question('Use project env for credentials? [y=project | n=apiKey] (y): '),
+        true,
+      )
+        ? 'project'
+        : 'apiKey'
+
+      const optionalEndpoint = (await rl.question('Judge endpoint URL (optional): ')).trim()
+      if (optionalEndpoint) {
+        judgeEndpoint = optionalEndpoint
+      }
+
+      if (judgeCredentialMode === 'apiKey') {
+        const key = await rl.question('Paste API key (hidden input not available in all shells): ')
+        if (key.trim()) {
+          process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY = key.trim()
+        }
+      }
+
+      acceptCloud = parseYesNo(
+        await rl.question(
+          'Accept cloud judge egress (redacted commands leave the repo)? [y | n] (n): ',
+        ),
+        false,
+      )
+    }
+
+    const initOptions = buildInitOptionsFromWizard(
+      {
+        adapter,
+        scope,
+        withSkill,
+        judgeProviderId,
+        judgeCredentialMode,
+        judgeEndpoint,
+        acceptCloud,
+        dogfood: false,
+      },
+      options.targetDir,
+    )
+
+    const result = await initProject(initOptions)
+
+    if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
+      const config = await loadConfigFile(result.repoRoot, result.adapter)
+      const stateDir = belayStateDir(config, repoLocalStateDirFor(result.repoRoot, config))
+      await writeJudgeCredentialStore(stateDir, process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY)
+      delete process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY
+    }
+
+    return result
+  } finally {
+    rl.close()
+  }
+}
+
+export async function runBelayConfig(options: BelayConfigOptions = {}) {
+  if (!options.subcommand) {
+    return runBelayConfigInteractive({ targetDir: options.targetDir })
+  }
+
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
+
+  if (options.subcommand === 'list') {
+    const entries = listJudgeFields(config.judge)
+    if (options.json) {
+      return entries
+    }
+    return Object.entries(entries)
+      .map(([key, value]) => `${key}: ${value === null ? '(null)' : String(value)}`)
+      .join('\n')
+  }
+
+  if (options.subcommand === 'get') {
+    const pathKey = assertJudgeConfigPath(options.path)
+    const value = getJudgeField(config.judge, pathKey)
+    if (options.json) {
+      return { path: pathKey, value }
+    }
+    return value === null ? '(null)' : String(value)
+  }
+
+  if (options.subcommand === 'set') {
+    const pathKey = assertJudgeConfigPath(options.path)
+    if (options.value === undefined) {
+      throw new Error('belay config set requires <path> <value>.')
+    }
+    await applyJudgeSet(repoRoot, config, pathKey, options.value)
+    const adapter = resolveAdapterName(config)
+    const updated = await loadConfigFile(repoRoot, adapter)
+    await appendCliAuditEvent(repoRoot, updated, {
+      event: 'judge_config_set',
+      path: pathKey,
+      value: options.value,
+      by: 'belay config set',
+    })
+    return `Set ${pathKey} = ${options.value}`
+  }
+
+  if (options.subcommand === 'unset') {
+    const pathKey = assertJudgeConfigPath(options.path)
+    await applyJudgeUnset(repoRoot, config, pathKey)
+    return `Unset ${pathKey}`
+  }
+
+  if (options.subcommand === 'judge') {
+    return judgeStatus({ targetDir: repoRoot, json: options.json })
+  }
+
+  throw new Error(`Unknown config subcommand: ${options.subcommand}`)
+}

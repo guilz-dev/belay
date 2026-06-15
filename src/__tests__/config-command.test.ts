@@ -6,9 +6,9 @@ import {
   parseJudgeProviderId,
   parseScope,
   parseYesNo,
-} from '../commands/init-wizard.js'
+} from '../commands/config.js'
 
-describe('init wizard', () => {
+describe('belay config parsers', () => {
   it('uses bracket defaults when the user presses Enter', () => {
     expect(parseAdapter('')).toBe('cursor')
     expect(parseScope('')).toBe('project')
@@ -18,7 +18,7 @@ describe('init wizard', () => {
     expect(parseYesNo('', false)).toBe(false)
   })
 
-  it('maps wizard answers to InitOptions', () => {
+  it('maps config wizard answers to InitOptions', () => {
     expect(
       buildInitOptionsFromWizard(
         {

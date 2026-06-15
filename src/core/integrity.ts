@@ -2,8 +2,12 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { getAdapterLayout } from '../adapters/layouts/index.js'
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
+import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterLayout } from '../adapters/layouts/types.js'
+import { resolveAdapterName } from '../config-io.js'
+import type { BelayConfigV4 } from './config.js'
 
 export interface IntegrityManifest {
   version: 1
@@ -85,4 +89,18 @@ export async function verifyIntegrityManifest(
     }
   }
   return { ok: mismatches.length === 0, mismatches }
+}
+
+export async function refreshIntegrityIfPinned(
+  repoRoot: string,
+  config: BelayConfigV4,
+): Promise<void> {
+  if (config.controlPlane.integrity !== 'hash-pinned') {
+    return
+  }
+  const adapter = resolveAdapterName(config)
+  const layout = getAdapterLayout(adapter)
+  const installScope = config.installScope === 'global' ? 'global' : 'project'
+  const scoped = resolveScopedPaths(layout, installScope, repoRoot)
+  await writeIntegrityManifest(repoRoot, layout, runtimeIntegrityFiles(layout, scoped))
 }

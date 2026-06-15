@@ -2,8 +2,6 @@ import path from 'node:path'
 import { stdin as input, stdout as output } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 
-import { getAdapterLayout } from '../adapters/layouts/index.js'
-import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import {
   configPathFor,
   loadApprovalState,
@@ -17,7 +15,7 @@ import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { BelayConfigV4, BelayJudgeConfig } from '../core/config.js'
 import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
 import { writeJudgeCredentialStore } from '../core/credential-store.js'
-import { runtimeIntegrityFiles, writeIntegrityManifest } from '../core/integrity.js'
+import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import { resolveJudgeCredential } from '../core/judge-api-key.js'
 import { ensurePendingJudgeCloudConsentApproval } from '../core/judge-cloud-consent.js'
 import {
@@ -101,17 +99,6 @@ function formatJudgeDiff(before: BelayJudgeConfig, after: BelayJudgeConfig): str
     }
   }
   return lines.join('\n')
-}
-
-async function refreshIntegrityIfPinned(repoRoot: string, config: BelayConfigV4): Promise<void> {
-  if (config.controlPlane.integrity !== 'hash-pinned') {
-    return
-  }
-  const adapter = resolveAdapterName(config)
-  const layout = getAdapterLayout(adapter)
-  const installScope = config.installScope === 'global' ? 'global' : 'project'
-  const scoped = resolveScopedPaths(layout, installScope, repoRoot)
-  await writeIntegrityManifest(repoRoot, layout, runtimeIntegrityFiles(layout, scoped))
 }
 
 export async function judgeStatus(options: JudgeCommandOptions = {}) {

@@ -79,6 +79,10 @@ function parseArgs(argv: string[]) {
     keyStdin?: boolean
     keyEnv?: string
     judgeTimeoutMs?: number
+    configSubcommand?: 'list' | 'get' | 'set' | 'unset' | 'credential' | 'judge'
+    configKey?: string
+    configValue?: string
+    credentialAction?: 'mode' | 'set' | 'clear'
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -434,6 +438,53 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('judge requires subcommand: status, list, use, test, or consent')
     }
+    if (command === 'config' && !options.configSubcommand) {
+      if (
+        token === 'list' ||
+        token === 'get' ||
+        token === 'set' ||
+        token === 'unset' ||
+        token === 'credential' ||
+        token === 'judge'
+      ) {
+        options.configSubcommand = token
+        continue
+      }
+      throw new Error('config requires subcommand: list, get, set, unset, credential, or judge')
+    }
+    if (command === 'config' && options.configSubcommand === 'credential' && !options.credentialAction) {
+      if (token === 'mode' || token === 'set' || token === 'clear') {
+        options.credentialAction = token
+        continue
+      }
+      throw new Error('config credential requires action: mode, set, or clear')
+    }
+    if (
+      command === 'config' &&
+      options.configSubcommand === 'credential' &&
+      options.credentialAction === 'mode' &&
+      !options.credentialMode
+    ) {
+      if (token === 'project' || token === 'apiKey') {
+        options.credentialMode = token
+        continue
+      }
+      throw new Error('config credential mode requires project or apiKey')
+    }
+    if (
+      command === 'config' &&
+      (options.configSubcommand === 'get' ||
+        options.configSubcommand === 'set' ||
+        options.configSubcommand === 'unset') &&
+      !options.configKey
+    ) {
+      options.configKey = token
+      continue
+    }
+    if (command === 'config' && options.configSubcommand === 'set' && options.configKey && !options.configValue) {
+      options.configValue = token
+      continue
+    }
     if (
       command === 'judge' &&
       (options.judgeSubcommand === 'use' || options.judgeSubcommand === 'consent') &&
@@ -458,7 +509,14 @@ function printHelp() {
 
 Usage:
   ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
-  ${c} init-wizard [--target <dir>]
+  ${c} config [--target <dir>] [--json]
+  ${c} config list|get|set|unset|judge [--target <dir>] [--json]
+  ${c} config get <judge.path> [--target <dir>] [--json]
+  ${c} config set <judge.path> <value> [--target <dir>]
+  ${c} config unset <judge.path> [--target <dir>]
+  ${c} config credential mode <project|apiKey> [--target <dir>]
+  ${c} config credential set [--key-stdin] [--key-env <NAME>] [--target <dir>]
+  ${c} config credential clear [--target <dir>]
   (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
@@ -495,12 +553,12 @@ async function main() {
       return
     }
 
-    if (command === 'init-wizard') {
-      const { runInitWizard } = await import('./commands/init-wizard.js')
-      const result = await runInitWizard({ targetDir: options.targetDir })
-      process.stdout.write(
-        `Initialized belay in ${result.repoRoot}${result.withSkill ? ' (with skill)' : ''}.\n`,
+    const DEPRECATED_COMMANDS = new Set(['init-wizard'])
+    if (DEPRECATED_COMMANDS.has(command)) {
+      process.stderr.write(
+        `${command} is removed. Use \`belay config\` for interactive setup, or \`belay init\` for non-interactive install.\n`,
       )
+      process.exitCode = 1
       return
     }
 
@@ -577,6 +635,43 @@ async function main() {
       })
       if (options.json && typeof result === 'object') {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      } else {
+        process.stdout.write(`${String(result)}\n`)
+      }
+      return
+    }
+
+    if (command === 'config') {
+      if (options.configSubcommand === 'credential') {
+        if (!options.credentialAction) {
+          throw new Error('config credential requires action: mode, set, or clear')
+        }
+        const { runBelayConfigCredential } = await import('./commands/config.js')
+        const result = await runBelayConfigCredential({
+          targetDir: options.targetDir,
+          action: options.credentialAction,
+          mode: options.credentialMode,
+          keyStdin: options.keyStdin,
+          keyEnv: options.keyEnv,
+        })
+        process.stdout.write(`${String(result)}\n`)
+        return
+      }
+      const { runBelayConfig } = await import('./commands/config.js')
+      const result = await runBelayConfig({
+        targetDir: options.targetDir,
+        subcommand: options.configSubcommand,
+        path: options.configKey,
+        value: options.configValue,
+        json: options.json,
+      })
+      if (options.json && typeof result === 'object') {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      } else if (typeof result === 'object' && result && 'repoRoot' in result) {
+        const initResult = result as { repoRoot: string; withSkill?: boolean }
+        process.stdout.write(
+          `Initialized belay in ${initResult.repoRoot}${initResult.withSkill ? ' (with skill)' : ''}.\n`,
+        )
       } else {
         process.stdout.write(`${String(result)}\n`)
       }

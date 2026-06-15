@@ -34,8 +34,8 @@ policy to maintain.
 | **Claude Code** | Supported | `.claude/settings.json` | `.claude/belay.config.json` |
 | **Codex** | Experimental | `.codex/config.toml` | `.codex/belay.config.json` |
 
-Pick the adapter at install time with `--adapter cursor|claude|codex` (or let
-`init-wizard` prompt). Hosts use different hook event names, but Belay registers
+Pick the adapter at install time with `--adapter cursor|claude|codex` (or use
+`belay config` interactively). Hosts use different hook event names, but Belay registers
 the same runners (`belay-tool-gate`, `belay-before-submit`, `belay-audit`) at
 equivalent lifecycle points:
 
@@ -68,8 +68,8 @@ audit instead of guessing.
 ## Quick start
 
 ```bash
-# Interactive setup (prompts for adapter, scope, skill, mode)
-npx @guilz-dev/belay init-wizard
+# Interactive setup (adapter, scope, skill, judge provider, credentials)
+belay config
 
 # Or non-interactive
 npx @guilz-dev/belay init --adapter claude   # Claude Code
@@ -239,15 +239,16 @@ Notable settings:
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges
   them back. File-mutation tools and shell redirects cannot write control-plane
   paths while it is enabled.
-- **Cloud judge** — switch with `belay judge use <provider-id>` (`ollama`, `codex`,
-  `claude`, `cursor`). **Provider** is the vendor/service (`judge.providerId`); **driver**
-  is the API compatibility layer (`judge.provider`: `ollama`, `openai-compatible`, or
-  `anthropic`); **host** is where hooks install (`config.adapter`: `cursor`, `claude`,
-  `codex`). Set `judge.endpoint` when needed, provide API keys via env or
-  `belay judge use --credential apiKey --key-stdin`. Record egress consent via
-  interactive `belay judge use … --accept-cloud` or `belay judge consent` → `belay approve`
-  → `belay judge use … --cloud-consent-approval-id` (`--accept-cloud` has no effect in non-interactive mode).
-  Fresh installs default to the host-matched provider (`cursor` → `cursor`, etc.).
+- **Cloud judge** — configure with `belay config` (interactive) or `belay config set judge.providerId <id>`.
+  Providers: `ollama`, `codex`, `claude`, `cursor`. **Provider** is the vendor/service
+  (`judge.providerId`); **driver** is the API compatibility layer (`judge.provider`:
+  `ollama`, `openai-compatible`, or `anthropic`); **host** is where hooks install
+  (`config.adapter`: `cursor`, `claude`, `codex`). Set `judge.endpoint` when needed;
+  credentials via `belay config credential mode project|apiKey` or env vars. Record egress
+  consent during `belay config` or via `belay judge consent` → `belay approve` →
+  `belay judge use … --cloud-consent-approval-id`. Fresh installs default to the
+  host-matched provider (`cursor` → `cursor`, etc.). `belay judge use` remains available
+  as a secondary path.
 
 ## Command reference
 
@@ -255,7 +256,8 @@ Notable settings:
 belay init [--adapter cursor|claude|codex] [--scope project|global]
            [--preset strict|standard|audit-first|l1-full-recommended]
            [--with-skill] [--dogfood]
-belay init-wizard                # interactive install
+belay config                     # interactive setup (primary)
+belay config list|get|set|unset|judge|credential …
 belay upgrade                    # refresh hooks + runtime, migrate config
 belay dogfood [--enforce]        # toggle audit / enforce mode
 belay doctor [--fix]             # check (and repair) floor health

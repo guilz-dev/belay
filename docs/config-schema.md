@@ -58,12 +58,26 @@ compatibility layer (`judge.provider`); **host** = install target (`config.adapt
 Legacy read aliases: `local` → `ollama`, `openai` → `codex` (normalized on load; not written on fresh init).
 
 Fresh default follows **host** (`config.adapter`): `cursor` → `cursor`, `claude` → `claude`,
-`codex` → `codex`. Switch providers with `belay judge use <provider-id>` (no re-init). Cloud
-egress requires recorded `cloudConsent` (interactive TTY with `--accept-cloud`, or
-`judge_cloud_consent` capability approval); `--accept-cloud` is ignored in non-interactive mode.
-API keys: env vars, or `belay judge use --credential apiKey --key-stdin`.
-Outbound text is scrubbed before any cloud judge call. Non-TTY consent:
-`belay judge consent <provider-id>` → `belay approve <id>` → `belay judge use … --cloud-consent-approval-id <id>`.
+`codex` → `codex`. Prefer **`belay config`** (interactive) or `belay config set judge.providerId <id>`
+for judge changes. `belay judge use` remains a secondary path. Cloud egress requires recorded
+`cloudConsent` (during `belay config`, interactive TTY with `--accept-cloud`, or capability
+approval); `--accept-cloud` is ignored in non-interactive mode. API keys: env vars, or
+`belay config credential set --key-stdin`. Outbound text is scrubbed before any cloud judge call.
+Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
+`belay judge use … --cloud-consent-approval-id <id>`.
+
+### CLI examples (`belay config`)
+
+```bash
+belay config                              # interactive setup (primary)
+belay config list
+belay config get judge.model
+belay config set judge.providerId codex
+belay config unset judge.endpoint
+belay config credential mode project
+belay config credential set --key-stdin
+belay config judge                        # same summary as belay judge status
+```
 
 ## `policy`
 

@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const STORE_FILENAME = 'credentials.json'
@@ -25,6 +25,16 @@ export async function writeJudgeCredentialStore(stateDir: string, apiKey: string
   })
   await chmod(filePath, 0o600)
   return filePath
+}
+
+export async function clearJudgeCredentialStore(stateDir: string): Promise<void> {
+  try {
+    await unlink(credentialStorePath(stateDir))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+  }
 }
 
 export async function readJudgeCredentialStore(stateDir: string): Promise<string | null> {
