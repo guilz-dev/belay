@@ -103,7 +103,7 @@ export function resolveJudgeConfig(input: ResolveJudgeConfigInput = {}): BelayJu
 
   if (input.judgeProfile) {
     warnDeprecated(
-      `--judge-profile is deprecated; use belay judge use <provider-id> (${JUDGE_PROVIDER_IDS.join(', ')}).`,
+      `--judge-profile is deprecated; use belay config set judge.providerId <provider-id> (${JUDGE_PROVIDER_IDS.join(', ')}).`,
     )
     const providerId = PROFILE_TO_PROVIDER_ID[input.judgeProfile]
     return resolveJudgeFromCatalog({
@@ -129,10 +129,10 @@ export class CloudJudgeConsentRequiredError extends Error {
       )
     }
     if (details?.key !== false) {
-      parts.push('Set provider API keys via env or belay judge use --credential apiKey.')
+      parts.push('Set provider API keys via env or belay config credential set --key-stdin.')
     }
     if (details?.localFallback !== false) {
-      parts.push('Use belay judge use ollama for local-only Tier1.')
+      parts.push('Use belay config set judge.providerId ollama for local-only Tier1.')
     }
     super(parts.join(' '))
     this.name = 'CloudJudgeConsentRequiredError'

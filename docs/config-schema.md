@@ -62,7 +62,8 @@ Fresh default follows **host** (`config.adapter`): `cursor` → `cursor`, `claud
 for judge changes. `belay judge use` remains a secondary path. Cloud egress requires recorded
 `cloudConsent` (during `belay config`, interactive TTY with `--accept-cloud`, or capability
 approval); `--accept-cloud` is ignored in non-interactive mode. API keys: env vars, or
-`belay config credential set --key-stdin`. Outbound text is scrubbed before any cloud judge call.
+`belay config credential set --key-stdin`. Cloud consent is recorded only when `judge.endpoint`
+is set (endpoint-optional / keyless providers are Phase 3). Outbound text is scrubbed before any cloud judge call.
 Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
 `belay judge use … --cloud-consent-approval-id <id>`.
 

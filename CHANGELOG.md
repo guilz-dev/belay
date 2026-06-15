@@ -22,7 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Re-init** — preserving an existing `cursor` judge with `endpoint: null` no longer throws on second `belay init`.
 - **Doctor** — Ollama probe runs only when `providerId` is `ollama`.
-- **Legacy configs** — removed `openrouter` / `custom` `providerId` values emit a warning on load and are preserved until `belay judge use` migrates; Tier1 fails closed until then.
+- **Legacy configs** — removed `openrouter` / `custom` `providerId` values emit a warning on load and are preserved until `belay config set judge.providerId` migrates; Tier1 fails closed until then.
 
 ## 0.2.0 — 2026-06-15
 

@@ -17,7 +17,7 @@ export function isRemovedProviderId(id: string): boolean {
 
 export function warnRemovedProviderId(id: string): void {
   process.stderr.write(
-    `Warning: judge.providerId "${id}" was removed; switch with belay judge use (ollama, codex, claude, cursor).\n`,
+    `Warning: judge.providerId "${id}" was removed; migrate with belay config set judge.providerId <ollama|codex|claude|cursor>.\n`,
   )
 }
 

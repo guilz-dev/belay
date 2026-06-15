@@ -32,6 +32,7 @@ import {
   normalizeLegacyProviderId,
 } from '../core/verdict/judge-catalog.js'
 import { resolveJudgeModel } from '../core/verdict/judge-factory.js'
+import { readKeyFromStdin } from './stdin-key.js'
 
 export interface JudgeCommandOptions {
   targetDir?: string
@@ -50,14 +51,6 @@ export interface JudgeCommandOptions {
 
 export function isInteractiveTTY(): boolean {
   return Boolean(input.isTTY && output.isTTY)
-}
-
-async function readKeyFromStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of input) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
-  return Buffer.concat(chunks).toString('utf8').trim()
 }
 
 async function confirmCloudConsent(endpoint: string): Promise<boolean> {

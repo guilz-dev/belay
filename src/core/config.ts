@@ -111,7 +111,7 @@ export type JudgeProvider = 'ollama' | 'openai-compatible' | 'anthropic'
 
 export type JudgeProviderId = 'ollama' | 'codex' | 'claude' | 'cursor'
 
-/** Read-only legacy ids; preserved on load with warning until `belay judge use` migrates. */
+/** Read-only legacy ids; preserved on load with warning until `belay config` migrates. */
 export type DeprecatedJudgeProviderId = 'openrouter' | 'custom'
 
 export type JudgeCredentialMode = 'project' | 'apiKey'

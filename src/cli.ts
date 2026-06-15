@@ -131,7 +131,7 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--judge-profile') {
       process.stderr.write(
-        'Warning: --judge-profile is deprecated; use belay judge use <provider-id> after init.\n',
+        'Warning: --judge-profile is deprecated; use belay config set judge.providerId <id> after init.\n',
       )
       const next = rest[index + 1]
       if (!next || !['local-ollama', 'cursor', 'claude', 'codex'].includes(next)) {

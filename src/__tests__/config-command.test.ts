@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildInitOptionsFromWizard,
+  buildInitOptionsFromConfigAnswers,
   parseAdapter,
   parseJudgeProviderId,
   parseScope,
@@ -20,7 +20,7 @@ describe('belay config parsers', () => {
 
   it('maps config wizard answers to InitOptions', () => {
     expect(
-      buildInitOptionsFromWizard(
+      buildInitOptionsFromConfigAnswers(
         {
           adapter: 'codex',
           scope: 'global',

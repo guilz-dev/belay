@@ -29,7 +29,7 @@ export async function diagnoseJudge(
     notes.push(`Judge driver: ${provider}`)
     notes.push(`Judge model requested: ${judge.model}`)
     issues.push(
-      `judge.providerId "${rawProviderId}" was removed; run belay judge use (ollama, codex, claude, cursor) to migrate.`,
+      `judge.providerId "${rawProviderId}" was removed; run belay config set judge.providerId <ollama|codex|claude|cursor> to migrate.`,
     )
     return { issues, warnings, notes }
   }

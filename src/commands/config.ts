@@ -23,6 +23,7 @@ import {
 import { initProject } from '../installer.js'
 import type { AdapterName, InitOptions } from '../types.js'
 import { judgeStatus } from './judge.js'
+import { readKeyFromStdin } from './stdin-key.js'
 
 export const BELAY_CONFIG_SUBCOMMANDS = [
   'list',
@@ -111,7 +112,7 @@ export function parseJudgeProviderId(
   throw new Error(`Unknown judge provider: ${value ?? '(empty)'}`)
 }
 
-export function buildInitOptionsFromWizard(
+export function buildInitOptionsFromConfigAnswers(
   answers: ConfigWizardAnswers,
   targetDir?: string,
 ): InitOptions {
@@ -275,12 +276,14 @@ async function applyJudgeUnset(
   throw new Error(`Cannot unset ${pathKey}; only judge.endpoint and judge.credential.ref are unsettable.`)
 }
 
-async function readKeyFromStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of input) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
-  return Buffer.concat(chunks).toString('utf8').trim()
+async function appendConfigAudit(
+  repoRoot: string,
+  config: BelayConfigV4,
+  event: Record<string, unknown>,
+): Promise<void> {
+  const adapter = resolveAdapterName(config)
+  const updated = await loadConfigFile(repoRoot, adapter)
+  await appendCliAuditEvent(repoRoot, updated, event)
 }
 
 export async function runBelayConfigCredential(options: BelayConfigCredentialOptions) {
@@ -302,6 +305,12 @@ export async function runBelayConfigCredential(options: BelayConfigCredentialOpt
               : { mode: 'apiKey', ref: 'store:judge' },
           })
     await persistJudge(repoRoot, config, judge, adapter)
+    await appendConfigAudit(repoRoot, config, {
+      event: 'judge_config_credential',
+      action: 'mode',
+      mode: options.mode,
+      by: 'belay config credential mode',
+    })
     return options.mode === 'project' ? 'Credential mode set to project.' : 'Credential mode set to apiKey.'
   }
 
@@ -319,6 +328,12 @@ export async function runBelayConfigCredential(options: BelayConfigCredentialOpt
         credential: { mode: 'apiKey', ref: `env:${options.keyEnv}` },
       })
       await persistJudge(repoRoot, config, judge, adapter)
+      await appendConfigAudit(repoRoot, config, {
+        event: 'judge_config_credential',
+        action: 'set',
+        ref: `env:${options.keyEnv}`,
+        by: 'belay config credential set',
+      })
       return `Credential ref set to env:${options.keyEnv}.`
     }
     if (!key) {
@@ -331,6 +346,12 @@ export async function runBelayConfigCredential(options: BelayConfigCredentialOpt
       credential: { mode: 'apiKey', ref: 'store:judge' },
     })
     await persistJudge(repoRoot, config, judge, adapter)
+    await appendConfigAudit(repoRoot, config, {
+      event: 'judge_config_credential',
+      action: 'set',
+      ref: 'store:judge',
+      by: 'belay config credential set',
+    })
     return 'API key stored in belay credential store.'
   }
 
@@ -342,6 +363,11 @@ export async function runBelayConfigCredential(options: BelayConfigCredentialOpt
       credential: config.judge.credential?.mode === 'project' ? { mode: 'project' } : undefined,
     })
     await persistJudge(repoRoot, config, judge, adapter)
+    await appendConfigAudit(repoRoot, config, {
+      event: 'judge_config_credential',
+      action: 'clear',
+      by: 'belay config credential clear',
+    })
     return 'Stored API key cleared.'
   }
 
@@ -399,7 +425,7 @@ export async function runBelayConfigInteractive(options: { targetDir?: string } 
       )
     }
 
-    const initOptions = buildInitOptionsFromWizard(
+    const initOptions = buildInitOptionsFromConfigAnswers(
       {
         adapter,
         scope,
@@ -461,9 +487,7 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
       throw new Error('belay config set requires <path> <value>.')
     }
     await applyJudgeSet(repoRoot, config, pathKey, options.value)
-    const adapter = resolveAdapterName(config)
-    const updated = await loadConfigFile(repoRoot, adapter)
-    await appendCliAuditEvent(repoRoot, updated, {
+    await appendConfigAudit(repoRoot, config, {
       event: 'judge_config_set',
       path: pathKey,
       value: options.value,
@@ -475,6 +499,11 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
   if (options.subcommand === 'unset') {
     const pathKey = assertJudgeConfigPath(options.path)
     await applyJudgeUnset(repoRoot, config, pathKey)
+    await appendConfigAudit(repoRoot, config, {
+      event: 'judge_config_unset',
+      path: pathKey,
+      by: 'belay config unset',
+    })
     return `Unset ${pathKey}`
   }
 

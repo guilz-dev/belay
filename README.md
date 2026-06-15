@@ -246,7 +246,8 @@ Notable settings:
   (`config.adapter`: `cursor`, `claude`, `codex`). Set `judge.endpoint` when needed;
   credentials via `belay config credential mode project|apiKey` or env vars. Record egress
   consent during `belay config` or via `belay judge consent` → `belay approve` →
-  `belay judge use … --cloud-consent-approval-id`. Fresh installs default to the
+  `belay judge use … --cloud-consent-approval-id`. Cloud consent is recorded only when
+  `judge.endpoint` is set (keyless / endpoint-optional providers land in Phase 3). Fresh installs default to the
   host-matched provider (`cursor` → `cursor`, etc.). `belay judge use` remains available
   as a secondary path.
 
