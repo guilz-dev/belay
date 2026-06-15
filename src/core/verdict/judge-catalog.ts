@@ -145,8 +145,43 @@ export function resolveJudgeFromCatalog(input: ResolveJudgeFromCatalogInput): Be
   }
 }
 
-export function catalogRequiresEndpoint(_providerId: JudgeProviderId): boolean {
-  return false
+export interface JudgeProviderCapabilities {
+  requiresConsent: boolean
+  requiresEndpoint: boolean
+  credentialPolicy: Array<'project' | 'apiKey'>
+}
+
+export function catalogRequiresEndpoint(
+  providerId: JudgeProviderId | string,
+  opts?: { transport?: string },
+): boolean {
+  const normalized = normalizeLegacyProviderId(String(providerId))
+  if (!normalized || normalized === 'ollama') {
+    return false
+  }
+  const transport = opts?.transport
+  if (!transport) {
+    return false
+  }
+  if (transport.endsWith('-cli') || transport === 'ollama-http') {
+    return false
+  }
+  return transport === 'http'
+}
+
+export function getJudgeProviderCapabilities(
+  providerId: JudgeProviderId | string,
+): JudgeProviderCapabilities | null {
+  const normalized = normalizeLegacyProviderId(String(providerId))
+  if (!normalized) {
+    return null
+  }
+  const spec = JUDGE_CATALOG[normalized]
+  return {
+    requiresConsent: spec.isCloud,
+    requiresEndpoint: catalogRequiresEndpoint(normalized, { transport: 'http' }),
+    credentialPolicy: ['project', 'apiKey'],
+  }
 }
 
 export function isCloudProviderId(providerId: JudgeProviderId | string | undefined): boolean {

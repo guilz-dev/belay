@@ -24,6 +24,7 @@ import {
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
 import { diagnoseJudge } from '../core/judge-doctor.js'
+import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import {
   getJudgeProviderSpec,
   isJudgeProviderId,
@@ -108,13 +109,15 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
     config,
   })
   const { resolved } = resolveJudgeModel(judge)
+  const transport = resolveJudgeTransport(judge)
 
   const lines = [
     `Judge providerId : ${judge.providerId ?? '(inferred)'}`,
     `Judge driver     : ${judge.provider}`,
+    `Transport        : ${transport}`,
     `Endpoint         : ${judge.endpoint ?? '(none)'}`,
     `Model            : ${resolved} (requested: ${judge.model})`,
-    `Credential       : ${credential.mode}${credential.source ? ` → ${credential.source}` : ''} ${credential.key ? '✓ set' : '✗ missing'}`,
+    `Credential       : ${credential.mode} (${credential.sourceKind})${credential.source ? ` → ${credential.source}` : ''} ${credential.key ? '✓ set' : '✗ missing'}`,
     `Cloud consent    : ${
       judge.cloudConsent?.accepted
         ? `accepted ${judge.cloudConsent.at} by ${judge.cloudConsent.by}`
@@ -130,6 +133,7 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
       endpoint: judge.endpoint,
       model: judge.model,
       modelResolved: resolved,
+      transport,
       credential,
       cloudConsent: judge.cloudConsent ?? null,
       cloudJudgeActive: isCloudJudgeConfig(judge) && hasValidCloudConsent(judge),
@@ -338,10 +342,13 @@ export async function judgeTest(options: JudgeCommandOptions = {}) {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const diagnosis = await diagnoseJudge(config, repoRoot)
+  const modelCheck = diagnosis.modelCheck
   if (options.json) {
-    return diagnosis
+    return { ...diagnosis, modelCheck }
   }
   return [
+    `Model check: ${modelCheck?.status ?? 'unverified'}`,
+    `Model source: ${modelCheck?.source ?? 'unknown'}`,
     ...diagnosis.notes.map((n) => `Note: ${n}`),
     ...diagnosis.warnings.map((w) => `Warning: ${w}`),
     ...diagnosis.issues.map((i) => `Issue: ${i}`),

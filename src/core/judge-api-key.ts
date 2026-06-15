@@ -1,11 +1,20 @@
 import type { BelayJudgeConfig, JudgeCredentialConfig } from './config.js'
 import { belayStateDir } from './config.js'
 import { parseCredentialRef, readJudgeCredentialStore } from './credential-store.js'
-import type { JudgeProviderSpec } from './verdict/judge-catalog.js'
+import { detectJudgeRuntimeCapabilities } from './judge-runtime-detection.js'
+import {
+  getJudgeProviderSpec,
+  inferProviderIdFromConfig,
+  normalizeLegacyProviderId,
+  type JudgeProviderSpec,
+} from './verdict/judge-catalog.js'
+
+export type JudgeCredentialSourceKind = 'env' | 'store' | 'host-session' | 'missing'
 
 export interface ResolvedJudgeCredential {
   key: string | null
   source: string | null
+  sourceKind: JudgeCredentialSourceKind
   mode: 'project' | 'apiKey'
 }
 
@@ -42,6 +51,38 @@ function resolveFromEnvChain(
   return { key: null, source: null }
 }
 
+function sourceKindForProjectMode(
+  fromEnv: { key: string | null; source: string | null },
+  judge: BelayJudgeConfig,
+  catalogSpec?: JudgeProviderSpec,
+): JudgeCredentialSourceKind {
+  if (fromEnv.key) {
+    return 'env'
+  }
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : inferProviderIdFromConfig(judge)
+  const spec = catalogSpec ?? getJudgeProviderSpec(providerId)
+  if (spec?.isCloud && detectJudgeRuntimeCapabilities(providerId).cliTransport) {
+    return 'host-session'
+  }
+  return 'missing'
+}
+
+function sourceKindForApiKeyMode(
+  key: string | null,
+  source: string | null,
+): JudgeCredentialSourceKind {
+  if (!key) {
+    return 'missing'
+  }
+  if (source?.startsWith('env:')) {
+    return 'env'
+  }
+  return 'store'
+}
+
 export async function resolveJudgeCredential(params: {
   judge: BelayJudgeConfig
   catalogSpec?: JudgeProviderSpec
@@ -61,6 +102,7 @@ export async function resolveJudgeCredential(params: {
       return {
         key,
         source: key ? `${stateDir}/credentials.json` : null,
+        sourceKind: sourceKindForApiKeyMode(key, key ? `${stateDir}/credentials.json` : null),
         mode: 'apiKey',
       }
     }
@@ -70,12 +112,17 @@ export async function resolveJudgeCredential(params: {
       return {
         key: value,
         source: value ? `env:${envName}` : null,
+        sourceKind: sourceKindForApiKeyMode(value, value ? `env:${envName}` : null),
         mode: 'apiKey',
       }
     }
-    return { key: null, source: null, mode: 'apiKey' }
+    return { key: null, source: null, sourceKind: 'missing', mode: 'apiKey' }
   }
 
   const fromEnv = resolveFromEnvChain(env, params.catalogSpec)
-  return { ...fromEnv, mode: 'project' }
+  return {
+    ...fromEnv,
+    sourceKind: sourceKindForProjectMode(fromEnv, params.judge, params.catalogSpec),
+    mode: 'project',
+  }
 }

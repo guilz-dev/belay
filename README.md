@@ -246,8 +246,10 @@ Notable settings:
   (`config.adapter`: `cursor`, `claude`, `codex`). Set `judge.endpoint` when needed;
   credentials via `belay config credential mode project|apiKey` or env vars. Record egress
   consent during `belay config` or via `belay judge consent` → `belay approve` →
-  `belay judge use … --cloud-consent-approval-id`. Cloud consent is recorded only when
-  `judge.endpoint` is set (keyless / endpoint-optional providers land in Phase 3). Fresh installs default to the
+  `belay judge use … --cloud-consent-approval-id`. Cloud providers can use native CLI
+  transport without `judge.endpoint` when the host CLI is available (`codex-cli`,
+  `cursor-cli`, `claude-cli`); HTTP transport still requires endpoint and recorded consent.
+  Fresh installs default to the
   host-matched provider (`cursor` → `cursor`, etc.). `belay judge use` remains available
   as a secondary path.
 
@@ -256,10 +258,10 @@ Notable settings:
 ```bash
 belay init [--adapter cursor|claude|codex] [--scope project|global]
            [--preset strict|standard|audit-first|l1-full-recommended]
-           [--with-skill] [--dogfood]
+           [--migrate-judge-default] [--with-skill] [--dogfood]
 belay config                     # interactive setup (primary)
 belay config list|get|set|unset|judge|credential …
-belay upgrade                    # refresh hooks + runtime, migrate config
+belay upgrade [--migrate-judge-default]   # refresh hooks + runtime, migrate config
 belay dogfood [--enforce]        # toggle audit / enforce mode
 belay doctor [--fix]             # check (and repair) floor health
 belay status                     # show install scope / skill-only state

@@ -62,8 +62,11 @@ Fresh default follows **host** (`config.adapter`): `cursor` → `cursor`, `claud
 for judge changes. `belay judge use` remains a secondary path. Cloud egress requires recorded
 `cloudConsent` (during `belay config`, interactive TTY with `--accept-cloud`, or capability
 approval); `--accept-cloud` is ignored in non-interactive mode. API keys: env vars, or
-`belay config credential set --key-stdin`. Cloud consent is recorded only when `judge.endpoint`
-is set (endpoint-optional / keyless providers are Phase 3). Outbound text is scrubbed before any cloud judge call.
+`belay config credential set --key-stdin`. Cloud providers may use native CLI transport
+without `judge.endpoint` when the host CLI is available; HTTP transport requires endpoint
+and recorded `cloudConsent`. Use `--migrate-judge-default` on `belay init` / `belay upgrade`
+to opt in to migrating an implicit factory-default `ollama` judge to the host default provider.
+Outbound text is scrubbed before any cloud judge call (HTTP and native CLI transports).
 Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
 `belay judge use … --cloud-consent-approval-id <id>`.
 

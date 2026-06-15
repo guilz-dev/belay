@@ -71,6 +71,7 @@ function parseArgs(argv: string[]) {
     judgeModel?: string
     judgeEndpoint?: string
     acceptCloudJudge?: boolean
+    migrateJudgeDefault?: boolean
     judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'consent'
     judgeUseProvider?: string
     acceptCloud?: boolean
@@ -170,6 +171,10 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--accept-cloud-judge') {
       options.acceptCloudJudge = true
+      continue
+    }
+    if (token === '--migrate-judge-default') {
+      options.migrateJudgeDefault = true
       continue
     }
     if (token === '--accept-cloud') {
@@ -508,7 +513,7 @@ function printHelp() {
   process.stdout.write(`${c}
 
 Usage:
-  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--migrate-judge-default] [--with-skill] [--dogfood]
   ${c} config [--target <dir>] [--json]
   ${c} config list|get|set|unset|judge [--target <dir>] [--json]
   ${c} config get <judge.path> [--target <dir>] [--json]
@@ -519,7 +524,7 @@ Usage:
   ${c} config credential clear [--target <dir>]
   (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
+  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
@@ -575,6 +580,7 @@ async function main() {
         judgeModel: options.judgeModel,
         judgeEndpoint: options.judgeEndpoint,
         acceptCloudJudge: options.acceptCloudJudge,
+        migrateJudgeDefault: options.migrateJudgeDefault,
       })
       const extras = [
         `adapter=${result.adapter}`,
@@ -603,6 +609,7 @@ async function main() {
         withSkill: options.withSkill,
         adapter: options.adapter,
         scope: options.installScope,
+        migrateJudgeDefault: options.migrateJudgeDefault,
       })
       const upgraded = await loadConfigFile(result.repoRoot, result.adapter)
       if (upgraded.policy.modelAssist.enabled) {

@@ -16,7 +16,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Judge providers** — catalog is `ollama`, `codex`, `claude`, `cursor` (removed `openrouter` / `custom`). Read-time aliases: `local` → `ollama`, `openai` → `codex`.
 - **Fresh init defaults** — judge `providerId` follows host adapter (`cursor` / `claude` / `codex`), not local Ollama. Default models: `gemma4:e2b`, `gpt-5.3-codex-high`, `claude-sonnet-4-6`, `composer-2.5`.
 - **Fresh init credential** — writes `judge.credential.mode: project` by default.
-- **`claude` driver** — config uses `anthropic`; Tier1 runtime fails closed until native CLI transport lands (Phase 3).
+- **Native CLI judge transport** — `codex` / `cursor` / `claude` can run Tier1 via host CLI (`*-cli` transport) without API keys when the CLI is on PATH; outbound text is scrubbed before send.
+- **`belay judge status` / `test` / doctor** — show transport, credential `sourceKind`, and live model check (`found` / `missing` / `unverified`).
+- **`--migrate-judge-default`** — opt-in migration of implicit factory-default `ollama` to the host-matched provider on `belay init` / `belay upgrade` (audit: `judge_provider_changed`).
+
+### Changed (earlier in unreleased)
+
+- **`claude` driver** — config uses `anthropic`; Tier1 uses `claude-cli` when the Claude CLI is available, otherwise fail-closed.
 
 ### Fixed
 

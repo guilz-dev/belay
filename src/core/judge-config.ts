@@ -1,6 +1,7 @@
 import type { AdapterName } from '../adapters/layouts/types.js'
 import type { BelayJudgeConfig, JudgeCloudConsent, JudgeProviderId } from './config.js'
 import { normalizeJudgeProvider } from './config.js'
+import { detectJudgeRuntimeCapabilities } from './judge-runtime-detection.js'
 import {
   catalogRequiresEndpoint,
   getJudgeProviderSpec,
@@ -176,6 +177,42 @@ export function hasValidCloudConsent(judge: BelayJudgeConfig): boolean {
   )
 }
 
+export function isImplicitLocalJudge(judge: BelayJudgeConfig): boolean {
+  const providerId =
+    judge.providerId && normalizeLegacyProviderId(judge.providerId)
+      ? normalizeLegacyProviderId(judge.providerId)!
+      : judge.provider === 'ollama'
+        ? 'ollama'
+        : null
+  if (providerId !== 'ollama') {
+    return false
+  }
+  if (judge.cloudConsent?.accepted) {
+    return false
+  }
+  const factoryDefault = resolveJudgeFromCatalog({ providerId: 'ollama' })
+  const endpoint = judge.endpoint?.trim() ?? factoryDefault.endpoint
+  const defaultEndpoint = factoryDefault.endpoint?.trim()
+  const endpointMatches =
+    !judge.endpoint ||
+    endpoint === defaultEndpoint ||
+    endpoint === 'http://127.0.0.1:11434' ||
+    endpoint === 'http://localhost:11434'
+  return judge.provider === 'ollama' && judge.model === factoryDefault.model && endpointMatches
+}
+
+export function migrateImplicitLocalJudgeIfNeeded(
+  existingJudge: BelayJudgeConfig,
+  adapter: AdapterName,
+): BelayJudgeConfig | null {
+  if (!isImplicitLocalJudge(existingJudge)) {
+    return null
+  }
+  return applyFreshInitDefaults(
+    resolveJudgeFromCatalog({ providerId: defaultJudgeProviderForAdapter(adapter) }),
+  )
+}
+
 export function assertJudgeEndpoint(judge: BelayJudgeConfig): void {
   const providerId =
     judge.providerId && normalizeLegacyProviderId(judge.providerId)
@@ -183,7 +220,10 @@ export function assertJudgeEndpoint(judge: BelayJudgeConfig): void {
       : judge.provider === 'ollama'
         ? 'ollama'
         : 'codex'
-  if (catalogRequiresEndpoint(providerId) && !judge.endpoint?.trim()) {
+  const transport = judge.endpoint?.trim()
+    ? 'http'
+    : (detectJudgeRuntimeCapabilities(providerId).cliTransport ?? 'http')
+  if (catalogRequiresEndpoint(providerId, { transport }) && !judge.endpoint?.trim()) {
     throw new JudgeEndpointRequiredError(providerId)
   }
 }
@@ -308,8 +348,12 @@ export function resolveJudgeUsePatch(
     keepAlive: existing.keepAlive,
   })
 
-  if (catalogRequiresEndpoint(normalizedId) && !judge.endpoint?.trim()) {
-    errors.push(`${normalizedId} requires --endpoint.`)
+  if (catalogRequiresEndpoint(normalizedId, {
+    transport: judge.endpoint?.trim()
+      ? 'http'
+      : (detectJudgeRuntimeCapabilities(normalizedId).cliTransport ?? 'unavailable'),
+  }) && !judge.endpoint?.trim()) {
+    errors.push(`${normalizedId} requires --endpoint for HTTP transport.`)
   }
 
   if (options.credentialMode === 'apiKey') {

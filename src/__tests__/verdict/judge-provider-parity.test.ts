@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
 import { createOllamaJudge, createOpenAiCompatibleJudge } from '../../core/verdict/judge.js'
 import { createJudgeFromConfig } from '../../core/verdict/judge-factory.js'
@@ -28,6 +28,10 @@ function mockFetch(responseBody: unknown): typeof fetch {
 }
 
 describe('T15 openai-compatible provider parity', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('openai-compatible and ollama both fail closed when Tier1 flags catastrophic effect', async () => {
     const cloudJudge = createOpenAiCompatibleJudge({
       endpoint: 'https://api.example.com/v1',
@@ -209,7 +213,8 @@ describe('T15 openai-compatible provider parity', () => {
     expect(postedBody).toContain('"messages"')
   })
 
-  it('createJudgeFromConfig fails closed when openai-compatible endpoint is missing', async () => {
+  it('createJudgeFromConfig fails closed when openai-compatible endpoint is missing and CLI unavailable', async () => {
+    vi.stubEnv('BELAY_JUDGE_DISABLE_CLI_TRANSPORT', '1')
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
@@ -235,7 +240,31 @@ describe('T15 openai-compatible provider parity', () => {
     expect(gated.permission).toBe('ask')
   })
 
-  it('createJudgeFromConfig fails closed for anthropic driver until native CLI transport', async () => {
+  it('createJudgeFromConfig selects cursor-cli without endpoint when CLI is available', async () => {
+    const config = normalizeConfig({
+      ...DEFAULT_CONFIG_V4,
+      judge: {
+        provider: 'openai-compatible',
+        providerId: 'cursor',
+        model: 'composer-2.5',
+        endpoint: null,
+        timeoutMs: 8000,
+        keepAlive: null,
+        credential: { mode: 'project' },
+      },
+    })
+    const judge = createJudgeFromConfig(config)
+    expect(judge.lastTrace?.transport).toBe('cursor-cli')
+    const result = await judge.evaluate({
+      text: 'mystery-cli deploy --force',
+      context: { cwd: '/repo', repoRoot: '/repo' },
+    })
+    expect(result.reason).toBe('cursor_cli_unavailable')
+    expect(judge.lastTrace?.transport).toBeUndefined()
+  })
+
+  it('createJudgeFromConfig fails closed for anthropic driver when CLI is unavailable', async () => {
+    vi.stubEnv('BELAY_JUDGE_DISABLE_CLI_TRANSPORT', '1')
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
