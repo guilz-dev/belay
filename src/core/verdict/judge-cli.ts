@@ -19,7 +19,16 @@ export interface CliJudgeOptions {
   timeoutMs?: number
   sensitivePaths: string[]
   scrubOptions: ScrubOptions
+  runCliCommand?: CliJudgeRunCommand
 }
+
+export interface CliInvocation {
+  binary: string
+  args: string[]
+  stdin?: string
+}
+
+export type CliJudgeRunCommand = (invocation: CliInvocation, timeoutMs: number) => Promise<string>
 
 const CLI_BINARIES: Record<Exclude<JudgeProviderId, 'ollama'>, string> = {
   codex: 'codex',
@@ -58,22 +67,158 @@ function initialTrace(options: CliJudgeOptions): Tier1JudgeTrace {
   }
 }
 
-async function runCliJson(
+export function buildCliInvocation(
   providerId: Exclude<JudgeProviderId, 'ollama'>,
   prompt: string,
   model: string,
-  timeoutMs: number,
-): Promise<string> {
-  const binary = CLI_BINARIES[providerId]
-  const args =
-    providerId === 'codex'
-      ? ['exec', '--json', '--model', model, '--', prompt]
-      : providerId === 'cursor'
-        ? ['--print', '--output-format', 'json', '--model', model, prompt]
-        : ['-p', '--output-format', 'json', '--model', model, prompt]
+): CliInvocation {
+  if (providerId === 'codex') {
+    return {
+      binary: CLI_BINARIES[providerId],
+      args: [
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--sandbox',
+        'read-only',
+        '--model',
+        model,
+        '-',
+      ],
+      stdin: prompt,
+    }
+  }
+
+  if (providerId === 'cursor') {
+    return {
+      binary: CLI_BINARIES[providerId],
+      args: [
+        '--print',
+        '--output-format',
+        'json',
+        '--mode',
+        'ask',
+        '--sandbox',
+        'enabled',
+        '--trust',
+        '--model',
+        model,
+        prompt,
+      ],
+    }
+  }
+
+  return {
+    binary: CLI_BINARIES[providerId],
+    args: [
+      '-p',
+      '--output-format',
+      'json',
+      '--permission-mode',
+      'plan',
+      '--tools',
+      '',
+      '--bare',
+      '--model',
+      model,
+    ],
+    stdin: prompt,
+  }
+}
+
+function tryParseJson(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+}
+
+function extractVerdictFromJsonValue(value: unknown): ReturnType<typeof parseTier1Json> {
+  if (typeof value === 'string') {
+    return parseTier1Json(value.trim())
+  }
+  if (Array.isArray(value)) {
+    for (let index = value.length - 1; index >= 0; index -= 1) {
+      const verdict = extractVerdictFromJsonValue(value[index])
+      if (verdict) {
+        return verdict
+      }
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  for (const key of ['result', 'content', 'text', 'message', 'output_text', 'final']) {
+    if (!(key in record)) {
+      continue
+    }
+    const verdict = extractVerdictFromJsonValue(record[key])
+    if (verdict) {
+      return verdict
+    }
+  }
+
+  for (const candidate of Object.values(record).reverse()) {
+    const verdict = extractVerdictFromJsonValue(candidate)
+    if (verdict) {
+      return verdict
+    }
+  }
+  return null
+}
+
+function parseCliJsonLines(raw: string): ReturnType<typeof parseTier1Json> {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const parsed = tryParseJson(lines[index] ?? '')
+    if (!parsed) {
+      continue
+    }
+    const verdict = extractVerdictFromJsonValue(parsed)
+    if (verdict) {
+      return verdict
+    }
+  }
+  return null
+}
+
+export function parseCliJudgeOutput(
+  providerId: Exclude<JudgeProviderId, 'ollama'>,
+  raw: string,
+): ReturnType<typeof parseTier1Json> {
+  const direct = parseTier1Json(raw)
+  if (direct) {
+    return direct
+  }
+
+  const parsed = tryParseJson(raw)
+  if (parsed) {
+    const envelopeVerdict = extractVerdictFromJsonValue(parsed)
+    if (envelopeVerdict) {
+      return envelopeVerdict
+    }
+  }
+
+  if (providerId === 'codex') {
+    return parseCliJsonLines(raw)
+  }
+
+  return parseCliJsonLines(raw)
+}
+
+async function runCliJson(invocation: CliInvocation, timeoutMs: number): Promise<string> {
+  const { binary, args, stdin } = invocation
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
@@ -87,6 +232,10 @@ async function runCliJson(
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)
     })
+    if (stdin !== undefined) {
+      child.stdin.write(stdin)
+    }
+    child.stdin.end()
     child.on('error', (error) => {
       clearTimeout(timer)
       reject(error)
@@ -106,6 +255,7 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
   const transport = transportForProvider(options.providerId)
   const timeoutMs = options.timeoutMs ?? 25000
   const providerId = options.providerId as Exclude<JudgeProviderId, 'ollama'>
+  const runCommand = options.runCliCommand ?? runCliJson
 
   const judge: TracedTier1Judge = {
     lastTrace: initialTrace(options),
@@ -140,8 +290,11 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
 
       const prompt = buildTier1Prompt(scrubbed.text)
       try {
-        const raw = await runCliJson(providerId, prompt, options.modelResolved, timeoutMs)
-        const parsed = parseTier1Json(raw)
+        const raw = await runCommand(
+          buildCliInvocation(providerId, prompt, options.modelResolved),
+          timeoutMs,
+        )
+        const parsed = parseCliJudgeOutput(providerId, raw)
         if (!parsed) {
           judge.lastTrace = {
             provider: 'fallback',

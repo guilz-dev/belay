@@ -472,53 +472,115 @@ export async function resolveBelayConfigInteractiveMode(
   }
 }
 
+async function runBelayConfigFullWithPrompter(
+  ask: ConfigPrompter,
+  options: BelayConfigInteractiveOptions,
+): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
+  if (!options.skipBanner) {
+    output.write('belay config\n')
+  }
+  const adapter = parseAdapter(await ask('Adapter [cursor | claude | codex] (cursor): '))
+  const scope = parseScope(await ask('Install scope [project | global] (project): '))
+  const withSkill = parseYesNo(
+    await ask('Install SKILL.md and slash commands? [y | n] (y): '),
+    true,
+  )
+  const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
+  const judgeProviderId = parseJudgeProviderId(
+    await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
+    defaultJudgeProviderId,
+  )
+
+  const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
+    ask,
+    judgeProviderId,
+  )
+
+  const initOptions = buildInitOptionsFromConfigAnswers(
+    {
+      adapter,
+      scope,
+      withSkill,
+      judgeProviderId,
+      judgeCredentialMode,
+      judgeEndpoint,
+      acceptCloud,
+      dogfood: false,
+    },
+    options.targetDir,
+  )
+
+  const result = await initProject(initOptions)
+
+  if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
+    const config = await loadConfigFile(result.repoRoot, result.adapter)
+    const stateDir = belayStateDir(config, repoLocalStateDirFor(result.repoRoot, config))
+    await writeJudgeCredentialStore(stateDir, process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY)
+    delete process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY
+  }
+
+  return result
+}
+
+async function runBelayConfigJudgeOnlyWithPrompter(
+  ask: ConfigPrompter,
+  options: BelayConfigInteractiveOptions,
+  repoRoot: string,
+  config: Awaited<ReturnType<typeof loadConfigFile>>,
+  adapter: AdapterName,
+): Promise<{ repoRoot: string; adapter: AdapterName }> {
+  if (!options.skipBanner) {
+    output.write('belay config (judge only)\n')
+  }
+  const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
+  const judgeProviderId = parseJudgeProviderId(
+    await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
+    defaultJudgeProviderId,
+  )
+
+  const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
+    ask,
+    judgeProviderId,
+  )
+
+  const patch = resolveJudgeUsePatch(config.judge, {
+    providerId: judgeProviderId,
+    endpoint: judgeEndpoint,
+    credentialMode: judgeCredentialMode,
+    acceptCloud: acceptCloud && Boolean(judgeEndpoint),
+    interactiveTTY: true,
+    interactiveConsentApproved: acceptCloud && Boolean(judgeEndpoint),
+  })
+  if (patch.errors.length > 0) {
+    throw new Error(patch.errors.join(' '))
+  }
+  for (const warning of patch.warnings) {
+    process.stderr.write(`Warning: ${warning}\n`)
+  }
+
+  const updated = await persistJudge(repoRoot, config, patch.judge, adapter)
+  warnCloudConsentIfNeeded(updated.judge)
+
+  if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
+    const stateDir = belayStateDir(updated, repoLocalStateDirFor(repoRoot, updated))
+    await writeJudgeCredentialStore(stateDir, process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY)
+    delete process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY
+  }
+
+  await appendConfigAudit(repoRoot, updated, {
+    event: 'judge_config_interactive',
+    providerId: updated.judge.providerId,
+    credentialMode: updated.judge.credential?.mode ?? null,
+    by: 'belay config interactive (judge only)',
+  })
+
+  return { repoRoot, adapter }
+}
+
 export async function runBelayConfigFullInteractive(
   options: BelayConfigInteractiveOptions = {},
 ): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
-  return withConfigPrompter(async (ask) => {
-    if (!options.skipBanner) {
-      output.write('belay config\n')
-    }
-    const adapter = parseAdapter(await ask('Adapter [cursor | claude | codex] (cursor): '))
-    const scope = parseScope(await ask('Install scope [project | global] (project): '))
-    const withSkill = parseYesNo(
-      await ask('Install SKILL.md and slash commands? [y | n] (y): '),
-      true,
-    )
-    const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
-    const judgeProviderId = parseJudgeProviderId(
-      await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
-      defaultJudgeProviderId,
-    )
-
-    const { judgeCredentialMode, judgeEndpoint, acceptCloud } =
-      await collectCloudJudgeWizardAnswers(ask, judgeProviderId)
-
-    const initOptions = buildInitOptionsFromConfigAnswers(
-      {
-        adapter,
-        scope,
-        withSkill,
-        judgeProviderId,
-        judgeCredentialMode,
-        judgeEndpoint,
-        acceptCloud,
-        dogfood: false,
-      },
-      options.targetDir,
-    )
-
-    const result = await initProject(initOptions)
-
-    if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
-      const config = await loadConfigFile(result.repoRoot, result.adapter)
-      const stateDir = belayStateDir(config, repoLocalStateDirFor(result.repoRoot, config))
-      await writeJudgeCredentialStore(stateDir, process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY)
-      delete process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY
-    }
-
-    return result
-  }, options.prompts)
+  return withConfigPrompter((ask) => runBelayConfigFullWithPrompter(ask, options), options.prompts)
 }
 
 export async function runBelayConfigJudgeOnlyInteractive(
@@ -528,52 +590,10 @@ export async function runBelayConfigJudgeOnlyInteractive(
   const config = await loadConfigFile(repoRoot)
   const adapter = resolveAdapterName(config)
 
-  return withConfigPrompter(async (ask) => {
-    if (!options.skipBanner) {
-      output.write('belay config (judge only)\n')
-    }
-    const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
-    const judgeProviderId = parseJudgeProviderId(
-      await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
-      defaultJudgeProviderId,
-    )
-
-    const { judgeCredentialMode, judgeEndpoint, acceptCloud } =
-      await collectCloudJudgeWizardAnswers(ask, judgeProviderId)
-
-    const patch = resolveJudgeUsePatch(config.judge, {
-      providerId: judgeProviderId,
-      endpoint: judgeEndpoint,
-      credentialMode: judgeCredentialMode,
-      acceptCloud: acceptCloud && Boolean(judgeEndpoint),
-      interactiveTTY: true,
-      interactiveConsentApproved: acceptCloud && Boolean(judgeEndpoint),
-    })
-    if (patch.errors.length > 0) {
-      throw new Error(patch.errors.join(' '))
-    }
-    for (const warning of patch.warnings) {
-      process.stderr.write(`Warning: ${warning}\n`)
-    }
-
-    const updated = await persistJudge(repoRoot, config, patch.judge, adapter)
-    warnCloudConsentIfNeeded(updated.judge)
-
-    if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
-      const stateDir = belayStateDir(updated, repoLocalStateDirFor(repoRoot, updated))
-      await writeJudgeCredentialStore(stateDir, process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY)
-      delete process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY
-    }
-
-    await appendConfigAudit(repoRoot, updated, {
-      event: 'judge_config_interactive',
-      providerId: updated.judge.providerId,
-      credentialMode: updated.judge.credential?.mode ?? null,
-      by: 'belay config interactive (judge only)',
-    })
-
-    return { repoRoot, adapter }
-  }, options.prompts)
+  return withConfigPrompter(
+    (ask) => runBelayConfigJudgeOnlyWithPrompter(ask, options, repoRoot, config, adapter),
+    options.prompts,
+  )
 }
 
 export async function runBelayConfigInteractive(options: BelayConfigInteractiveOptions = {}) {
@@ -602,9 +622,17 @@ export async function runBelayConfigInteractive(options: BelayConfigInteractiveO
       output.write('belay config\n')
       const judgeOnly = parseYesNo(await ask('Configure judge only? [Y/n]: '), true)
       if (judgeOnly) {
-        return runBelayConfigJudgeOnlyInteractive({ ...options, skipBanner: true })
+        const config = await loadConfigFile(repoRoot)
+        const adapter = resolveAdapterName(config)
+        return runBelayConfigJudgeOnlyWithPrompter(
+          ask,
+          { ...options, skipBanner: true },
+          repoRoot,
+          config,
+          adapter,
+        )
       }
-      return runBelayConfigFullInteractive({ ...options, skipBanner: true })
+      return runBelayConfigFullWithPrompter(ask, { ...options, skipBanner: true })
     }, options.prompts)
   }
 
