@@ -70,6 +70,13 @@ Outbound text is scrubbed before any cloud judge call (HTTP and native CLI trans
 Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` →
 `belay judge use … --cloud-consent-approval-id <id>`.
 
+#### Known limitations
+
+- **`model: auto`** — accepted on load and via `--judge-model auto`; fresh init never writes `auto`.
+- **Model discovery** — Vitest skips live CLI probes; production uses `judge-model-discovery.ts`.
+- **Interactive config** — `belay config` may re-run parts of init; use `belay config set` for judge-only edits on existing repos.
+- **Transport vs consent** — HTTP requires endpoint + `cloudConsent`; native CLI transport does not.
+
 ### CLI examples (`belay config`)
 
 ```bash

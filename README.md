@@ -253,6 +253,16 @@ Notable settings:
   host-matched provider (`cursor` → `cursor`, etc.). `belay judge use` remains available
   as a secondary path.
 
+  **Known limitations (Phase 3.5 follow-ups):**
+  - `model: auto` is still accepted when reading legacy config or via `--judge-model auto`;
+    fresh init writes catalog defaults only.
+  - Live CLI model discovery is skipped under Vitest to avoid hook timeouts; production runs
+    probe host CLIs when HTTP is unavailable.
+  - Interactive `belay config` currently runs through `initProject`; for judge-only changes on
+    an existing repo, prefer `belay config set judge.*` or `belay judge use`.
+  - Cloud egress consent is enforced for HTTP transport; native CLI transport uses the host
+    session and does not require `judge.endpoint`.
+
 ## Command reference
 
 ```bash
