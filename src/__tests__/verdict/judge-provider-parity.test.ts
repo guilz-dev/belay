@@ -234,4 +234,30 @@ describe('T15 openai-compatible provider parity', () => {
     })
     expect(gated.permission).toBe('ask')
   })
+
+  it('createJudgeFromConfig fails closed for anthropic driver until native CLI transport', async () => {
+    const config = normalizeConfig({
+      ...DEFAULT_CONFIG_V4,
+      judge: {
+        provider: 'anthropic',
+        providerId: 'claude',
+        model: 'claude-sonnet-4-6',
+        endpoint: null,
+        timeoutMs: 8000,
+        keepAlive: null,
+      },
+    })
+    const judge = createJudgeFromConfig(config)
+    const result = await judge.evaluate({
+      text: 'rm -rf /',
+      context: { cwd: '/repo', repoRoot: '/repo' },
+    })
+    expect(result.reason).toBe('anthropic_not_implemented')
+    expect(judge.lastTrace?.fallbackReason).toBe('anthropic_runtime_unavailable')
+    const gated = await verdict('rm -rf /', {
+      ...verdictTestContext(),
+      judge,
+    })
+    expect(gated.permission).toBe('ask')
+  })
 })

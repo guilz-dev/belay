@@ -144,17 +144,11 @@ async function applyInitJudgeConfig(
   repoRoot: string,
   adapterName: AdapterName,
   options: InitOptions,
+  isFreshBeforeInstall: boolean,
 ): Promise<void> {
   if (options.skipJudgeWrite) {
     return
   }
-  const layout = getAdapter(adapterName).layout
-  const configPath = layout.configPath(repoRoot)
-  let existingConfig: unknown = {}
-  if (await pathExists(configPath)) {
-    existingConfig = JSON.parse(await readFile(configPath, 'utf8'))
-  }
-  const isFresh = isFreshConfigInput(existingConfig)
   const mergedConfig = await loadConfigFile(repoRoot, adapterName)
   const hasExplicitJudgeFlags =
     options.judgeProfile ||
@@ -163,7 +157,7 @@ async function applyInitJudgeConfig(
     options.judgeModel ||
     options.judgeEndpoint
   const judge = resolveInitJudgeConfig({
-    isFresh,
+    isFresh: isFreshBeforeInstall,
     hasExplicitJudgeFlags: Boolean(hasExplicitJudgeFlags),
     judgeProfile: options.judgeProfile,
     judgeProvider: options.judgeProvider,
@@ -174,6 +168,7 @@ async function applyInitJudgeConfig(
     interactiveConsent: Boolean(options.acceptCloudJudge && process.stdin.isTTY),
     cloudConsentApprovalId: options.cloudConsentApprovalId,
     existingJudge: mergedConfig.judge,
+    adapter: adapterName,
   })
   if (options.judgeCredentialMode) {
     judge.credential =
@@ -204,8 +199,18 @@ export async function initProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const adapterName = resolveAdapterName(options, repoRoot)
   const adapter = getAdapter(adapterName)
+  const configPath = adapter.layout.configPath(repoRoot)
+  let isFreshBeforeInstall = true
+  if (await pathExists(configPath)) {
+    try {
+      const raw = await readFile(configPath, 'utf8')
+      isFreshBeforeInstall = isFreshConfigInput(JSON.parse(raw))
+    } catch {
+      isFreshBeforeInstall = false
+    }
+  }
   const result = await adapter.install(repoRoot, options)
-  await applyInitJudgeConfig(repoRoot, adapterName, options)
+  await applyInitJudgeConfig(repoRoot, adapterName, options, isFreshBeforeInstall)
   if (options.preset) {
     const existing = await loadConfigFile(repoRoot, adapterName)
     const presetConfig = mergeConfig(applyConfigPreset(options.preset))

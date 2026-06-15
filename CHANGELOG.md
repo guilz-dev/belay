@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Changed
+
+- **Judge providers** — catalog is `ollama`, `codex`, `claude`, `cursor` (removed `openrouter` / `custom`). Read-time aliases: `local` → `ollama`, `openai` → `codex`.
+- **Fresh init defaults** — judge `providerId` follows host adapter (`cursor` / `claude` / `codex`), not local Ollama. Default models: `gemma4:e2b`, `gpt-5.3-codex-high`, `claude-sonnet-4-6`, `composer-2.5`.
+- **Fresh init credential** — writes `judge.credential.mode: project` by default.
+- **`claude` driver** — config uses `anthropic`; Tier1 runtime fails closed until native CLI transport lands (Phase 3).
+
+### Fixed
+
+- **Re-init** — preserving an existing `cursor` judge with `endpoint: null` no longer throws on second `belay init`.
+- **Doctor** — Ollama probe runs only when `providerId` is `ollama`.
+- **Legacy configs** — removed `openrouter` / `custom` `providerId` values emit a warning on load and are preserved until `belay judge use` migrates; Tier1 fails closed until then.
+
 ## 0.2.0 — 2026-06-15
 
 ### Changed

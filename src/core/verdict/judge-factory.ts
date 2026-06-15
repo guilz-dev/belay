@@ -12,7 +12,7 @@ import {
   createOpenAiCompatibleJudge,
   type TracedTier1Judge,
 } from './judge.js'
-import { getJudgeProviderSpec } from './judge-catalog.js'
+import { getJudgeProviderSpec, isRemovedProviderId } from './judge-catalog.js'
 
 const FIXTURE_MODELS_URL = new URL('../../../fixtures/judge-models.json', import.meta.url)
 
@@ -56,7 +56,7 @@ export function resolveJudgeModel(judge: BelayJudgeConfig): {
   if (requested === 'auto') {
     const spec = judge.providerId ? getJudgeProviderSpec(judge.providerId) : null
     const resolved =
-      process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || spec?.defaultModel || 'gpt-4.1-mini'
+      process.env.BELAY_JUDGE_MODEL_RESOLVED?.trim() || spec?.defaultModel || requested
     return { requested, resolved }
   }
   return { requested, resolved: requested }
@@ -89,6 +89,16 @@ export function createJudgeFromConfig(
   }
 
   const judgeConfig = config.judge
+  if (judgeConfig.providerId && isRemovedProviderId(String(judgeConfig.providerId))) {
+    const { resolved } = resolveJudgeModel(judgeConfig)
+    return createFailClosedJudge({
+      reason: 'judge_provider_removed',
+      fallbackReason: 'provider_migration_required',
+      modelRequested: judgeConfig.model,
+      modelResolved: resolved,
+    })
+  }
+
   const provider = normalizeJudgeProvider(judgeConfig.provider)
   const catalogSpec = judgeConfig.providerId ? getJudgeProviderSpec(judgeConfig.providerId) : null
 
@@ -143,7 +153,22 @@ export function createJudgeFromConfig(
     })
   }
 
-  return createDeterministicJudgeStub()
+  if (provider === 'anthropic') {
+    const { resolved } = resolveJudgeModel(judgeConfig)
+    return createFailClosedJudge({
+      reason: 'anthropic_not_implemented',
+      fallbackReason: 'anthropic_runtime_unavailable',
+      modelRequested: judgeConfig.model,
+      modelResolved: resolved,
+    })
+  }
+
+  return createFailClosedJudge({
+    reason: 'unsupported_judge_provider',
+    fallbackReason: 'unsupported_provider',
+    modelRequested: judgeConfig.model,
+    modelResolved: judgeConfig.model,
+  })
 }
 
 export function judgeConfigSummary(judge: BelayJudgeConfig): string {

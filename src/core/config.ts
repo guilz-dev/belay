@@ -7,7 +7,13 @@ import type {
   UnknownLocalEffectPolicy,
   UnparseableShellPolicy,
 } from './types.js'
-import { getJudgeProviderSpec, inferProviderIdFromConfig } from './verdict/judge-catalog.js'
+import {
+  getJudgeProviderSpec,
+  inferProviderIdFromConfig,
+  isRemovedProviderId,
+  normalizeLegacyProviderId,
+  warnRemovedProviderId,
+} from './verdict/judge-catalog.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -101,9 +107,12 @@ export interface BelayRedactionConfig {
   maskHighEntropyStrings: boolean
 }
 
-export type JudgeProvider = 'ollama' | 'openai-compatible'
+export type JudgeProvider = 'ollama' | 'openai-compatible' | 'anthropic'
 
-export type JudgeProviderId = 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
+export type JudgeProviderId = 'ollama' | 'codex' | 'claude' | 'cursor'
+
+/** Read-only legacy ids; preserved on load with warning until `belay judge use` migrates. */
+export type DeprecatedJudgeProviderId = 'openrouter' | 'custom'
 
 export type JudgeCredentialMode = 'project' | 'apiKey'
 
@@ -124,7 +133,7 @@ export interface JudgeCloudConsent {
 
 export interface BelayJudgeConfig {
   provider: JudgeProvider
-  providerId?: JudgeProviderId
+  providerId?: JudgeProviderId | DeprecatedJudgeProviderId
   model: string
   timeoutMs: number
   endpoint: string | null
@@ -135,7 +144,7 @@ export interface BelayJudgeConfig {
 
 export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
   provider: 'ollama',
-  providerId: 'local',
+  providerId: 'ollama',
   model: 'gemma4:e2b',
   endpoint: 'http://localhost:11434',
   timeoutMs: 25000,
@@ -144,8 +153,8 @@ export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
 
 export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig = {
   provider: 'openai-compatible',
-  providerId: 'openai',
-  model: 'gpt-4.1-mini',
+  providerId: 'codex',
+  model: 'gpt-5.3-codex-high',
   timeoutMs: 8000,
   endpoint: null,
   keepAlive: null,
@@ -457,11 +466,33 @@ export function isConfigV4(value: unknown): value is BelayConfigV4 {
 
 export function normalizeJudgeProvider(
   provider: string | undefined,
-): 'ollama' | 'openai-compatible' {
+): 'ollama' | 'openai-compatible' | 'anthropic' {
+  if (provider === 'anthropic') {
+    return 'anthropic'
+  }
   if (provider === 'openai-compatible' || provider === 'cursor') {
     return 'openai-compatible'
   }
   return 'ollama'
+}
+
+function defaultJudgeTemplateForProvider(
+  provider: 'ollama' | 'openai-compatible' | 'anthropic',
+): BelayJudgeConfig {
+  if (provider === 'ollama') {
+    return DEFAULT_JUDGE_LOCAL_OLLAMA
+  }
+  if (provider === 'anthropic') {
+    return {
+      provider: 'anthropic',
+      providerId: 'claude',
+      model: 'claude-sonnet-4-6',
+      timeoutMs: 8000,
+      endpoint: null,
+      keepAlive: null,
+    }
+  }
+  return DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
 }
 
 function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
@@ -469,15 +500,18 @@ function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
   if (judge?.provider) {
     const rawProvider = String(judge.provider)
     const provider = normalizeJudgeProvider(rawProvider)
-    const base =
-      provider === 'openai-compatible'
-        ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
-        : DEFAULT_JUDGE_LOCAL_OLLAMA
+    const base = defaultJudgeTemplateForProvider(provider)
+    const providerId =
+      judge.providerId && normalizeLegacyProviderId(judge.providerId)
+        ? normalizeLegacyProviderId(judge.providerId)!
+        : rawProvider === 'cursor'
+          ? ('cursor' as const)
+          : undefined
     return normalizeJudgeConfig({
       ...base,
       ...judge,
       provider,
-      ...(rawProvider === 'cursor' ? { providerId: 'cursor' as const } : {}),
+      ...(providerId ? { providerId } : {}),
     })
   }
   return { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
@@ -485,14 +519,37 @@ function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
 
 export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig {
   const provider = normalizeJudgeProvider(judge.provider)
-  const base =
-    provider === 'openai-compatible'
-      ? DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
-      : DEFAULT_JUDGE_LOCAL_OLLAMA
+  const base = defaultJudgeTemplateForProvider(provider)
+
+  const rawProviderId = judge.providerId ? String(judge.providerId) : undefined
+  if (rawProviderId && isRemovedProviderId(rawProviderId)) {
+    warnRemovedProviderId(rawProviderId)
+    const model =
+      typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
+    const timeoutMs =
+      typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
+    const endpoint: string | null =
+      typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null
+    return {
+      provider,
+      providerId: rawProviderId as DeprecatedJudgeProviderId,
+      model,
+      timeoutMs,
+      endpoint,
+      keepAlive:
+        provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
+          ? judge.keepAlive.trim()
+          : provider === 'ollama'
+            ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
+            : null,
+      ...(judge.cloudConsent ? { cloudConsent: judge.cloudConsent } : {}),
+      ...(judge.credential ? { credential: judge.credential } : {}),
+    }
+  }
 
   let providerId: JudgeProviderId =
-    judge.providerId && getJudgeProviderSpec(judge.providerId)
-      ? judge.providerId
+    rawProviderId && normalizeLegacyProviderId(rawProviderId)
+      ? normalizeLegacyProviderId(rawProviderId)!
       : inferProviderIdFromConfig({ ...judge, provider })
 
   const spec = getJudgeProviderSpec(providerId)

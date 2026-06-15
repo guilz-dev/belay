@@ -1,8 +1,9 @@
 import { stdin as input, stdout as output } from 'node:process'
 import readline from 'node:readline/promises'
+import { defaultJudgeProviderForAdapter } from '../core/judge-config.js'
 import {
-  isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
+  normalizeLegacyProviderId,
   type JudgeProviderId,
 } from '../core/verdict/judge-catalog.js'
 import { initProject } from '../installer.js'
@@ -48,11 +49,12 @@ export function parseYesNo(value: string | undefined, defaultValue: boolean): bo
 
 export function parseJudgeProviderId(
   value: string | undefined,
-  defaultId: JudgeProviderId,
+  defaultId: JudgeProviderId | string,
 ): JudgeProviderId {
   const normalized = (value?.trim() || defaultId).toLowerCase()
-  if (isJudgeProviderId(normalized)) {
-    return normalized
+  const canonical = normalizeLegacyProviderId(normalized)
+  if (canonical) {
+    return canonical
   }
   throw new Error(`Unknown judge provider: ${value ?? '(empty)'}`)
 }
@@ -84,16 +86,19 @@ export async function runInitWizard(options: { targetDir?: string } = {}) {
       await rl.question('Install SKILL.md and slash commands? [y | n] (y): '),
       true,
     )
+    const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
     const judgeProviderId = parseJudgeProviderId(
-      await rl.question(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (local): `),
-      'local',
+      await rl.question(
+        `Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `,
+      ),
+      defaultJudgeProviderId,
     )
 
     let judgeCredentialMode: 'project' | 'apiKey' | undefined
     let judgeEndpoint: string | undefined
     let acceptCloud = false
 
-    const isCloud = judgeProviderId !== 'local'
+    const isCloud = judgeProviderId !== 'ollama'
     if (isCloud) {
       judgeCredentialMode = parseYesNo(
         await rl.question('Use project env for credentials? [y=project | n=apiKey] (y): '),
@@ -102,8 +107,9 @@ export async function runInitWizard(options: { targetDir?: string } = {}) {
         ? 'project'
         : 'apiKey'
 
-      if (judgeProviderId === 'cursor' || judgeProviderId === 'custom') {
-        judgeEndpoint = (await rl.question('Judge endpoint URL (required): ')).trim()
+      const optionalEndpoint = (await rl.question('Judge endpoint URL (optional): ')).trim()
+      if (optionalEndpoint) {
+        judgeEndpoint = optionalEndpoint
       }
 
       if (judgeCredentialMode === 'apiKey') {

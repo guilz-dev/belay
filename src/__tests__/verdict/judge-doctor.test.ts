@@ -24,15 +24,15 @@ describe('T12 doctor judge matrix', () => {
       ...DEFAULT_CONFIG_V4,
       judge: {
         provider: 'openai-compatible',
-        providerId: 'openai',
-        model: 'gpt-4.1-mini',
+        providerId: 'codex',
+        model: 'gpt-5.3-codex-high',
         timeoutMs: 8000,
         endpoint: 'https://api.example.com/v1',
         keepAlive: null,
         cloudConsent: {
           accepted: true,
           at: '2026-01-01T00:00:00.000Z',
-          providerId: 'openai',
+          providerId: 'codex',
           endpoint: 'https://api.example.com/v1',
           by: 'test',
         },
@@ -48,7 +48,7 @@ describe('T12 doctor judge matrix', () => {
     }
   })
 
-  it('flags missing endpoint for openai-compatible provider', async () => {
+  it('does not flag missing endpoint for cursor provider', async () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
@@ -61,7 +61,7 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.includes('endpoint'))).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('endpoint'))).toBe(false)
   })
 
   it('flags unreachable ollama endpoint', async () => {

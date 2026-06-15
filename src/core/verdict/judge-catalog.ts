@@ -1,6 +1,25 @@
 import type { BelayJudgeConfig, JudgeProvider } from '../config.js'
 
-export type JudgeProviderId = 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
+export type JudgeProviderId = 'ollama' | 'codex' | 'claude' | 'cursor'
+
+/** Read-time aliases for legacy configs; never written on fresh init. */
+export const LEGACY_PROVIDER_ID_ALIASES: Record<string, JudgeProviderId> = {
+  local: 'ollama',
+  openai: 'codex',
+}
+
+/** Removed catalog ids; load emits a warning and best-effort canonical mapping. */
+export const REMOVED_JUDGE_PROVIDER_IDS = ['openrouter', 'custom'] as const
+
+export function isRemovedProviderId(id: string): boolean {
+  return (REMOVED_JUDGE_PROVIDER_IDS as readonly string[]).includes(id)
+}
+
+export function warnRemovedProviderId(id: string): void {
+  process.stderr.write(
+    `Warning: judge.providerId "${id}" was removed; switch with belay judge use (ollama, codex, claude, cursor).\n`,
+  )
+}
 
 export interface JudgeProviderSpec {
   id: JudgeProviderId
@@ -12,20 +31,28 @@ export interface JudgeProviderSpec {
 }
 
 export const JUDGE_CATALOG: Record<JudgeProviderId, JudgeProviderSpec> = {
-  local: {
-    id: 'local',
+  ollama: {
+    id: 'ollama',
     driver: 'ollama',
     defaultEndpoint: 'http://localhost:11434',
     defaultModel: 'gemma4:e2b',
     apiKeyEnvVars: [],
     isCloud: false,
   },
-  openai: {
-    id: 'openai',
+  codex: {
+    id: 'codex',
     driver: 'openai-compatible',
-    defaultEndpoint: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4.1-mini',
+    defaultEndpoint: null,
+    defaultModel: 'gpt-5.3-codex-high',
     apiKeyEnvVars: ['OPENAI_API_KEY', 'BELAY_JUDGE_API_KEY'],
+    isCloud: true,
+  },
+  claude: {
+    id: 'claude',
+    driver: 'anthropic',
+    defaultEndpoint: null,
+    defaultModel: 'claude-sonnet-4-6',
+    apiKeyEnvVars: ['ANTHROPIC_API_KEY', 'BELAY_JUDGE_API_KEY'],
     isCloud: true,
   },
   cursor: {
@@ -36,59 +63,63 @@ export const JUDGE_CATALOG: Record<JudgeProviderId, JudgeProviderSpec> = {
     apiKeyEnvVars: ['CURSOR_API_KEY', 'BELAY_JUDGE_API_KEY'],
     isCloud: true,
   },
-  openrouter: {
-    id: 'openrouter',
-    driver: 'openai-compatible',
-    defaultEndpoint: 'https://openrouter.ai/api/v1',
-    defaultModel: 'openai/gpt-4.1-mini',
-    apiKeyEnvVars: ['OPENROUTER_API_KEY', 'BELAY_JUDGE_API_KEY'],
-    isCloud: true,
-  },
-  custom: {
-    id: 'custom',
-    driver: 'openai-compatible',
-    defaultEndpoint: null,
-    defaultModel: '',
-    apiKeyEnvVars: ['BELAY_JUDGE_API_KEY'],
-    isCloud: true,
-  },
 }
 
 export const JUDGE_PROVIDER_IDS = Object.keys(JUDGE_CATALOG) as JudgeProviderId[]
 
-export function getJudgeProviderSpec(id: string): JudgeProviderSpec | null {
+export function normalizeLegacyProviderId(id: string): JudgeProviderId | null {
   if (id in JUDGE_CATALOG) {
-    return JUDGE_CATALOG[id as JudgeProviderId]
+    return id as JudgeProviderId
   }
-  return null
+  return LEGACY_PROVIDER_ID_ALIASES[id] ?? null
 }
 
-export function isJudgeProviderId(value: string): value is JudgeProviderId {
-  return value in JUDGE_CATALOG
+export function getJudgeProviderSpec(id: string): JudgeProviderSpec | null {
+  const normalized = normalizeLegacyProviderId(id)
+  if (!normalized) {
+    return null
+  }
+  return JUDGE_CATALOG[normalized]
+}
+
+export function isJudgeProviderId(value: string): boolean {
+  return normalizeLegacyProviderId(value) !== null
 }
 
 export function inferProviderIdFromConfig(judge: Partial<BelayJudgeConfig>): JudgeProviderId {
-  const endpoint = judge.endpoint?.trim().toLowerCase() ?? ''
+  if (judge.providerId) {
+    const normalized = normalizeLegacyProviderId(judge.providerId)
+    if (normalized) {
+      return normalized
+    }
+  }
   if (judge.provider === 'ollama') {
-    return 'local'
+    return 'ollama'
+  }
+  if (judge.provider === 'anthropic') {
+    return 'claude'
+  }
+  const endpoint = judge.endpoint?.trim().toLowerCase() ?? ''
+  if (endpoint.includes('openrouter.ai')) {
+    return 'codex'
   }
   if (endpoint.includes('api.openai.com')) {
-    return 'openai'
-  }
-  if (endpoint.includes('openrouter.ai')) {
-    return 'openrouter'
+    return 'codex'
   }
   if (endpoint) {
-    return 'custom'
+    return 'codex'
   }
-  if (judge.providerId && isJudgeProviderId(judge.providerId)) {
-    return judge.providerId
+  if (judge.provider === 'openai-compatible') {
+    const model = judge.model?.trim().toLowerCase() ?? ''
+    if (model.includes('composer')) {
+      return 'cursor'
+    }
   }
-  return 'custom'
+  return 'codex'
 }
 
 export interface ResolveJudgeFromCatalogInput {
-  providerId: JudgeProviderId
+  providerId: JudgeProviderId | string
   model?: string
   endpoint?: string | null
   timeoutMs?: number
@@ -96,11 +127,12 @@ export interface ResolveJudgeFromCatalogInput {
 }
 
 export function resolveJudgeFromCatalog(input: ResolveJudgeFromCatalogInput): BelayJudgeConfig {
-  const spec = JUDGE_CATALOG[input.providerId]
-  const model =
-    input.model?.trim() ||
-    spec.defaultModel ||
-    (input.providerId === 'custom' ? '' : spec.defaultModel)
+  const providerId = normalizeLegacyProviderId(String(input.providerId))
+  if (!providerId) {
+    throw new Error(`Unknown judge provider id: ${input.providerId}`)
+  }
+  const spec = JUDGE_CATALOG[providerId]
+  const model = input.model?.trim() || spec.defaultModel
   const endpoint =
     input.endpoint !== undefined ? input.endpoint?.trim() || null : spec.defaultEndpoint
   return {
@@ -113,13 +145,17 @@ export function resolveJudgeFromCatalog(input: ResolveJudgeFromCatalogInput): Be
   }
 }
 
-export function catalogRequiresEndpoint(providerId: JudgeProviderId): boolean {
-  return providerId === 'cursor' || providerId === 'custom'
+export function catalogRequiresEndpoint(_providerId: JudgeProviderId): boolean {
+  return false
 }
 
-export function isCloudProviderId(providerId: JudgeProviderId | undefined): boolean {
+export function isCloudProviderId(providerId: JudgeProviderId | string | undefined): boolean {
   if (!providerId) {
     return false
   }
-  return JUDGE_CATALOG[providerId].isCloud
+  const normalized = normalizeLegacyProviderId(providerId)
+  if (!normalized) {
+    return false
+  }
+  return JUDGE_CATALOG[normalized].isCloud
 }

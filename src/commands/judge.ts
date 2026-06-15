@@ -31,6 +31,7 @@ import {
   isJudgeProviderId,
   JUDGE_CATALOG,
   JUDGE_PROVIDER_IDS,
+  normalizeLegacyProviderId,
 } from '../core/verdict/judge-catalog.js'
 import { resolveJudgeModel } from '../core/verdict/judge-factory.js'
 
@@ -175,7 +176,7 @@ export function judgeList(options: JudgeCommandOptions = {}) {
   return entries
     .map(
       (entry) =>
-        `${entry.id} (${entry.cloud ? 'cloud' : 'local'}) driver=${entry.driver} model=${entry.defaultModel} endpoint=${entry.defaultEndpoint ?? 'required'}`,
+        `${entry.id} (${entry.cloud ? 'cloud' : 'local'}) driver=${entry.driver} model=${entry.defaultModel} endpoint=${entry.defaultEndpoint ?? 'optional'}`,
     )
     .join('\n')
 }
@@ -323,7 +324,8 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
   if (!providerId || !isJudgeProviderId(providerId)) {
     throw new Error(`judge consent requires --provider-id: ${JUDGE_PROVIDER_IDS.join(', ')}`)
   }
-  const spec = getJudgeProviderSpec(providerId)
+  const canonicalProviderId = normalizeLegacyProviderId(providerId)!
+  const spec = getJudgeProviderSpec(canonicalProviderId)
   if (!spec?.isCloud) {
     throw new Error(
       `judge consent applies only to cloud providers (${JUDGE_PROVIDER_IDS.filter((id) => JUDGE_CATALOG[id].isCloud).join(', ')}).`,
@@ -332,19 +334,19 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
   const endpoint =
     options.endpoint?.trim() || config.judge.endpoint?.trim() || spec.defaultEndpoint || ''
   if (!endpoint) {
-    throw new Error(`${providerId} requires --endpoint for cloud consent request.`)
+    throw new Error(`${canonicalProviderId} requires --endpoint for cloud consent request.`)
   }
 
   const { approvalId, created } = await ensurePendingJudgeCloudConsentApproval({
     repoRoot,
     config,
-    providerId,
+    providerId: canonicalProviderId,
     endpoint,
   })
   const lines = [
     `Cloud consent approval ${created ? 'created' : 'reused'}: ${approvalId}`,
     `Approve: belay approve ${approvalId}`,
-    `Then: belay judge use ${providerId} --endpoint ${endpoint} --cloud-consent-approval-id ${approvalId}`,
+    `Then: belay judge use ${canonicalProviderId} --endpoint ${endpoint} --cloud-consent-approval-id ${approvalId}`,
   ]
   if (options.json) {
     return { approvalId, created, providerId, endpoint, reason: JUDGE_CLOUD_CONSENT_REASON }

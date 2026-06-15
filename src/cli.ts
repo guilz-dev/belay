@@ -457,8 +457,9 @@ function printHelp() {
   process.stdout.write(`${c}
 
 Usage:
-  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id|auto>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
+  ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--with-skill] [--dogfood]
   ${c} init-wizard [--target <dir>]
+  (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
@@ -474,8 +475,8 @@ Usage:
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
   ${c} judge <status|list|use|test|consent> [--target <dir>] [--json]
-  ${c} judge use <provider-id> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
-  ${c} judge consent <provider-id> [--endpoint <url>]
+  ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
+  ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
 `)

@@ -52,7 +52,7 @@ export interface InitOptions {
   preset?: import('./presets.js').ConfigPresetName
   judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
   judgeProvider?: 'ollama' | 'openai-compatible' | 'cursor'
-  judgeProviderId?: 'local' | 'openai' | 'cursor' | 'openrouter' | 'custom'
+  judgeProviderId?: 'ollama' | 'codex' | 'claude' | 'cursor' | 'local' | 'openai'
   judgeModel?: string
   judgeEndpoint?: string
   judgeCredentialMode?: 'project' | 'apiKey'

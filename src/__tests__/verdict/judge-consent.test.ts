@@ -10,7 +10,8 @@ import {
 describe("cloud consent boundaries (plan A')", () => {
   it('does not record consent from acceptCloud in non-interactive mode', () => {
     const { judge, warnings } = resolveJudgeUsePatch(DEFAULT_JUDGE_LOCAL_OLLAMA, {
-      providerId: 'openai',
+      providerId: 'codex',
+      endpoint: 'https://api.openai.com/v1',
       acceptCloud: true,
       interactiveTTY: false,
     })
@@ -20,7 +21,8 @@ describe("cloud consent boundaries (plan A')", () => {
 
   it('records consent from capability approval id without --accept-cloud', () => {
     const { judge } = resolveJudgeUsePatch(DEFAULT_JUDGE_LOCAL_OLLAMA, {
-      providerId: 'openai',
+      providerId: 'codex',
+      endpoint: 'https://api.openai.com/v1',
       cloudConsentApprovalId: 'approval-456',
       interactiveTTY: false,
     })
@@ -30,7 +32,8 @@ describe("cloud consent boundaries (plan A')", () => {
 
   it('records consent from capability approval id with --accept-cloud', () => {
     const { judge } = resolveJudgeUsePatch(DEFAULT_JUDGE_LOCAL_OLLAMA, {
-      providerId: 'openai',
+      providerId: 'codex',
+      endpoint: 'https://api.openai.com/v1',
       acceptCloud: true,
       cloudConsentApprovalId: 'approval-123',
       interactiveTTY: false,
@@ -42,7 +45,8 @@ describe("cloud consent boundaries (plan A')", () => {
 
   it('records consent from interactive TTY confirmation', () => {
     const { judge } = resolveJudgeUsePatch(DEFAULT_JUDGE_LOCAL_OLLAMA, {
-      providerId: 'openai',
+      providerId: 'codex',
+      endpoint: 'https://api.openai.com/v1',
       acceptCloud: true,
       interactiveTTY: true,
       interactiveConsentApproved: true,
@@ -55,8 +59,8 @@ describe("cloud consent boundaries (plan A')", () => {
     const judge = applyCloudConsent(
       {
         provider: 'openai-compatible',
-        providerId: 'openai',
-        model: 'gpt-4.1-mini',
+        providerId: 'codex',
+        model: 'gpt-5.3-codex-high',
         endpoint: 'https://api.openai.com/v1',
         timeoutMs: 8000,
         keepAlive: null,
@@ -67,7 +71,7 @@ describe("cloud consent boundaries (plan A')", () => {
     expect(
       hasValidCloudConsent({
         ...judge,
-        providerId: 'openrouter',
+        providerId: 'claude',
         endpoint: 'https://api.openai.com/v1',
       }),
     ).toBe(false)

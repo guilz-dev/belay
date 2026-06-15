@@ -21,7 +21,7 @@ describe('mixed-version judge config', () => {
     })
     expect(loaded.judge.provider).toBe('openai-compatible')
     expect(loaded.judge.provider).not.toBe('ollama')
-    expect(loaded.judge.providerId).toBe('openai')
+    expect(loaded.judge.providerId).toBe('codex')
   })
 
   it('does not collapse openai-compatible to ollama on migrate', () => {
@@ -36,7 +36,7 @@ describe('mixed-version judge config', () => {
       },
     })
     expect(migrated.judge.provider).toBe('openai-compatible')
-    expect(migrated.judge.model).toBe('gpt-4.1-mini')
+    expect(migrated.judge.model).toBe('gpt-5.3-codex-high')
   })
 
   it('preserves driver while adding providerId on normalize', () => {
@@ -48,18 +48,18 @@ describe('mixed-version judge config', () => {
       keepAlive: '30m',
     })
     expect(normalized.provider).toBe('ollama')
-    expect(normalized.providerId).toBe('local')
+    expect(normalized.providerId).toBe('ollama')
   })
 
   it('does not apply OpenAI default endpoint to endpoint-less openai-compatible', () => {
     const normalized = normalizeJudgeConfig({
       provider: 'openai-compatible',
-      model: 'gpt-4.1-mini',
+      model: 'gpt-5.3-codex-high',
       endpoint: null,
       timeoutMs: 8000,
       keepAlive: null,
     })
-    expect(normalized.providerId).toBe('custom')
+    expect(normalized.providerId).toBe('codex')
     expect(normalized.endpoint).toBeNull()
   })
 })

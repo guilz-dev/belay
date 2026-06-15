@@ -12,8 +12,8 @@ describe('init wizard', () => {
   it('uses bracket defaults when the user presses Enter', () => {
     expect(parseAdapter('')).toBe('cursor')
     expect(parseScope('')).toBe('project')
-    expect(parseJudgeProviderId('', 'local')).toBe('local')
-    expect(parseJudgeProviderId('', 'openai')).toBe('openai')
+    expect(parseJudgeProviderId('', 'ollama')).toBe('ollama')
+    expect(parseJudgeProviderId('', 'openai')).toBe('codex')
     expect(parseYesNo('', true)).toBe(true)
     expect(parseYesNo('', false)).toBe(false)
   })
@@ -25,7 +25,7 @@ describe('init wizard', () => {
           adapter: 'codex',
           scope: 'global',
           withSkill: true,
-          judgeProviderId: 'openai',
+          judgeProviderId: 'codex',
           acceptCloud: true,
           dogfood: true,
         },
@@ -36,7 +36,7 @@ describe('init wizard', () => {
       adapter: 'codex',
       scope: 'global',
       withSkill: true,
-      judgeProviderId: 'openai',
+      judgeProviderId: 'codex',
       acceptCloudJudge: true,
       dogfood: true,
     })

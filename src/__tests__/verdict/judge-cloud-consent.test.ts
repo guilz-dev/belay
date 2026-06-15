@@ -22,7 +22,8 @@ describe('judge cloud consent capability', () => {
 
     const message = (await judgeRequestCloudConsent({
       targetDir: repoRoot,
-      providerId: 'openai',
+      providerId: 'codex',
+      endpoint: 'https://api.openai.com/v1',
     })) as string
     expect(message).toContain('belay approve belay_')
 
