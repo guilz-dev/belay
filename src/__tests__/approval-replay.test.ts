@@ -10,6 +10,7 @@ import {
   validateReplayEnvelope,
 } from '../core/approval-replay.js'
 import { DEFAULT_APPROVAL_CONFIG, DEFAULT_CONFIG_V4 } from '../core/config.js'
+import type { ApprovalRecord } from '../core/types.js'
 
 function shellApproval(overrides: Partial<ApprovalRecord> = {}): ApprovalRecord {
   return {
