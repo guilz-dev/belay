@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.3.0 — 2026-06-15
+
 ### Changed
 
 - **`belay config`** — new primary UI for judge settings (`list`, `get`, `set`, `unset`, `credential`, `judge`) and interactive setup. Replaces `init-wizard`.
@@ -16,16 +18,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Judge providers** — catalog is `ollama`, `codex`, `claude`, `cursor` (removed `openrouter` / `custom`). Read-time aliases: `local` → `ollama`, `openai` → `codex`.
 - **Fresh init defaults** — judge `providerId` follows host adapter (`cursor` / `claude` / `codex`), not local Ollama. Default models: `gemma4:e2b`, `gpt-5.3-codex-high`, `claude-sonnet-4-6`, `composer-2.5`.
 - **Fresh init credential** — writes `judge.credential.mode: project` by default.
-- **Native CLI judge transport** — `codex` / `cursor` / `claude` can run Tier1 via host CLI (`*-cli` transport) without API keys when the CLI is on PATH; outbound text is scrubbed before send.
+- **Native CLI judge transport** — `codex` / `cursor` / `claude` can run Tier1 via host CLI (`*-cli` transport) without API keys when the CLI is on PATH; outbound text is scrubbed before send. Provider-specific read-only / ask-mode flags hardened for native invocations.
 - **`belay judge status` / `test` / doctor** — show transport, credential `sourceKind`, and live model check (`found` / `missing` / `unverified`).
 - **`--migrate-judge-default`** — opt-in migration of implicit factory-default `ollama` to the host-matched provider on `belay init` / `belay upgrade` (audit: `judge_provider_changed`).
 - **`judge.model: auto`** — rejected on new input (`--judge-model`, `belay config set`, `belay judge use`). Legacy config values are normalized to the catalog default on load with a warning (lazy migration until next persist).
-- **Interactive `belay config`** — on installed repos (`floorInstalled`), defaults to judge-only setup without re-running `init`; full setup remains available.
+- **Interactive `belay config`** — on installed repos (`floorInstalled`), defaults to judge-only setup without re-running `init`; full setup reuses one readline session.
 - **Model discovery tests** — unit tests mock CLI/API probes; optional live probe via `BELAY_LIVE_CLI_DISCOVERY=1` (not run in CI).
 - **`BELAY_JUDGE_MODEL_RESOLVED`** — honored only under Vitest for test overrides; ignored in normal CLI runs.
-
-### Changed (earlier in unreleased)
-
 - **`claude` driver** — config uses `anthropic`; Tier1 uses `claude-cli` when the Claude CLI is available, otherwise fail-closed.
 
 ### Fixed
