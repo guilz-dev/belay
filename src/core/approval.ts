@@ -1,7 +1,9 @@
+import { DEFAULT_APPROVAL_CONFIG } from './config.js'
+import { buildReplayEnvelopeFields } from './approval-replay.js'
 import type { ApprovalRecord, ApprovalStateFile } from './types.js'
 
-/** Cursor may invoke the same shell gate more than once per retry; lease covers that window. */
-export const APPROVAL_EXECUTION_LEASE_MS = 60_000
+/** @deprecated Use `DEFAULT_APPROVAL_CONFIG.executionLeaseMs` */
+export const APPROVAL_EXECUTION_LEASE_MS = DEFAULT_APPROVAL_CONFIG.executionLeaseMs
 
 export function nowIso(): string {
   return new Date().toISOString()
@@ -64,8 +66,48 @@ export function approvalCommandMatch(prompt: string, tokenPrefix: string): strin
   return null
 }
 
-export function buildRetryInstruction(tokenPrefix: string, approvalId: string): string {
-  return `To allow the next matching action once, send ${tokenPrefix} ${approvalId} and then retry the original action unchanged.`
+export function createApprovalRecordWithEnvelope(params: {
+  kind: ApprovalRecord['kind']
+  fingerprint: string
+  repoRoot: string
+  reason: string
+  summary: string
+  approvalTtlMinutes: number
+  approvalId: string
+  approvalInput?: {
+    input: string
+    inputKind: 'shell' | 'tool' | 'subagent'
+    cwd?: string
+    toolName?: string
+    payload?: Record<string, unknown>
+  }
+}): ApprovalRecord {
+  const envelope = buildReplayEnvelopeFields({
+    kind: params.kind,
+    command: params.approvalInput?.input,
+    input: params.approvalInput?.input,
+    inputKind: params.approvalInput?.inputKind,
+    cwd: params.approvalInput?.cwd,
+    toolName: params.approvalInput?.toolName,
+    payload: params.approvalInput?.payload,
+    fingerprint: params.fingerprint,
+    repoRoot: params.repoRoot,
+  })
+  return createApprovalRecord({
+    kind: params.kind,
+    fingerprint: params.fingerprint,
+    repoRoot: params.repoRoot,
+    reason: params.reason,
+    summary: params.summary,
+    approvalTtlMinutes: params.approvalTtlMinutes,
+    approvalId: params.approvalId,
+    input: envelope.input ?? params.approvalInput?.input,
+    inputKind: envelope.inputKind ?? params.approvalInput?.inputKind,
+    cwd: envelope.cwd,
+    toolName: envelope.toolName ?? params.approvalInput?.toolName,
+    payloadHash: envelope.payloadHash,
+    payloadJson: envelope.payloadJson,
+  })
 }
 
 export function createApprovalRecord(params: {
@@ -78,6 +120,10 @@ export function createApprovalRecord(params: {
   approvalId: string
   input?: string
   inputKind?: 'shell' | 'tool' | 'subagent'
+  cwd?: string
+  toolName?: string
+  payloadHash?: string
+  payloadJson?: string
 }): ApprovalRecord {
   const createdAt = nowIso()
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString()
@@ -94,6 +140,18 @@ export function createApprovalRecord(params: {
   if (params.input) {
     record.input = params.input
     record.inputKind = params.inputKind ?? (params.kind as 'shell' | 'tool' | 'subagent')
+  }
+  if (params.cwd) {
+    record.cwd = params.cwd
+  }
+  if (params.toolName) {
+    record.toolName = params.toolName
+  }
+  if (params.payloadHash) {
+    record.payloadHash = params.payloadHash
+  }
+  if (params.payloadJson) {
+    record.payloadJson = params.payloadJson
   }
   return record
 }

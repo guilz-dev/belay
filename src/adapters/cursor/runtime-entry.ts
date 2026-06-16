@@ -57,6 +57,7 @@ export async function runBeforeSubmitPromptHook() {
     jsonResponse({
       continue: result.continue,
       ...(result.user_message ? { user_message: result.user_message } : {}),
+      ...(result.replay ? { replay: result.replay } : {}),
     })
   } catch {
     jsonResponse({

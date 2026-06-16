@@ -21,6 +21,7 @@ exhaustive field defaults).
 | `redaction` | object | masks on | Audit scrubbing |
 | `controlPlane` | object | enabled | See below |
 | `notifications` | object | | webhook / command hook |
+| `approval` | object | `flow: one_step` | Approval UX — see below |
 | `approvalSigning` | object | `required: false` | Signed OOB approval tokens |
 | `egress` | object | disabled | L1 partial — egress proxy |
 | `sandbox` | object | disabled | L1-full — external sandbox broker |
@@ -132,6 +133,26 @@ boundary: shell redirects and mutations targeting paths outside the repository d
 the path is on the fs-scope allowlist (`belay approve <id> --scope path`). This is separate
 from the L3 restorability floor (repo-outside local-recoverable mutations are allowed at
 default L3 after Tier1 — see ADR-002).
+
+## `approval`
+
+Controls post-approval UX. Existing configs migrate to `one_step` on load.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `flow` | `"one_step"` \| `"two_step"` | `"one_step"` | `two_step` = approve then manually retry (legacy) |
+| `autoReplayScopes.shell` | boolean | `true` | Shell replay hints + `belay approve --replay` |
+| `autoReplayScopes.tool` | boolean | `false` | Tool actions fall back to manual retry |
+| `autoReplayScopes.subagent` | boolean | `false` | Subagent actions fall back to manual retry |
+| `executionLeaseMs` | number | `60000` | Duplicate hook invocations share one approval |
+
+`one_step` returns structured replay hints from editor approval hooks when shell auto-replay
+is enabled. Tool and subagent paths always fall back to `two_step` instructions until their
+scopes are explicitly enabled. `belay approve <id> --replay` runs shell commands only when
+`--replay` is passed explicitly; a successful CLI replay consumes the grant (do not also retry
+via hooks).
+
+Set `"approval": { "flow": "two_step" }` in `belay.config.json` to restore the previous UX.
 
 ## Presets
 

@@ -20,11 +20,17 @@ export async function explainCommand(options: ExplainOptions): Promise<ExplainRe
       const inputKind =
         latest.inputKind ??
         (latest.kind === 'egress' || latest.kind === 'capability' ? 'shell' : latest.kind)
+      const payload =
+        latest.payloadJson !== undefined
+          ? (JSON.parse(latest.payloadJson) as Record<string, unknown>)
+          : undefined
       const classified = await classifyForReport({
         targetDir: repoRoot,
-        cwd: options.cwd,
+        cwd: latest.cwd ?? options.cwd,
         kind: inputKind,
         command: latest.input ?? latest.summary,
+        toolName: latest.toolName,
+        payload,
       })
       return {
         repoRoot: classified.repoRoot,

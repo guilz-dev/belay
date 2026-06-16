@@ -100,6 +100,14 @@ export interface ApprovalRecord {
   /** Original gated input for explain-last-ask (ApprovalState v2). */
   input?: string
   inputKind?: 'shell' | 'tool' | 'subagent'
+  /** Replay envelope: working directory when the action was gated. */
+  cwd?: string
+  /** Replay envelope: tool name for tool/subagent actions. */
+  toolName?: string
+  /** Replay envelope: canonical payload hash for strict replay validation. */
+  payloadHash?: string
+  /** Replay envelope: scrubbed payload JSON for explain (size-capped at write time). */
+  payloadJson?: string
 }
 
 export interface ApprovalStateFile {

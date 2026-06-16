@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
@@ -67,7 +67,7 @@ export async function ensureBelayStateDir(
   repoRoot: string,
 ): Promise<string> {
   const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
-  await mkdir(stateDir, { recursive: true })
+  await mkdir(stateDir, { recursive: true, mode: 0o700 })
   return stateDir
 }
 
@@ -105,12 +105,16 @@ async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFil
 }
 
 async function writeApprovalStateFile(filePath: string, state: ApprovalStateFile): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true })
-  await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
+  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
+  await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+  await chmod(filePath, 0o600)
 }
 
 async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string): Promise<void> {
-  await mkdir(targetDir, { recursive: true })
+  await mkdir(targetDir, { recursive: true, mode: 0o700 })
   for (const fileName of APPROVAL_STATE_FILES) {
     const from = path.join(sourceDir, fileName)
     const to = path.join(targetDir, fileName)
@@ -119,6 +123,7 @@ async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string)
     }
     if (!existsSync(to)) {
       await copyFile(from, to)
+      await chmod(to, 0o600)
       continue
     }
     const targetState = await readApprovalStateFile(to)

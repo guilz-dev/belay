@@ -1,4 +1,5 @@
 import { canonicalStringify, subagentFingerprint } from './fingerprint.js'
+import { subagentFingerprintSource } from './replay-scrub.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 
@@ -26,32 +27,7 @@ function extractSubagentText(payload: Record<string, unknown>, options: Classifi
 }
 
 function fingerprintSource(payload: Record<string, unknown>, options: ClassifierOptions): unknown {
-  const toolInput = payload.tool_input
-  if (toolInput && typeof toolInput === 'object') {
-    const input = toolInput as Record<string, unknown>
-    return scrubValue(
-      {
-        description: input.description ?? '',
-        prompt: input.prompt ?? '',
-      },
-      options.scrubOptions,
-    )
-  }
-  const task = payload.task
-  if (typeof task === 'string') {
-    return scrubValue({ task }, options.scrubOptions)
-  }
-  if (task && typeof task === 'object') {
-    const taskObj = task as Record<string, unknown>
-    return scrubValue(
-      {
-        description: taskObj.description ?? '',
-        prompt: taskObj.prompt ?? '',
-      },
-      options.scrubOptions,
-    )
-  }
-  return scrubValue(payload, options.scrubOptions)
+  return subagentFingerprintSource(payload, options.scrubOptions ?? {})
 }
 
 export function classifySubagent(

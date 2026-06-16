@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **`approval.flow`** — `one_step` (default) and `two_step` modes for post-approval UX.
+- **Replay envelope** — pending approvals store `cwd`, `toolName`, and payload hash for strict replay validation.
+- **`belay approve --replay`** — explicit shell subprocess replay after approval; successful replay consumes the one-shot grant.
+- **Adapter replay hints** — optional `replay` field on approval hook responses (Cursor, Claude, Codex).
+
+### Changed
+
+- Default approval UX is **`one_step`**: shell actions get replay hints; tool/subagent fall back to manual retry unless `approval.autoReplayScopes` enables them.
+- `approval.executionLeaseMs` replaces the hard-coded 60s execution lease default.
+- Replay scrub/fingerprint inputs are unified via `replay-scrub.ts` (tool `tool_input`, subagent description/prompt subset).
+
 ## 0.3.0 — 2026-06-15
 
 ### Changed

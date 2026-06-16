@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -8,6 +8,7 @@ import {
   mergeAndWriteConfig,
   migrateRepoLocalApprovalsToControlPlane,
   pendingApprovalsPath,
+  saveApprovalState,
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
@@ -16,6 +17,18 @@ const tempDirs: string[] = []
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
+
+describe('config-io approval state permissions', () => {
+  it('writes approval state files with mode 0600', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-perm-'))
+    tempDirs.push(repoRoot)
+    const config = mergeConfig({ version: 3 })
+    await saveApprovalState(repoRoot, 'pending-approvals.json', { version: 1, approvals: [] }, config)
+    const filePath = pendingApprovalsPath(repoRoot, config)
+    const mode = (await stat(filePath)).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
 })
 
 describe('config-io control plane migration', () => {

@@ -201,6 +201,20 @@ export interface BelayApprovalSigningConfig {
   required: boolean
 }
 
+export type ApprovalFlow = 'one_step' | 'two_step'
+
+export interface BelayApprovalAutoReplayScopes {
+  shell: boolean
+  tool: boolean
+  subagent: boolean
+}
+
+export interface BelayApprovalConfig {
+  flow: ApprovalFlow
+  autoReplayScopes: BelayApprovalAutoReplayScopes
+  executionLeaseMs: number
+}
+
 export interface BelayEgressConfig {
   enabled: boolean
   listenHost: string
@@ -225,6 +239,7 @@ export interface BelayConfigV4 {
   controlPlane: BelayControlPlaneConfig
   notifications: BelayNotificationsConfig
   approvalSigning: BelayApprovalSigningConfig
+  approval: BelayApprovalConfig
   egress: BelayEgressConfig
   sandbox: BelaySandboxConfig
   audit: BelayConfigV2['audit']
@@ -327,6 +342,16 @@ export const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig = {
   required: false,
 }
 
+export const DEFAULT_APPROVAL_CONFIG: BelayApprovalConfig = {
+  flow: 'one_step',
+  autoReplayScopes: {
+    shell: true,
+    tool: false,
+    subagent: false,
+  },
+  executionLeaseMs: 60_000,
+}
+
 export const DEFAULT_EGRESS_V3: BelayEgressConfig = {
   enabled: false,
   listenHost: '127.0.0.1',
@@ -384,6 +409,7 @@ export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
   notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
   approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+  approval: { ...DEFAULT_APPROVAL_CONFIG },
   egress: { ...DEFAULT_EGRESS_V3 },
   sandbox: { ...DEFAULT_SANDBOX_V3 },
   audit: { ...DEFAULT_CONFIG_V2.audit },
@@ -437,6 +463,7 @@ export function migrateV2ToV3(
     controlPlane: { ...LEGACY_CONTROL_PLANE_V3 },
     notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
     approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
+    approval: { ...DEFAULT_APPROVAL_CONFIG },
     egress: { ...DEFAULT_EGRESS_V3 },
     sandbox: { ...DEFAULT_SANDBOX_V3 },
     audit: v2.audit,
@@ -653,6 +680,9 @@ type RawConfigInput = Partial<{
   controlPlane: Partial<BelayControlPlaneConfig>
   notifications: Partial<BelayNotificationsConfig>
   approvalSigning: Partial<BelayApprovalSigningConfig>
+  approval: Partial<BelayApprovalConfig> & {
+    autoReplayScopes?: Partial<BelayApprovalAutoReplayScopes>
+  }
   egress: Partial<BelayEgressConfig>
   sandbox: Partial<BelaySandboxConfig>
   audit: Partial<BelayConfigV2['audit']>
@@ -706,6 +736,14 @@ function mergeV3FromRaw(base: BelayConfigV4, raw: RawConfigInput): BelayConfigV4
       ...base.approvalSigning,
       ...(raw.approvalSigning ?? {}),
     },
+    approval: {
+      ...base.approval,
+      ...(raw.approval ?? {}),
+      autoReplayScopes: {
+        ...base.approval.autoReplayScopes,
+        ...(raw.approval?.autoReplayScopes ?? {}),
+      },
+    },
     egress: {
       ...base.egress,
       ...(raw.egress ?? {}),
@@ -757,6 +795,14 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
     },
     approvalSigning: {
       required: raw.approvalSigning?.required === true,
+    },
+    approval: {
+      ...DEFAULT_APPROVAL_CONFIG,
+      ...(raw.approval ?? {}),
+      autoReplayScopes: {
+        ...DEFAULT_APPROVAL_CONFIG.autoReplayScopes,
+        ...(raw.approval?.autoReplayScopes ?? {}),
+      },
     },
     egress: {
       ...DEFAULT_EGRESS_V3,
@@ -1022,6 +1068,18 @@ export function normalizeConfig(
     approvalSigning: {
       required: v4.approvalSigning?.required === true,
     },
+    approval: {
+      flow: v4.approval?.flow === 'two_step' ? 'two_step' : DEFAULT_APPROVAL_CONFIG.flow,
+      autoReplayScopes: {
+        shell: v4.approval?.autoReplayScopes?.shell !== false,
+        tool: v4.approval?.autoReplayScopes?.tool === true,
+        subagent: v4.approval?.autoReplayScopes?.subagent === true,
+      },
+      executionLeaseMs:
+        typeof v4.approval?.executionLeaseMs === 'number' && v4.approval.executionLeaseMs > 0
+          ? v4.approval.executionLeaseMs
+          : DEFAULT_APPROVAL_CONFIG.executionLeaseMs,
+    },
     egress: {
       enabled: v4.egress?.enabled === true,
       listenHost: normalizeEgressListenHost(
@@ -1106,6 +1164,14 @@ export function mergeConfig(
     approvalSigning: {
       ...defaults.approvalSigning,
       ...migrated.approvalSigning,
+    },
+    approval: {
+      ...defaults.approval,
+      ...migrated.approval,
+      autoReplayScopes: {
+        ...defaults.approval.autoReplayScopes,
+        ...migrated.approval.autoReplayScopes,
+      },
     },
     egress: {
       ...defaults.egress,

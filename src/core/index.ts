@@ -1,14 +1,40 @@
 export {
   APPROVAL_EXECUTION_LEASE_MS,
   approvalCommandMatch,
-  buildRetryInstruction,
   compactApprovals,
   createApprovalRecord,
+  createApprovalRecordWithEnvelope,
   isExecutionLeaseExpired,
   isExpired,
   mergeApprovalStates,
   nowIso,
 } from './approval.js'
+export {
+  approvalFlow,
+  buildApprovalRecordedMessage,
+  buildReplayEnvelopeFields,
+  buildReplayHint,
+  buildRetryInstructionForConfig,
+  canAutoReplay,
+  getExecutionLeaseMs,
+  replayShellCommand,
+  validateReplayEnvelope,
+} from './approval-replay.js'
+/** @deprecated Use `buildRetryInstructionForConfig` */
+export { buildRetryInstructionForConfig as buildRetryInstruction } from './approval-replay.js'
+export {
+  consumeApprovedAfterCliReplay,
+  createGateApprovalStore,
+  gateApprovalStoreFromDeps,
+  recordApproval,
+} from './approval-service.js'
+export type { ApprovalStore } from './approval-service.js'
+export { fingerprintReplayPayload, subagentFingerprintSource } from './replay-scrub.js'
+export type {
+  ApprovalReplayHint,
+  ReplayActionContext,
+  ReplayAdapterId,
+} from './approval-replay.js'
 export type { AuditMetricsReport } from './audit-metrics.js'
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js'
 export { classifySubagent } from './classify-subagent.js'
@@ -20,6 +46,9 @@ export {
   type BelayConfigV2,
   type BelayConfigV3,
   type BelayConfigV4,
+  type BelayApprovalConfig,
+  type BelayApprovalAutoReplayScopes,
+  type ApprovalFlow,
   type BelayControlPlaneConfig,
   type BelayJudgeConfig,
   type BelayOverridesConfig,
@@ -31,6 +60,7 @@ export {
   DEFAULT_CONFIG_V2,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
+  DEFAULT_APPROVAL_CONFIG,
   DEFAULT_JUDGE_CURSOR_COMPOSER,
   DEFAULT_JUDGE_LOCAL_OLLAMA,
   defaultControlPlaneDir,
