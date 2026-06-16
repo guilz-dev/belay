@@ -1,8 +1,12 @@
 import path from 'node:path'
 
 import { loadApprovalState, loadConfigFile } from '../config-io.js'
-import { recordApproval, consumeApprovedAfterCliReplay, createGateApprovalStore } from '../core/approval-service.js'
 import { canAutoReplay, getExecutionLeaseMs, replayShellCommand } from '../core/approval-replay.js'
+import {
+  consumeApprovedAfterCliReplay,
+  createGateApprovalStore,
+  recordApproval,
+} from '../core/approval-service.js'
 import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { CapabilityApprovalScope } from '../core/capability/types.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'

@@ -1,18 +1,15 @@
-import { compactApprovals } from './approval.js'
-import {
-  buildApprovalRecordedMessage,
-  type ReplayAdapterId,
-} from './approval-replay.js'
-import { verifyApprovalToken } from './approval-token.js'
-import type { BelayConfigV3 } from './config.js'
-import { configuredControlPlaneDir } from './config.js'
-import type { ApprovalStateFile } from './types.js'
 import {
   approvedApprovalsPath,
   loadApprovalState,
   pendingApprovalsPath,
   saveApprovalState,
 } from '../config-io.js'
+import { compactApprovals } from './approval.js'
+import { buildApprovalRecordedMessage, type ReplayAdapterId } from './approval-replay.js'
+import { verifyApprovalToken } from './approval-token.js'
+import type { BelayConfigV3 } from './config.js'
+import { configuredControlPlaneDir } from './config.js'
+import type { ApprovalStateFile } from './types.js'
 
 export interface ApprovalStore {
   loadPending: () => Promise<{ filePath: string; state: ApprovalStateFile }>

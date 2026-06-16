@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-import {
-  consumeApprovedAfterCliReplay,
-  recordApproval,
-} from '../core/approval-service.js'
 import * as approvalReplay from '../core/approval-replay.js'
+import { consumeApprovedAfterCliReplay, recordApproval } from '../core/approval-service.js'
 import { DEFAULT_CONFIG_V4 } from '../core/config.js'
 import type { ApprovalStateFile } from '../core/types.js'
 

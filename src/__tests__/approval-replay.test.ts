@@ -79,9 +79,9 @@ describe('approval-replay', () => {
     const hint = buildReplayHint(DEFAULT_CONFIG_V4, approval, 'cursor')
     expect(hint?.autoReplay).toBe(false)
     expect(hint?.fallbackToTwoStep).toBe(true)
-    expect(
-      buildApprovalRecordedMessage(DEFAULT_CONFIG_V4, approval, 'cursor'),
-    ).toContain('Retry the original action once')
+    expect(buildApprovalRecordedMessage(DEFAULT_CONFIG_V4, approval, 'cursor')).toContain(
+      'Retry the original action once',
+    )
   })
 
   it('rejects replay envelope mismatches fail-closed', () => {

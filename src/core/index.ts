@@ -9,46 +9,45 @@ export {
   mergeApprovalStates,
   nowIso,
 } from './approval.js'
+export type {
+  ApprovalReplayHint,
+  ReplayActionContext,
+  ReplayAdapterId,
+} from './approval-replay.js'
+/** @deprecated Use `buildRetryInstructionForConfig` */
 export {
   approvalFlow,
   buildApprovalRecordedMessage,
   buildReplayEnvelopeFields,
   buildReplayHint,
   buildRetryInstructionForConfig,
+  buildRetryInstructionForConfig as buildRetryInstruction,
   canAutoReplay,
   getExecutionLeaseMs,
   replayShellCommand,
   validateReplayEnvelope,
 } from './approval-replay.js'
-/** @deprecated Use `buildRetryInstructionForConfig` */
-export { buildRetryInstructionForConfig as buildRetryInstruction } from './approval-replay.js'
+export type { ApprovalStore } from './approval-service.js'
 export {
   consumeApprovedAfterCliReplay,
   createGateApprovalStore,
   gateApprovalStoreFromDeps,
   recordApproval,
 } from './approval-service.js'
-export type { ApprovalStore } from './approval-service.js'
-export { fingerprintReplayPayload, subagentFingerprintSource } from './replay-scrub.js'
-export type {
-  ApprovalReplayHint,
-  ReplayActionContext,
-  ReplayAdapterId,
-} from './approval-replay.js'
 export type { AuditMetricsReport } from './audit-metrics.js'
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js'
 export { classifySubagent } from './classify-subagent.js'
 export { classifyToolUse } from './classify-tool.js'
 export {
+  type ApprovalFlow,
   approvedApprovalsFile,
+  type BelayApprovalAutoReplayScopes,
+  type BelayApprovalConfig,
   type BelayConfig,
   type BelayConfigV1,
   type BelayConfigV2,
   type BelayConfigV3,
   type BelayConfigV4,
-  type BelayApprovalConfig,
-  type BelayApprovalAutoReplayScopes,
-  type ApprovalFlow,
   type BelayControlPlaneConfig,
   type BelayJudgeConfig,
   type BelayOverridesConfig,
@@ -57,10 +56,10 @@ export {
   belayStateDir,
   classifierOptionsFromConfig,
   configuredControlPlaneDir,
+  DEFAULT_APPROVAL_CONFIG,
   DEFAULT_CONFIG_V2,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
-  DEFAULT_APPROVAL_CONFIG,
   DEFAULT_JUDGE_CURSOR_COMPOSER,
   DEFAULT_JUDGE_LOCAL_OLLAMA,
   defaultControlPlaneDir,
@@ -112,6 +111,7 @@ export {
   relativeWithinRepo,
   resolveMutationTarget,
 } from './path-utils.js'
+export { fingerprintReplayPayload, subagentFingerprintSource } from './replay-scrub.js'
 export { scrubString, scrubValue } from './scrub.js'
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js'
 export type {

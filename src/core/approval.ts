@@ -1,5 +1,5 @@
-import { DEFAULT_APPROVAL_CONFIG } from './config.js'
 import { buildReplayEnvelopeFields } from './approval-replay.js'
+import { DEFAULT_APPROVAL_CONFIG } from './config.js'
 import type { ApprovalRecord, ApprovalStateFile } from './types.js'
 
 /** @deprecated Use `DEFAULT_APPROVAL_CONFIG.executionLeaseMs` */

@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
-
+import { DEFAULT_CONFIG_V4, scrubOptionsFromConfig } from '../core/config.js'
 import { toolFingerprint } from '../core/fingerprint.js'
 import { fingerprintReplayPayload } from '../core/replay-scrub.js'
-import { scrubOptionsFromConfig } from '../core/config.js'
-import { DEFAULT_CONFIG_V4 } from '../core/config.js'
 
 describe('replay-scrub', () => {
   it('scrubs tool_input for tool replay payload', () => {

@@ -2,16 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { recordApproval, gateApprovalStoreFromDeps } from '../../core/approval-service.js'
+import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
 import {
+  type ApprovalReplayHint,
   buildReplayHint,
   buildRetryInstructionForConfig,
   getExecutionLeaseMs,
-  type ApprovalReplayHint,
   type ReplayActionContext,
   type ReplayAdapterId,
   validateReplayEnvelope,
 } from '../../core/approval-replay.js'
+import { gateApprovalStoreFromDeps, recordApproval } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
 import {
   fsScopeAllowlistPath,
@@ -36,10 +37,6 @@ import {
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
 import {
-  createApprovalRecordWithEnvelope,
-  compactApprovals,
-} from '../../core/approval.js'
-import {
   approvalCommandMatch,
   approvedApprovalsFile,
   type BelayConfigV3,
@@ -53,15 +50,15 @@ import {
   scrubValue,
   toolFingerprint,
 } from '../../core/index.js'
-import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import { notifyDeny } from '../../core/notify.js'
+import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
   isTransactionalEligible,
   runTransactionalExecution,
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
-import type { Assessment, ApprovalStateFile, ClassifierOptions } from '../../core/types.js'
+import type { ApprovalStateFile, Assessment, ClassifierOptions } from '../../core/types.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -283,9 +280,7 @@ async function consumeApprovedApproval(
 
   approved.state.approvals[index] = {
     ...approval,
-    executionLeaseExpiresAt: new Date(
-      Date.now() + getExecutionLeaseMs(ctx.config),
-    ).toISOString(),
+    executionLeaseExpiresAt: new Date(Date.now() + getExecutionLeaseMs(ctx.config)).toISOString(),
   }
   await deps.writeApprovals(approved.filePath, approved.state)
   return approval
@@ -562,7 +557,11 @@ async function gateDecisionToVerdict(
           permission: 'deny',
         })
         return classifyResultToGateVerdict({
-          result: { ...result, verdict: 'deny_pending_approval', reason: 'approval_replay_mismatch' },
+          result: {
+            ...result,
+            verdict: 'deny_pending_approval',
+            reason: 'approval_replay_mismatch',
+          },
           mode: ctx.config.mode,
           permission: 'deny',
           wouldBlock: true,
@@ -731,9 +730,7 @@ export async function processApprovalPrompt(
     }
   }
 
-  const replay = recorded.approval
-    ? buildReplayHint(ctx.config, recorded.approval, adapter)
-    : null
+  const replay = recorded.approval ? buildReplayHint(ctx.config, recorded.approval, adapter) : null
 
   return {
     continue: false,
