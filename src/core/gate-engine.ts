@@ -217,7 +217,12 @@ function applySandboxOutsideBoundary(
   result: ClassifyResult,
   options: ClassifierOptions,
 ): ClassifyResult {
-  const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+  const outsideRepoPaths = collectOutsideRepoPaths(
+    command,
+    action.cwd,
+    action.repoRoot,
+    options.trustedWorkspaceRoots,
+  )
   return applySandboxFsScopeBoundary(outsideRepoPaths, result, options, {
     redirect: command.includes('>'),
   })
@@ -229,18 +234,33 @@ function applyShellPeripheralPolicy(
   result: ClassifyResult,
   options: ClassifierOptions,
 ): ClassifyResult {
-  const outsideRepoPaths = collectOutsideRepoPaths(command, action.cwd, action.repoRoot)
+  const outsideRepoPaths = collectOutsideRepoPaths(
+    command,
+    action.cwd,
+    action.repoRoot,
+    options.trustedWorkspaceRoots,
+  )
   return applyFsScopePeripheralPolicy(outsideRepoPaths, result, options)
 }
 
-function outsideRepoPathsForToolAction(action: GatedAction): string[] {
+function outsideRepoPathsForToolAction(action: GatedAction, options: ClassifierOptions): string[] {
   const payload = action.payload ?? {}
   const paths = new Set(
-    collectOutsideRepoPathsFromToolPayload(payload, action.cwd, action.repoRoot),
+    collectOutsideRepoPathsFromToolPayload(
+      payload,
+      action.cwd,
+      action.repoRoot,
+      options.trustedWorkspaceRoots,
+    ),
   )
   const command = shellCommandFromPayload(payload)
   if (command) {
-    for (const resolved of collectOutsideRepoPaths(command, action.cwd, action.repoRoot)) {
+    for (const resolved of collectOutsideRepoPaths(
+      command,
+      action.cwd,
+      action.repoRoot,
+      options.trustedWorkspaceRoots,
+    )) {
       paths.add(resolved)
     }
   }
@@ -252,7 +272,7 @@ function applyToolSandboxPolicies(
   result: ClassifyResult,
   options: ClassifierOptions,
 ): ClassifyResult {
-  const outsideRepoPaths = outsideRepoPathsForToolAction(action)
+  const outsideRepoPaths = outsideRepoPathsForToolAction(action, options)
   const command = shellCommandFromPayload(action.payload ?? {})
   let next = applySandboxFsScopeBoundary(outsideRepoPaths, result, options, {
     redirect: command.includes('>'),

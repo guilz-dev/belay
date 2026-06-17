@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -49,17 +49,53 @@ export function pathWithinRoot(root: string, targetPath: string): boolean {
   return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
 }
 
-export function relativeWithinRepo(repoRoot: string, targetPath: string): string | null {
-  const resolvedRoot = canonicalPath(repoRoot)
+function relativeWithinRoot(
+  root: string,
+  targetPath: string,
+  options: { canonicalizeRoot?: boolean } = {},
+): string | null {
+  const resolvedRoot =
+    options.canonicalizeRoot === false ? path.resolve(root) : canonicalPath(root)
   const resolvedTarget = canonicalPath(targetPath)
   const relativePath = path.relative(resolvedRoot, resolvedTarget)
   if (relativePath === '') {
     return '.'
   }
-  if (relativePath.startsWith('..')) {
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     return null
   }
   return relativePath
+}
+
+export function relativeWithinRepo(repoRoot: string, targetPath: string): string | null {
+  return relativeWithinRoot(repoRoot, targetPath)
+}
+
+export type WorkspaceRootMatch =
+  | { kind: 'repo'; root: string; relativePath: string }
+  | { kind: 'trusted'; root: string; relativePath: string }
+
+export function resolveWorkspaceRootMatch(
+  repoRoot: string,
+  trustedRoots: string[] = [],
+  targetPath: string,
+): WorkspaceRootMatch | null {
+  const canonicalRepoRoot = canonicalPath(repoRoot)
+  const repoRelative = relativeWithinRoot(repoRoot, targetPath)
+  if (repoRelative !== null) {
+    return { kind: 'repo', root: canonicalRepoRoot, relativePath: repoRelative }
+  }
+
+  const normalizedTrustedRoots = [...new Set(trustedRoots.map((root) => path.resolve(root)))]
+    .filter((root) => root !== canonicalRepoRoot)
+    .sort((left, right) => right.length - left.length)
+  for (const root of normalizedTrustedRoots) {
+    const trustedRelative = relativeWithinRoot(root, targetPath, { canonicalizeRoot: false })
+    if (trustedRelative !== null) {
+      return { kind: 'trusted', root, relativePath: trustedRelative }
+    }
+  }
+  return null
 }
 
 export function normalizeToken(token: string, repoRoot: string): string {
@@ -111,6 +147,29 @@ export function hasOutsideRepoPath(tokens: string[], cwd: string, repoRoot: stri
     if (!resolved) {
       return false
     }
-    return relativeWithinRepo(repoRoot, resolved) === null
+    return resolveWorkspaceRootMatch(repoRoot, [], resolved) === null
   })
+}
+
+export function containingGitRoot(targetPath: string): string | null {
+  const resolved = canonicalPath(targetPath)
+  let current = resolved
+  try {
+    if (!statSync(current).isDirectory()) {
+      current = path.dirname(current)
+    }
+  } catch {
+    current = path.dirname(current)
+  }
+
+  while (true) {
+    if (existsSync(path.join(current, '.git'))) {
+      return current
+    }
+    const parent = path.dirname(current)
+    if (parent === current) {
+      return null
+    }
+    current = parent
+  }
 }

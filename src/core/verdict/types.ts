@@ -61,6 +61,7 @@ export interface VerdictContext {
   cwd: string
   repoRoot: string
   trustedCwd: boolean
+  trustedWorkspaceRoots?: string[]
   sensitivePaths: string[]
   protectedArtifactRoots?: string[]
   customAllowCommands?: string[]

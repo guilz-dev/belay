@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
+import { canonicalPath } from '../core/path-utils.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
@@ -64,6 +65,74 @@ describe('classifyToolUse', () => {
     )
     expect(result.verdict).toBe('allow_flagged')
     expect(result.assessment.signals).toContain('tier1_restorable')
+  })
+
+  it('treats trusted workspace root writes as repo-local equivalent', async () => {
+    const home = process.env.HOME ?? '/home/user'
+    const trustedRoot = canonicalPath(path.join(home, '.cursor/plans'))
+    const target = path.join(trustedRoot, 'foo.plan.md')
+    const result = await classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: { path: target, contents: '# plan' },
+      },
+      repoRoot,
+      cwd,
+      config,
+      {
+        tier1Judge: benignJudge,
+        trustedWorkspaceRoots: [trustedRoot],
+      },
+    )
+
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('file_mutation')
+    expect(result.assessment.external).toBe(false)
+    expect(result.assessment.signals).toContain('trusted_workspace_root')
+  })
+
+  it('still blocks high-risk sensitive paths inside a trusted workspace root', async () => {
+    const home = process.env.HOME ?? '/home/user'
+    const trustedRoot = canonicalPath(path.join(home, '.cursor/plans'))
+    const target = path.join(trustedRoot, '.env')
+    const result = await classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: { path: target, contents: 'SECRET=1' },
+      },
+      repoRoot,
+      cwd,
+      config,
+      {
+        tier1Judge: benignJudge,
+        trustedWorkspaceRoots: [trustedRoot],
+      },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.assessment.signals).toContain('sensitive_path_mutation')
+  })
+
+  it('still blocks credential paths inside a trusted workspace root', async () => {
+    const home = process.env.HOME ?? '/home/user'
+    const trustedRoot = canonicalPath(path.join(home, '.cursor/plans'))
+    const target = path.join(trustedRoot, '.npmrc')
+    const result = await classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: { path: target, contents: 'registry=https://example.com' },
+      },
+      repoRoot,
+      cwd,
+      config,
+      {
+        tier1Judge: benignJudge,
+        trustedWorkspaceRoots: [trustedRoot],
+      },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.assessment.signals).toContain('outside_repo_secret_credential_path')
   })
 
   it('asks on sensitive path mutations when Tier1 says not local-recoverable', async () => {

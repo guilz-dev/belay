@@ -15,11 +15,16 @@ import {
 import { gateApprovalStoreFromDeps, recordApproval } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
 import {
+  collectOutsideRepoPaths,
+  collectOutsideRepoPathsFromToolPayload,
   fsScopeAllowlistPath,
   isCapabilityBrokerDemotionActive,
   loadFsScopeAllowlistSync,
+  loadTrustedWorkspaceRootsSync,
   shouldSkipBrokerApprovedOnce,
   shouldSkipBrokerApprovedRecord,
+  trustedWorkspaceRootsPath,
+  validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
@@ -51,6 +56,7 @@ import {
   toolFingerprint,
 } from '../../core/index.js'
 import { notifyDeny } from '../../core/notify.js'
+import { canonicalPath } from '../../core/path-utils.js'
 import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
   isTransactionalEligible,
@@ -58,7 +64,12 @@ import {
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
-import type { ApprovalStateFile, Assessment, ClassifierOptions } from '../../core/types.js'
+import type {
+  ApprovalScopeHint,
+  ApprovalStateFile,
+  Assessment,
+  ClassifierOptions,
+} from '../../core/types.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -193,11 +204,15 @@ export function repoShellClassifierOptions(
 export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
   const brokerFsScope = isCapabilityBrokerDemotionActive(config)
+  const trustedRoots = loadTrustedWorkspaceRootsSync(
+    trustedWorkspaceRootsPath(config, repoLocalStateDir),
+  )
   return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
     brokerFsScope,
     fsScopeAllowlist: brokerFsScope
       ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
       : undefined,
+    trustedWorkspaceRoots: trustedRoots.roots.map((entry) => entry.path),
   })
 }
 
@@ -223,6 +238,7 @@ async function ensurePendingApproval(
     toolName?: string
     payload?: Record<string, unknown>
   },
+  scopeHint?: ApprovalScopeHint,
 ) {
   const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
@@ -246,11 +262,93 @@ async function ensurePendingApproval(
     approvalTtlMinutes: ctx.config.approvalTtlMinutes,
     approvalId: `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
     approvalInput,
+    scopeHint,
   })
   pending.state.version = 2
   pending.state.approvals.push(approval)
   await deps.writeApprovals(pending.filePath, pending.state)
   return approval
+}
+
+function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
+  const toolInput = payload.tool_input
+  if (!toolInput || typeof toolInput !== 'object') {
+    return ''
+  }
+  const input = toolInput as Record<string, unknown>
+  return typeof input.command === 'string' ? input.command : ''
+}
+
+function deriveWorkspaceRootScopeHint(params: {
+  result: ClassifyResult
+  replayAction?: ReplayActionContext
+  payloadForScopeHint?: Record<string, unknown>
+  options: ClassifierOptions
+}): ApprovalScopeHint | undefined {
+  if (
+    params.result.reason !== 'outside_repo_mutation' &&
+    params.result.reason !== 'outside_repo_redirect'
+  ) {
+    return undefined
+  }
+  const action = params.replayAction
+  if (!action?.cwd) {
+    return undefined
+  }
+
+  const outsidePaths = new Set<string>()
+  if (action.kind === 'shell' && action.command) {
+    for (const resolved of collectOutsideRepoPaths(
+      action.command,
+      action.cwd,
+      action.repoRoot,
+      params.options.trustedWorkspaceRoots,
+    )) {
+      outsidePaths.add(resolved)
+    }
+  } else if (action.kind === 'tool') {
+    const toolPayload = params.payloadForScopeHint ?? action.payload ?? {}
+    for (const resolved of collectOutsideRepoPathsFromToolPayload(
+      toolPayload,
+      action.cwd,
+      action.repoRoot,
+      params.options.trustedWorkspaceRoots,
+    )) {
+      outsidePaths.add(resolved)
+    }
+    const command = extractShellCommandFromPayload(toolPayload)
+    if (command) {
+      for (const resolved of collectOutsideRepoPaths(
+        command,
+        action.cwd,
+        action.repoRoot,
+        params.options.trustedWorkspaceRoots,
+      )) {
+        outsidePaths.add(resolved)
+      }
+    }
+  }
+
+  if (outsidePaths.size !== 1) {
+    return undefined
+  }
+  const targetPath = [...outsidePaths][0]
+  if (!targetPath) {
+    return undefined
+  }
+  const candidateRoot = canonicalPath(path.dirname(targetPath))
+  const validation = validateTrustedWorkspaceRootCandidate({
+    candidatePath: candidateRoot,
+    repoRoot: action.repoRoot,
+    controlPlaneDir: params.options.controlPlaneDir ?? undefined,
+    protectedRoots: params.options.protectedArtifactRoots ?? [],
+    requireExistingDirectory: true,
+    requireNonGit: true,
+  })
+  if (!validation.ok) {
+    return undefined
+  }
+  return { scope: 'workspace-root', path: validation.normalizedPath }
 }
 
 async function consumeApprovedApproval(
@@ -429,6 +527,8 @@ export async function evaluateGatedAction(
       fingerprint: result.fingerprint,
       repoRoot: ctx.repoRoot,
     },
+    classifierOptions,
+    scopeHintPayload: params.payload,
   })
 }
 
@@ -490,6 +590,8 @@ async function gateDecisionToVerdict(
       payload?: Record<string, unknown>
     }
     replayAction?: ReplayActionContext
+    classifierOptions?: ClassifierOptions
+    scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
   const gateBase = {
@@ -625,7 +727,19 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const approval = await ensurePendingApproval(ctx, deps, kind, result, auditExtras.approvalInput)
+  const approval = await ensurePendingApproval(
+    ctx,
+    deps,
+    kind,
+    result,
+    auditExtras.approvalInput,
+    deriveWorkspaceRootScopeHint({
+      result,
+      replayAction: auditExtras.replayAction,
+      payloadForScopeHint: auditExtras.scopeHintPayload,
+      options: auditExtras.classifierOptions ?? {},
+    }),
+  )
   let approvalToken: string | undefined
   try {
     approvalToken = await issueApprovalToken(

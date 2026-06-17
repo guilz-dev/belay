@@ -57,11 +57,11 @@ export async function approvePending(
     return { ok: result.ok, message: result.message }
   }
 
-  if (options.scope === 'path') {
+  if (options.scope === 'path' || options.scope === 'workspace-root') {
     const result = await recordCapabilityApproval({
       approvalId: options.approvalId,
       config,
-      scope: 'path',
+      scope: options.scope,
       scopePath: options.scopePath,
       token: options.token,
       requireSignedToken: config.approvalSigning.required,

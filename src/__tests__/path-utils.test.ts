@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   canonicalPath,
+  containingGitRoot,
   hasOutsideRepoPath,
   pathWithinRoot,
   relativeWithinRepo,
+  resolveWorkspaceRootMatch,
 } from '../core/path-utils.js'
 
 const tempDirs: string[] = []
@@ -83,5 +85,45 @@ describe('hasOutsideRepoPath', () => {
     tempDirs.push(repoRoot)
     expect(hasOutsideRepoPath(['status'], repoRoot, repoRoot)).toBe(false)
     expect(hasOutsideRepoPath(['origin', 'main'], repoRoot, repoRoot)).toBe(false)
+  })
+})
+
+describe('resolveWorkspaceRootMatch', () => {
+  it('matches trusted workspace roots outside repo', () => {
+    const repoRoot = '/workspace/repo'
+    const trusted = ['/Users/user/.cursor/plans']
+    const target = '/Users/user/.cursor/plans/foo.plan.md'
+    const match = resolveWorkspaceRootMatch(repoRoot, trusted, target)
+    expect(match).toEqual({
+      kind: 'trusted',
+      root: canonicalPath('/Users/user/.cursor/plans'),
+      relativePath: 'foo.plan.md',
+    })
+  })
+
+  it('fails closed when trusted root path later becomes a symlink', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-repo-root-'))
+    const trustedRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-trusted-root-'))
+    const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'belay-outside-root-'))
+    tempDirs.push(repoRoot, trustedRoot, outsideDir)
+    const frozenTrustedRoot = canonicalPath(trustedRoot)
+    const initialTarget = path.join(trustedRoot, 'note.md')
+    await writeFile(initialTarget, 'x')
+    expect(resolveWorkspaceRootMatch(repoRoot, [frozenTrustedRoot], initialTarget)?.kind).toBe(
+      'trusted',
+    )
+
+    await rm(trustedRoot, { recursive: true, force: true })
+    await symlink(outsideDir, trustedRoot)
+    const escapedTarget = path.join(trustedRoot, 'escape.txt')
+    expect(resolveWorkspaceRootMatch(repoRoot, [frozenTrustedRoot], escapedTarget)).toBeNull()
+  })
+})
+
+describe('containingGitRoot', () => {
+  it('returns null for non-git-managed directories', async () => {
+    const nonGitDir = await mkdtemp(path.join(os.tmpdir(), 'belay-nongit-'))
+    tempDirs.push(nonGitDir)
+    expect(containingGitRoot(nonGitDir)).toBeNull()
   })
 })

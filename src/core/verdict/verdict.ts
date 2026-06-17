@@ -400,6 +400,7 @@ function tier0HighStakesRm(
     cwd: context.cwd,
     repoRoot: context.repoRoot,
     trustedCwd: context.trustedCwd,
+    trustedWorkspaceRoots: context.trustedWorkspaceRoots,
     sensitivePaths: context.sensitivePaths,
     protectedArtifactRoots: context.protectedArtifactRoots,
   })
@@ -440,6 +441,7 @@ function tier0HighStakesRm(
           context.repoRoot,
           context.sensitivePaths,
           context.protectedArtifactRoots,
+          context.trustedWorkspaceRoots,
         )
       ) {
         destructiveHighStakes = true
@@ -686,6 +688,7 @@ async function evaluateSegment(
     cwd: context.cwd,
     repoRoot: context.repoRoot,
     trustedCwd: context.trustedCwd,
+    trustedWorkspaceRoots: context.trustedWorkspaceRoots,
     sensitivePaths: context.sensitivePaths,
     protectedArtifactRoots: context.protectedArtifactRoots,
   })
@@ -749,6 +752,7 @@ async function evaluateSegment(
           context.repoRoot,
           context.sensitivePaths,
           context.protectedArtifactRoots,
+          context.trustedWorkspaceRoots,
         )
       ) {
         destructiveHighStakes = true
@@ -816,6 +820,7 @@ async function evaluateSegment(
           cwd: context.cwd,
           repoRoot: context.repoRoot,
           trustedCwd: context.trustedCwd,
+          trustedWorkspaceRoots: context.trustedWorkspaceRoots,
           sensitivePaths: context.sensitivePaths,
         })
       : null

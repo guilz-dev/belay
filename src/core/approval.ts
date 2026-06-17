@@ -81,6 +81,7 @@ export function createApprovalRecordWithEnvelope(params: {
     toolName?: string
     payload?: Record<string, unknown>
   }
+  scopeHint?: ApprovalRecord['scopeHint']
 }): ApprovalRecord {
   const envelope = buildReplayEnvelopeFields({
     kind: params.kind,
@@ -107,6 +108,7 @@ export function createApprovalRecordWithEnvelope(params: {
     toolName: envelope.toolName ?? params.approvalInput?.toolName,
     payloadHash: envelope.payloadHash,
     payloadJson: envelope.payloadJson,
+    scopeHint: params.scopeHint,
   })
 }
 
@@ -124,6 +126,7 @@ export function createApprovalRecord(params: {
   toolName?: string
   payloadHash?: string
   payloadJson?: string
+  scopeHint?: ApprovalRecord['scopeHint']
 }): ApprovalRecord {
   const createdAt = nowIso()
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString()
@@ -152,6 +155,9 @@ export function createApprovalRecord(params: {
   }
   if (params.payloadJson) {
     record.payloadJson = params.payloadJson
+  }
+  if (params.scopeHint) {
+    record.scopeHint = params.scopeHint
   }
   return record
 }

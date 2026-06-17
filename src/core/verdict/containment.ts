@@ -4,6 +4,7 @@ import {
   canonicalPath,
   pathWithinRoot,
   relativeWithinRepo,
+  resolveWorkspaceRootMatch,
   resolveMutationTarget,
 } from '../path-utils.js'
 
@@ -48,11 +49,15 @@ export function resolveTrustedPath(
   return canonicalPath(path.resolve(trustedCwd, expanded))
 }
 
-export function locationForPath(resolvedPath: string | null, repoRoot: string): VerdictLocation {
+export function locationForPath(
+  resolvedPath: string | null,
+  repoRoot: string,
+  trustedWorkspaceRoots: string[] = [],
+): VerdictLocation {
   if (!resolvedPath) {
     return 'unknown'
   }
-  if (pathWithinRoot(repoRoot, resolvedPath)) {
+  if (resolveWorkspaceRootMatch(repoRoot, trustedWorkspaceRoots, resolvedPath)) {
     return 'repo_local'
   }
   return 'repo_outside'
@@ -72,15 +77,22 @@ export function isHighStakesPath(
   repoRoot: string,
   sensitivePaths: string[],
   protectedRoots: string[] = [],
+  trustedWorkspaceRoots: string[] = [],
 ): boolean {
   if (isGitPath(resolvedPath, repoRoot)) {
     return true
   }
-  const relative = relativeWithinRepo(repoRoot, resolvedPath)
-  if (relative !== null && matchesSensitivePath(relative.replaceAll('\\', '/'), sensitivePaths)) {
+  const workspaceMatch = resolveWorkspaceRootMatch(repoRoot, trustedWorkspaceRoots, resolvedPath)
+  if (
+    workspaceMatch !== null &&
+    matchesSensitivePath(workspaceMatch.relativePath.replaceAll('\\', '/'), sensitivePaths)
+  ) {
     return true
   }
-  if (relative === null && isOutsideRepoSecretCredentialPath(resolvedPath)) {
+  if (
+    (workspaceMatch === null || workspaceMatch.kind === 'trusted') &&
+    isOutsideRepoSecretCredentialPath(resolvedPath)
+  ) {
     return true
   }
   return protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))
@@ -112,6 +124,7 @@ export function isDestructiveHighStakesMutation(
   repoRoot: string,
   sensitivePaths: string[],
   protectedRoots: string[] = [],
+  trustedWorkspaceRoots: string[] = [],
 ): boolean {
   if (touchesProtectedRoot(resolvedPath, protectedRoots)) {
     return true
@@ -119,7 +132,7 @@ export function isDestructiveHighStakesMutation(
   if (!isDestructiveMutationHead(head)) {
     return false
   }
-  return isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, [])
+  return isHighStakesPath(resolvedPath, repoRoot, sensitivePaths, [], trustedWorkspaceRoots)
 }
 
 export function analyzePathTargets(params: {
@@ -129,6 +142,7 @@ export function analyzePathTargets(params: {
   trustedCwd: boolean
   sensitivePaths: string[]
   protectedArtifactRoots?: string[]
+  trustedWorkspaceRoots?: string[]
 }): PathTargetAnalysis {
   const signals: string[] = []
   if (!params.trustedCwd || !params.cwd) {
@@ -146,7 +160,7 @@ export function analyzePathTargets(params: {
     const resolved =
       resolveTrustedPath(target, params.cwd, params.trustedCwd) ??
       resolveMutationTarget(target, params.cwd)
-    const location = locationForPath(resolved, params.repoRoot)
+    const location = locationForPath(resolved, params.repoRoot, params.trustedWorkspaceRoots)
     locations.add(location)
     if (
       resolved &&
@@ -155,6 +169,7 @@ export function analyzePathTargets(params: {
         params.repoRoot,
         params.sensitivePaths,
         params.protectedArtifactRoots,
+        params.trustedWorkspaceRoots,
       )
     ) {
       isHighStakes = true

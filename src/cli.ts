@@ -62,7 +62,7 @@ function parseArgs(argv: string[]) {
     configPath?: string
     approvalToken?: string
     egressSubcommand?: 'start' | 'stop' | 'status' | 'env'
-    approveScope?: 'once' | 'domain' | 'path'
+    approveScope?: 'once' | 'domain' | 'path' | 'workspace-root'
     approvePath?: string
     approveReplay?: boolean
     sandboxSubcommand?: 'status'
@@ -331,10 +331,10 @@ function parseArgs(argv: string[]) {
     if (token === '--scope') {
       const next = rest[index + 1]
       if (command === 'approve') {
-        if (!next || !['once', 'domain', 'path'].includes(next)) {
-          throw new Error('--scope requires once, domain, or path.')
+        if (!next || !['once', 'domain', 'path', 'workspace-root'].includes(next)) {
+          throw new Error('--scope requires once, domain, path, or workspace-root.')
         }
-        options.approveScope = next as 'once' | 'domain' | 'path'
+        options.approveScope = next as 'once' | 'domain' | 'path' | 'workspace-root'
       } else if (command === 'init' || command === 'upgrade') {
         if (!next || !['project', 'global'].includes(next)) {
           throw new Error('--scope requires project or global.')
@@ -559,7 +559,7 @@ Usage:
   ${c} judge <status|list|use|test|consent> [--target <dir>] [--json]
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
   ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
-  ${c} approve <approval-id> [--replay] [--scope once|domain|path] [--path <path>] [--token <signed-token>] [--target <dir>]
+  ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
 `)
 }

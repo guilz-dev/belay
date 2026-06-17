@@ -121,6 +121,7 @@ export type {
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js'
 export type {
   ApprovalRecord,
+  ApprovalScopeHint,
   ApprovalStateFile,
   Assessment,
   ClassifierOptions,
