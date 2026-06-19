@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -10,7 +10,10 @@ import {
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
+import { recordCapabilityApproval } from '../core/capability-approval.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { canonicalPath } from '../core/path-utils.js'
+import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
@@ -159,5 +162,109 @@ describe('capability gate runtime', () => {
 
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe('outside_repo_mutation')
+  })
+
+  it('allows trusted workspace root tool mutations after scoped approval', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-tool-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const trustedRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-trusted-root-'))
+    tempDirs.push(trustedRoot)
+    const targetPath = path.join(trustedRoot, 'foo.plan.md')
+    const config = sandboxBrokerConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const blocked = await evaluateGatedAction(ctx, deps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      payload: {
+        tool_name: 'Write',
+        tool_input: { path: targetPath, contents: 'hi' },
+      },
+    })
+    expect(blocked.permission).toBe('deny')
+    expect(blocked.reason).toBe('outside_repo_mutation')
+    expect(blocked.approvalId).toMatch(/^belay_/)
+
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    const pendingPath = path.join(stateDir, 'pending-approvals.json')
+    const pending = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<{
+        approvalId: string
+        scopeHint?: { scope: string; path: string }
+      }>
+    }
+    const approval = pending.approvals.find((entry) => entry.approvalId === blocked.approvalId)
+    expect(approval?.scopeHint).toEqual({
+      scope: 'workspace-root',
+      path: canonicalPath(trustedRoot),
+    })
+    const approvalId = blocked.approvalId
+    expect(approvalId).toBeDefined()
+    if (!approvalId) {
+      throw new Error('approval id is required for workspace-root approval test')
+    }
+
+    const approved = await recordCapabilityApproval({
+      approvalId,
+      config,
+      scope: 'workspace-root',
+      scopePath: trustedRoot,
+      store: createCapabilityApprovalStore(repoRoot, config),
+    })
+    expect(approved.ok).toBe(true)
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      payload: {
+        tool_name: 'Write',
+        tool_input: { path: targetPath, contents: 'hi' },
+      },
+    })
+    expect(verdict.permission).toBe('allow')
+    expect(verdict.reason).toBe('file_mutation')
+  })
+
+  it('does not suggest workspace-root scope hints for high-stakes directories', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-tool-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = sandboxBrokerConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+    const blocked = await evaluateGatedAction(ctx, deps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      payload: {
+        tool_name: 'Write',
+        tool_input: { path: '/etc/hosts', contents: 'hi' },
+      },
+    })
+    expect(blocked.permission).toBe('deny')
+    expect(blocked.reason).toBe('outside_repo_mutation')
+    expect(blocked.approvalId).toMatch(/^belay_/)
+
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    const pendingPath = path.join(stateDir, 'pending-approvals.json')
+    const pending = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<{
+        approvalId: string
+        scopeHint?: { scope: string; path: string }
+      }>
+    }
+    const approval = pending.approvals.find((entry) => entry.approvalId === blocked.approvalId)
+    expect(approval?.scopeHint).toBeUndefined()
   })
 })

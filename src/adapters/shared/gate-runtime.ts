@@ -2,14 +2,29 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { recordApproval } from '../../core/approval-service.js'
+import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
+import {
+  type ApprovalReplayHint,
+  buildReplayHint,
+  buildRetryInstructionForConfig,
+  getExecutionLeaseMs,
+  type ReplayActionContext,
+  type ReplayAdapterId,
+  validateReplayEnvelope,
+} from '../../core/approval-replay.js'
+import { gateApprovalStoreFromDeps, recordApproval } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
 import {
+  collectOutsideRepoPaths,
+  collectOutsideRepoPathsFromToolPayload,
   fsScopeAllowlistPath,
   isCapabilityBrokerDemotionActive,
   loadFsScopeAllowlistSync,
+  loadTrustedWorkspaceRootsSync,
   shouldSkipBrokerApprovedOnce,
   shouldSkipBrokerApprovedRecord,
+  trustedWorkspaceRootsPath,
+  validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
@@ -27,18 +42,13 @@ import {
   normalizeGatedAction,
 } from '../../core/gate-engine.js'
 import {
-  APPROVAL_EXECUTION_LEASE_MS,
-  type ApprovalStateFile,
   approvalCommandMatch,
   approvedApprovalsFile,
   type BelayConfigV3,
-  buildRetryInstruction,
   type ClassifyResult,
   canonicalStringify,
   classifierOptionsFromConfig,
-  compactApprovals,
   configuredControlPlaneDir,
-  createApprovalRecord,
   pendingApprovalsFile,
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
@@ -46,19 +56,46 @@ import {
   toolFingerprint,
 } from '../../core/index.js'
 import { notifyDeny } from '../../core/notify.js'
+import { canonicalPath } from '../../core/path-utils.js'
+import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
   isTransactionalEligible,
   runTransactionalExecution,
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
-import type { Assessment, ClassifierOptions } from '../../core/types.js'
+import type {
+  ApprovalScopeHint,
+  ApprovalStateFile,
+  Assessment,
+  ClassifierOptions,
+} from '../../core/types.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
 const EMPTY_APPROVALS: ApprovalStateFile = {
   version: 1,
   approvals: [],
+}
+
+function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
+  if (
+    ctx.config.adapter === 'cursor' ||
+    ctx.config.adapter === 'claude' ||
+    ctx.config.adapter === 'codex'
+  ) {
+    return ctx.config.adapter
+  }
+  if (ctx.layout.name === 'cursor' || ctx.layout.name === 'claude' || ctx.layout.name === 'codex') {
+    return ctx.layout.name
+  }
+  return undefined
+}
+
+export interface ApprovalPromptResult {
+  continue: boolean
+  user_message?: string
+  replay?: ApprovalReplayHint
 }
 
 export interface GateRuntimeContext {
@@ -167,11 +204,15 @@ export function repoShellClassifierOptions(
 export function runtimeClassifierOptions(ctx: GateRuntimeContext, config: BelayConfigV3) {
   const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
   const brokerFsScope = isCapabilityBrokerDemotionActive(config)
+  const trustedRoots = loadTrustedWorkspaceRootsSync(
+    trustedWorkspaceRootsPath(config, repoLocalStateDir),
+  )
   return repoShellClassifierOptions(config, ctx.repoRoot, ctx.layout, {
     brokerFsScope,
     fsScopeAllowlist: brokerFsScope
       ? loadFsScopeAllowlistSync(fsScopeAllowlistPath(config, repoLocalStateDir))
       : undefined,
+    trustedWorkspaceRoots: trustedRoots.roots.map((entry) => entry.path),
   })
 }
 
@@ -190,7 +231,14 @@ async function ensurePendingApproval(
   deps: GateRuntimeDeps,
   kind: GatedActionKind,
   result: ClassifyResult,
-  approvalInput?: { input: string; inputKind: 'shell' | 'tool' | 'subagent' },
+  approvalInput?: {
+    input: string
+    inputKind: 'shell' | 'tool' | 'subagent'
+    cwd?: string
+    toolName?: string
+    payload?: Record<string, unknown>
+  },
+  scopeHint?: ApprovalScopeHint,
 ) {
   const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
@@ -205,7 +253,7 @@ async function ensurePendingApproval(
     return existing
   }
 
-  const approval = createApprovalRecord({
+  const approval = createApprovalRecordWithEnvelope({
     kind,
     fingerprint: result.fingerprint,
     repoRoot: ctx.repoRoot,
@@ -213,13 +261,94 @@ async function ensurePendingApproval(
     summary: result.normalizedCommand ?? result.summary ?? '',
     approvalTtlMinutes: ctx.config.approvalTtlMinutes,
     approvalId: `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
-    input: approvalInput?.input,
-    inputKind: approvalInput?.inputKind,
+    approvalInput,
+    scopeHint,
   })
   pending.state.version = 2
   pending.state.approvals.push(approval)
   await deps.writeApprovals(pending.filePath, pending.state)
   return approval
+}
+
+function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
+  const toolInput = payload.tool_input
+  if (!toolInput || typeof toolInput !== 'object') {
+    return ''
+  }
+  const input = toolInput as Record<string, unknown>
+  return typeof input.command === 'string' ? input.command : ''
+}
+
+function deriveWorkspaceRootScopeHint(params: {
+  result: ClassifyResult
+  replayAction?: ReplayActionContext
+  payloadForScopeHint?: Record<string, unknown>
+  options: ClassifierOptions
+}): ApprovalScopeHint | undefined {
+  if (
+    params.result.reason !== 'outside_repo_mutation' &&
+    params.result.reason !== 'outside_repo_redirect'
+  ) {
+    return undefined
+  }
+  const action = params.replayAction
+  if (!action?.cwd) {
+    return undefined
+  }
+
+  const outsidePaths = new Set<string>()
+  if (action.kind === 'shell' && action.command) {
+    for (const resolved of collectOutsideRepoPaths(
+      action.command,
+      action.cwd,
+      action.repoRoot,
+      params.options.trustedWorkspaceRoots,
+    )) {
+      outsidePaths.add(resolved)
+    }
+  } else if (action.kind === 'tool') {
+    const toolPayload = params.payloadForScopeHint ?? action.payload ?? {}
+    for (const resolved of collectOutsideRepoPathsFromToolPayload(
+      toolPayload,
+      action.cwd,
+      action.repoRoot,
+      params.options.trustedWorkspaceRoots,
+    )) {
+      outsidePaths.add(resolved)
+    }
+    const command = extractShellCommandFromPayload(toolPayload)
+    if (command) {
+      for (const resolved of collectOutsideRepoPaths(
+        command,
+        action.cwd,
+        action.repoRoot,
+        params.options.trustedWorkspaceRoots,
+      )) {
+        outsidePaths.add(resolved)
+      }
+    }
+  }
+
+  if (outsidePaths.size !== 1) {
+    return undefined
+  }
+  const targetPath = [...outsidePaths][0]
+  if (!targetPath) {
+    return undefined
+  }
+  const candidateRoot = canonicalPath(path.dirname(targetPath))
+  const validation = validateTrustedWorkspaceRootCandidate({
+    candidatePath: candidateRoot,
+    repoRoot: action.repoRoot,
+    controlPlaneDir: params.options.controlPlaneDir ?? undefined,
+    protectedRoots: params.options.protectedArtifactRoots ?? [],
+    requireExistingDirectory: true,
+    requireNonGit: true,
+  })
+  if (!validation.ok) {
+    return undefined
+  }
+  return { scope: 'workspace-root', path: validation.normalizedPath }
 }
 
 async function consumeApprovedApproval(
@@ -249,7 +378,7 @@ async function consumeApprovedApproval(
 
   approved.state.approvals[index] = {
     ...approval,
-    executionLeaseExpiresAt: new Date(Date.now() + APPROVAL_EXECUTION_LEASE_MS).toISOString(),
+    executionLeaseExpiresAt: new Date(Date.now() + getExecutionLeaseMs(ctx.config)).toISOString(),
   }
   await deps.writeApprovals(approved.filePath, approved.state)
   return approval
@@ -364,6 +493,9 @@ export async function evaluateGatedAction(
     }
   }
 
+  const scrubOpts = scrubOptionsFromConfig(ctx.config)
+  const scrubbedPayload = fingerprintReplayPayload(params.kind, params.payload, scrubOpts)
+
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     predictedAssessment,
     observedAssessment,
@@ -373,15 +505,30 @@ export async function evaluateGatedAction(
         ? {
             input: params.command ?? result.normalizedCommand ?? result.summary ?? '',
             inputKind: 'shell',
+            cwd: params.cwd,
           }
         : {
             input:
               params.command ??
               result.normalizedCommand ??
               result.summary ??
-              canonicalStringify(params.payload ?? {}),
+              canonicalStringify(scrubbedPayload ?? {}),
             inputKind: params.kind,
+            cwd: params.cwd,
+            toolName: params.toolName,
+            payload: scrubbedPayload,
           },
+    replayAction: {
+      kind: params.kind,
+      cwd: params.cwd,
+      toolName: params.toolName,
+      command: params.command,
+      payload: scrubbedPayload,
+      fingerprint: result.fingerprint,
+      repoRoot: ctx.repoRoot,
+    },
+    classifierOptions,
+    scopeHintPayload: params.payload,
   })
 }
 
@@ -392,12 +539,13 @@ export async function gateUnmappedToolVerdict(
   toolName: string,
   payload: Record<string, unknown>,
 ): Promise<GateVerdict> {
-  const scrubbed = scrubValue(payload, scrubOptionsFromConfig(ctx.config))
+  const scrubOpts = scrubOptionsFromConfig(ctx.config)
+  const replayPayload = fingerprintReplayPayload('tool', payload, scrubOpts) ?? {}
   const result: ClassifyResult = {
     verdict: 'deny_pending_approval',
     reason: 'unmapped_tool',
     summary: toolName,
-    fingerprint: toolFingerprint(toolName, scrubbed, ctx.repoRoot),
+    fingerprint: toolFingerprint(toolName, replayPayload, ctx.repoRoot),
     assessment: {
       reversibility: 'irreversible',
       external: false,
@@ -410,6 +558,17 @@ export async function gateUnmappedToolVerdict(
     approvalInput: {
       input: toolName,
       inputKind: 'tool',
+      cwd: ctx.repoRoot,
+      toolName,
+      payload: replayPayload,
+    },
+    replayAction: {
+      kind: 'tool',
+      cwd: ctx.repoRoot,
+      toolName,
+      payload: replayPayload,
+      fingerprint: result.fingerprint,
+      repoRoot: ctx.repoRoot,
     },
   })
 }
@@ -423,7 +582,16 @@ async function gateDecisionToVerdict(
     predictedAssessment?: Assessment
     observedAssessment?: Assessment
     transactionalLayer?: Record<string, unknown>
-    approvalInput?: { input: string; inputKind: 'shell' | 'tool' | 'subagent' }
+    approvalInput?: {
+      input: string
+      inputKind: 'shell' | 'tool' | 'subagent'
+      cwd?: string
+      toolName?: string
+      payload?: Record<string, unknown>
+    }
+    replayAction?: ReplayActionContext
+    classifierOptions?: ClassifierOptions
+    scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
   const gateBase = {
@@ -477,6 +645,35 @@ async function gateDecisionToVerdict(
         entry.repoRoot === ctx.repoRoot,
     )
     if (!shouldSkipBrokerApprovedRecord(brokerActive, matchedApproval?.reason)) {
+      if (
+        matchedApproval &&
+        auditExtras.replayAction &&
+        !validateReplayEnvelope(matchedApproval, auditExtras.replayAction)
+      ) {
+        await deps.appendAudit(ctx, {
+          ...gateBase,
+          verdict: 'deny_pending_approval',
+          reason: 'approval_replay_mismatch',
+          approvalId: matchedApproval.approvalId,
+          wouldBlock: true,
+          permission: 'deny',
+        })
+        return classifyResultToGateVerdict({
+          result: {
+            ...result,
+            verdict: 'deny_pending_approval',
+            reason: 'approval_replay_mismatch',
+          },
+          mode: ctx.config.mode,
+          permission: 'deny',
+          wouldBlock: true,
+          approvalId: matchedApproval.approvalId,
+          user_message:
+            'Belay denied this action because it does not match the approved replay envelope. Re-approve the exact action or run belay explain.',
+          agent_message:
+            'Belay denied this action because cwd, tool, or payload changed after approval.',
+        })
+      }
       approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
     }
   }
@@ -530,7 +727,19 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const approval = await ensurePendingApproval(ctx, deps, kind, result, auditExtras.approvalInput)
+  const approval = await ensurePendingApproval(
+    ctx,
+    deps,
+    kind,
+    result,
+    auditExtras.approvalInput,
+    deriveWorkspaceRootScopeHint({
+      result,
+      replayAction: auditExtras.replayAction,
+      payloadForScopeHint: auditExtras.scopeHintPayload,
+      options: auditExtras.classifierOptions ?? {},
+    }),
+  )
   let approvalToken: string | undefined
   try {
     approvalToken = await issueApprovalToken(
@@ -573,7 +782,7 @@ async function gateDecisionToVerdict(
     permission: 'deny',
     wouldBlock: true,
     approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstruction(ctx.config.tokenPrefix, approval.approvalId)} For details, run belay explain or /belay why.`,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstructionForConfig(ctx.config, ctx.config.tokenPrefix, approval.approvalId)} For details, run belay explain or /belay why.`,
     agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
   })
 }
@@ -582,11 +791,13 @@ export async function processApprovalPrompt(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
   prompt: string,
-): Promise<{ continue: boolean; user_message?: string }> {
+): Promise<ApprovalPromptResult> {
   const approvalId = approvalCommandMatch(prompt, ctx.config.tokenPrefix)
   if (!approvalId) {
     return { continue: true }
   }
+
+  const adapter = adapterIdFromContext(ctx)
 
   if (ctx.config.approvalSigning.required) {
     const message =
@@ -610,12 +821,11 @@ export async function processApprovalPrompt(
     approvalId,
     config: ctx.config,
     requireSignedToken: ctx.config.approvalSigning.required,
-    store: {
-      loadPending: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
-      loadApproved: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
-      writePending: (filePath, state) => deps.writeApprovals(filePath, state),
-      writeApproved: (filePath, state) => deps.writeApprovals(filePath, state),
-    },
+    adapter,
+    store: gateApprovalStoreFromDeps({
+      loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
+      writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
+    }),
   })
 
   await deps.appendAudit(ctx, {
@@ -634,9 +844,12 @@ export async function processApprovalPrompt(
     }
   }
 
+  const replay = recorded.approval ? buildReplayHint(ctx.config, recorded.approval, adapter) : null
+
   return {
     continue: false,
     user_message: recorded.message,
+    ...(replay ? { replay } : {}),
   }
 }
 
@@ -666,10 +879,9 @@ export function gateVerdictToClaudePreToolUseResponse(
   }
 }
 
-export function gateVerdictToClaudeUserPromptResponse(verdict: {
-  continue: boolean
-  user_message?: string
-}): Record<string, unknown> {
+export function gateVerdictToClaudeUserPromptResponse(
+  verdict: ApprovalPromptResult,
+): Record<string, unknown> {
   if (verdict.continue) {
     return {}
   }
@@ -678,6 +890,7 @@ export function gateVerdictToClaudeUserPromptResponse(verdict: {
       hookEventName: 'UserPromptSubmit',
       continue: false,
       user_message: verdict.user_message,
+      ...(verdict.replay ? { replay: verdict.replay } : {}),
     },
   }
 }
@@ -691,16 +904,16 @@ export function gateVerdictToCodexPreToolUseResponse(
 }
 
 // Codex UserPromptSubmit blocks via `decision: "block"` (per developers.openai.com/codex/hooks).
-export function gateVerdictToCodexUserPromptResponse(verdict: {
-  continue: boolean
-  user_message?: string
-}): Record<string, unknown> {
+export function gateVerdictToCodexUserPromptResponse(
+  verdict: ApprovalPromptResult,
+): Record<string, unknown> {
   if (verdict.continue) {
     return {}
   }
   return {
     decision: 'block',
     reason: verdict.user_message,
+    ...(verdict.replay ? { replay: verdict.replay } : {}),
   }
 }
 

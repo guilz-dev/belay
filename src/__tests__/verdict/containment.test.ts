@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { canonicalPath } from '../../core/path-utils.js'
 import { analyzePathTargets, resolveTrustedPath } from '../../core/verdict/containment.js'
 import { verdictTestContext } from './helpers.js'
 
@@ -33,6 +34,49 @@ describe('containment', () => {
     })
     expect(analysis.isHighStakes).toBe(true)
     expect(analysis.location).toBe('repo_outside')
+    expect(analysis.signals).toContain('high_stakes_path')
+  })
+
+  it('treats trusted workspace roots as repo-local location', () => {
+    const trustedRoot = canonicalPath(path.join(process.env.HOME ?? '/home/user', '.cursor/plans'))
+    const analysis = analyzePathTargets({
+      targets: [path.join(trustedRoot, 'foo.plan.md')],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      trustedCwd: true,
+      trustedWorkspaceRoots: [trustedRoot],
+      sensitivePaths: ctx.sensitivePaths,
+    })
+    expect(analysis.location).toBe('repo_local')
+    expect(analysis.isHighStakes).toBe(false)
+  })
+
+  it('marks sensitive paths in trusted roots as high stakes', () => {
+    const trustedRoot = canonicalPath(path.join(process.env.HOME ?? '/home/user', '.cursor/plans'))
+    const analysis = analyzePathTargets({
+      targets: [path.join(trustedRoot, '.env')],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      trustedCwd: true,
+      trustedWorkspaceRoots: [trustedRoot],
+      sensitivePaths: ctx.sensitivePaths,
+    })
+    expect(analysis.location).toBe('repo_local')
+    expect(analysis.isHighStakes).toBe(true)
+  })
+
+  it('marks credential paths in trusted roots as high stakes', () => {
+    const trustedRoot = canonicalPath(path.join(process.env.HOME ?? '/home/user', '.cursor/plans'))
+    const analysis = analyzePathTargets({
+      targets: [path.join(trustedRoot, '.npmrc')],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      trustedCwd: true,
+      trustedWorkspaceRoots: [trustedRoot],
+      sensitivePaths: ctx.sensitivePaths,
+    })
+    expect(analysis.location).toBe('repo_local')
+    expect(analysis.isHighStakes).toBe(true)
     expect(analysis.signals).toContain('high_stakes_path')
   })
 

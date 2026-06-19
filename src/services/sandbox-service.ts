@@ -6,6 +6,7 @@ import {
   evaluateL1FullStatus,
   isCapabilityBrokerDemotionActive,
 } from '../core/capability/broker.js'
+import { trustedWorkspaceRootsPath } from '../core/capability/trusted-workspace-roots.js'
 import { configuredControlPlaneDir } from '../core/config.js'
 import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
 import { egressStatus } from './egress-service.js'
@@ -88,6 +89,7 @@ export function createCapabilityApprovalStore(
   const repoLocalDir = repoLocalStateDirFor(repoRoot, config)
   return {
     allowlistPath: fsScopeAllowlistPath(config, repoLocalDir),
+    trustedRootsPath: trustedWorkspaceRootsPath(config, repoLocalDir),
     async loadPending() {
       const { loadApprovalState, pendingApprovalsPath } = await import('../config-io.js')
       const filePath = pendingApprovalsPath(repoRoot, config)

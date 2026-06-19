@@ -19,8 +19,22 @@ export {
   shouldSkipBrokerApprovedOnce,
   shouldSkipBrokerApprovedRecord,
 } from './reasons.js'
+export {
+  addTrustedWorkspaceRoot,
+  isBroadTrustedWorkspaceRoot,
+  isHighStakesTrustedWorkspaceRoot,
+  isPathWithinTrustedWorkspaceRoots,
+  loadTrustedWorkspaceRoots,
+  loadTrustedWorkspaceRootsSync,
+  normalizeTrustedWorkspaceRootPath,
+  saveTrustedWorkspaceRoots,
+  trustedWorkspaceRootsPath,
+  validateTrustedWorkspaceRootCandidate,
+} from './trusted-workspace-roots.js'
 export type {
   CapabilityApprovalScope,
   FsScopeAllowlistEntry,
   FsScopeAllowlistFile,
+  TrustedWorkspaceRootEntry,
+  TrustedWorkspaceRootsFile,
 } from './types.js'

@@ -79,10 +79,16 @@ export interface ClassifierOptions {
   /** When true with sandbox enabled, outside-repo rules defer to fs-scope allowlist. */
   brokerFsScope?: boolean
   fsScopeAllowlist?: FsScopeAllowlistFile
+  trustedWorkspaceRoots?: string[]
   /** Test override: inject Tier1 judge without changing config.judge. */
   tier1Judge?: import('./verdict/types.js').Tier1Judge
   /** When false, path resolution stays fail-closed (opaque cd chains). Default: Boolean(cwd). */
   trustedCwd?: boolean
+}
+
+export interface ApprovalScopeHint {
+  scope: 'workspace-root'
+  path: string
 }
 
 export interface ApprovalRecord {
@@ -100,6 +106,16 @@ export interface ApprovalRecord {
   /** Original gated input for explain-last-ask (ApprovalState v2). */
   input?: string
   inputKind?: 'shell' | 'tool' | 'subagent'
+  /** Replay envelope: working directory when the action was gated. */
+  cwd?: string
+  /** Replay envelope: tool name for tool/subagent actions. */
+  toolName?: string
+  /** Replay envelope: canonical payload hash for strict replay validation. */
+  payloadHash?: string
+  /** Replay envelope: scrubbed payload JSON for explain (size-capped at write time). */
+  payloadJson?: string
+  /** Optional scope hint for structured capability approvals. */
+  scopeHint?: ApprovalScopeHint
 }
 
 export interface ApprovalStateFile {

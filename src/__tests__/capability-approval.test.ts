@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -14,9 +14,11 @@ function memoryStore(
   pending: ApprovalStateFile,
   approved: ApprovalStateFile,
   allowlistPath: string,
+  trustedRootsPath: string,
 ) {
   return {
     allowlistPath,
+    trustedRootsPath,
     async loadPending() {
       return { filePath: '/tmp/pending.json', state: pending }
     },
@@ -58,12 +60,13 @@ describe('recordCapabilityApproval', () => {
       await mkdtemp(path.join(os.tmpdir(), 'belay-cap-')),
       'allowlist.json',
     )
+    const trustedRootsPath = path.join(path.dirname(allowlistPath), 'trusted-workspace-roots.json')
     tempDirs.push(path.dirname(allowlistPath))
 
     const result = await recordCapabilityApproval({
       approvalId: 'belay_wrongreason',
       config: DEFAULT_CONFIG_V3,
-      store: memoryStore(pending, approved, allowlistPath),
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
       scope: 'path',
       scopePath: '/tmp/outside.txt',
     })
@@ -92,12 +95,13 @@ describe('recordCapabilityApproval', () => {
     const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-'))
     tempDirs.push(stateDir)
     const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
+    const trustedRootsPath = path.join(stateDir, 'trusted-workspace-roots.json')
     const outsidePath = canonicalPath('/tmp/outside.txt')
 
     const result = await recordCapabilityApproval({
       approvalId: 'belay_outside',
       config: DEFAULT_CONFIG_V3,
-      store: memoryStore(pending, approved, allowlistPath),
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
       scope: 'path',
       scopePath: '/tmp/outside.txt',
     })
@@ -110,5 +114,126 @@ describe('recordCapabilityApproval', () => {
       paths: Array<{ path: string }>
     }
     expect(saved.paths.map((entry) => entry.path)).toContain(outsidePath)
+  })
+
+  it('adds a trusted workspace root when scope hint matches', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-trusted-'))
+    tempDirs.push(stateDir)
+    const trustedRoot = path.join(stateDir, 'cursor-plans')
+    await mkdir(trustedRoot, { recursive: true })
+    const pending: ApprovalStateFile = {
+      version: 2,
+      approvals: [
+        {
+          approvalId: 'belay_workspace_root',
+          kind: 'tool',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'outside_repo_mutation',
+          summary: 'write plan',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          scopeHint: { scope: 'workspace-root', path: trustedRoot },
+        },
+      ],
+    }
+    const approved: ApprovalStateFile = { version: 1, approvals: [] }
+    const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
+    const trustedRootsPath = path.join(stateDir, 'trusted-workspace-roots.json')
+
+    const result = await recordCapabilityApproval({
+      approvalId: 'belay_workspace_root',
+      config: DEFAULT_CONFIG_V3,
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
+      scope: 'workspace-root',
+      scopePath: trustedRoot,
+    })
+
+    expect(result.ok).toBe(true)
+    const saved = JSON.parse(await readFile(trustedRootsPath, 'utf8')) as {
+      roots: Array<{ path: string; approvalId: string }>
+    }
+    expect(saved.roots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: canonicalPath(trustedRoot),
+          approvalId: 'belay_workspace_root',
+        }),
+      ]),
+    )
+  })
+
+  it('rejects workspace-root approval when path does not match scope hint', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-trusted-'))
+    tempDirs.push(stateDir)
+    const trustedRoot = path.join(stateDir, 'cursor-plans')
+    const differentRoot = path.join(stateDir, 'other')
+    await mkdir(trustedRoot, { recursive: true })
+    await mkdir(differentRoot, { recursive: true })
+    const pending: ApprovalStateFile = {
+      version: 2,
+      approvals: [
+        {
+          approvalId: 'belay_workspace_root_mismatch',
+          kind: 'tool',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'outside_repo_mutation',
+          summary: 'write plan',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          scopeHint: { scope: 'workspace-root', path: trustedRoot },
+        },
+      ],
+    }
+    const approved: ApprovalStateFile = { version: 1, approvals: [] }
+    const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
+    const trustedRootsPath = path.join(stateDir, 'trusted-workspace-roots.json')
+
+    const result = await recordCapabilityApproval({
+      approvalId: 'belay_workspace_root_mismatch',
+      config: DEFAULT_CONFIG_V3,
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
+      scope: 'workspace-root',
+      scopePath: differentRoot,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('must exactly match')
+  })
+
+  it('rejects workspace-root approval for high-stakes directories', async () => {
+    const pending: ApprovalStateFile = {
+      version: 2,
+      approvals: [
+        {
+          approvalId: 'belay_workspace_root_high_stakes',
+          kind: 'tool',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'outside_repo_mutation',
+          summary: 'write hosts',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          scopeHint: { scope: 'workspace-root', path: '/etc' },
+        },
+      ],
+    }
+    const approved: ApprovalStateFile = { version: 1, approvals: [] }
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-trusted-'))
+    tempDirs.push(stateDir)
+    const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
+    const trustedRootsPath = path.join(stateDir, 'trusted-workspace-roots.json')
+
+    const result = await recordCapabilityApproval({
+      approvalId: 'belay_workspace_root_high_stakes',
+      config: DEFAULT_CONFIG_V3,
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
+      scope: 'workspace-root',
+      scopePath: '/etc',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('high-stakes')
   })
 })

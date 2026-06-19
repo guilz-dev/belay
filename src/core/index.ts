@@ -1,20 +1,48 @@
 export {
   APPROVAL_EXECUTION_LEASE_MS,
   approvalCommandMatch,
-  buildRetryInstruction,
   compactApprovals,
   createApprovalRecord,
+  createApprovalRecordWithEnvelope,
   isExecutionLeaseExpired,
   isExpired,
   mergeApprovalStates,
   nowIso,
 } from './approval.js'
+export type {
+  ApprovalReplayHint,
+  ReplayActionContext,
+  ReplayAdapterId,
+} from './approval-replay.js'
+/** @deprecated Use `buildRetryInstructionForConfig` */
+export {
+  approvalFlow,
+  buildApprovalRecordedMessage,
+  buildReplayEnvelopeFields,
+  buildReplayHint,
+  buildRetryInstructionForConfig,
+  buildRetryInstructionForConfig as buildRetryInstruction,
+  canAutoReplay,
+  getExecutionLeaseMs,
+  replayShellCommand,
+  validateReplayEnvelope,
+} from './approval-replay.js'
+export type { ApprovalStore } from './approval-service.js'
+export {
+  consumeApprovedAfterCliReplay,
+  createGateApprovalStore,
+  gateApprovalStoreFromDeps,
+  recordApproval,
+} from './approval-service.js'
 export type { AuditMetricsReport } from './audit-metrics.js'
 export { computeAuditMetrics, parseAuditNdjson } from './audit-metrics.js'
 export { classifySubagent } from './classify-subagent.js'
 export { classifyToolUse } from './classify-tool.js'
 export {
+  type ApprovalFlow,
   approvedApprovalsFile,
+  type BelayApprovalAutoReplayScopes,
+  type BelayApprovalConfig,
   type BelayConfig,
   type BelayConfigV1,
   type BelayConfigV2,
@@ -28,6 +56,7 @@ export {
   belayStateDir,
   classifierOptionsFromConfig,
   configuredControlPlaneDir,
+  DEFAULT_APPROVAL_CONFIG,
   DEFAULT_CONFIG_V2,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
@@ -82,6 +111,7 @@ export {
   relativeWithinRepo,
   resolveMutationTarget,
 } from './path-utils.js'
+export { fingerprintReplayPayload, subagentFingerprintSource } from './replay-scrub.js'
 export { scrubString, scrubValue } from './scrub.js'
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js'
 export type {
@@ -91,6 +121,7 @@ export type {
 export { isTransactionalEligible, runTransactionalExecution } from './transactional/index.js'
 export type {
   ApprovalRecord,
+  ApprovalScopeHint,
   ApprovalStateFile,
   Assessment,
   ClassifierOptions,

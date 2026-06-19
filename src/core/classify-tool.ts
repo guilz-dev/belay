@@ -2,7 +2,7 @@ import path from 'node:path'
 import type { BelayConfigV3 } from './config.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
-import { pathWithinRoot, relativeWithinRepo } from './path-utils.js'
+import { pathWithinRoot, resolveWorkspaceRootMatch } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell, resolveClassifierTrustedCwd } from './verdict/adapter.js'
@@ -116,6 +116,7 @@ async function classifyFileMutationWithTier1(params: {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
     trustedCwd,
+    trustedWorkspaceRoots: params.options.trustedWorkspaceRoots,
     sensitivePaths: params.options.sensitivePaths ?? params.config.classifier.sensitivePaths,
   })
   if (prescan) {
@@ -309,8 +310,12 @@ export async function classifyToolUse(
       }
     }
 
-    const relativePath = relativeWithinRepo(repoRoot, resolvedPath)
-    if (relativePath === null) {
+    const workspaceMatch = resolveWorkspaceRootMatch(
+      repoRoot,
+      options.trustedWorkspaceRoots,
+      resolvedPath,
+    )
+    if (workspaceMatch === null) {
       signals.push('outside_repo_path')
       return classifyFileMutationWithTier1({
         toolName,
@@ -326,6 +331,37 @@ export async function classifyToolUse(
         locationLabel: 'outside_repo',
       })
     }
+
+    if (workspaceMatch.kind === 'trusted') {
+      signals.push('trusted_workspace_root')
+    }
+
+    const trustedCwd = resolveClassifierTrustedCwd(cwd, options)
+    const workspacePrescan = mutationPrescanRequiresAsk({
+      targets: [filePath],
+      cwd,
+      repoRoot,
+      trustedCwd,
+      trustedWorkspaceRoots: options.trustedWorkspaceRoots,
+      sensitivePaths,
+    })
+    if (workspacePrescan) {
+      return classifyFileMutationWithTier1({
+        toolName,
+        toolKind,
+        filePath,
+        resolvedPath,
+        repoRoot,
+        cwd,
+        config,
+        options,
+        signals,
+        isDelete: FILE_DELETE_TOOL_NAMES.has(toolKind),
+        locationLabel: 'sensitive_path',
+      })
+    }
+
+    const relativePath = workspaceMatch.relativePath
 
     if (matchesSensitivePath(relativePath, sensitivePaths)) {
       signals.push('sensitive_path')

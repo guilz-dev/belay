@@ -1,4 +1,11 @@
+import {
+  approvedApprovalsPath,
+  loadApprovalState,
+  pendingApprovalsPath,
+  saveApprovalState,
+} from '../config-io.js'
 import { compactApprovals } from './approval.js'
+import { buildApprovalRecordedMessage, type ReplayAdapterId } from './approval-replay.js'
 import { verifyApprovalToken } from './approval-token.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
@@ -18,8 +25,9 @@ export async function recordApproval(params: {
   token?: string
   /** When true, require a signed token (out-of-band CLI path). Editor prompts skip this. */
   requireSignedToken?: boolean
+  adapter?: ReplayAdapterId
 }): Promise<{ ok: boolean; message: string; approval?: ApprovalStateFile['approvals'][number] }> {
-  const { approvalId, config, store, token, requireSignedToken = false } = params
+  const { approvalId, config, store, token, requireSignedToken = false, adapter } = params
 
   const pending = await store.loadPending()
   pending.state = compactApprovals(pending.state)
@@ -58,7 +66,63 @@ export async function recordApproval(params: {
 
   return {
     ok: true,
-    message: `Belay approval recorded for ${approvalId}. Retry the original action once before it expires.`,
+    message: buildApprovalRecordedMessage(config, approval, adapter),
     approval,
+  }
+}
+
+/** CLI `--replay` already executed the shell command; drop the one-shot grant. */
+export async function consumeApprovedAfterCliReplay(params: {
+  approvalId: string
+  store: ApprovalStore
+}): Promise<void> {
+  const approved = await params.store.loadApproved()
+  approved.state = compactApprovals(approved.state)
+  const remaining = approved.state.approvals.filter(
+    (approval) => approval.approvalId !== params.approvalId,
+  )
+  if (remaining.length === approved.state.approvals.length) {
+    return
+  }
+  approved.state.approvals = remaining
+  await params.store.writeApproved(approved.filePath, approved.state)
+}
+
+export function createGateApprovalStore(repoRoot: string, config: BelayConfigV3): ApprovalStore {
+  return {
+    async loadPending() {
+      const filePath = pendingApprovalsPath(repoRoot, config)
+      return {
+        filePath,
+        state: await loadApprovalState(repoRoot, 'pending-approvals.json', config),
+      }
+    },
+    async loadApproved() {
+      const filePath = approvedApprovalsPath(repoRoot, config)
+      return {
+        filePath,
+        state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
+      }
+    },
+    async writePending(_filePath, state) {
+      await saveApprovalState(repoRoot, 'pending-approvals.json', state, config)
+    },
+    async writeApproved(_filePath, state) {
+      await saveApprovalState(repoRoot, 'approved-approvals.json', state, config)
+    },
+  }
+}
+
+export function gateApprovalStoreFromDeps(deps: {
+  loadApprovals: (
+    fileName: 'pending-approvals.json' | 'approved-approvals.json',
+  ) => Promise<{ filePath: string; state: ApprovalStateFile }>
+  writeApprovals: (filePath: string, state: ApprovalStateFile) => Promise<void>
+}): ApprovalStore {
+  return {
+    loadPending: () => deps.loadApprovals('pending-approvals.json'),
+    loadApproved: () => deps.loadApprovals('approved-approvals.json'),
+    writePending: (filePath, state) => deps.writeApprovals(filePath, state),
+    writeApproved: (filePath, state) => deps.writeApprovals(filePath, state),
   }
 }

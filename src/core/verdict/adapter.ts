@@ -33,6 +33,7 @@ export function buildVerdictContext(params: {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
     trustedCwd: resolveClassifierTrustedCwd(params.cwd, params.options, params.trustedCwd),
+    trustedWorkspaceRoots: params.options?.trustedWorkspaceRoots ?? [],
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
     protectedArtifactRoots:
       protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,

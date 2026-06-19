@@ -1,5 +1,5 @@
 import { matchesSensitivePath } from '../glob.js'
-import { relativeWithinRepo, resolveMutationTarget } from '../path-utils.js'
+import { resolveMutationTarget, resolveWorkspaceRootMatch } from '../path-utils.js'
 import type { ScrubOptions } from '../types.js'
 import { resolveTrustedPath } from './containment.js'
 import { scrubOutboundForJudge } from './judge-outbound.js'
@@ -115,6 +115,7 @@ export interface MutationPrescanParams {
   cwd: string
   repoRoot: string
   trustedCwd: boolean
+  trustedWorkspaceRoots?: string[]
   sensitivePaths: string[]
 }
 
@@ -127,10 +128,14 @@ export function prescanMutationTargets(params: MutationPrescanParams): Tier1Verd
     if (!resolved) {
       continue
     }
-    const relative = relativeWithinRepo(params.repoRoot, resolved)
+    const workspaceMatch = resolveWorkspaceRootMatch(
+      params.repoRoot,
+      params.trustedWorkspaceRoots,
+      resolved,
+    )
     if (
-      relative !== null &&
-      matchesSensitivePath(relative.replaceAll('\\', '/'), params.sensitivePaths)
+      workspaceMatch !== null &&
+      matchesSensitivePath(workspaceMatch.relativePath.replaceAll('\\', '/'), params.sensitivePaths)
     ) {
       return {
         local_recoverable: false,
@@ -139,7 +144,10 @@ export function prescanMutationTargets(params: MutationPrescanParams): Tier1Verd
         reason: 'sensitive_path_mutation',
       }
     }
-    if (relative === null && isOutsideRepoSecretCredentialPath(resolved)) {
+    if (
+      (workspaceMatch === null || workspaceMatch.kind === 'trusted') &&
+      isOutsideRepoSecretCredentialPath(resolved)
+    ) {
       return {
         local_recoverable: false,
         destroys_outside_repo: false,

@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { relativeWithinRepo, resolveMutationTarget } from '../path-utils.js'
+import { resolveMutationTarget, resolveWorkspaceRootMatch } from '../path-utils.js'
 import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
 
 function applyPatchTargets(patch: string): string[] {
@@ -52,24 +52,30 @@ function addOutsideRepoPath(
   token: string,
   cwd: string,
   repoRoot: string,
+  trustedWorkspaceRoots: string[] = [],
 ): void {
   const resolved = resolveMutationTarget(token, cwd)
-  if (resolved && relativeWithinRepo(repoRoot, resolved) === null) {
+  if (resolved && resolveWorkspaceRootMatch(repoRoot, trustedWorkspaceRoots, resolved) === null) {
     paths.add(resolved)
   }
 }
 
-export function collectOutsideRepoPaths(command: string, cwd: string, repoRoot: string): string[] {
+export function collectOutsideRepoPaths(
+  command: string,
+  cwd: string,
+  repoRoot: string,
+  trustedWorkspaceRoots: string[] = [],
+): string[] {
   const tokens = tokenizeShell(command)
   const redirects = extractRedirectTargets(tokens)
   const paths = new Set<string>()
 
   for (const token of tokens.slice(1)) {
-    addOutsideRepoPath(paths, token, cwd, repoRoot)
+    addOutsideRepoPath(paths, token, cwd, repoRoot, trustedWorkspaceRoots)
   }
 
   for (const redirect of redirects) {
-    addOutsideRepoPath(paths, redirect, cwd, repoRoot)
+    addOutsideRepoPath(paths, redirect, cwd, repoRoot, trustedWorkspaceRoots)
   }
 
   return [...paths]
@@ -79,6 +85,7 @@ export function collectOutsideRepoPathsFromToolPayload(
   payload: Record<string, unknown>,
   cwd: string,
   repoRoot: string,
+  trustedWorkspaceRoots: string[] = [],
 ): string[] {
   const toolKind = String(payload.tool_name ?? '')
     .trim()
@@ -88,7 +95,7 @@ export function collectOutsideRepoPathsFromToolPayload(
   const filePath = extractToolFilePath(payload)
   if (filePath) {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath)
-    if (relativeWithinRepo(repoRoot, resolved) === null) {
+    if (resolveWorkspaceRootMatch(repoRoot, trustedWorkspaceRoots, resolved) === null) {
       paths.add(resolved)
     }
     return [...paths]
@@ -99,7 +106,7 @@ export function collectOutsideRepoPathsFromToolPayload(
     if (patch) {
       for (const target of applyPatchTargets(patch)) {
         const resolved = path.isAbsolute(target) ? target : path.resolve(cwd, target)
-        if (relativeWithinRepo(repoRoot, resolved) === null) {
+        if (resolveWorkspaceRootMatch(repoRoot, trustedWorkspaceRoots, resolved) === null) {
           paths.add(resolved)
         }
       }

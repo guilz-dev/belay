@@ -1,13 +1,12 @@
 import path from 'node:path'
 
+import { loadApprovalState, loadConfigFile } from '../config-io.js'
+import { canAutoReplay, getExecutionLeaseMs, replayShellCommand } from '../core/approval-replay.js'
 import {
-  approvedApprovalsPath,
-  loadApprovalState,
-  loadConfigFile,
-  pendingApprovalsPath,
-  saveApprovalState,
-} from '../config-io.js'
-import { recordApproval } from '../core/approval-service.js'
+  consumeApprovedAfterCliReplay,
+  createGateApprovalStore,
+  recordApproval,
+} from '../core/approval-service.js'
 import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { CapabilityApprovalScope } from '../core/capability/types.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
@@ -24,6 +23,7 @@ export interface ApproveOptions {
   token?: string
   scope?: ApproveScope
   scopePath?: string
+  replay?: boolean
 }
 
 export async function approvePending(
@@ -57,11 +57,11 @@ export async function approvePending(
     return { ok: result.ok, message: result.message }
   }
 
-  if (options.scope === 'path') {
+  if (options.scope === 'path' || options.scope === 'workspace-root') {
     const result = await recordCapabilityApproval({
       approvalId: options.approvalId,
       config,
-      scope: 'path',
+      scope: options.scope,
       scopePath: options.scopePath,
       token: options.token,
       requireSignedToken: config.approvalSigning.required,
@@ -70,34 +70,61 @@ export async function approvePending(
     return { ok: result.ok, message: result.message }
   }
 
+  const approvalStore = createGateApprovalStore(repoRoot, config)
+
   const result = await recordApproval({
     approvalId: options.approvalId,
     config,
     token: options.token,
     requireSignedToken: config.approvalSigning.required,
-    store: {
-      async loadPending() {
-        const filePath = pendingApprovalsPath(repoRoot, config)
-        return {
-          filePath,
-          state: await loadApprovalState(repoRoot, 'pending-approvals.json', config),
-        }
-      },
-      async loadApproved() {
-        const filePath = approvedApprovalsPath(repoRoot, config)
-        return {
-          filePath,
-          state: await loadApprovalState(repoRoot, 'approved-approvals.json', config),
-        }
-      },
-      async writePending(_filePath, state) {
-        await saveApprovalState(repoRoot, 'pending-approvals.json', state, config)
-      },
-      async writeApproved(_filePath, state) {
-        await saveApprovalState(repoRoot, 'approved-approvals.json', state, config)
-      },
-    },
+    store: approvalStore,
   })
+
+  if (!result.ok) {
+    return { ok: result.ok, message: result.message }
+  }
+
+  if (options.replay) {
+    const approval = result.approval
+    if (!approval) {
+      return { ok: false, message: 'Approval recorded but replay envelope is missing.' }
+    }
+    if (!canAutoReplay(config, approval.kind)) {
+      return {
+        ok: false,
+        message:
+          'Replay is not enabled for this approval kind. Retry the original action manually or enable approval.autoReplayScopes.',
+      }
+    }
+    if (approval.kind !== 'shell' || !approval.input) {
+      return {
+        ok: false,
+        message:
+          'CLI replay is only supported for shell approvals. Retry the original tool or subagent action manually.',
+      }
+    }
+    const replayResult = await replayShellCommand(
+      approval.input,
+      approval.cwd ?? repoRoot,
+      getExecutionLeaseMs(config),
+    )
+    const output = [replayResult.stdout, replayResult.stderr].filter(Boolean).join('\n').trim()
+    if (replayResult.exitCode === 0) {
+      await consumeApprovedAfterCliReplay({
+        approvalId: options.approvalId,
+        store: approvalStore,
+      })
+      return {
+        ok: true,
+        message: `Belay replay succeeded for ${options.approvalId}. Do not retry via hooks; the one-shot grant was consumed.${output ? `\n${output}` : ''}`,
+      }
+    }
+    const timeoutNote = replayResult.timedOut ? ' Replay timed out.' : ''
+    return {
+      ok: false,
+      message: `Belay replay failed for ${options.approvalId} (exit ${replayResult.exitCode}).${timeoutNote} Approval remains active for one hook retry.${output ? `\n${output}` : ''}`,
+    }
+  }
 
   return { ok: result.ok, message: result.message }
 }
