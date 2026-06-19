@@ -4,8 +4,8 @@ import {
   canonicalPath,
   pathWithinRoot,
   relativeWithinRepo,
-  resolveWorkspaceRootMatch,
   resolveMutationTarget,
+  resolveWorkspaceRootMatch,
 } from '../path-utils.js'
 
 import { isOutsideRepoSecretCredentialPath } from './persistent-paths.js'

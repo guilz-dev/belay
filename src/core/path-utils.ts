@@ -54,8 +54,7 @@ function relativeWithinRoot(
   targetPath: string,
   options: { canonicalizeRoot?: boolean } = {},
 ): string | null {
-  const resolvedRoot =
-    options.canonicalizeRoot === false ? path.resolve(root) : canonicalPath(root)
+  const resolvedRoot = options.canonicalizeRoot === false ? path.resolve(root) : canonicalPath(root)
   const resolvedTarget = canonicalPath(targetPath)
   const relativePath = path.relative(resolvedRoot, resolvedTarget)
   if (relativePath === '') {
