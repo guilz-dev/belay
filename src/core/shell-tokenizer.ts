@@ -18,8 +18,8 @@ function readShellOperator(input: string, index: number): { token: string; lengt
   const next = input[index + 1] ?? ''
   const digits = /[0-9]/.test(char) ? readDigits(input, index) : ''
   const digitsLength = digits.length
-  const afterDigits = digitsLength > 0 ? input[index + digitsLength] ?? '' : ''
-  const afterDigitsNext = digitsLength > 0 ? input[index + digitsLength + 1] ?? '' : ''
+  const afterDigits = digitsLength > 0 ? (input[index + digitsLength] ?? '') : ''
+  const afterDigitsNext = digitsLength > 0 ? (input[index + digitsLength + 1] ?? '') : ''
 
   if (char === '&' && next === '&') {
     return { token: '&&', length: 2 }
@@ -61,7 +61,13 @@ function readShellOperator(input: string, index: number): { token: string; lengt
 }
 
 export function isRedirectOperator(token: string): boolean {
-  return token === '>' || token === '>>' || token === '<' || token === '&>' || FD_REDIRECT_PATTERN.test(token)
+  return (
+    token === '>' ||
+    token === '>>' ||
+    token === '<' ||
+    token === '&>' ||
+    FD_REDIRECT_PATTERN.test(token)
+  )
 }
 
 export function isFdDuplication(token: string): boolean {
@@ -143,7 +149,14 @@ export function splitTopLevelSegments(tokens: string[]): string[][] {
   const segments: string[][] = []
   let current: string[] = []
   for (const token of tokens) {
-    if (token === '&&' || token === '||' || token === ';' || token === '|' || token === '&' || token === '|&') {
+    if (
+      token === '&&' ||
+      token === '||' ||
+      token === ';' ||
+      token === '|' ||
+      token === '&' ||
+      token === '|&'
+    ) {
       if (current.length > 0) {
         segments.push(current)
       }

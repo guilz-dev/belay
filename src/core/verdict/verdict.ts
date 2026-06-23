@@ -276,12 +276,7 @@ function extractPathArgs(tokens: string[]): string[] {
   const args: string[] = [...redirects]
   for (let index = 1; index < tokens.length; index += 1) {
     const token = tokens[index]
-    if (
-      !token ||
-      token.startsWith('-') ||
-      isRedirectOperator(token) ||
-      isFdDuplication(token)
-    ) {
+    if (!token || token.startsWith('-') || isRedirectOperator(token) || isFdDuplication(token)) {
       continue
     }
     if (redirects.includes(token)) {
