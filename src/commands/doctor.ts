@@ -17,7 +17,7 @@ import {
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
-import { diagnoseJudge } from '../core/judge-doctor.js'
+import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { egressStatus } from '../services/egress-service.js'
@@ -283,6 +283,16 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       notes.push(...cleanup.actions)
     } else {
       notes.push('No orphan approval cleanup actions were needed.')
+    }
+
+    const judgeStateDir = belayStateDir(loadedConfig, repoLocalDir)
+    if (options.dryRun !== true) {
+      const stoppedBrokers = await stopJudgeSessionBrokers(repoRoot, judgeStateDir)
+      if (stoppedBrokers > 0) {
+        notes.push(`Stopped judge session broker artifacts for ${repoRoot}.`)
+      }
+    } else {
+      notes.push('Dry run: would stop judge session broker and clear kill switch if present.')
     }
   }
 

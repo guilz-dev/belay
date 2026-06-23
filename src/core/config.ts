@@ -14,6 +14,10 @@ import {
   normalizeLegacyProviderId,
   warnRemovedProviderId,
 } from './verdict/judge-catalog.js'
+import {
+  type BelayJudgeRuntimeConfig,
+  normalizeJudgeRuntimeConfig,
+} from './verdict/judge-runtime-config.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -140,6 +144,7 @@ export interface BelayJudgeConfig {
   keepAlive: string | null
   cloudConsent?: JudgeCloudConsent
   credential?: JudgeCredentialConfig
+  runtime?: BelayJudgeRuntimeConfig
 }
 
 export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
@@ -575,6 +580,7 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
             : null,
       ...(judge.cloudConsent ? { cloudConsent: judge.cloudConsent } : {}),
       ...(judge.credential ? { credential: judge.credential } : {}),
+      runtime: normalizeJudgeRuntimeConfig(judge.runtime),
     }
   }
 
@@ -638,6 +644,8 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
       ...(judge.credential.ref ? { ref: judge.credential.ref } : {}),
     }
   }
+
+  normalized.runtime = normalizeJudgeRuntimeConfig(judge.runtime)
 
   return normalized
 }

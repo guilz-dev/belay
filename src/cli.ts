@@ -74,7 +74,7 @@ function parseArgs(argv: string[]) {
     judgeEndpoint?: string
     acceptCloudJudge?: boolean
     migrateJudgeDefault?: boolean
-    judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'consent'
+    judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'bench' | 'consent'
     judgeUseProvider?: string
     acceptCloud?: boolean
     cloudConsentApprovalId?: string
@@ -446,12 +446,13 @@ function parseArgs(argv: string[]) {
         token === 'list' ||
         token === 'use' ||
         token === 'test' ||
+        token === 'bench' ||
         token === 'consent'
       ) {
         options.judgeSubcommand = token
         continue
       }
-      throw new Error('judge requires subcommand: status, list, use, test, or consent')
+      throw new Error('judge requires subcommand: status, list, use, test, bench, or consent')
     }
     if (command === 'config' && !options.configSubcommand) {
       if (
@@ -556,7 +557,7 @@ Usage:
   ${c} explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
-  ${c} judge <status|list|use|test|consent> [--target <dir>] [--json]
+  ${c} judge <status|list|use|test|bench|consent> [--target <dir>] [--json]
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
   ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]

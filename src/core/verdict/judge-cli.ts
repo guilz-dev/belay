@@ -11,6 +11,11 @@ import {
 } from './judge.js'
 import type { JudgeProviderId } from './judge-catalog.js'
 import { scrubOutboundForJudge } from './judge-outbound.js'
+import type { BelayJudgeRuntimeConfig } from './judge-runtime-config.js'
+import { DEFAULT_JUDGE_RUNTIME_CONFIG } from './judge-runtime-config.js'
+import type { JudgeFallbackReason } from './judge-session-guard.js'
+import { transportFallbackToFailClosedReason } from './judge-session-guard.js'
+import { evaluateWithJudgeTransport } from './judge-transport.js'
 
 export interface CliJudgeOptions {
   providerId: JudgeProviderId
@@ -20,6 +25,10 @@ export interface CliJudgeOptions {
   sensitivePaths: string[]
   scrubOptions: ScrubOptions
   runCliCommand?: CliJudgeRunCommand
+  runtime?: BelayJudgeRuntimeConfig
+  repoRoot?: string
+  stateDir?: string
+  judgeMode?: string
 }
 
 export interface CliInvocation {
@@ -215,7 +224,19 @@ export function parseCliJudgeOutput(
 }
 
 async function runCliJson(invocation: CliInvocation, timeoutMs: number): Promise<string> {
+  return runCliJsonWithTimeouts(invocation, { evalTimeoutMs: timeoutMs })
+}
+
+export async function runCliJsonWithTimeouts(
+  invocation: CliInvocation,
+  budgets: { connectTimeoutMs?: number; evalTimeoutMs: number },
+): Promise<string> {
   const { binary, args, stdin } = invocation
+  const connectTimeoutMs = budgets.connectTimeoutMs ?? 0
+  if (connectTimeoutMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -225,7 +246,7 @@ async function runCliJson(invocation: CliInvocation, timeoutMs: number): Promise
     const timer = setTimeout(() => {
       child.kill('SIGTERM')
       reject(new Error(`${binary} timed out`))
-    }, timeoutMs)
+    }, budgets.evalTimeoutMs)
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
     })
@@ -256,6 +277,10 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
   const timeoutMs = options.timeoutMs ?? 25000
   const providerId = options.providerId as Exclude<JudgeProviderId, 'ollama'>
   const runCommand = options.runCliCommand ?? runCliJson
+  const runtime = options.runtime ?? DEFAULT_JUDGE_RUNTIME_CONFIG
+  const repoRoot = options.repoRoot ?? process.cwd()
+  const stateDir = options.stateDir ?? repoRoot
+  const judgeMode = options.judgeMode ?? 'enforce'
 
   const judge: TracedTier1Judge = {
     lastTrace: initialTrace(options),
@@ -290,30 +315,73 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
 
       const prompt = buildTier1Prompt(scrubbed.text)
       try {
-        const raw = await runCommand(
-          buildCliInvocation(providerId, prompt, options.modelResolved),
-          timeoutMs,
+        const transportResult = await evaluateWithJudgeTransport(
+          {
+            prompt,
+            context: {
+              providerId,
+              model: options.modelResolved,
+              repoRoot: input.context.repoRoot || repoRoot,
+              stateDir,
+              judgeMode,
+              runtime,
+              judgeTimeoutMs: timeoutMs,
+            },
+          },
+          { runCommand },
         )
-        const parsed = parseCliJudgeOutput(providerId, raw)
-        if (!parsed) {
+
+        const traceTransport: Tier1JudgeTransport =
+          transportResult.transport === 'session'
+            ? (`${providerId}-cli-session` as Tier1JudgeTransport)
+            : transport
+
+        if (!transportResult.verdict) {
+          const fallbackReason =
+            transportResult.fallbackReason ??
+            (`${providerId}_cli_parse_error` as JudgeFallbackReason)
           judge.lastTrace = {
             provider: 'fallback',
             modelRequested: options.modelRequested,
             modelResolved: options.modelResolved,
             latencyMs: Date.now() - started,
-            fallbackReason: `${providerId}_cli_parse_error`,
+            fallbackReason,
+            judgeSessionUsed: transportResult.sessionUsed,
+            judgeSessionReused: transportResult.sessionReused,
+            judgeSessionRefHash: transportResult.sessionRefHash,
+            judgeSessionResetReason: transportResult.sessionResetReason,
+            judgeConnectMs: transportResult.connectMs,
+            judgeEvalMs: transportResult.evalMs,
+            judgeParseMs: transportResult.parseMs,
+            judgeShadowCompared: transportResult.shadowCompared,
+            judgeShadowMismatch: transportResult.shadowMismatch,
+            judgeShadowMismatchRateWindow: transportResult.shadowMismatchRateWindow,
+            judgeKillSwitchTriggered: transportResult.killSwitchTriggered,
           }
-          return failClosedVerdict(`${providerId}_cli_parse_error`)
+          return failClosedVerdict(transportFallbackToFailClosedReason(providerId, fallbackReason))
         }
+
         judge.lastTrace = {
           provider: traceProvider(options.providerId),
           modelRequested: options.modelRequested,
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
-          transport,
+          transport: traceTransport,
           outboundRedacted: true,
+          judgeSessionUsed: transportResult.sessionUsed,
+          judgeSessionReused: transportResult.sessionReused,
+          judgeSessionRefHash: transportResult.sessionRefHash,
+          judgeSessionResetReason: transportResult.sessionResetReason,
+          judgeFallbackReason: transportResult.fallbackReason,
+          judgeConnectMs: transportResult.connectMs,
+          judgeEvalMs: transportResult.evalMs,
+          judgeParseMs: transportResult.parseMs,
+          judgeShadowCompared: transportResult.shadowCompared,
+          judgeShadowMismatch: transportResult.shadowMismatch,
+          judgeShadowMismatchRateWindow: transportResult.shadowMismatchRateWindow,
+          judgeKillSwitchTriggered: transportResult.killSwitchTriggered,
         }
-        return parsed
+        return transportResult.verdict
       } catch {
         judge.lastTrace = {
           provider: 'fallback',

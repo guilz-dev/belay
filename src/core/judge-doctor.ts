@@ -11,6 +11,7 @@ import {
 } from './judge-model-discovery.js'
 import { detectJudgeRuntimeCapabilities, resolveJudgeTransport } from './judge-runtime-detection.js'
 import { createOllamaJudge, createOpenAiCompatibleJudge } from './verdict/judge.js'
+import { stopJudgeBrokerDaemon } from './verdict/judge-broker-service.js'
 import {
   getJudgeProviderCapabilities,
   getJudgeProviderSpec,
@@ -18,6 +19,11 @@ import {
   normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
 import { createJudgeFromConfig, resolveJudgeModel } from './verdict/judge-factory.js'
+import {
+  listRepoJudgeSessionBrokers,
+  stopRepoJudgeSessionBroker,
+} from './verdict/judge-session-broker.js'
+import { clearJudgeSessionKillSwitch } from './verdict/judge-session-kill-switch.js'
 
 export interface JudgeDoctorResult {
   issues: string[]
@@ -238,5 +244,34 @@ export async function diagnoseJudge(
     notes.push(`Factory transport: ${factoryJudge.lastTrace.transport}`)
   }
 
+  if (config.judge.runtime?.session.enabled) {
+    notes.push('Judge session transport: enabled')
+    const activeBrokers = listRepoJudgeSessionBrokers()
+    if (activeBrokers.includes(repoRoot)) {
+      notes.push(`Active session broker for repo: ${repoRoot}`)
+    }
+  } else {
+    notes.push('Judge session transport: disabled (default)')
+  }
+
   return { issues, warnings, notes, modelCheck }
+}
+
+export async function stopJudgeSessionBrokers(repoRoot: string, stateDir: string): Promise<number> {
+  let stopped = 0
+  stopped += stopRepoJudgeSessionBroker(repoRoot, 'manual_stop')
+  stopped += await stopJudgeBrokerDaemon(stateDir)
+  await clearJudgeSessionKillSwitch(stateDir)
+  return stopped
+}
+
+export function stopInProcessJudgeSessionBrokers(repoRoot?: string): number {
+  if (repoRoot) {
+    return stopRepoJudgeSessionBroker(repoRoot, 'manual_stop')
+  }
+  let stopped = 0
+  for (const root of listRepoJudgeSessionBrokers()) {
+    stopped += stopRepoJudgeSessionBroker(root, 'manual_stop')
+  }
+  return stopped
 }

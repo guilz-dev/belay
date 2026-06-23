@@ -31,6 +31,9 @@ export type Tier1JudgeTransport =
   | 'codex-cli'
   | 'cursor-cli'
   | 'claude-cli'
+  | 'codex-cli-session'
+  | 'cursor-cli-session'
+  | 'claude-cli-session'
   | 'unavailable'
 
 export interface Tier1JudgeTrace {
@@ -41,6 +44,18 @@ export interface Tier1JudgeTrace {
   transport?: Tier1JudgeTransport
   outboundRedacted?: boolean
   fallbackReason?: string
+  judgeSessionUsed?: boolean
+  judgeSessionReused?: boolean
+  judgeSessionRefHash?: string
+  judgeSessionResetReason?: string
+  judgeFallbackReason?: string
+  judgeConnectMs?: number
+  judgeEvalMs?: number
+  judgeParseMs?: number
+  judgeShadowCompared?: boolean
+  judgeShadowMismatch?: boolean
+  judgeShadowMismatchRateWindow?: number
+  judgeKillSwitchTriggered?: boolean
 }
 
 export interface TracedTier1Judge extends Tier1Judge {

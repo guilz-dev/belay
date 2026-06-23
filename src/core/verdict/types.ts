@@ -53,6 +53,18 @@ export interface JudgeTrace {
   latencyMs: number
   outboundRedacted?: boolean
   fallbackReason?: string
+  judgeSessionUsed?: boolean
+  judgeSessionReused?: boolean
+  judgeSessionRefHash?: string
+  judgeSessionResetReason?: string
+  judgeFallbackReason?: string
+  judgeConnectMs?: number
+  judgeEvalMs?: number
+  judgeParseMs?: number
+  judgeShadowCompared?: boolean
+  judgeShadowMismatch?: boolean
+  judgeShadowMismatchRateWindow?: number
+  judgeKillSwitchTriggered?: boolean
 }
 
 export type VerdictMode = 'enforce' | 'audit'

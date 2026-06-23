@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4, BelayJudgeConfig } from '../config.js'
-import { normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
+import { belayStateDir, normalizeJudgeProvider, scrubOptionsFromConfig } from '../config.js'
 import { resolveJudgeCredential } from '../judge-api-key.js'
 import { hasValidCloudConsent, isCloudJudgeConfig } from '../judge-config.js'
 import { rejectDeprecatedJudgeModelAuto } from '../judge-model-policy.js'
@@ -104,7 +104,9 @@ function createCliJudgeForProvider(
   providerId: Exclude<JudgeProviderId, 'ollama'>,
   judgeConfig: BelayJudgeConfig,
   config: BelayConfigV4,
+  repoRoot?: string,
 ): TracedTier1Judge {
+  const resolvedRepoRoot = repoRoot ?? process.cwd()
   const { resolved } = resolveJudgeModel(judgeConfig)
   const options = {
     modelRequested: judgeConfig.model,
@@ -112,6 +114,10 @@ function createCliJudgeForProvider(
     timeoutMs: judgeConfig.timeoutMs,
     sensitivePaths: config.classifier.sensitivePaths,
     scrubOptions: scrubOptionsFromConfig(config),
+    runtime: judgeConfig.runtime,
+    repoRoot: resolvedRepoRoot,
+    stateDir: belayStateDir(config, repoLocalStateDirFor(resolvedRepoRoot, config)),
+    judgeMode: config.mode,
   }
   if (providerId === 'codex') {
     return createCodexCliJudge(options)
@@ -146,12 +152,13 @@ export function createJudgeFromConfig(
   const catalogSpec = getJudgeProviderSpec(providerId)
   const { resolved } = resolveJudgeModel(judgeConfig)
   const runtime = detectJudgeRuntimeCapabilities(providerId)
+  const repoRoot = options.repoRoot ?? process.cwd()
 
   if (provider === 'openai-compatible') {
     const endpoint = judgeConfig.endpoint?.trim()
     if (!endpoint && runtime.cliTransport) {
       if (providerId === 'codex' || providerId === 'cursor') {
-        return createCliJudgeForProvider(providerId, judgeConfig, config)
+        return createCliJudgeForProvider(providerId, judgeConfig, config, repoRoot)
       }
     }
 
@@ -173,7 +180,6 @@ export function createJudgeFromConfig(
       })
     }
 
-    const repoRoot = options.repoRoot ?? process.cwd()
     const repoLocalStateDir = repoLocalStateDirFor(repoRoot, config)
 
     return createOpenAiCompatibleJudge({
@@ -211,6 +217,10 @@ export function createJudgeFromConfig(
         timeoutMs: judgeConfig.timeoutMs,
         sensitivePaths: config.classifier.sensitivePaths,
         scrubOptions: scrubOptionsFromConfig(config),
+        runtime: judgeConfig.runtime,
+        repoRoot,
+        stateDir: belayStateDir(config, repoLocalStateDirFor(repoRoot, config)),
+        judgeMode: config.mode,
       })
     }
     return createFailClosedJudge({
