@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { judgeList, judgeStatus, judgeUse } from '../../commands/judge.js'
+import { judgeBench, judgeList, judgeStatus, judgeUse } from '../../commands/judge.js'
 import { loadConfigFile } from '../../config-io.js'
 import { initProject } from '../../installer.js'
 
@@ -121,5 +121,13 @@ describe('belay judge command', () => {
     const auditPath = path.join(repoRoot, config.audit.logPath)
     const audit = await readFile(auditPath, 'utf8')
     expect(audit).toContain('judge_provider_changed')
+  })
+
+  it('reports latency SLO summary via bench subcommand', async () => {
+    const report = await judgeBench({ json: true })
+    expect(report).toMatchObject({
+      slo: expect.objectContaining({ tier1P95ReductionTarget: 0.4 }),
+      measured: expect.any(Object),
+    })
   })
 })

@@ -356,4 +356,38 @@ describe('generated hook runtime', () => {
       ).catch(() => '[]'),
     ).not.toContain(pending.approvals[0].approvalId)
   })
+
+  it('keeps shell gate outcomes unchanged when judge session transport is enabled', async () => {
+    const repoRoot = await initIsolatedRepo()
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          ...(await loadConfigFile(repoRoot)),
+          mode: 'enforce',
+          judge: {
+            ...(await loadConfigFile(repoRoot)).judge,
+            runtime: {
+              session: { enabled: true, providerAllowlist: ['cursor'] },
+              shadow: { enabled: false },
+            },
+          },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+
+    const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'echo hello',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(allowed.stdout).permission).toBe('allow')
+  })
 })

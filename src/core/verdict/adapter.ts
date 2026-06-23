@@ -1,6 +1,7 @@
 import type { BelayConfigV4 } from '../config.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
 import { judgeTraceAuditFields } from './judge-audit.js'
+import { recordJudgeLatency } from './judge-baseline.js'
 import { createJudgeFromConfig } from './judge-factory.js'
 import type { Tier1Judge, VerdictContext, VerdictResult } from './types.js'
 import { verdict } from './verdict.js'
@@ -40,7 +41,10 @@ export function buildVerdictContext(params: {
     customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
     customExternalCommands:
       params.options?.customExternalCommands ?? params.config.overrides.external,
-    judge: params.judge ?? params.options?.tier1Judge ?? createJudgeFromConfig(params.config),
+    judge:
+      params.judge ??
+      params.options?.tier1Judge ??
+      createJudgeFromConfig(params.config, { repoRoot: params.repoRoot }),
     mode: params.config.mode,
     unknownLocalEffect:
       params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
@@ -57,7 +61,12 @@ export async function classifyShell(
   judge?: Tier1Judge,
 ): Promise<ClassifyResult> {
   const context = buildVerdictContext({ cwd, repoRoot, config, options, judge })
+  const started = Date.now()
   const result = await verdict(command, context)
+  const elapsed = Date.now() - started
+  if (result.confidence !== 'llm') {
+    recordJudgeLatency('tier0', elapsed)
+  }
   return verdictToClassifyResult(result)
 }
 

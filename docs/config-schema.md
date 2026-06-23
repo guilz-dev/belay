@@ -55,6 +55,9 @@ compatibility layer (`judge.provider`); **host** = install target (`config.adapt
 | `keepAlive` | string | `"30m"` (ollama only) |
 | `cloudConsent` | object | unset until TTY or capability approval records egress opt-in |
 | `credential` | `{ mode: "project" }` \| `{ mode: "apiKey", ref: "store:judge" \| "env:NAME" }` | `project` on fresh init; never `apiKey` in team config |
+| `runtime` | object | optional session/shadow transport tuning (see [judge session rollout](./judge-session-rollout.md)) |
+
+`belay judge bench` reports in-process Tier0/Tier1 latency percentiles and SLO status.
 
 Legacy read aliases: `local` → `ollama`, `openai` → `codex` (normalized on load; not written on fresh init).
 

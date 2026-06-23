@@ -39,7 +39,7 @@ import { readKeyFromStdin } from './stdin-key.js'
 export interface JudgeCommandOptions {
   targetDir?: string
   json?: boolean
-  subcommand?: 'status' | 'list' | 'use' | 'test' | 'consent'
+  subcommand?: 'status' | 'list' | 'use' | 'test' | 'bench' | 'consent'
   providerId?: string
   model?: string
   endpoint?: string
@@ -360,6 +360,22 @@ export async function judgeTest(options: JudgeCommandOptions = {}) {
   ].join('\n')
 }
 
+export async function judgeBench(options: JudgeCommandOptions = {}) {
+  const { judgeLatencySloReport } = await import('../core/verdict/judge-baseline.js')
+  const report = judgeLatencySloReport()
+  if (options.json) {
+    return report
+  }
+  const lines = [
+    `SLO target: Tier1 session p95 <= ${Math.round(report.slo.spawnBaselineP95Ms * (1 - report.slo.tier1P95ReductionTarget))}ms`,
+    `Tier0 p50/p95: ${report.measured.tier0.p50}/${report.measured.tier0.p95}ms (${report.measured.tier0.count} samples)`,
+    `Tier1 spawn p50/p95: ${report.measured.tier1_spawn.p50}/${report.measured.tier1_spawn.p95}ms (${report.measured.tier1_spawn.count} samples)`,
+    `Tier1 session p50/p95: ${report.measured.tier1_session.p50}/${report.measured.tier1_session.p95}ms (${report.measured.tier1_session.count} samples)`,
+    `Session meets target: ${report.sessionMeetsTarget ? 'yes' : 'no'}`,
+  ]
+  return lines.join('\n')
+}
+
 export async function runJudgeCommand(options: JudgeCommandOptions) {
   switch (options.subcommand) {
     case 'status':
@@ -370,9 +386,11 @@ export async function runJudgeCommand(options: JudgeCommandOptions) {
       return judgeUse(options)
     case 'test':
       return judgeTest(options)
+    case 'bench':
+      return judgeBench(options)
     case 'consent':
       return judgeRequestCloudConsent(options)
     default:
-      throw new Error('judge requires subcommand: status, list, use, test, or consent')
+      throw new Error('judge requires subcommand: status, list, use, test, bench, or consent')
   }
 }
