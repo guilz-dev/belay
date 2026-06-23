@@ -14,6 +14,7 @@ import { classifyShellCore } from './helpers/shell-classify.js'
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
 const outsideTmpLog = canonicalPath('/tmp/out.log')
+const outsideTmpIn = canonicalPath('/tmp/in.txt')
 
 describe('tokenizeShell', () => {
   it('splits top-level background operators with or without surrounding spaces', () => {
@@ -49,6 +50,14 @@ describe('tokenizeShell', () => {
     expect(tokenizeShell('echo hi 2>&-')).toEqual(['echo', 'hi', '2>&-'])
     expect(tokenizeShell('echo hi 3>&1')).toEqual(['echo', 'hi', '3>&1'])
     expect(tokenizeShell('echo hi &>/tmp/out.log')).toEqual(['echo', 'hi', '&>', '/tmp/out.log'])
+    expect(tokenizeShell('cat 3< in.txt')).toEqual(['cat', '3<', 'in.txt'])
+    expect(tokenizeShell('cat 3</tmp/in.txt')).toEqual(['cat', '3<', '/tmp/in.txt'])
+    expect(tokenizeShell('cat 12<foo')).toEqual(['cat', '12<', 'foo'])
+    expect(tokenizeShell('echo hi 3<&1')).toEqual(['echo', 'hi', '3<&1'])
+    expect(tokenizeShell('echo hi 3<&-')).toEqual(['echo', 'hi', '3<&-'])
+    expect(tokenizeShell('echo hi 12<&1')).toEqual(['echo', 'hi', '12<&1'])
+    expect(tokenizeShell('echo hi 12<&-')).toEqual(['echo', 'hi', '12<&-'])
+    expect(tokenizeShell('cat < /tmp/in.txt')).toEqual(['cat', '<', '/tmp/in.txt'])
   })
 })
 
@@ -66,6 +75,14 @@ describe('extractRedirectTargets', () => {
     expect(extractRedirectTargets(tokenizeShell('echo hi 2>&1'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('echo hi 2>&-'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('echo hi 3>&1'))).toEqual([])
+    expect(extractRedirectTargets(tokenizeShell('cat 3< in.txt'))).toEqual(['in.txt'])
+    expect(extractRedirectTargets(tokenizeShell('cat 3</tmp/in.txt'))).toEqual(['/tmp/in.txt'])
+    expect(extractRedirectTargets(tokenizeShell('cat 12<foo'))).toEqual(['foo'])
+    expect(extractRedirectTargets(tokenizeShell('echo hi 3<&1'))).toEqual([])
+    expect(extractRedirectTargets(tokenizeShell('echo hi 3<&-'))).toEqual([])
+    expect(extractRedirectTargets(tokenizeShell('echo hi 12<&1'))).toEqual([])
+    expect(extractRedirectTargets(tokenizeShell('echo hi 12<&-'))).toEqual([])
+    expect(extractRedirectTargets(tokenizeShell('cat < /tmp/in.txt'))).toEqual(['/tmp/in.txt'])
   })
 })
 
@@ -80,6 +97,14 @@ describe('collectOutsideRepoPaths', () => {
     expect(collectOutsideRepoPaths('echo hi 3>/tmp/out.log', cwd, repoRoot)).toEqual([
       outsideTmpLog,
     ])
+  })
+
+  it('collects input redirects to repo-outside files but skips fd duplication', () => {
+    expect(collectOutsideRepoPaths('cat 3</tmp/in.txt', cwd, repoRoot)).toEqual([outsideTmpIn])
+    expect(collectOutsideRepoPaths('echo hi 3<&1', cwd, repoRoot)).toEqual([])
+    expect(collectOutsideRepoPaths('echo hi 3<&-', cwd, repoRoot)).toEqual([])
+    expect(collectOutsideRepoPaths('echo hi 12<&-', cwd, repoRoot)).toEqual([])
+    expect(collectOutsideRepoPaths('cat < /tmp/in.txt', cwd, repoRoot)).toEqual([outsideTmpIn])
   })
 })
 
@@ -113,11 +138,41 @@ describe('classifyShell background segmentation', () => {
     const altFd = await classifyShellCore('echo hi 3>&1', cwd, repoRoot)
     expect(altFd.verdict).toBe('allow')
     expect(altFd.reason).toBe('read_only')
+
+    const inputDup = await classifyShellCore('echo hi 3<&1', cwd, repoRoot)
+    expect(inputDup.verdict).toBe('allow')
+    expect(inputDup.reason).toBe('read_only')
+
+    const inputClose = await classifyShellCore('echo hi 3<&-', cwd, repoRoot)
+    expect(inputClose.verdict).toBe('allow')
+    expect(inputClose.reason).toBe('read_only')
+
+    const multiDigitClose = await classifyShellCore('echo hi 12<&-', cwd, repoRoot)
+    expect(multiDigitClose.verdict).toBe('allow')
+    expect(multiDigitClose.reason).toBe('read_only')
   })
 
   it('treats generic fd redirects as outside-repo local mutation instead of mixed paths', async () => {
     const result = await classifyShellCore('echo hi 3>/tmp/out.log', cwd, repoRoot)
     expect(result.verdict).toBe('allow_flagged')
     expect(result.reason).toBe('repo_outside_local_mutation')
+  })
+
+  it('treats input redirects as file targets only for read-only heads', async () => {
+    const inputRedirect = await classifyShellCore('cat 3</tmp/in.txt', cwd, repoRoot)
+    expect(inputRedirect.verdict).toBe('allow_flagged')
+    expect(inputRedirect.reason).toBe('repo_outside_local_mutation')
+
+    const multiDigitInput = await classifyShellCore('cat 12<foo', cwd, repoRoot)
+    expect(multiDigitInput.verdict).toBe('allow_flagged')
+    expect(multiDigitInput.reason).toBe('local_mutation')
+
+    const plainInputRedirect = await classifyShellCore('cat < /tmp/in.txt', cwd, repoRoot)
+    expect(plainInputRedirect.verdict).toBe('allow_flagged')
+    expect(plainInputRedirect.reason).toBe('repo_outside_local_mutation')
+
+    const echoInputRedirect = await classifyShellCore('echo 3</tmp/in.txt', cwd, repoRoot)
+    expect(echoInputRedirect.verdict).toBe('allow_flagged')
+    expect(echoInputRedirect.reason).toBe('repo_outside_local_mutation')
   })
 })
