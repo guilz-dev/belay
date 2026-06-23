@@ -193,7 +193,14 @@ export function splitTopLevelSegments(command: string): string[] {
   }
 
   for (const token of tokens) {
-    if (token === '&&' || token === '||' || token === ';' || token === '|' || token === '&') {
+    if (
+      token === '&&' ||
+      token === '||' ||
+      token === ';' ||
+      token === '|' ||
+      token === '&' ||
+      token === '|&'
+    ) {
       flush()
       continue
     }

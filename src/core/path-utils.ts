@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { isFdDuplication, isRedirectOperator } from './shell-tokenizer.js'
 
 /**
  * Resolve symlinks for the longest existing prefix of `targetPath`, then append
@@ -109,7 +110,16 @@ export function resolveMutationTarget(token: string, cwd: string): string | null
   if (!token || token === '--' || token.startsWith('-')) {
     return null
   }
-  if (token === '2>' || token === '1>' || token === '&>' || token === '1>>' || token === '2>>') {
+  if (
+    isRedirectOperator(token) ||
+    isFdDuplication(token) ||
+    token === '&&' ||
+    token === '||' ||
+    token === '|' ||
+    token === '|&' ||
+    token === ';' ||
+    token === '&'
+  ) {
     return null
   }
   if (path.isAbsolute(token)) {
