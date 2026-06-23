@@ -1,6 +1,6 @@
 const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
-const FD_DUPLICATION_PATTERN = /^\d+>&(?:\d+|-)$/
-const FD_REDIRECT_PATTERN = /^\d+>>?$/
+const FD_DUPLICATION_PATTERN = /^\d+[<>]&(?:\d+|-)$/
+const FD_REDIRECT_PATTERN = /^\d+(?:>>?|<)$/
 
 function readDigits(input: string, index: number): string {
   let end = index
@@ -11,8 +11,9 @@ function readDigits(input: string, index: number): string {
 }
 
 // This tokenizer only recognizes FD redirects when the digit run is immediately
-// followed by `>` (for example `2>&1`, `3>file`, `12>>log`). It does not try to
-// recover bash's full word-boundary rules for cases like `foo12>>bar`.
+// followed by `>` or `<` (for example `2>&1`, `3>file`, `12>>log`, `3<file`,
+// `3<&1`). It does not try to recover bash's full word-boundary rules for cases
+// like `foo12>>bar` or `foo12<bar`.
 function readShellOperator(input: string, index: number): { token: string; length: number } | null {
   const char = input[index]
   const next = input[index + 1] ?? ''
@@ -33,7 +34,7 @@ function readShellOperator(input: string, index: number): { token: string; lengt
   if (char === '&' && next === '>') {
     return { token: '&>', length: 2 }
   }
-  if (digitsLength > 0 && afterDigits === '>') {
+  if (digitsLength > 0 && (afterDigits === '>' || afterDigits === '<')) {
     if (afterDigitsNext === '&') {
       let end = index + digitsLength + 2
       while (end < input.length && /[0-9-]/.test(input[end] ?? '')) {
@@ -43,10 +44,10 @@ function readShellOperator(input: string, index: number): { token: string; lengt
         return { token: input.slice(index, end), length: end - index }
       }
     }
-    if (afterDigitsNext === '>') {
+    if (afterDigits === '>' && afterDigitsNext === '>') {
       return { token: `${digits}>>`, length: digitsLength + 2 }
     }
-    return { token: `${digits}>`, length: digitsLength + 1 }
+    return { token: `${digits}${afterDigits}`, length: digitsLength + 1 }
   }
   if (char === '>' && next === '>') {
     return { token: '>>', length: 2 }
