@@ -3,6 +3,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { collectOutsideRepoPaths } from '../core/capability/paths.js'
+import { canonicalPath } from '../core/path-utils.js'
 import {
   extractRedirectTargets,
   splitTopLevelSegments,
@@ -12,6 +13,7 @@ import { classifyShellCore } from './helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
+const outsideTmpLog = canonicalPath('/tmp/out.log')
 
 describe('tokenizeShell', () => {
   it('splits top-level background operators with or without surrounding spaces', () => {
@@ -70,13 +72,13 @@ describe('extractRedirectTargets', () => {
 describe('collectOutsideRepoPaths', () => {
   it('keeps repo-outside redirect detection for &> targets', () => {
     expect(collectOutsideRepoPaths('echo hi &>/tmp/out.log', cwd, repoRoot)).toEqual([
-      '/private/tmp/out.log',
+      outsideTmpLog,
     ])
   })
 
   it('collects generic fd redirects without treating the operator as a path', () => {
     expect(collectOutsideRepoPaths('echo hi 3>/tmp/out.log', cwd, repoRoot)).toEqual([
-      '/private/tmp/out.log',
+      outsideTmpLog,
     ])
   })
 })
