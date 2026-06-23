@@ -8,11 +8,16 @@ import {
   buildReplayHint,
   buildRetryInstructionForConfig,
   getExecutionLeaseMs,
+  replayShellCommand,
   type ReplayActionContext,
   type ReplayAdapterId,
   validateReplayEnvelope,
 } from '../../core/approval-replay.js'
-import { gateApprovalStoreFromDeps, recordApproval } from '../../core/approval-service.js'
+import {
+  consumeApprovedAfterCliReplay,
+  gateApprovalStoreFromDeps,
+  recordApproval,
+} from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
 import {
   collectOutsideRepoPaths,
@@ -845,6 +850,100 @@ export async function processApprovalPrompt(
   }
 
   const replay = recorded.approval ? buildReplayHint(ctx.config, recorded.approval, adapter) : null
+
+  const shouldFallbackReplay =
+    adapter === 'cursor' &&
+    replay?.kind === 'shell' &&
+    replay.autoReplay === true &&
+    Boolean(recorded.approval?.input) &&
+    (!process.env.VITEST || process.env.BELAY_TEST_APPROVAL_REPLAY === '1')
+
+  if (shouldFallbackReplay && recorded.approval) {
+    const approvalStore = gateApprovalStoreFromDeps({
+      loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
+      writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
+    })
+    let replayResult: Awaited<ReturnType<typeof replayShellCommand>>
+    try {
+      replayResult = await replayShellCommand(
+        recorded.approval.input ?? '',
+        recorded.approval.cwd ?? ctx.repoRoot,
+        getExecutionLeaseMs(ctx.config),
+      )
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      await deps.appendAudit(ctx, {
+        event: 'approval',
+        kind: 'approval',
+        verdict: 'allow',
+        approvalId,
+        reason: 'approval_replay_error',
+        summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+      })
+      return {
+        continue: false,
+        user_message:
+          `Belay approval recorded for ${approvalId}, but one-step shell replay could not start (${detail}). ` +
+          'Approval remains active for one hook retry.',
+      }
+    }
+    const output = [replayResult.stdout, replayResult.stderr].filter(Boolean).join('\n').trim()
+    if (replayResult.exitCode === 0) {
+      try {
+        await consumeApprovedAfterCliReplay({
+          approvalId: approvalId,
+          store: approvalStore,
+        })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        await deps.appendAudit(ctx, {
+          event: 'approval',
+          kind: 'approval',
+          verdict: 'allow',
+          approvalId,
+          reason: 'approval_replay_consume_error',
+          summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+        })
+        return {
+          continue: false,
+          user_message:
+            `Belay approval recorded for ${approvalId}, and one-step shell replay succeeded, but approval finalization failed (${detail}). ` +
+            'Approval remains active for one hook retry.' +
+            (output ? `\n${output}` : ''),
+        }
+      }
+      await deps.appendAudit(ctx, {
+        event: 'approval',
+        kind: 'approval',
+        verdict: 'allow',
+        approvalId,
+        reason: 'approval_replay_succeeded',
+        summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+      })
+      return {
+        continue: false,
+        user_message:
+          `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.` +
+          (output ? `\n${output}` : ''),
+      }
+    }
+    await deps.appendAudit(ctx, {
+      event: 'approval',
+      kind: 'approval',
+      verdict: 'allow',
+      approvalId,
+      reason: 'approval_replay_failed',
+      summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+    })
+    const timeoutNote = replayResult.timedOut ? ' Replay timed out.' : ''
+    return {
+      continue: false,
+      user_message:
+        `Belay approval recorded for ${approvalId}, but one-step shell replay failed (exit ${replayResult.exitCode}).${timeoutNote} ` +
+        `Approval remains active for one hook retry.` +
+        (output ? `\n${output}` : ''),
+    }
+  }
 
   return {
     continue: false,

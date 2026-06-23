@@ -38,7 +38,13 @@ setup (or `npx @guilz-dev/belay init` for non-interactive install). Run
 
 1. Read the approval ID in the deny message.
 2. Approve once with `/belay-approve <approval-id>` or `belay approve <approval-id>`.
-3. Retry the original action unchanged.
+3. Retry the original action unchanged (default `approval.flow` is `one_step` for shell — the
+   approval response includes a replay hint when auto-replay is enabled).
+
+For shell-only CLI replay after approval: `belay approve <approval-id> --replay`.
+
+To restore the legacy two-step UX (approve, then always retry manually), set
+`approval.flow` to `two_step` in `belay.config.json`.
 
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
