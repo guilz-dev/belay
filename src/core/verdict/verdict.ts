@@ -1,5 +1,10 @@
 import { resolveMutationTarget } from '../path-utils.js'
-import { extractRedirectTargets, tokenizeShell } from '../shell-tokenizer.js'
+import {
+  extractRedirectTargets,
+  isFdDuplication,
+  isRedirectOperator,
+  tokenizeShell,
+} from '../shell-tokenizer.js'
 import {
   analyzePathTargets,
   cwdRelative,
@@ -271,7 +276,7 @@ function extractPathArgs(tokens: string[]): string[] {
   const args: string[] = [...redirects]
   for (let index = 1; index < tokens.length; index += 1) {
     const token = tokens[index]
-    if (!token || token.startsWith('-') || token === '>' || token === '>>' || token === '<') {
+    if (!token || token.startsWith('-') || isRedirectOperator(token) || isFdDuplication(token)) {
       continue
     }
     if (redirects.includes(token)) {
