@@ -34,6 +34,7 @@ export interface JudgeDoctorResult {
 
 export interface DiagnoseJudgeOptions {
   discoveryDeps?: JudgeModelDiscoveryDeps
+  liveProbe?: boolean
 }
 
 export async function diagnoseJudge(
@@ -41,6 +42,9 @@ export async function diagnoseJudge(
   repoRoot: string = process.cwd(),
   options: DiagnoseJudgeOptions = {},
 ): Promise<JudgeDoctorResult> {
+  const shouldRunLiveProbe =
+    options.liveProbe === true && !process.env.VITEST && !process.env.VITEST_WORKER_ID
+
   const issues: string[] = []
   const warnings: string[] = []
   const notes: string[] = []
@@ -181,6 +185,31 @@ export async function diagnoseJudge(
       )
     } else {
       notes.push(`Native CLI transport available: ${transport}`)
+      if (shouldRunLiveProbe) {
+        const smokeConfig: BelayConfigV4 = {
+          ...config,
+          judge: {
+            ...judge,
+            timeoutMs: Math.min(judge.timeoutMs, 5000),
+          },
+        }
+        const smokeJudge = createJudgeFromConfig(smokeConfig, { repoRoot })
+        const smokeResult = await smokeJudge.evaluate({
+          text: 'git status',
+          context: { cwd: repoRoot, repoRoot },
+        })
+        const smokeFallback =
+          smokeJudge.lastTrace?.judgeFallbackReason ??
+          smokeJudge.lastTrace?.fallbackReason ??
+          smokeResult.reason
+        if (smokeJudge.lastTrace?.provider === 'fallback') {
+          issues.push(
+            `Native CLI transport smoke probe failed (${smokeFallback}). Tier1 will fail closed to ask.`,
+          )
+        } else {
+          notes.push('Native CLI transport smoke probe succeeded.')
+        }
+      }
     }
     return { issues, warnings, notes, modelCheck }
   }

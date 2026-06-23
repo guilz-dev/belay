@@ -75,6 +75,7 @@ function parseArgs(argv: string[]) {
     acceptCloudJudge?: boolean
     migrateJudgeDefault?: boolean
     judgeSubcommand?: 'status' | 'list' | 'use' | 'test' | 'bench' | 'consent'
+    judgeLiveProbe?: boolean
     judgeUseProvider?: string
     acceptCloud?: boolean
     cloudConsentApprovalId?: string
@@ -222,6 +223,13 @@ function parseArgs(argv: string[]) {
       }
       options.judgeTimeoutMs = Number(next)
       index += 1
+      continue
+    }
+    if (token === '--live-probe') {
+      if (command !== 'judge') {
+        throw new Error('--live-probe is only valid for judge test.')
+      }
+      options.judgeLiveProbe = true
       continue
     }
     if (token === '--json') {
@@ -558,6 +566,7 @@ Usage:
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
   ${c} judge <status|list|use|test|bench|consent> [--target <dir>] [--json]
+  ${c} judge test [--target <dir>] [--json] [--live-probe]
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
   ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]
@@ -646,6 +655,9 @@ async function main() {
       if (!options.judgeSubcommand) {
         throw new Error('judge requires subcommand: status, list, use, or test')
       }
+      if (options.judgeLiveProbe && options.judgeSubcommand !== 'test') {
+        throw new Error('--live-probe is only valid for judge test.')
+      }
       const result = await runJudgeCommand({
         targetDir: options.targetDir,
         json: options.json,
@@ -659,6 +671,7 @@ async function main() {
         credentialMode: options.credentialMode,
         keyStdin: options.keyStdin,
         keyEnv: options.keyEnv,
+        liveProbe: options.judgeLiveProbe,
       })
       if (options.json && typeof result === 'object') {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)

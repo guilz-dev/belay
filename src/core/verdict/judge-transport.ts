@@ -4,6 +4,7 @@ import { evaluateViaJudgeBroker, invalidateJudgeSession } from './judge-broker-s
 import type { JudgeProviderId } from './judge-catalog.js'
 import {
   buildCliInvocation,
+  CliRunError,
   type CliInvocation,
   type CliJudgeRunCommand,
   parseCliJudgeOutput,
@@ -95,6 +96,17 @@ function spawnFallbackReason(
   providerId: Exclude<JudgeProviderId, 'ollama'>,
   error: unknown,
 ): JudgeFallbackReason {
+  if (error instanceof CliRunError) {
+    if (error.kind === 'timeout') {
+      return 'eval_timeout'
+    }
+    if (error.kind === 'exit_nonzero') {
+      return `${providerId}_cli_nonzero`
+    }
+    if (error.kind === 'spawn_error') {
+      return `${providerId}_cli_spawn_error`
+    }
+  }
   if (isEvalTimeoutError(error)) {
     return 'eval_timeout'
   }
@@ -137,12 +149,13 @@ async function runSpawnTransport(
   const evalTimeoutMs = resolveSessionEvalTimeoutMs(sessionConfig, context.judgeTimeoutMs)
   let raw = ''
   let evalMs = 0
+  const evalStarted = Date.now()
   try {
-    const evalStarted = Date.now()
     raw = await runCommand(invocation, evalTimeoutMs)
     evalMs = Date.now() - evalStarted
     recordJudgeLatency('tier1_spawn', evalMs)
   } catch (error) {
+    evalMs = Date.now() - evalStarted
     return {
       raw: '',
       verdict: null,

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { TracedTier1Judge } from '../../core/verdict/judge.js'
 import {
   buildCliInvocation,
+  CliRunError,
   type CliInvocation,
   type CliJudgeOptions,
   createClaudeCliJudge,
   createCodexCliJudge,
   createCursorCliJudge,
   parseCliJudgeOutput,
+  runCliJsonWithTimeouts,
 } from '../../core/verdict/judge-cli.js'
 import type { Tier1Verdict } from '../../core/verdict/types.js'
 
@@ -164,6 +166,26 @@ describe('judge-cli', () => {
       const { result, seenInvocation } = await runWithJudge(createClaudeCliJudge, raw)
       expect(result).toEqual(SAFE_VERDICT)
       expect(seenInvocation?.args).toContain('--tools')
+    })
+
+    it('times out promptly when child ignores SIGTERM', async () => {
+      const started = Date.now()
+      try {
+        await runCliJsonWithTimeouts(
+          {
+            binary: process.execPath,
+            args: ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+          },
+          { evalTimeoutMs: 100 },
+        )
+      } catch (error) {
+        const cliError = error as CliRunError
+        expect(cliError).toBeInstanceOf(CliRunError)
+        expect(cliError.kind).toBe('timeout')
+        expect(Date.now() - started).toBeLessThan(700)
+        return
+      }
+      throw new Error('expected timeout rejection')
     })
   })
 })

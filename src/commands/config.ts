@@ -20,6 +20,7 @@ import {
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
 import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
+import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import {
   isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
@@ -163,7 +164,7 @@ function listJudgeFields(judge: BelayJudgeConfig): Record<string, unknown> {
 }
 
 function warnCloudConsentIfNeeded(judge: BelayJudgeConfig): void {
-  if (isCloudJudgeConfig(judge) && !hasValidCloudConsent(judge)) {
+  if (isCloudJudgeConfig(judge) && resolveJudgeTransport(judge) === 'http' && !hasValidCloudConsent(judge)) {
     process.stderr.write(
       'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
     )
