@@ -4,9 +4,9 @@ import { evaluateViaJudgeBroker, invalidateJudgeSession } from './judge-broker-s
 import type { JudgeProviderId } from './judge-catalog.js'
 import {
   buildCliInvocation,
-  CliRunError,
   type CliInvocation,
   type CliJudgeRunCommand,
+  CliRunError,
   parseCliJudgeOutput,
   runCliJsonWithTimeouts,
 } from './judge-cli.js'
