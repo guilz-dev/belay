@@ -4,7 +4,11 @@ import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, scrubOptionsFromConfig } from '../../core/config.js'
 import { resetJudgeBrokerForTests } from '../../core/verdict/judge-broker-service.js'
-import { buildCliInvocation, CliRunError, createCursorCliJudge } from '../../core/verdict/judge-cli.js'
+import {
+  buildCliInvocation,
+  CliRunError,
+  createCursorCliJudge,
+} from '../../core/verdict/judge-cli.js'
 import { setCliFingerprintResolverForTests } from '../../core/verdict/judge-cli-fingerprint.js'
 import {
   DEFAULT_JUDGE_RUNTIME_CONFIG,

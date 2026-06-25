@@ -349,12 +349,16 @@ export async function runCliJsonWithTimeouts(
         return
       }
       rejectOnce(
-        new CliRunError('exit_nonzero', stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`, {
-          exitCode: typeof code === 'number' ? code : undefined,
-          stderr: stderr.trim() || undefined,
-          stdout: stdout.trim() || undefined,
-          command,
-        }),
+        new CliRunError(
+          'exit_nonzero',
+          stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`,
+          {
+            exitCode: typeof code === 'number' ? code : undefined,
+            stderr: stderr.trim() || undefined,
+            stdout: stdout.trim() || undefined,
+            command,
+          },
+        ),
       )
     })
   })

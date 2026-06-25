@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { TracedTier1Judge } from '../../core/verdict/judge.js'
 import {
   buildCliInvocation,
-  CliRunError,
   type CliInvocation,
   type CliJudgeOptions,
+  CliRunError,
   createClaudeCliJudge,
   createCodexCliJudge,
   createCursorCliJudge,

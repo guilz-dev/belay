@@ -8,9 +8,9 @@ import {
   buildReplayHint,
   buildRetryInstructionForConfig,
   getExecutionLeaseMs,
-  replayShellCommand,
   type ReplayActionContext,
   type ReplayAdapterId,
+  replayShellCommand,
   validateReplayEnvelope,
 } from '../../core/approval-replay.js'
 import {

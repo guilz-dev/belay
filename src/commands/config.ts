@@ -164,7 +164,11 @@ function listJudgeFields(judge: BelayJudgeConfig): Record<string, unknown> {
 }
 
 function warnCloudConsentIfNeeded(judge: BelayJudgeConfig): void {
-  if (isCloudJudgeConfig(judge) && resolveJudgeTransport(judge) === 'http' && !hasValidCloudConsent(judge)) {
+  if (
+    isCloudJudgeConfig(judge) &&
+    resolveJudgeTransport(judge) === 'http' &&
+    !hasValidCloudConsent(judge)
+  ) {
     process.stderr.write(
       'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
     )
