@@ -4,7 +4,11 @@ import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V4, scrubOptionsFromConfig } from '../../core/config.js'
 import { resetJudgeBrokerForTests } from '../../core/verdict/judge-broker-service.js'
-import { buildCliInvocation, createCursorCliJudge } from '../../core/verdict/judge-cli.js'
+import {
+  buildCliInvocation,
+  CliRunError,
+  createCursorCliJudge,
+} from '../../core/verdict/judge-cli.js'
 import { setCliFingerprintResolverForTests } from '../../core/verdict/judge-cli-fingerprint.js'
 import {
   DEFAULT_JUDGE_RUNTIME_CONFIG,
@@ -164,6 +168,36 @@ describe('judge-transport', () => {
       context: { cwd: '/repo/d', repoRoot: '/repo/d' },
     })
     expect(verdict.reason).toBe('cursor_cli_unavailable')
+  })
+
+  it('keeps fallback observable when CLI exits non-zero', async () => {
+    const judge = createCursorCliJudge({
+      modelRequested: 'composer-2.5',
+      modelResolved: 'composer-2.5',
+      sensitivePaths: DEFAULT_CONFIG_V4.classifier.sensitivePaths,
+      scrubOptions: scrubOptionsFromConfig(DEFAULT_CONFIG_V4),
+      runtime: {
+        session: { ...DEFAULT_JUDGE_SESSION_CONFIG, enabled: false },
+        shadow: { ...DEFAULT_JUDGE_SHADOW_CONFIG },
+      },
+      repoRoot: '/repo/nonzero',
+      stateDir: '/tmp/belay-state-nonzero',
+      judgeMode: 'audit',
+      runCliCommand: async () => {
+        throw new CliRunError('exit_nonzero', 'unsupported option', {
+          exitCode: 2,
+          stderr: 'unsupported option',
+        })
+      },
+    })
+
+    const verdict = await judge.evaluate({
+      text: 'git status',
+      context: { cwd: '/repo/nonzero', repoRoot: '/repo/nonzero' },
+    })
+
+    expect(verdict.reason).toBe('cursor_cli_unavailable')
+    expect(judge.lastTrace?.judgeFallbackReason).toBe('cursor_cli_nonzero')
   })
 
   it('does not persist session prompt or chat id under state dir', async () => {

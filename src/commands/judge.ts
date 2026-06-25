@@ -40,6 +40,7 @@ export interface JudgeCommandOptions {
   targetDir?: string
   json?: boolean
   subcommand?: 'status' | 'list' | 'use' | 'test' | 'bench' | 'consent'
+  liveProbe?: boolean
   providerId?: string
   model?: string
   endpoint?: string
@@ -346,7 +347,9 @@ export async function judgeRequestCloudConsent(options: JudgeCommandOptions = {}
 export async function judgeTest(options: JudgeCommandOptions = {}) {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const diagnosis = await diagnoseJudge(config, repoRoot)
+  const diagnosis = await diagnoseJudge(config, repoRoot, {
+    liveProbe: options.liveProbe === true,
+  })
   const modelCheck = diagnosis.modelCheck
   if (options.json) {
     return { ...diagnosis, modelCheck }

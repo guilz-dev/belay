@@ -39,11 +39,42 @@ export interface CliInvocation {
 
 export type CliJudgeRunCommand = (invocation: CliInvocation, timeoutMs: number) => Promise<string>
 
+export type CliRunErrorKind = 'timeout' | 'spawn_error' | 'exit_nonzero'
+
+export class CliRunError extends Error {
+  kind: CliRunErrorKind
+  exitCode?: number
+  stderr?: string
+  stdout?: string
+  command?: string
+
+  constructor(
+    kind: CliRunErrorKind,
+    message: string,
+    details: {
+      exitCode?: number
+      stderr?: string
+      stdout?: string
+      command?: string
+    } = {},
+  ) {
+    super(message)
+    this.name = 'CliRunError'
+    this.kind = kind
+    this.exitCode = details.exitCode
+    this.stderr = details.stderr
+    this.stdout = details.stdout
+    this.command = details.command
+  }
+}
+
 const CLI_BINARIES: Record<Exclude<JudgeProviderId, 'ollama'>, string> = {
   codex: 'codex',
   cursor: 'cursor-agent',
   claude: 'claude',
 }
+
+const FORCE_KILL_GRACE_MS = 250
 
 function failClosedVerdict(reason: string) {
   return {
@@ -241,11 +272,58 @@ export async function runCliJsonWithTimeouts(
     const child = spawn(binary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    const command = [binary, ...args].join(' ')
     let stdout = ''
     let stderr = ''
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM')
-      reject(new Error(`${binary} timed out`))
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+    let forceKillTimer: NodeJS.Timeout | null = null
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer)
+      }
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer)
+      }
+    }
+
+    const rejectOnce = (error: CliRunError) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+
+    const resolveOnce = (value: string) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    timer = setTimeout(() => {
+      rejectOnce(
+        new CliRunError('timeout', `${binary} timed out`, {
+          stderr: stderr.trim() || undefined,
+          stdout: stdout.trim() || undefined,
+          command,
+        }),
+      )
+
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        return
+      }
+
+      forceKillTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // process already exited
+        }
+      }, FORCE_KILL_GRACE_MS)
     }, budgets.evalTimeoutMs)
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
@@ -258,16 +336,30 @@ export async function runCliJsonWithTimeouts(
     }
     child.stdin.end()
     child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
+      rejectOnce(
+        new CliRunError('spawn_error', error instanceof Error ? error.message : String(error), {
+          command,
+        }),
+      )
     })
     child.on('close', (code) => {
-      clearTimeout(timer)
+      if (settled) return
       if (code === 0 && stdout.trim()) {
-        resolve(stdout.trim())
+        resolveOnce(stdout.trim())
         return
       }
-      reject(new Error(stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`))
+      rejectOnce(
+        new CliRunError(
+          'exit_nonzero',
+          stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`,
+          {
+            exitCode: typeof code === 'number' ? code : undefined,
+            stderr: stderr.trim() || undefined,
+            stdout: stdout.trim() || undefined,
+            command,
+          },
+        ),
+      )
     })
   })
 }
@@ -346,6 +438,7 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
             modelResolved: options.modelResolved,
             latencyMs: Date.now() - started,
             fallbackReason,
+            judgeFallbackReason: fallbackReason,
             judgeSessionUsed: transportResult.sessionUsed,
             judgeSessionReused: transportResult.sessionReused,
             judgeSessionRefHash: transportResult.sessionRefHash,
@@ -389,6 +482,7 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
           modelResolved: options.modelResolved,
           latencyMs: Date.now() - started,
           fallbackReason: `${providerId}_cli_unavailable`,
+          judgeFallbackReason: `${providerId}_cli_unavailable`,
         }
         return failClosedVerdict(`${providerId}_cli_unavailable`)
       }

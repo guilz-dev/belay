@@ -39,6 +39,8 @@ Thumbs.db
 !.cursor/skills/belay/**
 !.cursor/skills/verify-parallel/
 !.cursor/skills/verify-parallel/**
+!.cursor/skills/update-local-belay/
+!.cursor/skills/update-local-belay/**
 
 # Skills CLI artifacts (installed by `npx skills add`; do not commit)
 .agents/

@@ -28,6 +28,7 @@ import {
   migrateImplicitLocalJudgeIfNeeded,
   resolveInitJudgeConfig,
 } from './core/judge-config.js'
+import { resolveJudgeTransport } from './core/judge-runtime-detection.js'
 import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
@@ -211,7 +212,11 @@ async function applyInitJudgeConfig(
     }
   }
   const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge: finalJudge })
-  if (isCloudJudgeConfig(configWithJudge.judge) && !hasValidCloudConsent(configWithJudge.judge)) {
+  if (
+    isCloudJudgeConfig(configWithJudge.judge) &&
+    resolveJudgeTransport(configWithJudge.judge) === 'http' &&
+    !hasValidCloudConsent(configWithJudge.judge)
+  ) {
     process.stderr.write(
       'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
     )

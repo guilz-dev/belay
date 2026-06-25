@@ -39,6 +39,8 @@ export type JudgeFallbackReason =
   | 'shadow_forced_spawn'
   | 'unsafe_option_rejected'
   | 'broker_busy_reset'
+  | `${Exclude<JudgeProviderId, 'ollama'>}_cli_spawn_error`
+  | `${Exclude<JudgeProviderId, 'ollama'>}_cli_nonzero`
   | `${Exclude<JudgeProviderId, 'ollama'>}_cli_unavailable`
   | `${Exclude<JudgeProviderId, 'ollama'>}_cli_parse_error`
 
