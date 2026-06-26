@@ -7,10 +7,15 @@ import {
   isGateRecord,
 } from './audit-query.js'
 import type { AuditRecord } from './audit-types.js'
+import { matchesCustomCommand } from './custom-command-match.js'
 
 export const HARVEST_REPORT_SCHEMA_VERSION = 1
 
-export type HarvestCandidateSource = 'deny_then_approve' | 'repeated_ask' | 'read_style_signal'
+export type HarvestCandidateSource =
+  | 'deny_then_approve'
+  | 'repeated_ask'
+  | 'read_style_signal'
+  | 'overrides_allow'
 
 export type HarvestReviewOutcome = 'provably-benign' | 'accepted-benign' | 'reject'
 
@@ -162,7 +167,10 @@ function recordsForShellRoundTrips(records: AuditRecord[]): AuditRecord[] {
   )
 }
 
-export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandidate[] {
+export function extractHarvestCandidates(
+  records: AuditRecord[],
+  options: { allowPatterns?: string[] } = {},
+): HarvestCandidate[] {
   const shellOnly = shellRecords(records)
   const classifierAsks = shellOnly.filter(
     (record) => inferWouldBlock(record) && !isAvailabilityCausedAsk(record),
@@ -211,6 +219,28 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
     })
   }
 
+  const allowPatterns = options.allowPatterns ?? []
+  for (const record of classifierAsks) {
+    if (!record.fingerprint) {
+      continue
+    }
+    const command = commandFromRecord(record)
+    if (!command) {
+      continue
+    }
+    for (const pattern of allowPatterns) {
+      if (matchesCustomCommand(command, command, pattern)) {
+        upsertCandidate(map, {
+          fingerprint: record.fingerprint,
+          command,
+          reason: record.reason ?? 'unknown',
+          source: 'overrides_allow',
+        })
+        break
+      }
+    }
+  }
+
   return [...map.values()].sort((left, right) => {
     if (right.askCount !== left.askCount) {
       return right.askCount - left.askCount
@@ -219,11 +249,14 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
   })
 }
 
-export function buildHarvestReport(records: AuditRecord[]): HarvestReport {
+export function buildHarvestReport(
+  records: AuditRecord[],
+  options: { allowPatterns?: string[] } = {},
+): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
     scope: 'shell',
-    candidates: extractHarvestCandidates(records),
+    candidates: extractHarvestCandidates(records, options),
     availabilityQueue: extractAvailabilityQueue(records),
   }
 }

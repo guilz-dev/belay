@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { loadConfigFile } from '../config-io.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import { toAuditRecord } from '../core/audit-query.js'
 import type { AuditRecord } from '../core/audit-types.js'
@@ -53,8 +54,12 @@ function filterShellRecords(records: AuditRecord[], since?: string, until?: stri
 }
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
-  const records = await loadAuditRecords(path.resolve(options.targetDir ?? process.cwd()))
-  return buildHarvestReport(filterShellRecords(records, options.since, options.until))
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
+  const records = await loadAuditRecords(repoRoot)
+  return buildHarvestReport(filterShellRecords(records, options.since, options.until), {
+    allowPatterns: config.overrides.allow,
+  })
 }
 
 export function formatHarvestReport(report: HarvestReport): string {

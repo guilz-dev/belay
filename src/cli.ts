@@ -9,6 +9,7 @@ import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js'
 import { explainCommand, formatExplainReport } from './commands/explain.js'
 import { formatHarvestReport, harvestApplyProject, harvestListProject } from './commands/harvest.js'
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
+import { formatQualityReport, qualityCheck } from './commands/quality.js'
 import { formatRecoverReport, recoverProject } from './commands/recover.js'
 import { formatReport, reportProject } from './commands/report.js'
 import { revokeApproval } from './commands/revoke.js'
@@ -597,6 +598,7 @@ Usage:
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
+  ${c} quality [--target <dir>] [--corpus <path>] [--json]
   ${c} report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
   ${c} recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
     (--limit picks the Nth recover candidate after priority ranking: local_mutation first, then recency; 1 = highest priority, default 1)
@@ -835,6 +837,21 @@ async function main() {
       } else {
         process.stdout.write(formatMetricsReport(report))
       }
+      return
+    }
+
+    if (command === 'quality') {
+      const report = await qualityCheck({
+        targetDir: options.targetDir,
+        corpusDir: options.corpusPath,
+        json: options.json,
+      })
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      } else {
+        process.stdout.write(`${formatQualityReport(report)}\n`)
+      }
+      process.exitCode = report.ok ? 0 : 1
       return
     }
 

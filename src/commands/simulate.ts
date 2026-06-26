@@ -63,6 +63,7 @@ export async function simulateProject(options: SimulateOptions) {
 export function formatSimulateReport(report: Awaited<ReturnType<typeof simulateProject>>): string {
   const lines = [
     `simulate ${report.candidateConfigPath}`,
+    'Triage only — corpus hard gates (`pnpm corpus`), not simulate counts, are the safety boundary.',
     `Records scanned: ${report.totalRecords}`,
     `Verdict changes: ${report.changedCount}`,
     `allow/flagged → deny: ${report.allowToDenyCount}`,
@@ -71,8 +72,10 @@ export function formatSimulateReport(report: Awaited<ReturnType<typeof simulateP
   ]
 
   for (const diff of report.diffs.slice(0, 30)) {
+    const context =
+      diff.replayCwd && diff.replayKind ? ` [${diff.replayKind} cwd=${diff.replayCwd}]` : ''
     lines.push(
-      `- ${diff.summary ?? diff.fingerprint}: ${diff.previousVerdict}/${diff.previousReason} → ${diff.nextVerdict}/${diff.nextReason}`,
+      `- ${diff.summary ?? diff.fingerprint}${context}: ${diff.previousVerdict}/${diff.previousReason} → ${diff.nextVerdict}/${diff.nextReason}`,
     )
   }
 
