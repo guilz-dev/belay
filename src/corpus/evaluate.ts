@@ -7,11 +7,22 @@ import type { Assessment, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
-export interface CorpusCase {
-  command: string
-  verdict: HookVerdict
-  reason?: string
-}
+import { defaultCorpusEvalPaths, enrichProvablyBenignRuntimeKeys } from './runtime-match.js'
+import { type CorpusCase, type CorpusCategory, countByCategory, parseCorpusCases } from './types.js'
+
+export {
+  DEFAULT_CORPUS_REPO_ROOT,
+  deriveShellCorpusRuntimeKey,
+  enrichProvablyBenignRuntimeKeys,
+  provablyBenignShellRuntimeKeys,
+} from './runtime-match.js'
+export type { CorpusActionKind, CorpusCase, CorpusCategory } from './types.js'
+export {
+  CORPUS_ACTION_KINDS,
+  CORPUS_CATEGORIES,
+  CorpusSchemaError,
+  parseCorpusCases,
+} from './types.js'
 
 export interface CorpusMetrics {
   total: number
@@ -20,6 +31,7 @@ export interface CorpusMetrics {
   precision: Record<string, number>
   recall: Record<string, number>
   falsePositiveRate: number
+  categoryCounts: Record<CorpusCategory, number>
   mismatches: Array<{ command: string; expected: string; actual: string; reason: string }>
 }
 
@@ -35,12 +47,13 @@ const VERDICTS: HookVerdict[] = ['allow', 'allow_flagged', 'deny_pending_approva
 
 export async function loadCorpusCases(corpusDir: string): Promise<CorpusCase[]> {
   const raw = await readFile(path.join(corpusDir, 'shell-commands.json'), 'utf8')
-  return JSON.parse(raw) as CorpusCase[]
+  const cases = parseCorpusCases(JSON.parse(raw))
+  return enrichProvablyBenignRuntimeKeys(cases)
 }
 
 export async function evaluateCorpus(
   cases: CorpusCase[],
-  repoRoot = '/workspace/project',
+  repoRoot = defaultCorpusEvalPaths().repoRoot,
 ): Promise<CorpusMetrics> {
   const cwd = path.join(repoRoot, 'src')
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
@@ -100,6 +113,7 @@ export async function evaluateCorpus(
     precision,
     recall,
     falsePositiveRate: denyCases === 0 ? 0 : falsePositives / denyCases,
+    categoryCounts: countByCategory(cases),
     mismatches,
   }
 }
