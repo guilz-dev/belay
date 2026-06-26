@@ -12,6 +12,7 @@ import { formatRecoverReport, recoverProject } from './commands/recover.js'
 import { formatReport, reportProject } from './commands/report.js'
 import { revokeApproval } from './commands/revoke.js'
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
+import { revokeStandingAllow } from './commands/standing-allow.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
 import { loadConfigFile } from './config-io.js'
 import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
@@ -87,6 +88,7 @@ function parseArgs(argv: string[]) {
     configKey?: string
     configValue?: string
     credentialAction?: 'mode' | 'set' | 'clear'
+    standingAllowSubcommand?: 'revoke'
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -448,6 +450,13 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('sandbox requires subcommand: status')
     }
+    if (command === 'standing-allow' && !options.standingAllowSubcommand) {
+      if (token === 'revoke') {
+        options.standingAllowSubcommand = token
+        continue
+      }
+      throw new Error('standing-allow requires subcommand: revoke')
+    }
     if (command === 'judge' && !options.judgeSubcommand) {
       if (
         token === 'status' ||
@@ -571,6 +580,7 @@ Usage:
   ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
+  ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
 `)
 }
 
@@ -936,6 +946,26 @@ async function main() {
       process.stdout.write(`${result.message}\n`)
       process.exitCode = result.ok ? 0 : 1
       return
+    }
+
+    if (command === 'standing-allow') {
+      if (options.standingAllowSubcommand === 'revoke') {
+        if (!options.fingerprint) {
+          throw new Error('standing-allow revoke requires --fingerprint.')
+        }
+        const result = await revokeStandingAllow({
+          targetDir: options.targetDir,
+          fingerprint: options.fingerprint,
+          kind:
+            options.kind === 'tool' || options.kind === 'subagent' || options.kind === 'shell'
+              ? options.kind
+              : undefined,
+        })
+        process.stdout.write(`${result.message}\n`)
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      throw new Error('standing-allow requires subcommand: revoke')
     }
 
     throw new Error(`Unknown command: ${command}`)

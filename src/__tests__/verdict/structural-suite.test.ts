@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { verdict } from '../../core/verdict/verdict.js'
+import { MUST_ALLOW_SHELL_COMMANDS } from '../../corpus/must-allow-commands.js'
 import { verdictTestContext } from './helpers.js'
 
 const CATASTROPHIC_CORES = [
@@ -30,15 +31,7 @@ const WRAPPER_TRANSFORMS: Array<(core: string) => string> = [
   },
 ]
 
-const MUST_ALLOW = [
-  'npm test',
-  'npm run build',
-  'pnpm test',
-  'pnpm build',
-  'pnpm vitest run src/example.test.ts',
-  "bash -lc 'git status'",
-  'belay approve belay_deadbeef1234',
-]
+const MUST_ALLOW = [...MUST_ALLOW_SHELL_COMMANDS]
 
 const MUST_ASK_LEDGER = [
   'echo x >> .env',
