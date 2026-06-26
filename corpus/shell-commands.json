@@ -1,99 +1,189 @@
 [
-  { "command": "git status", "verdict": "allow", "reason": "read_only" },
-  { "command": "rg plan src", "verdict": "allow", "reason": "read_only" },
-  { "command": "ls -la", "verdict": "allow", "reason": "read_only" },
-  { "command": "find . -name '*.ts'", "verdict": "allow", "reason": "read_only" },
-  { "command": "touch notes.txt", "verdict": "allow_flagged", "reason": "local_mutation" },
-  { "command": "mkdir tmp", "verdict": "allow_flagged", "reason": "local_mutation" },
   {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git status",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rg plan src",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "ls -la",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "find . -name '*.ts'",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "touch notes.txt",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "mkdir tmp",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "git push origin main",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
   {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "curl https://example.com",
     "verdict": "allow",
     "reason": "egress_read"
   },
   {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "wget https://example.com",
     "verdict": "allow",
     "reason": "egress_read"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "docker run node:22 node -v",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "docker buildx build --push -t r/app .",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "terraform apply -auto-approve",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "npm run deploy:prod",
     "verdict": "deny_pending_approval",
     "reason": "external_script"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "git status && git push origin main",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
-  { "command": "echo hi | bash", "verdict": "deny_pending_approval", "reason": "pipe_to_shell" },
   {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "echo hi | bash",
+    "verdict": "deny_pending_approval",
+    "reason": "pipe_to_shell"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "eval \"git push\"",
     "verdict": "deny_pending_approval",
     "reason": "dynamic_shell_evaluation"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "echo $(git push origin main)",
     "verdict": "deny_pending_approval",
     "reason": "command_substitution"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "find . -name '*.ts' -delete",
     "verdict": "deny_pending_approval",
     "reason": "find_dangerous_action"
   },
   {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "ls\ncurl https://example.com",
     "verdict": "allow",
     "reason": "egress_read"
   },
   {
+    "kind": "shell",
+    "category": "accepted-benign",
     "command": "rm -rf /tmp/build",
     "verdict": "allow_flagged",
     "reason": "repo_outside_local_mutation"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "git push --force origin main",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },
-  { "command": "chmod -R 755 scripts", "verdict": "allow_flagged", "reason": "local_mutation" },
   {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "chmod -R 755 scripts",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
     "command": "sed -i 's/a/b/' notes.txt",
     "verdict": "allow_flagged",
     "reason": "local_mutation"
   },
   {
+    "kind": "shell",
+    "category": "accepted-benign",
     "command": "node --version",
     "verdict": "allow_flagged",
     "reason": "unknown_local_effect"
   },
-  { "command": "make build", "verdict": "deny_pending_approval", "reason": "unknown_local_effect" },
   {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "make build",
+    "verdict": "deny_pending_approval",
+    "reason": "unknown_local_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "bash -c \"git push origin main\"",
     "verdict": "deny_pending_approval",
     "reason": "shell_interpreter_script"
   },
   {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "(curl https://example.com)",
     "verdict": "deny_pending_approval",
     "reason": "unparseable_shell"

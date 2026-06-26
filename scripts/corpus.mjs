@@ -12,6 +12,9 @@ console.log('Corpus evaluation')
 console.log(`  cases: ${metrics.total}`)
 console.log(`  accuracy: ${(metrics.accuracy * 100).toFixed(1)}%`)
 console.log(`  falsePositiveRate: ${(metrics.falsePositiveRate * 100).toFixed(1)}%`)
+console.log(
+  `  categories: must-ask=${metrics.categoryCounts['must-ask']} provably-benign=${metrics.categoryCounts['provably-benign']} accepted-benign=${metrics.categoryCounts['accepted-benign']}`,
+)
 for (const verdict of ['allow', 'allow_flagged', 'deny_pending_approval']) {
   console.log(
     `  ${verdict}: precision=${(metrics.precision[verdict] * 100).toFixed(1)}% recall=${(metrics.recall[verdict] * 100).toFixed(1)}%`,
