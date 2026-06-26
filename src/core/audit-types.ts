@@ -1,6 +1,6 @@
 import type { Assessment } from './types.js'
 
-export const AUDIT_METRICS_SCHEMA_VERSION = 2
+export const AUDIT_METRICS_SCHEMA_VERSION = 3
 
 export const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
 
@@ -14,6 +14,7 @@ export interface AuditRecord {
   summary?: string
   approvalId?: string
   wouldBlock?: boolean
+  judgeFallbackReason?: string
   permission?: string
   mode?: string
   assessment?: Assessment
@@ -69,4 +70,25 @@ export interface NoisyRuleCandidate {
   denyCount: number
   approvedCount: number
   approvalRate: number
+}
+
+export interface ReasonApprovalRatio {
+  reason: string
+  wouldBlockCount: number
+  approvedAfterDenyCount: number
+  approvalRate: number
+}
+
+export interface RepeatedFingerprintAsk {
+  fingerprint: string
+  summary: string
+  reason: string
+  askCount: number
+}
+
+export interface AvailabilityAskCounts {
+  total: number
+  missingTrustedCwd: number
+  judgeTimeout: number
+  judgeFallback: number
 }
