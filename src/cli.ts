@@ -7,6 +7,7 @@ import { auditProject, formatAuditReport } from './commands/audit.js'
 import { doctorProject, formatDoctorReport } from './commands/doctor.js'
 import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js'
 import { explainCommand, formatExplainReport } from './commands/explain.js'
+import { formatHarvestReport, harvestApplyProject, harvestListProject } from './commands/harvest.js'
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
 import { formatRecoverReport, recoverProject } from './commands/recover.js'
 import { formatReport, reportProject } from './commands/report.js'
@@ -89,6 +90,10 @@ function parseArgs(argv: string[]) {
     configValue?: string
     credentialAction?: 'mode' | 'set' | 'clear'
     standingAllowSubcommand?: 'revoke'
+    harvestSubcommand?: 'list' | 'apply'
+    harvestOutcome?: 'provably-benign' | 'accepted-benign' | 'reject'
+    harvestCommand?: string
+    corpusPath?: string
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -258,6 +263,24 @@ function parseArgs(argv: string[]) {
       index += 1
       continue
     }
+    if (token === '--outcome') {
+      const next = rest[index + 1]
+      if (!next || !['provably-benign', 'accepted-benign', 'reject'].includes(next)) {
+        throw new Error('--outcome requires provably-benign, accepted-benign, or reject.')
+      }
+      options.harvestOutcome = next as 'provably-benign' | 'accepted-benign' | 'reject'
+      index += 1
+      continue
+    }
+    if (token === '--corpus') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--corpus requires a path.')
+      }
+      options.corpusPath = next
+      index += 1
+      continue
+    }
     if (token === '--kind') {
       const next = rest[index + 1]
       if (!next) {
@@ -398,6 +421,8 @@ function parseArgs(argv: string[]) {
       }
       if (command === 'recover') {
         options.recoverCommand = next
+      } else if (command === 'harvest') {
+        options.harvestCommand = next
       } else {
         options.explainCommand = next
       }
@@ -456,6 +481,13 @@ function parseArgs(argv: string[]) {
         continue
       }
       throw new Error('standing-allow requires subcommand: revoke')
+    }
+    if (command === 'harvest' && !options.harvestSubcommand) {
+      if (token === 'list' || token === 'apply') {
+        options.harvestSubcommand = token
+        continue
+      }
+      throw new Error('harvest requires subcommand: list or apply')
     }
     if (command === 'judge' && !options.judgeSubcommand) {
       if (
@@ -581,6 +613,8 @@ Usage:
   ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
+  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--json]
+  ${c} harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject [--reason <r>] [--corpus <path>] [--target <dir>]
 `)
 }
 
@@ -818,6 +852,42 @@ async function main() {
         process.stdout.write(formatReport(report))
       }
       return
+    }
+
+    if (command === 'harvest') {
+      if (options.harvestSubcommand === 'list') {
+        const report = await harvestListProject({
+          targetDir: options.targetDir,
+          since: options.since,
+          until: options.until,
+          json: options.json,
+        })
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatHarvestReport(report)}\n`)
+        }
+        return
+      }
+      if (options.harvestSubcommand === 'apply') {
+        if (!options.harvestCommand) {
+          throw new Error('harvest apply requires --command.')
+        }
+        if (!options.harvestOutcome) {
+          throw new Error('harvest apply requires --outcome.')
+        }
+        const result = await harvestApplyProject({
+          targetDir: options.targetDir,
+          command: options.harvestCommand,
+          outcome: options.harvestOutcome,
+          reason: options.reason,
+          corpusPath: options.corpusPath,
+        })
+        process.stdout.write(`${result.message}\n`)
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      throw new Error('harvest requires subcommand: list or apply')
     }
 
     if (command === 'recover') {
