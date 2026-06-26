@@ -37,16 +37,17 @@ Each entry in `shell-commands.json`:
 ### `must-ask`
 
 Irreversible, catastrophic, or bypass-shaped commands that must **never** be silently
-allowed. CI hard gate (follow-on): any `must-ask` case classified as `allow` or
-`allow_flagged` fails the build.
+allowed. CI hard gate: any `must-ask` case **not** classified as `deny_pending_approval`
+fails the build (`allow` and `allow_flagged` both count as misses). Reason mismatches
+alone do not fail the hard gate.
 
 Examples: `git push`, `terraform apply`, pipe-to-shell, command substitution.
 
 ### `provably-benign`
 
 Structurally benign commands with hard ground truth (read-only, payload-less egress).
-Must **never** be blocked. CI hard gate (follow-on): any `provably-benign` case
-classified as `deny_pending_approval` fails the build.
+Must pass silently as `allow`. CI hard gate: any `provably-benign` case classified as
+`allow_flagged` or `deny_pending_approval` fails the build (ADR-002 M2 over-stop).
 
 Runtime matching uses the shell verdict **fingerprint** (same as audit traces), either
 stored in `runtimeKey` or derived by `enrichProvablyBenignRuntimeKeys()`. Standing-allow
@@ -74,8 +75,8 @@ runtime.
 
 ## Initial split (shell)
 
-| Category | Count | Verdict constraint |
-|---|---|---|
-| `must-ask` | 14 | `deny_pending_approval` |
-| `provably-benign` | 7 | `allow` |
-| `accepted-benign` | 6 | `allow_flagged` |
+| Category | Count | Verdict constraint | CI gate |
+|---|---|---|---|
+| `must-ask` | 14 | `deny_pending_approval` | Hard — any miss fails `pnpm corpus` |
+| `provably-benign` | 7 | `allow` | Hard — any non-`allow` fails `pnpm corpus` |
+| `accepted-benign` | 6 | `allow_flagged` | Soft — reported as review-required only |
