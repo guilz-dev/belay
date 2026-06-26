@@ -7,6 +7,7 @@ import type { AuditRecord } from '../core/audit-types.js'
 import {
   applyHarvestReview,
   buildHarvestReport,
+  filterRecordsForHarvest,
   type HarvestReport,
   type HarvestReviewOutcome,
 } from '../core/harvest.js'
@@ -28,38 +29,25 @@ export interface HarvestApplyOptions {
   corpusPath?: string
 }
 
-function filterShellRecords(records: AuditRecord[], since?: string, until?: string): AuditRecord[] {
-  let filtered = records.filter(
-    (record) => record.event === 'beforeShellExecution' || record.kind === 'shell',
-  )
-  if (since) {
-    const sinceMs = Date.parse(since)
-    if (!Number.isNaN(sinceMs)) {
-      filtered = filtered.filter((record) => {
-        const ts = record.timestamp ? Date.parse(record.timestamp) : Number.NaN
-        return !Number.isNaN(ts) && ts >= sinceMs
-      })
-    }
-  }
-  if (until) {
-    const untilMs = Date.parse(until)
-    if (!Number.isNaN(untilMs)) {
-      filtered = filtered.filter((record) => {
-        const ts = record.timestamp ? Date.parse(record.timestamp) : Number.NaN
-        return !Number.isNaN(ts) && ts <= untilMs
-      })
-    }
-  }
-  return filtered
-}
-
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const records = await loadAuditRecords(repoRoot)
-  return buildHarvestReport(filterShellRecords(records, options.since, options.until), {
+  return harvestReportFromRecords(records, {
+    since: options.since,
+    until: options.until,
     allowPatterns: config.overrides.allow,
   })
+}
+
+export function harvestReportFromRecords(
+  records: AuditRecord[],
+  options: { since?: string; until?: string; allowPatterns?: string[] } = {},
+): HarvestReport {
+  return buildHarvestReport(
+    filterRecordsForHarvest(records, { since: options.since, until: options.until }),
+    { allowPatterns: options.allowPatterns },
+  )
 }
 
 export function formatHarvestReport(report: HarvestReport): string {
@@ -94,6 +82,7 @@ export function formatHarvestReport(report: HarvestReport): string {
   lines.push(
     '',
     'Candidates are review-only signals — approve in audit does not auto-promote to corpus.',
+    'Time filters (--since/--until) keep paired deny/approval rows for round-trip detection.',
     'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject',
   )
   return lines.join('\n')
@@ -130,5 +119,5 @@ export async function harvestApplyProject(
 /** Parse audit ndjson for tests without full project layout. */
 export function harvestReportFromNdjson(raw: string): HarvestReport {
   const records = parseAuditNdjson(raw).map((entry) => toAuditRecord(entry))
-  return buildHarvestReport(records)
+  return harvestReportFromRecords(records)
 }

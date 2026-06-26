@@ -1,10 +1,11 @@
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
+import { computeAuditMetrics } from '../core/audit-metrics.js'
 import { runCorpusEvaluation } from '../corpus/evaluate.js'
 import { passesHardGates } from '../corpus/gates.js'
-import { harvestListProject } from './harvest.js'
-import { metricsProject } from './metrics.js'
+import { loadAuditRecords } from './audit.js'
+import { harvestReportFromRecords } from './harvest.js'
 
 export const QUALITY_REPORT_SCHEMA_VERSION = 1
 
@@ -48,10 +49,18 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
 
   const corpusMetrics = await runCorpusEvaluation(corpusDir)
   const hardGatesOk = passesHardGates(corpusMetrics.gates)
-  const metrics = await metricsProject({ targetDir: repoRoot })
-  const harvest = await harvestListProject({ targetDir: repoRoot })
+  const auditRecords = await loadAuditRecords(repoRoot)
+  const metrics = computeAuditMetrics(auditRecords as Record<string, unknown>[], {
+    auditLogPath: config.audit.logPath,
+    mode: config.mode,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+  })
+  const harvest = harvestReportFromRecords(auditRecords, {
+    allowPatterns: config.overrides.allow,
+  })
 
   const notes: string[] = [
+    'Overall ok reflects corpus hard gates only; audit and harvest signals are advisory.',
     'Recursive quality loop: corpus hard gates are the FN/FP safety boundary.',
     'Harvest candidates and audit metrics inform review — approvals are not ground truth.',
     'Simulate (`belay simulate`) is triage only; it does not replace `pnpm corpus`.',

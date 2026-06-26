@@ -129,4 +129,42 @@ describe('reclassify replay fidelity', () => {
     expect(diff?.replayKind).toBe('shell')
     expect(diff?.nextVerdict).toBe('allow')
   })
+
+  it('falls back to repoRoot cwd when replayContext is absent', async () => {
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
+      verdict: 'allow',
+      reason: 'read_only',
+      summary: 'git status',
+      fingerprint: 'fp',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: [],
+      },
+    })
+
+    await reclassifyAuditRecord(
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        summary: 'git status',
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(classifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'shell',
+        cwd: repoRoot,
+        command: 'git status',
+      }),
+      config,
+      expect.anything(),
+    )
+  })
 })

@@ -2,9 +2,11 @@ import type { CorpusCase, CorpusCategory } from '../corpus/types.js'
 import { computeRepeatedFingerprintAsks, isAvailabilityCausedAsk } from './audit-analysis.js'
 import {
   buildApprovalRoundTrips,
+  filterAuditRecords,
   inferWouldBlock,
   isApprovalRecorded,
-  isGateRecord,
+  isShellGateRecord,
+  parseTimestamp,
 } from './audit-query.js'
 import type { AuditRecord } from './audit-types.js'
 import { matchesCustomCommand } from './custom-command-match.js'
@@ -51,12 +53,6 @@ export interface HarvestReport {
 
 const READ_STYLE_COMMAND_PATTERN =
   /^\s*(git\s+status|git\s+diff|git\s+log|git\s+show|ls\b|cat\b|head\b|tail\b|find\b|rg\b|grep\b|fd\b|bat\b|less\b|more\b|pwd\b|whoami\b|env\b|printenv\b|npm\s+(test|run\s+test)|pnpm\s+(test|run\s+test)|yarn\s+test)/
-
-function isShellGateRecord(record: AuditRecord): boolean {
-  return (
-    isGateRecord(record) && (record.event === 'beforeShellExecution' || record.kind === 'shell')
-  )
-}
 
 function shellRecords(records: AuditRecord[]): AuditRecord[] {
   return records.filter(isShellGateRecord)
@@ -167,6 +163,78 @@ function recordsForShellRoundTrips(records: AuditRecord[]): AuditRecord[] {
   )
 }
 
+/** Pair deny/approval rows split by a time window so round-trip harvest still works. */
+function augmentHarvestRoundTripPairs(
+  scoped: AuditRecord[],
+  timeFiltered: AuditRecord[],
+): AuditRecord[] {
+  if (timeFiltered.length === 0) {
+    return timeFiltered
+  }
+
+  const included = new Set(timeFiltered)
+  const augmented = [...timeFiltered]
+
+  const approvalById = new Map<string, AuditRecord>()
+  const denyByApprovalId = new Map<string, AuditRecord>()
+  for (const record of scoped) {
+    if (!record.approvalId) {
+      continue
+    }
+    if (isApprovalRecorded(record)) {
+      approvalById.set(record.approvalId, record)
+    } else if (isShellGateRecord(record) && inferWouldBlock(record)) {
+      denyByApprovalId.set(record.approvalId, record)
+    }
+  }
+
+  for (const record of timeFiltered) {
+    if (!record.approvalId) {
+      continue
+    }
+    if (isApprovalRecorded(record)) {
+      const deny = denyByApprovalId.get(record.approvalId)
+      if (deny && !included.has(deny)) {
+        included.add(deny)
+        augmented.push(deny)
+      }
+      continue
+    }
+    if (isShellGateRecord(record)) {
+      const approval = approvalById.get(record.approvalId)
+      if (approval && !included.has(approval)) {
+        included.add(approval)
+        augmented.push(approval)
+      }
+    }
+  }
+
+  return augmented.sort((left, right) => {
+    const leftMs = parseTimestamp(left.timestamp) ?? 0
+    const rightMs = parseTimestamp(right.timestamp) ?? 0
+    return leftMs - rightMs
+  })
+}
+
+/** Shell gate rows plus approval events — matches what `belay harvest list` needs. */
+export function filterRecordsForHarvest(
+  records: AuditRecord[],
+  options: { since?: string; until?: string } = {},
+): AuditRecord[] {
+  const scoped = records.filter(
+    (record) => isShellGateRecord(record) || isApprovalRecorded(record),
+  )
+  if (!options.since && !options.until) {
+    return scoped
+  }
+
+  const timeFiltered = filterAuditRecords(scoped, {
+    since: options.since,
+    until: options.until,
+  })
+  return augmentHarvestRoundTripPairs(scoped, timeFiltered)
+}
+
 export function extractHarvestCandidates(
   records: AuditRecord[],
   options: { allowPatterns?: string[] } = {},
@@ -177,6 +245,7 @@ export function extractHarvestCandidates(
   )
   const map = new Map<string, HarvestCandidate>()
 
+  // `unknown` covers legacy shell rows missing `kind`.
   const roundTrips = buildApprovalRoundTrips(recordsForShellRoundTrips(records)).filter(
     (trip) => trip.kind === 'shell' || trip.kind === 'unknown',
   )
@@ -219,6 +288,7 @@ export function extractHarvestCandidates(
     })
   }
 
+  // Current overrides.allow match on past would-blocks — not a changelog of new additions.
   const allowPatterns = options.allowPatterns ?? []
   for (const record of classifierAsks) {
     if (!record.fingerprint) {
@@ -313,9 +383,14 @@ export function applyHarvestReview(
     reason,
   }
 
+  const followUp =
+    category === 'provably-benign'
+      ? 'Next: run `pnpm corpus` to verify hard gates, then `pnpm build` to refresh the standing-allow catalog.'
+      : 'Next: run `pnpm corpus` to verify corpus evaluation (accepted-benign is soft-gated).'
+
   return {
     cases: [...cases, nextCase],
     applied: true,
-    message: `Added ${JSON.stringify(command)} to corpus as ${category}.`,
+    message: `Added ${JSON.stringify(command)} to corpus as ${category}. ${followUp}`,
   }
 }

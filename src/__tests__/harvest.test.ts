@@ -7,6 +7,7 @@ import {
   buildHarvestReport,
   extractAvailabilityQueue,
   extractHarvestCandidates,
+  filterRecordsForHarvest,
 } from '../core/harvest.js'
 
 function shellDeny(params: Record<string, unknown>) {
@@ -45,6 +46,52 @@ describe('harvest', () => {
     expect(report.availabilityQueue[0]?.availabilitySignal).toBe('judge_timeout')
     expect(report.candidates.some((entry) => entry.fingerprint === 'fp-avail')).toBe(false)
     expect(report.candidates.some((entry) => entry.fingerprint === 'fp-classifier')).toBe(true)
+  })
+
+  it('keeps paired deny rows when --since filters only the approval event', () => {
+    const records = [
+      shellDeny({
+        timestamp: '2026-01-01T00:00:00.000Z',
+        fingerprint: 'fp-since-pair',
+        summary: 'pnpm test',
+        reason: 'unknown_local_effect',
+        approvalId: 'belay_since_pair',
+      }),
+      toAuditRecord({
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalId: 'belay_since_pair',
+        timestamp: '2026-01-02T00:00:00.000Z',
+      }),
+    ]
+
+    const report = buildHarvestReport(
+      filterRecordsForHarvest(records, { since: '2026-01-02T00:00:00.000Z' }),
+    )
+    expect(report.candidates).toHaveLength(1)
+    expect(report.candidates[0]?.sources).toContain('deny_then_approve')
+  })
+
+  it('harvest list filter keeps approval events for deny-then-approve detection', () => {
+    const records = [
+      shellDeny({
+        timestamp: '2026-01-01T00:00:00.000Z',
+        fingerprint: 'fp-list-path',
+        summary: 'pnpm test',
+        reason: 'unknown_local_effect',
+        approvalId: 'belay_list123',
+      }),
+      toAuditRecord({
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalId: 'belay_list123',
+        timestamp: '2026-01-01T00:01:00.000Z',
+      }),
+    ]
+
+    const report = buildHarvestReport(filterRecordsForHarvest(records))
+    expect(report.candidates).toHaveLength(1)
+    expect(report.candidates[0]?.sources).toContain('deny_then_approve')
   })
 
   it('includes deny-then-approve shell round trips as candidates only', () => {
@@ -131,6 +178,8 @@ describe('harvest', () => {
       reason: 'read_only',
     })
     expect(promoted.applied).toBe(true)
+    expect(promoted.message).toContain('pnpm corpus')
+    expect(promoted.message).toContain('pnpm build')
     expect(promoted.cases.at(-1)).toMatchObject({
       category: 'provably-benign',
       verdict: 'allow',
