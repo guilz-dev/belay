@@ -5,9 +5,8 @@ import { fileURLToPath } from 'node:url'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const outFile = path.join(root, 'src/corpus/standing-allow-catalog.generated.ts')
 
-const { loadCorpusCases, DEFAULT_CORPUS_REPO_ROOT, runCorpusEvaluation, passesHardGates } = await import(
-  path.join(root, 'dist/corpus/evaluate.js')
-)
+const { loadCorpusCases, DEFAULT_CORPUS_REPO_ROOT, runCorpusEvaluation, passesHardGates } =
+  await import(path.join(root, 'dist/corpus/evaluate.js'))
 const { MUST_ALLOW_SHELL_COMMANDS } = await import(
   path.join(root, 'dist/corpus/must-allow-commands.js')
 )
