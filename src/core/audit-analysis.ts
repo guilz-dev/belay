@@ -2,8 +2,11 @@ import { inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
 import type {
   ApprovalRoundTrip,
   AuditRecord,
+  AvailabilityAskCounts,
   BypassAttempt,
   NoisyRuleCandidate,
+  ReasonApprovalRatio,
+  RepeatedFingerprintAsk,
 } from './audit-types.js'
 
 const WRAPPER_TERMS = ['bash -c', 'sh -c', 'eval ', 'source ', 'node -e', '| bash', '| sh']
@@ -183,4 +186,143 @@ export function countVerdicts(records: AuditRecord[]): Record<string, number> {
     counts[verdict] = (counts[verdict] ?? 0) + 1
   }
   return counts
+}
+
+export function computeWouldBlockByReason(records: AuditRecord[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const record of records) {
+    if (!isGateRecord(record) || !inferWouldBlock(record)) {
+      continue
+    }
+    const reason = record.reason ?? 'unknown'
+    counts[reason] = (counts[reason] ?? 0) + 1
+  }
+  return counts
+}
+
+/** Approval ratios are candidate signals from operator behavior — not corpus ground truth. */
+export function computeApprovalRatioByReason(
+  records: AuditRecord[],
+  roundTrips: ApprovalRoundTrip[],
+): ReasonApprovalRatio[] {
+  const wouldBlockByReason = new Map<string, number>()
+  const approvedByReason = new Map<string, number>()
+
+  for (const record of records) {
+    if (!isGateRecord(record) || !inferWouldBlock(record)) {
+      continue
+    }
+    const reason = record.reason ?? 'unknown'
+    wouldBlockByReason.set(reason, (wouldBlockByReason.get(reason) ?? 0) + 1)
+  }
+
+  for (const trip of roundTrips) {
+    if (!trip.approvalTimestamp) {
+      continue
+    }
+    approvedByReason.set(trip.reason, (approvedByReason.get(trip.reason) ?? 0) + 1)
+  }
+
+  return [...wouldBlockByReason.entries()]
+    .map(([reason, wouldBlockCount]) => {
+      const approvedAfterDenyCount = approvedByReason.get(reason) ?? 0
+      return {
+        reason,
+        wouldBlockCount,
+        approvedAfterDenyCount,
+        approvalRate: wouldBlockCount > 0 ? approvedAfterDenyCount / wouldBlockCount : 0,
+      }
+    })
+    .sort((left, right) => right.wouldBlockCount - left.wouldBlockCount)
+}
+
+function judgeFallbackReason(record: AuditRecord): string {
+  return typeof record.judgeFallbackReason === 'string' ? record.judgeFallbackReason : ''
+}
+
+function isJudgeTimeoutFallback(fallback: string): boolean {
+  return fallback.includes('timeout')
+}
+
+export function isAvailabilityCausedAsk(record: AuditRecord): boolean {
+  if (!isGateRecord(record) || !inferWouldBlock(record)) {
+    return false
+  }
+  if (record.reason === 'missing_trusted_cwd') {
+    return true
+  }
+  return judgeFallbackReason(record).length > 0
+}
+
+export function computeAvailabilityAskCounts(records: AuditRecord[]): AvailabilityAskCounts {
+  const counts: AvailabilityAskCounts = {
+    total: 0,
+    missingTrustedCwd: 0,
+    judgeTimeout: 0,
+    judgeFallback: 0,
+  }
+
+  for (const record of records) {
+    if (!isGateRecord(record) || !inferWouldBlock(record)) {
+      continue
+    }
+
+    if (record.reason === 'missing_trusted_cwd') {
+      counts.missingTrustedCwd += 1
+      counts.total += 1
+      continue
+    }
+
+    const fallback = judgeFallbackReason(record)
+    if (!fallback) {
+      continue
+    }
+
+    if (isJudgeTimeoutFallback(fallback)) {
+      counts.judgeTimeout += 1
+    } else {
+      counts.judgeFallback += 1
+    }
+    counts.total += 1
+  }
+
+  return counts
+}
+
+export function computeRepeatedFingerprintAsks(
+  records: AuditRecord[],
+  minCount = 2,
+  limit = 10,
+): RepeatedFingerprintAsk[] {
+  const grouped = new Map<
+    string,
+    { fingerprint: string; summary: string; reason: string; askCount: number }
+  >()
+
+  for (const record of records) {
+    if (!isGateRecord(record) || !inferWouldBlock(record) || !record.fingerprint) {
+      continue
+    }
+
+    const fingerprint = record.fingerprint
+    const existing = grouped.get(fingerprint)
+    if (existing) {
+      existing.askCount += 1
+      existing.summary = record.summary ?? existing.summary
+      existing.reason = record.reason ?? existing.reason
+      continue
+    }
+
+    grouped.set(fingerprint, {
+      fingerprint,
+      summary: record.summary ?? '',
+      reason: record.reason ?? 'unknown',
+      askCount: 1,
+    })
+  }
+
+  return [...grouped.values()]
+    .filter((entry) => entry.askCount >= minCount)
+    .sort((left, right) => right.askCount - left.askCount)
+    .slice(0, limit)
 }

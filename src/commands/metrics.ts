@@ -10,6 +10,13 @@ export interface MetricsOptions {
   json?: boolean
 }
 
+function formatFingerprintPreview(fingerprint: string): string {
+  if (fingerprint.length <= 12) {
+    return fingerprint
+  }
+  return `${fingerprint.slice(0, 12)}…`
+}
+
 export async function metricsProject(options: MetricsOptions = {}): Promise<AuditMetricsReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
@@ -34,6 +41,7 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `Schema: v${report.schemaVersion}`,
     `Gate events: ${report.gateEvents}`,
     `Would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,
+    `Classifier-quality would-block: ${report.classifierWouldBlockCount} (${(report.classifierWouldBlockRate * 100).toFixed(1)}%)`,
     `Approvals recorded during audit: ${report.approvalRecordedCount}`,
   ]
 
@@ -45,6 +53,41 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
 
   if (report.bypassAttemptCount > 0) {
     lines.push(`Bypass attempts detected: ${report.bypassAttemptCount}`)
+  }
+
+  if (report.availabilityAsks.total > 0) {
+    lines.push('', 'Availability-caused asks (infrastructure, not classifier ground truth):')
+    lines.push(`- missing trusted cwd: ${report.availabilityAsks.missingTrustedCwd}`)
+    lines.push(`- judge timeout: ${report.availabilityAsks.judgeTimeout}`)
+    lines.push(`- other judge fallback: ${report.availabilityAsks.judgeFallback}`)
+    lines.push(`- total: ${report.availabilityAsks.total}`)
+  }
+
+  if (report.repeatedFingerprintAsks.length > 0) {
+    lines.push('', 'Repeated fingerprint asks (repeat friction):')
+    for (const entry of report.repeatedFingerprintAsks) {
+      lines.push(
+        `- [${entry.reason}] x${entry.askCount} ${formatFingerprintPreview(entry.fingerprint)}: ${entry.summary}`,
+      )
+    }
+  }
+
+  if (Object.keys(report.wouldBlockByReason).length > 0) {
+    lines.push('', 'Would-block by reason:')
+    for (const [reason, count] of Object.entries(report.wouldBlockByReason).sort(
+      (a, b) => b[1] - a[1],
+    )) {
+      lines.push(`- ${reason}: ${count}`)
+    }
+  }
+
+  if (report.approvalRatioByReason.length > 0) {
+    lines.push('', 'Approval ratio by reason (candidate signal, not ground truth):')
+    for (const entry of report.approvalRatioByReason.slice(0, 10)) {
+      lines.push(
+        `- ${entry.reason}: ${(entry.approvalRate * 100).toFixed(0)}% approved after deny (${entry.approvedAfterDenyCount}/${entry.wouldBlockCount})`,
+      )
+    }
   }
 
   if (Object.keys(report.byVerdict).length > 0) {
@@ -77,7 +120,10 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
   }
 
   if (report.noisyRuleCandidates.length > 0) {
-    lines.push('', 'Noisy rule candidates:')
+    lines.push(
+      '',
+      'Noisy rule candidates (high-signal subset of approval ratios; ≥50% approved after deny):',
+    )
     for (const rule of report.noisyRuleCandidates) {
       lines.push(
         `- ${rule.reason}: ${(rule.approvalRate * 100).toFixed(0)}% approved after deny (${rule.approvedCount}/${rule.denyCount})`,
@@ -86,7 +132,7 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
   }
 
   if (Object.keys(report.byReason).length > 0) {
-    lines.push('', 'By reason:')
+    lines.push('', 'All gate events by reason:')
     for (const [reason, count] of Object.entries(report.byReason).sort((a, b) => b[1] - a[1])) {
       lines.push(`- ${reason}: ${count}`)
     }

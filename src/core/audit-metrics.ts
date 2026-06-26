@@ -1,6 +1,10 @@
 import {
   bucketGateEventsByDay,
   computeApprovalLatencyStats,
+  computeApprovalRatioByReason,
+  computeAvailabilityAskCounts,
+  computeRepeatedFingerprintAsks,
+  computeWouldBlockByReason,
   countVerdicts,
   detectBypassAttempts,
   detectNoisyRules,
@@ -12,6 +16,11 @@ import {
   isApprovalRecorded,
   toAuditRecord,
 } from './audit-query.js'
+import type {
+  AvailabilityAskCounts,
+  ReasonApprovalRatio,
+  RepeatedFingerprintAsk,
+} from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 
 /** Minimum gate events before recommending enforce with zero would-block rate. */
@@ -25,6 +34,12 @@ export interface AuditMetricsReport {
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
+  classifierWouldBlockCount: number
+  classifierWouldBlockRate: number
+  wouldBlockByReason: Record<string, number>
+  approvalRatioByReason: ReasonApprovalRatio[]
+  availabilityAsks: AvailabilityAskCounts
+  repeatedFingerprintAsks: RepeatedFingerprintAsk[]
   byReason: Record<string, number>
   byKind: Record<string, number>
   byVerdict: Record<string, number>
@@ -141,8 +156,14 @@ export function computeAuditMetrics(
   const approvalLatency = computeApprovalLatencyStats(roundTrips)
   const bypassAttempts = detectBypassAttempts(auditRecords)
   const noisyRuleCandidates = detectNoisyRules(auditRecords, roundTrips)
+  const wouldBlockByReason = computeWouldBlockByReason(auditRecords)
+  const approvalRatioByReason = computeApprovalRatioByReason(auditRecords, roundTrips)
+  const availabilityAsks = computeAvailabilityAskCounts(auditRecords)
+  const repeatedFingerprintAsks = computeRepeatedFingerprintAsks(auditRecords)
 
   const wouldBlockRate = gateEvents > 0 ? wouldBlockCount / gateEvents : 0
+  const classifierWouldBlockCount = Math.max(0, wouldBlockCount - availabilityAsks.total)
+  const classifierWouldBlockRate = gateEvents > 0 ? classifierWouldBlockCount / gateEvents : 0
   const topWouldBlockSummaries = [...summaryCounts.values()]
     .sort((left, right) => right.count - left.count)
     .slice(0, 10)
@@ -167,7 +188,7 @@ export function computeAuditMetrics(
       }
     } else {
       notes.push(
-        `${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic). Review top summaries and add overrides.allow where appropriate.`,
+        `${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(classifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and add overrides.allow where appropriate.`,
       )
       if (approvalRecordedCount > 0) {
         notes.push(
@@ -178,10 +199,10 @@ export function computeAuditMetrics(
           'Review top would-block summaries and add overrides.allow for legitimate commands before switching to enforce.',
         )
       }
-      if (wouldBlockRate < 0.05 && gateEvents >= 20) {
+      if (classifierWouldBlockRate < 0.05 && gateEvents >= 20 && availabilityAsks.total === 0) {
         readyForEnforce = true
         notes.push(
-          'Would-block rate is below 5% with sufficient sample size — consider enforce mode.',
+          'Classifier-quality would-block rate is below 5% with sufficient sample size — consider enforce mode.',
         )
       }
     }
@@ -189,6 +210,20 @@ export function computeAuditMetrics(
     notes.push('Config is not in audit mode — metrics show enforce-time behavior.')
   } else {
     notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.')
+  }
+
+  if (availabilityAsks.total > 0) {
+    readyForEnforce = false
+    notes.push(
+      `${availabilityAsks.total} availability-caused ask(s) — tune infrastructure before corpus overrides.`,
+    )
+    notes.push('Ready for enforce withheld while availability-caused asks are present.')
+  }
+
+  if (repeatedFingerprintAsks.length > 0) {
+    notes.push(
+      `${repeatedFingerprintAsks.length} repeated fingerprint ask pattern(s) — review standing-allow / cache candidates.`,
+    )
   }
 
   if (noisyRuleCandidates.length > 0) {
@@ -205,6 +240,12 @@ export function computeAuditMetrics(
     gateEvents,
     wouldBlockCount,
     wouldBlockRate,
+    classifierWouldBlockCount,
+    classifierWouldBlockRate,
+    wouldBlockByReason,
+    approvalRatioByReason,
+    availabilityAsks,
+    repeatedFingerprintAsks,
     byReason,
     byKind,
     byVerdict,
