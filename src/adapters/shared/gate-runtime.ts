@@ -19,6 +19,7 @@ import {
   recordApproval,
 } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
+import { buildAuditReplayContext } from '../../core/audit-replay-context.js'
 import {
   collectOutsideRepoPaths,
   collectOutsideRepoPathsFromToolPayload,
@@ -604,6 +605,7 @@ async function gateDecisionToVerdict(
     scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
+  const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
   const gateBase = {
     event: gateAuditEventName(kind),
     kind,
@@ -616,6 +618,7 @@ async function gateDecisionToVerdict(
     schemaVersion: result.axes ? 2 : 1,
     ...(result.axes ?? {}),
     ...auditExtras.transactionalLayer,
+    ...(replayContext ? { replayContext } : {}),
   }
 
   if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {

@@ -1,4 +1,7 @@
+import type { AuditReplayContext } from './audit-replay-context.js'
 import type { Assessment } from './types.js'
+
+export type { AuditReplayContext } from './audit-replay-context.js'
 
 export const AUDIT_METRICS_SCHEMA_VERSION = 3
 
@@ -25,6 +28,7 @@ export interface AuditRecord {
   transactionalCategories?: string[]
   transactionalChangeCount?: number
   transactionalSkipReason?: string
+  replayContext?: AuditReplayContext
   [key: string]: unknown
 }
 

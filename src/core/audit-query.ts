@@ -21,6 +21,12 @@ export function isGateRecord(record: AuditRecord): boolean {
   return typeof record.event === 'string' && GATE_EVENTS.has(record.event)
 }
 
+export function isShellGateRecord(record: AuditRecord): boolean {
+  return (
+    isGateRecord(record) && (record.event === 'beforeShellExecution' || record.kind === 'shell')
+  )
+}
+
 export function isApprovalRecorded(record: AuditRecord): boolean {
   return (
     (record.event === 'approval' ||

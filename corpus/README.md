@@ -73,6 +73,17 @@ runtime.
 - **Runtime-facing:** `kind`, `category`, and `runtimeKey` (or derived fingerprint) for
   `provably-benign` shell entries. `accepted-benign` is fixture metadata until promoted.
 
+## Harvest workflow
+
+After reviewing audit traces:
+
+1. `belay harvest list` — shell-only benign candidates and availability queue (approvals are signals, not ground truth).
+2. `belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject` — append reviewed cases to `shell-commands.json`.
+3. `pnpm corpus` — verify hard gates (`must-ask`, `provably-benign`).
+4. `pnpm build` — refresh standing-allow catalog when promoting `provably-benign` entries.
+
+`belay quality` summarizes corpus gates, audit metrics, and harvest backlog in one report.
+
 ## Initial split (shell)
 
 | Category | Count | Verdict constraint | CI gate |

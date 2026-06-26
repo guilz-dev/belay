@@ -1,6 +1,7 @@
 import { getAdapter } from '../adapters/registry.js'
 import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { detectAdapterName } from '../config-io.js'
+import { parseAuditReplayContext } from './audit-replay-context.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
 import type { BelayConfigV3 } from './config.js'
@@ -12,6 +13,8 @@ export interface ReclassifyDiff {
   event?: string
   summary?: string
   fingerprint?: string
+  replayCwd?: string
+  replayKind?: string
   previousVerdict: string
   previousReason: string
   nextVerdict: string
@@ -37,46 +40,56 @@ export async function reclassifyAuditRecord(
     return null
   }
 
-  const kind = record.kind === 'tool' || record.kind === 'subagent' ? record.kind : 'shell'
+  const replay = parseAuditReplayContext(record)
+  const kind =
+    replay?.kind ?? (record.kind === 'tool' || record.kind === 'subagent' ? record.kind : 'shell')
   const summary = record.summary ?? ''
+  const cwd = replay?.cwd ?? repoRoot
 
   try {
     if (kind === 'shell') {
-      const command = shellCommandFromSummary(summary)
+      const command = replay?.command ?? shellCommandFromSummary(summary)
       if (!command) {
         return null
       }
       const action = normalizeGatedAction({
         kind: 'shell',
         repoRoot,
-        cwd: repoRoot,
+        cwd,
         command,
       })
       return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
     }
 
     if (kind === 'subagent') {
+      const payload =
+        replay?.payload ??
+        ({
+          tool_name: 'Task',
+          tool_input: { description: summary },
+        } as Record<string, unknown>)
       const action = normalizeGatedAction({
         kind: 'subagent',
         repoRoot,
-        cwd: repoRoot,
-        payload: {
-          tool_name: 'Task',
-          tool_input: { description: summary },
-        },
+        cwd,
+        payload,
       })
       return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
     }
 
+    const toolName = replay?.toolName ?? 'Shell'
+    const payload =
+      replay?.payload ??
+      ({
+        tool_name: toolName,
+        tool_input: { command: replay?.command ?? summary },
+      } as Record<string, unknown>)
     const action = normalizeGatedAction({
       kind: 'tool',
       repoRoot,
-      cwd: repoRoot,
-      toolName: 'Shell',
-      payload: {
-        tool_name: 'Shell',
-        tool_input: { command: summary },
-      },
+      cwd,
+      toolName,
+      payload,
     })
     return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
   } catch {
@@ -98,11 +111,13 @@ export async function diffReclassification(
   if (previousVerdict === next.verdict && previousReason === next.reason) {
     return null
   }
+  const replay = parseAuditReplayContext(record)
   return {
     timestamp: record.timestamp,
     event: record.event,
     summary: record.summary,
     fingerprint: record.fingerprint,
+    ...(replay ? { replayCwd: replay.cwd, replayKind: replay.kind } : {}),
     previousVerdict,
     previousReason,
     nextVerdict: next.verdict,
