@@ -110,7 +110,7 @@ export async function harvestApplyProject(
   }
 
   return {
-    ok: result.applied,
+    ok: result.ok,
     message: result.message,
     corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
   }
