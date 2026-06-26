@@ -28,9 +28,7 @@ export function buildAuditReplayContext(
   }
   const replayKind = replayAction.kind
   const resolvedKind: GatedActionKind =
-    replayKind === 'shell' || replayKind === 'tool' || replayKind === 'subagent'
-      ? replayKind
-      : kind
+    replayKind === 'shell' || replayKind === 'tool' || replayKind === 'subagent' ? replayKind : kind
   return {
     cwd: replayAction.cwd,
     kind: resolvedKind,

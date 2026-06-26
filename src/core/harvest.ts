@@ -221,9 +221,7 @@ export function filterRecordsForHarvest(
   records: AuditRecord[],
   options: { since?: string; until?: string } = {},
 ): AuditRecord[] {
-  const scoped = records.filter(
-    (record) => isShellGateRecord(record) || isApprovalRecorded(record),
-  )
+  const scoped = records.filter((record) => isShellGateRecord(record) || isApprovalRecorded(record))
   if (!options.since && !options.until) {
     return scoped
   }
