@@ -9,6 +9,7 @@ import {
   loadStandingAllow,
   resolveStandingAllowMatch,
   revokeStandingAllowEntry,
+  type StandingAllowFile,
 } from '../core/standing-allow.js'
 import type { ClassifyResult } from '../core/types.js'
 import { MUST_ALLOW_SHELL_COMMANDS } from '../corpus/must-allow-commands.js'
@@ -234,7 +235,7 @@ describe('standing-allow', () => {
   })
 
   it('does not treat one-off approvals as standing-allow state', () => {
-    const state = { version: 1, entries: [] }
+    const state: StandingAllowFile = { version: 1, entries: [] }
     const match = resolveStandingAllowMatch({
       kind: 'shell',
       result: denyResult({

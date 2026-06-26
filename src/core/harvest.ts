@@ -1,4 +1,4 @@
-import type { CorpusCase, CorpusCategory } from '../corpus/types.js'
+import type { CorpusCase } from '../corpus/types.js'
 import { computeRepeatedFingerprintAsks, isAvailabilityCausedAsk } from './audit-analysis.js'
 import {
   buildApprovalRoundTrips,
@@ -329,13 +329,6 @@ export function buildHarvestReport(
   }
 }
 
-function defaultReasonForCategory(category: CorpusCategory): string {
-  if (category === 'provably-benign') {
-    return 'read_only'
-  }
-  return 'local_mutation'
-}
-
 export function applyHarvestReview(
   cases: CorpusCase[],
   params: {
@@ -343,19 +336,24 @@ export function applyHarvestReview(
     outcome: HarvestReviewOutcome
     reason?: string
   },
-): { cases: CorpusCase[]; applied: boolean; message: string } {
+): { cases: CorpusCase[]; applied: boolean; ok: boolean; message: string } {
   const command = params.command.trim()
   if (!command) {
-    return { cases, applied: false, message: 'Command must be non-empty.' }
+    return { cases, applied: false, ok: false, message: 'Command must be non-empty.' }
   }
 
   if (params.outcome === 'reject') {
-    return { cases, applied: false, message: `Rejected candidate ${JSON.stringify(command)}.` }
+    return {
+      cases,
+      applied: false,
+      ok: true,
+      message: `Reviewed and rejected candidate ${JSON.stringify(command)}.`,
+    }
   }
 
   const category = params.outcome
   const verdict = category === 'provably-benign' ? 'allow' : 'allow_flagged'
-  const reason = params.reason?.trim() || defaultReasonForCategory(category)
+  const reason = params.reason?.trim()
 
   const duplicate = cases.find((entry) => entry.command === command)
   if (duplicate) {
@@ -363,12 +361,14 @@ export function applyHarvestReview(
       return {
         cases,
         applied: false,
+        ok: false,
         message: `Corpus already contains ${JSON.stringify(command)} as ${category}.`,
       }
     }
     return {
       cases,
       applied: false,
+      ok: false,
       message: `Corpus already contains ${JSON.stringify(command)} as ${duplicate.category}; resolve manually.`,
     }
   }
@@ -378,17 +378,18 @@ export function applyHarvestReview(
     category,
     command,
     verdict,
-    reason,
+    ...(reason ? { reason } : {}),
   }
 
   const followUp =
     category === 'provably-benign'
-      ? 'Next: run `pnpm corpus` to verify hard gates, then `pnpm build` to refresh the standing-allow catalog.'
+      ? 'Next: run `pnpm corpus` and confirm hard gates pass before `pnpm build` refreshes the standing-allow catalog.'
       : 'Next: run `pnpm corpus` to verify corpus evaluation (accepted-benign is soft-gated).'
 
   return {
     cases: [...cases, nextCase],
     applied: true,
+    ok: true,
     message: `Added ${JSON.stringify(command)} to corpus as ${category}. ${followUp}`,
   }
 }

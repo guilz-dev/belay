@@ -167,10 +167,12 @@ describe('harvest', () => {
       outcome: 'accepted-benign',
     })
     expect(accepted.applied).toBe(true)
+    expect(accepted.ok).toBe(true)
     expect(accepted.cases.at(-1)).toMatchObject({
       category: 'accepted-benign',
       verdict: 'allow_flagged',
     })
+    expect(accepted.cases.at(-1)).not.toHaveProperty('reason')
 
     const promoted = applyHarvestReview(accepted.cases, {
       command: 'rg TODO',
@@ -178,6 +180,7 @@ describe('harvest', () => {
       reason: 'read_only',
     })
     expect(promoted.applied).toBe(true)
+    expect(promoted.ok).toBe(true)
     expect(promoted.message).toContain('pnpm corpus')
     expect(promoted.message).toContain('pnpm build')
     expect(promoted.cases.at(-1)).toMatchObject({
@@ -191,6 +194,8 @@ describe('harvest', () => {
       outcome: 'reject',
     })
     expect(rejected.applied).toBe(false)
+    expect(rejected.ok).toBe(true)
+    expect(rejected.message).toContain('Reviewed and rejected')
     expect(rejected.cases).toHaveLength(promoted.cases.length)
   })
 

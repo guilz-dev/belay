@@ -5,9 +5,8 @@ import { fileURLToPath } from 'node:url'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const outFile = path.join(root, 'src/corpus/standing-allow-catalog.generated.ts')
 
-const { loadCorpusCases, DEFAULT_CORPUS_REPO_ROOT } = await import(
-  path.join(root, 'dist/corpus/evaluate.js')
-)
+const { loadCorpusCases, DEFAULT_CORPUS_REPO_ROOT, runCorpusEvaluation, passesHardGates } =
+  await import(path.join(root, 'dist/corpus/evaluate.js'))
 const { MUST_ALLOW_SHELL_COMMANDS } = await import(
   path.join(root, 'dist/corpus/must-allow-commands.js')
 )
@@ -18,6 +17,12 @@ const { DEFAULT_CONFIG_V3, classifierOptionsFromConfig } = await import(
 const { createDeterministicJudgeStub } = await import(path.join(root, 'dist/core/verdict/judge.js'))
 
 const corpusDir = path.join(root, 'corpus')
+const corpusMetrics = await runCorpusEvaluation(corpusDir)
+if (!passesHardGates(corpusMetrics.gates)) {
+  throw new Error(
+    `Refusing to regenerate standing-allow catalog while corpus hard gates fail (must-ask misses=${corpusMetrics.gates.mustAsk.mismatches}, provably-benign blocks=${corpusMetrics.gates.provablyBenign.mismatches}). Run pnpm corpus and fix the corpus first.`,
+  )
+}
 const cases = await loadCorpusCases(corpusDir)
 const repoRoot = DEFAULT_CORPUS_REPO_ROOT
 const cwd = path.join(repoRoot, 'src')
