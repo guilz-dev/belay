@@ -7,9 +7,25 @@ import type { Assessment, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
+import { type CorpusGateMetrics, type CorpusMismatch, computeCategoryGates } from './gates.js'
 import { defaultCorpusEvalPaths, enrichProvablyBenignRuntimeKeys } from './runtime-match.js'
 import { type CorpusCase, type CorpusCategory, countByCategory, parseCorpusCases } from './types.js'
 
+export type {
+  CategoryGateResult,
+  CorpusGateMetrics,
+  CorpusMismatch,
+  HardGateLimits,
+} from './gates.js'
+export {
+  computeCategoryGates,
+  hardGateLimitFailures,
+  isAcceptedBenignMismatch,
+  isMustAskMiss,
+  isProvablyBenignBlock,
+  passesHardGates,
+  ZERO_HARD_GATE_LIMITS,
+} from './gates.js'
 export {
   DEFAULT_CORPUS_REPO_ROOT,
   deriveShellCorpusRuntimeKey,
@@ -30,9 +46,13 @@ export interface CorpusMetrics {
   accuracy: number
   precision: Record<string, number>
   recall: Record<string, number>
-  falsePositiveRate: number
+  /** must-ask cases that were not denied (false negative rate on catastrophic corpus). */
+  missRate: number
+  /** provably-benign cases that were not silently allowed (over-stop / false positive rate). */
+  benignBlockRate: number
+  gates: CorpusGateMetrics
   categoryCounts: Record<CorpusCategory, number>
-  mismatches: Array<{ command: string; expected: string; actual: string; reason: string }>
+  mismatches: CorpusMismatch[]
 }
 
 export function assessmentsDiverge(predicted: Assessment, observed: Assessment): boolean {
@@ -57,7 +77,8 @@ export async function evaluateCorpus(
 ): Promise<CorpusMetrics> {
   const cwd = path.join(repoRoot, 'src')
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-  const mismatches: CorpusMetrics['mismatches'] = []
+  const mismatches: CorpusMismatch[] = []
+  const results: Array<{ actual: HookVerdict; reason: string }> = []
   let correct = 0
 
   const confusion: Record<string, Record<string, number>> = {}
@@ -75,6 +96,7 @@ export async function evaluateCorpus(
       options,
       judge,
     )
+    results.push({ actual: result.verdict, reason: result.reason })
     confusion[testCase.verdict][result.verdict] += 1
     const verdictOk = result.verdict === testCase.verdict
     const reasonOk = !testCase.reason || result.reason === testCase.reason
@@ -83,6 +105,7 @@ export async function evaluateCorpus(
     } else {
       mismatches.push({
         command: testCase.command,
+        category: testCase.category,
         expected: testCase.verdict,
         actual: result.verdict,
         reason: result.reason,
@@ -100,11 +123,7 @@ export async function evaluateCorpus(
     recall[verdict] = actualTotal === 0 ? 1 : truePositive / actualTotal
   }
 
-  const falsePositives = mismatches.filter(
-    (entry) =>
-      entry.expected === 'deny_pending_approval' && entry.actual !== 'deny_pending_approval',
-  ).length
-  const denyCases = cases.filter((entry) => entry.verdict === 'deny_pending_approval').length
+  const gates = computeCategoryGates(cases, results)
 
   return {
     total: cases.length,
@@ -112,7 +131,9 @@ export async function evaluateCorpus(
     accuracy: cases.length === 0 ? 1 : correct / cases.length,
     precision,
     recall,
-    falsePositiveRate: denyCases === 0 ? 0 : falsePositives / denyCases,
+    missRate: gates.mustAsk.rate,
+    benignBlockRate: gates.provablyBenign.rate,
+    gates,
     categoryCounts: countByCategory(cases),
     mismatches,
   }

@@ -4,10 +4,14 @@ import { describe, expect, it } from 'vitest'
 import {
   assessmentsDiverge,
   CorpusSchemaError,
+  computeCategoryGates,
   deriveShellCorpusRuntimeKey,
   enrichProvablyBenignRuntimeKeys,
+  isMustAskMiss,
+  isProvablyBenignBlock,
   loadCorpusCases,
   parseCorpusCases,
+  passesHardGates,
   provablyBenignShellRuntimeKeys,
 } from '../corpus/evaluate.js'
 
@@ -153,5 +157,106 @@ describe('corpus evaluation', () => {
         },
       ]),
     ).rejects.toThrow(/runtimeKey mismatch/)
+  })
+
+  it('computes hard gates from category labels', () => {
+    const cases = [
+      {
+        kind: 'shell' as const,
+        category: 'must-ask' as const,
+        command: 'git push',
+        verdict: 'deny_pending_approval' as const,
+      },
+      {
+        kind: 'shell' as const,
+        category: 'provably-benign' as const,
+        command: 'git status',
+        verdict: 'allow' as const,
+      },
+      {
+        kind: 'shell' as const,
+        category: 'accepted-benign' as const,
+        command: 'touch x',
+        verdict: 'allow_flagged' as const,
+      },
+    ]
+
+    const gates = computeCategoryGates(cases, [
+      { actual: 'allow', reason: 'external_effect' },
+      { actual: 'allow', reason: 'read_only' },
+      { actual: 'deny_pending_approval', reason: 'local_mutation' },
+    ])
+
+    expect(gates.mustAsk.mismatches).toBe(1)
+    expect(gates.provablyBenign.mismatches).toBe(0)
+    expect(gates.acceptedBenign.mismatches).toBe(1)
+    expect(passesHardGates(gates)).toBe(false)
+  })
+
+  it('detects must-ask miss and provably-benign block predicates', () => {
+    const mustAsk = {
+      kind: 'shell' as const,
+      category: 'must-ask' as const,
+      command: 'git push',
+      verdict: 'deny_pending_approval' as const,
+    }
+    const provablyBenign = {
+      kind: 'shell' as const,
+      category: 'provably-benign' as const,
+      command: 'git status',
+      verdict: 'allow' as const,
+    }
+
+    expect(isMustAskMiss(mustAsk, 'allow')).toBe(true)
+    expect(isMustAskMiss(mustAsk, 'allow_flagged')).toBe(true)
+    expect(isMustAskMiss(mustAsk, 'deny_pending_approval')).toBe(false)
+    expect(isProvablyBenignBlock(provablyBenign, 'deny_pending_approval')).toBe(true)
+    expect(isProvablyBenignBlock(provablyBenign, 'allow_flagged')).toBe(true)
+    expect(isProvablyBenignBlock(provablyBenign, 'allow')).toBe(false)
+  })
+
+  it('rejects computeCategoryGates when cases and results lengths differ', () => {
+    expect(() =>
+      computeCategoryGates(
+        [
+          {
+            kind: 'shell',
+            category: 'must-ask',
+            command: 'git push',
+            verdict: 'deny_pending_approval',
+          },
+        ],
+        [],
+      ),
+    ).toThrow(/length mismatch/)
+  })
+
+  it('counts allow_flagged on provably-benign as a hard gate failure', () => {
+    const gates = computeCategoryGates(
+      [
+        {
+          kind: 'shell',
+          category: 'provably-benign',
+          command: 'git status',
+          verdict: 'allow',
+        },
+      ],
+      [{ actual: 'allow_flagged', reason: 'read_only' }],
+    )
+
+    expect(gates.provablyBenign.mismatches).toBe(1)
+    expect(passesHardGates(gates)).toBe(false)
+  })
+
+  it('passes hard gates on the live shell corpus', async () => {
+    const cases = await loadCorpusCases(corpusDir)
+    const { evaluateCorpus } = await import('../corpus/evaluate.js')
+    const metrics = await evaluateCorpus(cases)
+
+    expect(passesHardGates(metrics.gates)).toBe(true)
+    expect(metrics.missRate).toBe(0)
+    expect(metrics.benignBlockRate).toBe(0)
+    expect(metrics.gates.mustAsk.mismatches).toBe(0)
+    expect(metrics.gates.provablyBenign.mismatches).toBe(0)
   })
 })
