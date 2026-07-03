@@ -1,7 +1,7 @@
 # Labeled corpus
 
 Shell command fixtures for offline evaluation (`pnpm corpus`) and future runtime
-standing-allow catalogs. Related design: [`docs/recursive-quality-loop.md`](../docs/recursive-quality-loop.md).
+standing-allow catalogs. Related design: [`docs/autonomous-quality-loop.ja.md`](../docs/autonomous-quality-loop.ja.md).
 
 ## Files
 
