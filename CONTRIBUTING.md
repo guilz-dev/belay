@@ -60,6 +60,33 @@ esbuild-bundled runtimes from `dist/bundle/<adapter>-runtime.mjs`.
 Convenience: `make verify` (lint + typecheck + test), `make verify-parallel`.
 `pnpm test:stable` runs the suite 3× to catch order-dependent flakiness.
 
+### Quality loop (classifier / corpus changes)
+
+When touching the verdict engine, tokenizer, containment, or corpus fixtures, run the
+detect loop before opening a PR. Full playbook: [`docs/quality-loop-playbook.ja.md`](docs/quality-loop-playbook.ja.md).
+
+```bash
+./scripts/quality-loop-session.sh --full          # corpus + structural + probe + diagnose
+./scripts/quality-loop-session.sh --full --verify  # + test:stable after fixes
+pnpm probe:adversarial -- --strict              # nightly-equivalent FN gate
+belay quality --json                            # corpus gates + provenance + harvest
+```
+
+Cursor skill: [`.cursor/skills/quality-loop/SKILL.md`](.cursor/skills/quality-loop/SKILL.md)
+
+### Dogfooding this repository
+
+You do **not** need `belay` on `PATH`. From the repo root:
+
+| Goal | Command |
+| --- | --- |
+| Switch to audit dogfood mode | `make dogfood` or `pnpm dogfood` |
+| Rebuild hooks/runtime + dogfood | `make dev-refresh` or `pnpm dev-refresh` |
+| Sync `main` + upgrade install | `.cursor/skills/update-local-belay/scripts/sync-and-upgrade.sh` |
+
+`make dogfood` runs `pnpm build`, then `node dist/cli.js dogfood`, then `status`.
+When metrics look good: `node dist/cli.js dogfood --enforce`.
+
 ## Architecture
 
 - `src/core/verdict/` — the verdict engine: **Tier0** (deterministic, owns FN=0) + **Tier1**

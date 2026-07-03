@@ -15,6 +15,17 @@ export type CorpusActionKind = (typeof CORPUS_ACTION_KINDS)[number]
 export const CORPUS_CATEGORIES = ['must-ask', 'provably-benign', 'accepted-benign'] as const
 export type CorpusCategory = (typeof CORPUS_CATEGORIES)[number]
 
+export const CORPUS_PROVENANCE_SOURCES = ['manual', 'mutation', 'harvest', 'redteam'] as const
+export type CorpusProvenanceSource = (typeof CORPUS_PROVENANCE_SOURCES)[number]
+
+export interface CorpusProvenance {
+  source: CorpusProvenanceSource
+  sourceBatchId?: string
+  sourceCaseId?: string
+  reviewedBy?: string
+  reviewedAt?: string
+}
+
 export interface CorpusCase {
   /** Fixture action kind. Reserved for future tool/subagent corpora. */
   kind: CorpusActionKind
@@ -28,6 +39,8 @@ export interface CorpusCase {
    * Consumed by future standing-allow / catalog code — not used by evaluation harness alone.
    */
   runtimeKey?: string
+  /** Optional case origin metadata for quality-loop ratchet and harvest audit. */
+  provenance?: CorpusProvenance
 }
 
 export class CorpusSchemaError extends Error {
@@ -88,6 +101,53 @@ function assertCategoryVerdictConsistency(
   }
 }
 
+function parseProvenance(value: unknown, index: number): CorpusProvenance {
+  if (!isRecord(value)) {
+    throw new CorpusSchemaError(`case[${index}].provenance must be an object`)
+  }
+  const source = value.source
+  if (
+    source !== 'manual' &&
+    source !== 'mutation' &&
+    source !== 'harvest' &&
+    source !== 'redteam'
+  ) {
+    throw new CorpusSchemaError(
+      `case[${index}].provenance.source must be manual | mutation | harvest | redteam (got ${JSON.stringify(source)})`,
+    )
+  }
+  const provenance: CorpusProvenance = { source }
+  if (value.sourceBatchId !== undefined) {
+    if (typeof value.sourceBatchId !== 'string' || value.sourceBatchId.trim() === '') {
+      throw new CorpusSchemaError(
+        `case[${index}].provenance.sourceBatchId must be a non-empty string`,
+      )
+    }
+    provenance.sourceBatchId = value.sourceBatchId
+  }
+  if (value.sourceCaseId !== undefined) {
+    if (typeof value.sourceCaseId !== 'string' || value.sourceCaseId.trim() === '') {
+      throw new CorpusSchemaError(
+        `case[${index}].provenance.sourceCaseId must be a non-empty string`,
+      )
+    }
+    provenance.sourceCaseId = value.sourceCaseId
+  }
+  if (value.reviewedBy !== undefined) {
+    if (typeof value.reviewedBy !== 'string' || value.reviewedBy.trim() === '') {
+      throw new CorpusSchemaError(`case[${index}].provenance.reviewedBy must be a non-empty string`)
+    }
+    provenance.reviewedBy = value.reviewedBy
+  }
+  if (value.reviewedAt !== undefined) {
+    if (typeof value.reviewedAt !== 'string' || value.reviewedAt.trim() === '') {
+      throw new CorpusSchemaError(`case[${index}].provenance.reviewedAt must be a non-empty string`)
+    }
+    provenance.reviewedAt = value.reviewedAt
+  }
+  return provenance
+}
+
 export function parseCorpusCases(raw: unknown): CorpusCase[] {
   if (!Array.isArray(raw)) {
     throw new CorpusSchemaError('corpus must be a JSON array')
@@ -125,6 +185,9 @@ export function parseCorpusCases(raw: unknown): CorpusCase[] {
       }
       testCase.runtimeKey = entry.runtimeKey
     }
+    if (entry.provenance !== undefined) {
+      testCase.provenance = parseProvenance(entry.provenance, index)
+    }
 
     return testCase
   })
@@ -138,6 +201,28 @@ export function countByCategory(cases: CorpusCase[]): Record<CorpusCategory, num
   }
   for (const testCase of cases) {
     counts[testCase.category] += 1
+  }
+  return counts
+}
+
+export type CorpusProvenanceCounts = Record<CorpusProvenanceSource | 'unspecified', number>
+
+/** Count corpus cases by provenance.source; missing provenance counts as unspecified (legacy manual). */
+export function countProvenanceBySource(cases: CorpusCase[]): CorpusProvenanceCounts {
+  const counts: CorpusProvenanceCounts = {
+    manual: 0,
+    mutation: 0,
+    harvest: 0,
+    redteam: 0,
+    unspecified: 0,
+  }
+  for (const testCase of cases) {
+    const source = testCase.provenance?.source
+    if (!source) {
+      counts.unspecified += 1
+    } else {
+      counts[source] += 1
+    }
   }
   return counts
 }

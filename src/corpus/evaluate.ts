@@ -7,9 +7,21 @@ import type { Assessment, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
-import { type CorpusGateMetrics, type CorpusMismatch, computeCategoryGates } from './gates.js'
+import {
+  type CorpusGateMetrics,
+  type CorpusMismatch,
+  computeCategoryGates,
+  isMustAskMiss,
+} from './gates.js'
 import { defaultCorpusEvalPaths, enrichProvablyBenignRuntimeKeys } from './runtime-match.js'
-import { type CorpusCase, type CorpusCategory, countByCategory, parseCorpusCases } from './types.js'
+import {
+  type CorpusCase,
+  type CorpusCategory,
+  type CorpusProvenanceCounts,
+  countByCategory,
+  countProvenanceBySource,
+  parseCorpusCases,
+} from './types.js'
 
 export type {
   CategoryGateResult,
@@ -52,6 +64,7 @@ export interface CorpusMetrics {
   benignBlockRate: number
   gates: CorpusGateMetrics
   categoryCounts: Record<CorpusCategory, number>
+  provenanceCounts: CorpusProvenanceCounts
   mismatches: CorpusMismatch[]
 }
 
@@ -135,6 +148,7 @@ export async function evaluateCorpus(
     benignBlockRate: gates.provablyBenign.rate,
     gates,
     categoryCounts: countByCategory(cases),
+    provenanceCounts: countProvenanceBySource(cases),
     mismatches,
   }
 }
@@ -144,4 +158,103 @@ export async function runCorpusEvaluation(corpusDir?: string): Promise<CorpusMet
     corpusDir ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'corpus')
   const cases = await loadCorpusCases(root)
   return evaluateCorpus(cases)
+}
+
+export interface CommandBatchInput {
+  command: string
+  expected: HookVerdict
+  core?: string
+  mutatorId?: string
+}
+
+export interface CommandBatchResult {
+  command: string
+  expected: HookVerdict
+  actual: HookVerdict
+  reason: string
+  core?: string
+  mutatorId?: string
+  isFn: boolean
+}
+
+export async function evaluateCommandBatch(
+  cases: CommandBatchInput[],
+  repoRoot = defaultCorpusEvalPaths().repoRoot,
+): Promise<CommandBatchResult[]> {
+  const { cwd } = defaultCorpusEvalPaths(repoRoot)
+  const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
+  const judge = createDeterministicJudgeStub()
+  const results: CommandBatchResult[] = []
+
+  for (const testCase of cases) {
+    const result = await classifyShell(
+      testCase.command,
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      options,
+      judge,
+    )
+    const isFn = isMustAskMiss(
+      {
+        category: 'must-ask',
+        command: testCase.command,
+        verdict: testCase.expected,
+        kind: 'shell',
+      },
+      result.verdict,
+    )
+    results.push({
+      command: testCase.command,
+      expected: testCase.expected,
+      actual: result.verdict,
+      reason: result.reason,
+      core: testCase.core,
+      mutatorId: testCase.mutatorId,
+      isFn,
+    })
+  }
+
+  return results
+}
+
+export interface FpCommandBatchResult {
+  command: string
+  actual: HookVerdict
+  reason: string
+  core: string
+  mutatorId: string
+  isFp: boolean
+}
+
+/** False-positive probe: must-allow cores that receive deny_pending_approval count as FP. */
+export async function evaluateFpCommandBatch(
+  cases: Array<{ command: string; core: string; mutatorId: string }>,
+  repoRoot = defaultCorpusEvalPaths().repoRoot,
+): Promise<FpCommandBatchResult[]> {
+  const { cwd } = defaultCorpusEvalPaths(repoRoot)
+  const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
+  const judge = createDeterministicJudgeStub()
+  const results: FpCommandBatchResult[] = []
+
+  for (const testCase of cases) {
+    const result = await classifyShell(
+      testCase.command,
+      cwd,
+      repoRoot,
+      DEFAULT_CONFIG_V3,
+      options,
+      judge,
+    )
+    results.push({
+      command: testCase.command,
+      actual: result.verdict,
+      reason: result.reason,
+      core: testCase.core,
+      mutatorId: testCase.mutatorId,
+      isFp: result.verdict === 'deny_pending_approval',
+    })
+  }
+
+  return results
 }

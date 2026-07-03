@@ -1,35 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { verdict } from '../../core/verdict/verdict.js'
 import { MUST_ALLOW_SHELL_COMMANDS } from '../../corpus/must-allow-commands.js'
+import { ALL_STRUCTURAL_WRAPPERS, CATASTROPHIC_CORES } from '../../corpus/mutators.js'
 import { verdictTestContext } from './helpers.js'
-
-const CATASTROPHIC_CORES = [
-  'rm -rf .git',
-  'git push --force',
-  'dropdb prod',
-  'npm publish',
-  'aws s3 rm s3://bucket/key',
-  'terraform apply',
-  'rm -rf ~',
-]
-
-const WRAPPER_TRANSFORMS: Array<(core: string) => string> = [
-  (core) => `bash -c '${core}'`,
-  (core) => `env FOO=1 ${core}`,
-  (core) => `nohup ${core}`,
-  (core) => `sudo ${core}`,
-  (core) => `eval "${core}"`,
-  (core) => `$(${core})`,
-  (core) => `echo $(${core})`,
-  (core) => `echo "${core}" | base64 -d | sh`,
-  (core) => `echo "${core}" | python3`,
-  (core) => `xargs ${core} <<< ''`,
-  (core) => `(${core})`,
-  (core) => {
-    const [head, ...rest] = core.split(' ')
-    return `/usr/bin/${head} ${rest.join(' ')}`
-  },
-]
 
 const MUST_ALLOW = [...MUST_ALLOW_SHELL_COMMANDS]
 
@@ -60,8 +33,9 @@ describe('structural suite', () => {
     const cases: Array<{ name: string; command: string }> = []
     for (const core of CATASTROPHIC_CORES) {
       cases.push({ name: `core:${core}`, command: core })
-      for (const wrap of WRAPPER_TRANSFORMS) {
-        cases.push({ name: `wrapped:${wrap(core)}`, command: wrap(core) })
+      for (const mutator of ALL_STRUCTURAL_WRAPPERS) {
+        const wrapped = mutator.apply(core)
+        cases.push({ name: `wrapped:${wrapped}`, command: wrapped })
       }
     }
 

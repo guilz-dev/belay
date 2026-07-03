@@ -51,5 +51,6 @@ describe('simulate', () => {
 
     expect(report.changedCount).toBeGreaterThanOrEqual(1)
     expect(report.allowToDenyCount + report.denyToAllowCount).toBeGreaterThan(0)
+    expect(report.missingSnapshotCount).toBe(1)
   })
 })

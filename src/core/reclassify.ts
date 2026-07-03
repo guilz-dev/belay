@@ -1,7 +1,12 @@
 import { getAdapter } from '../adapters/registry.js'
 import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { detectAdapterName } from '../config-io.js'
-import { parseAuditReplayContext } from './audit-replay-context.js'
+import {
+  type AuditReplayContext,
+  hashReplayPayload,
+  parseAuditActionSnapshot,
+  parseAuditReplayContext,
+} from './audit-replay-context.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
 import type { BelayConfigV3 } from './config.js'
@@ -31,6 +36,23 @@ function classifierOptionsForRepo(config: BelayConfigV3, repoRoot: string) {
   return repoShellClassifierOptions(config, repoRoot, adapter.layout)
 }
 
+function trustedReplayContext(
+  snapshot: ReturnType<typeof parseAuditActionSnapshot>,
+  replay: AuditReplayContext | null,
+): AuditReplayContext | null {
+  if (!replay) {
+    return null
+  }
+  if (
+    snapshot?.payloadHash &&
+    replay.payload &&
+    hashReplayPayload(replay.payload) !== snapshot.payloadHash
+  ) {
+    return { ...replay, payload: undefined }
+  }
+  return replay
+}
+
 export async function reclassifyAuditRecord(
   record: AuditRecord,
   config: BelayConfigV3,
@@ -40,15 +62,19 @@ export async function reclassifyAuditRecord(
     return null
   }
 
-  const replay = parseAuditReplayContext(record)
+  const snapshot = parseAuditActionSnapshot(record)
+  const replay = trustedReplayContext(snapshot, parseAuditReplayContext(record))
   const kind =
-    replay?.kind ?? (record.kind === 'tool' || record.kind === 'subagent' ? record.kind : 'shell')
+    snapshot?.kind ??
+    replay?.kind ??
+    (record.kind === 'tool' || record.kind === 'subagent' ? record.kind : 'shell')
   const summary = record.summary ?? ''
-  const cwd = replay?.cwd ?? repoRoot
+  const cwd = snapshot?.cwd ?? replay?.cwd ?? repoRoot
 
   try {
     if (kind === 'shell') {
-      const command = replay?.command ?? shellCommandFromSummary(summary)
+      const command =
+        snapshot?.normalizedAction ?? replay?.command ?? shellCommandFromSummary(summary)
       if (!command) {
         return null
       }
@@ -77,12 +103,12 @@ export async function reclassifyAuditRecord(
       return await classifyGatedAction(action, config, classifierOptionsForRepo(config, repoRoot))
     }
 
-    const toolName = replay?.toolName ?? 'Shell'
+    const toolName = snapshot?.toolName ?? replay?.toolName ?? 'Shell'
     const payload =
       replay?.payload ??
       ({
         tool_name: toolName,
-        tool_input: { command: replay?.command ?? summary },
+        tool_input: { command: snapshot?.normalizedAction ?? replay?.command ?? summary },
       } as Record<string, unknown>)
     const action = normalizeGatedAction({
       kind: 'tool',
@@ -111,16 +137,25 @@ export async function diffReclassification(
   if (previousVerdict === next.verdict && previousReason === next.reason) {
     return null
   }
+  const snapshot = parseAuditActionSnapshot(record)
   const replay = parseAuditReplayContext(record)
   return {
     timestamp: record.timestamp,
     event: record.event,
     summary: record.summary,
     fingerprint: record.fingerprint,
-    ...(replay ? { replayCwd: replay.cwd, replayKind: replay.kind } : {}),
+    ...(snapshot || replay
+      ? { replayCwd: snapshot?.cwd ?? replay?.cwd, replayKind: snapshot?.kind ?? replay?.kind }
+      : {}),
     previousVerdict,
     previousReason,
     nextVerdict: next.verdict,
     nextReason: next.reason,
   }
+}
+
+export function countMissingActionSnapshots(records: AuditRecord[]): number {
+  return records.filter(
+    (record) => record.event && GATE_EVENTS.has(record.event) && !parseAuditActionSnapshot(record),
+  ).length
 }

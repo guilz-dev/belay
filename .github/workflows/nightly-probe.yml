@@ -1,0 +1,68 @@
+name: Nightly adversarial probe
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # UTC 18:00 ≒ JST 03:00 — strict hard-fail
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: 'Fail job when probe reports FN (default true for schedule)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run adversarial probe
+        run: |
+          ARGS="--max-cases 200 --seed 42"
+          STRICT=true
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            STRICT="${{ inputs.strict }}"
+          fi
+          if [ "$STRICT" = "true" ]; then
+            ARGS="$ARGS --strict"
+          fi
+          pnpm probe:adversarial $ARGS
+
+      - name: Upload probe artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-loop-probe
+          path: artifacts/quality-loop/
+          retention-days: 30
+
+      - name: Open failure issue
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/nightly-probe-issue.mjs

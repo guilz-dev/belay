@@ -56,7 +56,9 @@
     "test": "pnpm build && vitest run",
     "test:structural": "pnpm build && vitest run src/__tests__/verdict/structural-suite.test.ts",
     "test:stable": "pnpm build && vitest run && vitest run && vitest run",
-    "corpus": "pnpm build && node scripts/corpus.mjs"
+    "corpus": "pnpm build && node scripts/corpus.mjs",
+    "probe:adversarial": "pnpm build && node scripts/adversarial-probe.mjs",
+    "corpus:ratchet": "pnpm build && node scripts/corpus-ratchet.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",

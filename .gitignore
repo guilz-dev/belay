@@ -39,6 +39,8 @@ Thumbs.db
 !.cursor/skills/belay/**
 !.cursor/skills/verify-parallel/
 !.cursor/skills/verify-parallel/**
+!.cursor/skills/quality-loop/
+!.cursor/skills/quality-loop/**
 !.cursor/skills/update-local-belay/
 !.cursor/skills/update-local-belay/**
 
@@ -65,3 +67,6 @@ skills-lock.json
 # Temporary files
 tmp/
 temp/
+
+# Quality loop probe artifacts (CI uploads via workflow; do not commit)
+artifacts/quality-loop/

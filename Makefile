@@ -1,4 +1,4 @@
-.PHONY: lint typecheck test build corpus verify verify-parallel
+.PHONY: lint typecheck test build corpus verify verify-parallel dogfood dev-refresh
 
 lint:
 	pnpm lint
@@ -15,6 +15,12 @@ build:
 corpus:
 	pnpm corpus
 
+probe-adversarial:
+	pnpm probe:adversarial
+
+corpus-ratchet:
+	pnpm corpus:ratchet
+
 verify: lint typecheck test
 
 verify-parallel:
@@ -27,3 +33,11 @@ verify-parallel:
 	wait $$TYPECHECK_PID || status=1; \
 	wait $$TEST_PID || status=1; \
 	exit $$status
+
+# Source-built CLI; no global `belay` install required.
+dogfood:
+	./scripts/dev-dogfood.sh
+
+# Rebuild hooks/runtime from source and switch to dogfood mode (no git pull).
+dev-refresh:
+	./scripts/dev-refresh.sh
