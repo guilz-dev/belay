@@ -5,7 +5,7 @@ import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
 import { parseAuditNdjson, toAuditRecord } from '../core/audit-metrics.js'
 import { type BelayConfigV3, mergeConfig } from '../core/config.js'
-import { diffReclassification } from '../core/reclassify.js'
+import { countMissingActionSnapshots, diffReclassification } from '../core/reclassify.js'
 
 export interface SimulateOptions {
   targetDir?: string
@@ -33,6 +33,7 @@ export async function simulateProject(options: SimulateOptions) {
   }
 
   const records = parseAuditNdjson(raw).map(toAuditRecord)
+  const missingSnapshotCount = countMissingActionSnapshots(records)
   const diffs = (
     await Promise.all(
       records.map((record) => diffReclassification(record, candidateConfig, repoRoot)),
@@ -56,6 +57,7 @@ export async function simulateProject(options: SimulateOptions) {
     changedCount: diffs.length,
     allowToDenyCount: allowToDeny.length,
     denyToAllowCount: denyToAllow.length,
+    missingSnapshotCount,
     diffs,
   }
 }
@@ -65,6 +67,7 @@ export function formatSimulateReport(report: Awaited<ReturnType<typeof simulateP
     `simulate ${report.candidateConfigPath}`,
     'Triage only — corpus hard gates (`pnpm corpus`), not simulate counts, are the safety boundary.',
     `Records scanned: ${report.totalRecords}`,
+    `Missing action snapshots: ${report.missingSnapshotCount}`,
     `Verdict changes: ${report.changedCount}`,
     `allow/flagged → deny: ${report.allowToDenyCount}`,
     `deny → allow/flagged: ${report.denyToAllowCount}`,

@@ -69,7 +69,12 @@ export function isGitPath(resolvedPath: string, repoRoot: string): boolean {
     return false
   }
   const normalized = relative.replaceAll('\\', '/')
-  return normalized === '.git' || normalized.startsWith('.git/')
+  return (
+    normalized === '.git' ||
+    normalized.startsWith('.git/') ||
+    normalized.endsWith('/.git') ||
+    normalized.includes('/.git/')
+  )
 }
 
 export function isHighStakesPath(

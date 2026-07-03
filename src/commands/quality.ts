@@ -4,6 +4,7 @@ import { loadConfigFile } from '../config-io.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
 import { runCorpusEvaluation } from '../corpus/evaluate.js'
 import { passesHardGates } from '../corpus/gates.js'
+import type { CorpusCategory, CorpusProvenanceCounts } from '../corpus/types.js'
 import { loadAuditRecords } from './audit.js'
 import { harvestReportFromRecords } from './harvest.js'
 
@@ -15,6 +16,9 @@ export interface QualityReport {
   corpus: {
     path: string
     passesHardGates: boolean
+    totalCases: number
+    categoryCounts: Record<CorpusCategory, number>
+    provenanceCounts: CorpusProvenanceCounts
     mustAskMisses: number
     provablyBenignBlocks: number
     acceptedBenignMismatches: number
@@ -90,6 +94,9 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
     corpus: {
       path: path.relative(repoRoot, corpusDir) || corpusDir,
       passesHardGates: hardGatesOk,
+      totalCases: corpusMetrics.total,
+      categoryCounts: corpusMetrics.categoryCounts,
+      provenanceCounts: corpusMetrics.provenanceCounts,
       mustAskMisses: corpusMetrics.gates.mustAsk.mismatches,
       provablyBenignBlocks: corpusMetrics.gates.provablyBenign.mismatches,
       acceptedBenignMismatches: corpusMetrics.gates.acceptedBenign.mismatches,
@@ -121,6 +128,9 @@ export function formatQualityReport(report: QualityReport): string {
     'Corpus hard gates:',
     `  path: ${report.corpus.path}`,
     `  passes: ${report.corpus.passesHardGates ? 'yes' : 'no'}`,
+    `  total cases: ${report.corpus.totalCases}`,
+    `  categories: must-ask=${report.corpus.categoryCounts['must-ask']} provably-benign=${report.corpus.categoryCounts['provably-benign']} accepted-benign=${report.corpus.categoryCounts['accepted-benign']}`,
+    `  provenance: manual=${report.corpus.provenanceCounts.manual} mutation=${report.corpus.provenanceCounts.mutation} harvest=${report.corpus.provenanceCounts.harvest} redteam=${report.corpus.provenanceCounts.redteam} unspecified=${report.corpus.provenanceCounts.unspecified}`,
     `  must-ask misses: ${report.corpus.mustAskMisses}`,
     `  provably-benign blocks: ${report.corpus.provablyBenignBlocks}`,
     `  accepted-benign mismatches (soft): ${report.corpus.acceptedBenignMismatches}`,

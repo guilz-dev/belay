@@ -128,5 +128,41 @@ describe('gate-runtime integration', () => {
     expect(verdict.permission).toBe('deny')
     expect(verdict.axes?.would).toBe('ask')
     expect(auditEvents[0]?.effect).toBeDefined()
+    const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
+    expect(snapshot?.schemaVersion).toBe(1)
+    expect(snapshot?.kind).toBe('shell')
+    expect(snapshot?.cwd).toBe(repoRoot)
+    expect(snapshot?.normalizedAction).toBeTruthy()
+  })
+
+  it('writes actionSnapshot with subdirectory cwd for simulate replay', async () => {
+    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
+
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-snapshot-gate-'))
+    const srcCwd = path.join(repoRoot, 'src')
+    await mkdir(srcCwd, { recursive: true })
+    const configPath = path.join(repoRoot, '.belay', 'config.json')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')
+
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'shell',
+      cwd: srcCwd,
+      command: 'rm -rf .git',
+    })
+
+    const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
+    expect(snapshot?.cwd).toBe(srcCwd)
+    expect(snapshot?.normalizedAction).toContain('rm')
   })
 })

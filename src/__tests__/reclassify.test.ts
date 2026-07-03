@@ -167,4 +167,103 @@ describe('reclassify replay fidelity', () => {
       expect.anything(),
     )
   })
+
+  it('prefers actionSnapshot over summary when payload hash matches', async () => {
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
+      verdict: 'allow',
+      reason: 'read_only',
+      summary: 'git status',
+      fingerprint: 'fp',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: [],
+      },
+    })
+
+    await reclassifyAuditRecord(
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        summary: 'stale summary text',
+        actionSnapshot: {
+          schemaVersion: 1,
+          kind: 'shell',
+          cwd: `${repoRoot}/src`,
+          normalizedAction: 'git status',
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(classifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'shell',
+        cwd: `${repoRoot}/src`,
+        command: 'git status',
+      }),
+      config,
+      expect.anything(),
+    )
+  })
+
+  it('drops replay payload when actionSnapshot payloadHash mismatches', async () => {
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
+      verdict: 'allow',
+      reason: 'read_only',
+      summary: 'git status',
+      fingerprint: 'fp',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: [],
+      },
+    })
+
+    await reclassifyAuditRecord(
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        summary: 'stale summary',
+        actionSnapshot: {
+          schemaVersion: 1,
+          kind: 'tool',
+          cwd: `${repoRoot}/src`,
+          normalizedAction: 'git status',
+          toolName: 'Shell',
+          payloadHash: 'deadbeef',
+        },
+        replayContext: {
+          cwd: `${repoRoot}/src`,
+          kind: 'tool',
+          toolName: 'Shell',
+          payload: { tool_name: 'Shell', tool_input: { command: 'rm -rf .git' } },
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(classifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool',
+        toolName: 'Shell',
+        payload: expect.objectContaining({
+          tool_name: 'Shell',
+          tool_input: { command: 'git status' },
+        }),
+      }),
+      config,
+      expect.anything(),
+    )
+  })
 })

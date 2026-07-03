@@ -19,7 +19,10 @@ import {
   recordApproval,
 } from '../../core/approval-service.js'
 import { issueApprovalToken } from '../../core/approval-token.js'
-import { buildAuditReplayContext } from '../../core/audit-replay-context.js'
+import {
+  buildAuditActionSnapshot,
+  buildAuditReplayContext,
+} from '../../core/audit-replay-context.js'
 import {
   collectOutsideRepoPaths,
   collectOutsideRepoPathsFromToolPayload,
@@ -606,6 +609,7 @@ async function gateDecisionToVerdict(
   } = {},
 ): Promise<GateVerdict> {
   const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
+  const actionSnapshot = buildAuditActionSnapshot(kind, result, auditExtras.replayAction)
   const gateBase = {
     event: gateAuditEventName(kind),
     kind,
@@ -619,6 +623,7 @@ async function gateDecisionToVerdict(
     ...(result.axes ?? {}),
     ...auditExtras.transactionalLayer,
     ...(replayContext ? { replayContext } : {}),
+    ...(actionSnapshot ? { actionSnapshot } : {}),
   }
 
   if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {

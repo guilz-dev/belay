@@ -24,6 +24,20 @@ describe('containment', () => {
     expect(analysis.location).toBe('repo_local')
   })
 
+  it('marks nested .git paths as high stakes from subdirectory cwd', () => {
+    const repoRoot = '/workspace/project'
+    const cwd = path.join(repoRoot, 'src')
+    const analysis = analyzePathTargets({
+      targets: ['.git'],
+      cwd,
+      repoRoot,
+      trustedCwd: true,
+      sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
+    })
+    expect(analysis.isHighStakes).toBe(true)
+    expect(analysis.signals).toContain('high_stakes_path')
+  })
+
   it('marks repo-outside secret targets as high stakes', () => {
     const analysis = analyzePathTargets({
       targets: ['~/.env'],

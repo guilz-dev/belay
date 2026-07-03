@@ -1,13 +1,14 @@
 # Labeled corpus
 
 Shell command fixtures for offline evaluation (`pnpm corpus`) and future runtime
-standing-allow catalogs. Related design: [`docs/recursive-quality-loop.md`](../docs/recursive-quality-loop.md).
+standing-allow catalogs. Related designs: [`docs/recursive-quality-loop.md`](../docs/recursive-quality-loop.md), [`docs/autonomous-quality-loop.ja.md`](../docs/autonomous-quality-loop.ja.md).
 
 ## Files
 
 | File | Role |
 |---|---|
 | `shell-commands.json` | Shell corpus fixtures (offline evaluation harness) |
+| `judge-accuracy.json` | Fixed Tier1 judge accuracy fixture (not auto-derived) |
 | `baseline.json` | Minimum accuracy metrics for CI regression checks |
 
 ## Case shape
@@ -31,6 +32,7 @@ Each entry in `shell-commands.json`:
 | `command` | Input to the classifier harness. | Shell cases: same string is classified at runtime. |
 | `verdict` / `reason` | Expected classifier output. | Not replayed at runtime — evaluation-only expectations. |
 | `runtimeKey` | Optional precomputed shell fingerprint for `provably-benign` cases. Loader verifies precomputed keys against `deriveShellCorpusRuntimeKey()`. | **Runtime-facing.** When omitted, derived on load via `enrichProvablyBenignRuntimeKeys()`. |
+| `provenance` | Optional case origin (`manual` / `mutation` / `harvest` / `redteam`). Omitted entries are treated as manual fixtures. | Offline audit trail for quality-loop ratchet; not used at runtime. |
 
 ## Categories
 
