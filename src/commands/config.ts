@@ -32,6 +32,7 @@ import type { AdapterName, InitOptions } from '../types.js'
 import { isBelayFloorInstalled } from './health-snapshot.js'
 import { judgeStatus } from './judge.js'
 import { readKeyFromStdin } from './stdin-key.js'
+import { confirmPrompt, intro, isInteractiveTTY, type SelectOptions, selectPrompt } from './tui.js'
 
 export const BELAY_CONFIG_SUBCOMMANDS = [
   'list',
@@ -400,7 +401,14 @@ export interface BelayConfigInteractiveOptions {
   skipBanner?: boolean
 }
 
-type ConfigPrompter = (message: string) => Promise<string>
+interface ConfigWizardPrompter {
+  askText(message: string): Promise<string>
+  askSelect<T extends string>(
+    options: SelectOptions<T>,
+    parseRaw?: (raw: string, options: SelectOptions<T>) => T,
+  ): Promise<T>
+  askConfirm(message: string, defaultValue: boolean): Promise<boolean>
+}
 
 interface CloudJudgeWizardAnswers {
   judgeCredentialMode?: 'project' | 'apiKey'
@@ -408,26 +416,121 @@ interface CloudJudgeWizardAnswers {
   acceptCloud: boolean
 }
 
+function formatSelectPrompt<T extends string>(options: SelectOptions<T>): string {
+  const values = options.choices.map((choice) => choice.value).join(' | ')
+  return `${options.message} [${values}] (${options.defaultValue}): `
+}
+
+function formatConfirmPrompt(message: string, defaultValue: boolean): string {
+  return `${message} [y | n] (${defaultValue ? 'y' : 'n'}): `
+}
+
+function parseSelectAnswer<T extends string>(raw: string, options: SelectOptions<T>): T {
+  const normalized = raw.trim().toLowerCase()
+  if (!normalized) {
+    return options.defaultValue
+  }
+  const found = options.choices.find((choice) => {
+    if (choice.value.toLowerCase() === normalized) {
+      return true
+    }
+    return choice.label?.trim().toLowerCase() === normalized
+  })
+  if (!found) {
+    throw new Error(`Invalid choice for ${options.message}: ${raw}`)
+  }
+  return found.value
+}
+
+async function askTextLazy(message: string): Promise<string> {
+  const rl = readline.createInterface({ input, output })
+  try {
+    return (await rl.question(message)).trimEnd()
+  } finally {
+    rl.close()
+  }
+}
+
+function createTestPrompter(prompts: string[]): ConfigWizardPrompter {
+  let index = 0
+  const nextPrompt = (message: string) => {
+    if (index >= prompts.length) {
+      throw new Error(`unexpected config prompt: ${message}`)
+    }
+    return prompts[index++]
+  }
+  return {
+    askText: async (message) => nextPrompt(message),
+    askSelect: async (options, parseRaw) => {
+      const raw = nextPrompt(formatSelectPrompt(options))
+      return parseRaw ? parseRaw(raw, options) : parseSelectAnswer(raw, options)
+    },
+    askConfirm: async (message, defaultValue) =>
+      parseYesNo(nextPrompt(formatConfirmPrompt(message, defaultValue)), defaultValue),
+  }
+}
+
+function createReadlinePrompter(): ConfigWizardPrompter {
+  return {
+    askText: askTextLazy,
+    askSelect: async (options, parseRaw) => {
+      const raw = await askTextLazy(formatSelectPrompt(options))
+      return parseRaw ? parseRaw(raw, options) : parseSelectAnswer(raw, options)
+    },
+    askConfirm: async (message, defaultValue) =>
+      parseYesNo(await askTextLazy(formatConfirmPrompt(message, defaultValue)), defaultValue),
+  }
+}
+
+function createTuiPrompter(): ConfigWizardPrompter {
+  return {
+    askText: askTextLazy,
+    askSelect: selectPrompt,
+    askConfirm: confirmPrompt,
+  }
+}
+
+async function withConfigWizardPrompter<T>(
+  options: BelayConfigInteractiveOptions,
+  fn: (prompter: ConfigWizardPrompter) => Promise<T>,
+): Promise<T> {
+  if (options.prompts) {
+    return fn(createTestPrompter(options.prompts))
+  }
+  if (isInteractiveTTY()) {
+    return fn(createTuiPrompter())
+  }
+  return fn(createReadlinePrompter())
+}
+
+function writeConfigWizardBanner(options: BelayConfigInteractiveOptions, title: string): void {
+  if (options.skipBanner) {
+    return
+  }
+  if (isInteractiveTTY()) {
+    intro(title)
+    return
+  }
+  output.write(`${title}\n`)
+}
+
 async function collectCloudJudgeWizardAnswers(
-  ask: ConfigPrompter,
+  prompter: ConfigWizardPrompter,
   judgeProviderId: JudgeProviderId,
 ): Promise<CloudJudgeWizardAnswers> {
   if (judgeProviderId === 'ollama') {
     return { acceptCloud: false }
   }
 
-  const judgeCredentialMode = parseYesNo(
-    await ask('Use project env for credentials? [y=project | n=apiKey] (y): '),
-    true,
-  )
+  const judgeCredentialMode = (await prompter.askConfirm('Use project env for credentials?', true))
     ? 'project'
     : 'apiKey'
 
-  const optionalEndpoint = (await ask('Judge endpoint URL (optional): ')).trim()
+  const optionalEndpoint = (await prompter.askText('Judge endpoint URL (optional): ')).trim()
   const judgeEndpoint = optionalEndpoint || undefined
 
   if (judgeCredentialMode === 'apiKey') {
-    const key = await ask('Paste API key (hidden input not available in all shells): ')
+    const key = await prompter.askText('Paste API key (hidden input not available in all shells): ')
     if (key.trim()) {
       process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY = key.trim()
     }
@@ -435,36 +538,13 @@ async function collectCloudJudgeWizardAnswers(
 
   let acceptCloud = false
   if (judgeEndpoint) {
-    acceptCloud = parseYesNo(
-      await ask('Accept cloud judge egress (redacted commands leave the repo)? [y | n] (n): '),
+    acceptCloud = await prompter.askConfirm(
+      'Accept cloud judge egress (redacted commands leave the repo)?',
       false,
     )
   }
 
   return { judgeCredentialMode, judgeEndpoint, acceptCloud }
-}
-
-async function withConfigPrompter<T>(
-  fn: (ask: ConfigPrompter) => Promise<T>,
-  prompts?: string[],
-): Promise<T> {
-  if (prompts) {
-    let index = 0
-    const ask: ConfigPrompter = async (message) => {
-      if (index >= prompts.length) {
-        throw new Error(`unexpected config prompt: ${message}`)
-      }
-      return prompts[index++]
-    }
-    return fn(ask)
-  }
-
-  const rl = readline.createInterface({ input, output })
-  try {
-    return await fn((message) => rl.question(message))
-  } finally {
-    rl.close()
-  }
 }
 
 export async function resolveBelayConfigInteractiveMode(
@@ -477,27 +557,36 @@ export async function resolveBelayConfigInteractiveMode(
   }
 }
 
-async function runBelayConfigFullWithPrompter(
-  ask: ConfigPrompter,
+async function runBelayConfigFullWithWizard(
+  prompter: ConfigWizardPrompter,
   options: BelayConfigInteractiveOptions,
 ): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
-  if (!options.skipBanner) {
-    output.write('belay config\n')
-  }
-  const adapter = parseAdapter(await ask('Adapter [cursor | claude | codex] (cursor): '))
-  const scope = parseScope(await ask('Install scope [project | global] (project): '))
-  const withSkill = parseYesNo(
-    await ask('Install SKILL.md and slash commands? [y | n] (y): '),
-    true,
-  )
+  writeConfigWizardBanner(options, 'belay config')
+
+  const adapter = await prompter.askSelect<AdapterName>({
+    message: 'Adapter',
+    defaultValue: 'cursor',
+    choices: [{ value: 'cursor' }, { value: 'claude' }, { value: 'codex' }],
+  })
+  const scope = await prompter.askSelect<'project' | 'global'>({
+    message: 'Install scope',
+    defaultValue: 'project',
+    choices: [{ value: 'project' }, { value: 'global' }],
+  })
+  const withSkill = await prompter.askConfirm('Install SKILL.md and slash commands?', true)
+
   const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
-  const judgeProviderId = parseJudgeProviderId(
-    await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
-    defaultJudgeProviderId,
+  const judgeProviderId = await prompter.askSelect<JudgeProviderId>(
+    {
+      message: 'Judge provider',
+      defaultValue: defaultJudgeProviderId,
+      choices: JUDGE_PROVIDER_IDS.map((providerId) => ({ value: providerId })),
+    },
+    (raw, selectOptions) => parseJudgeProviderId(raw, selectOptions.defaultValue),
   )
 
   const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
-    ask,
+    prompter,
     judgeProviderId,
   )
 
@@ -527,24 +616,27 @@ async function runBelayConfigFullWithPrompter(
   return result
 }
 
-async function runBelayConfigJudgeOnlyWithPrompter(
-  ask: ConfigPrompter,
+async function runBelayConfigJudgeOnlyWithWizard(
+  prompter: ConfigWizardPrompter,
   options: BelayConfigInteractiveOptions,
   repoRoot: string,
   config: Awaited<ReturnType<typeof loadConfigFile>>,
   adapter: AdapterName,
 ): Promise<{ repoRoot: string; adapter: AdapterName }> {
-  if (!options.skipBanner) {
-    output.write('belay config (judge only)\n')
-  }
+  writeConfigWizardBanner(options, 'belay config (judge only)')
+
   const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
-  const judgeProviderId = parseJudgeProviderId(
-    await ask(`Judge provider [${JUDGE_PROVIDER_IDS.join(' | ')}] (${defaultJudgeProviderId}): `),
-    defaultJudgeProviderId,
+  const judgeProviderId = await prompter.askSelect<JudgeProviderId>(
+    {
+      message: 'Judge provider',
+      defaultValue: defaultJudgeProviderId,
+      choices: JUDGE_PROVIDER_IDS.map((providerId) => ({ value: providerId })),
+    },
+    (raw, selectOptions) => parseJudgeProviderId(raw, selectOptions.defaultValue),
   )
 
   const { judgeCredentialMode, judgeEndpoint, acceptCloud } = await collectCloudJudgeWizardAnswers(
-    ask,
+    prompter,
     judgeProviderId,
   )
 
@@ -553,7 +645,8 @@ async function runBelayConfigJudgeOnlyWithPrompter(
     endpoint: judgeEndpoint,
     credentialMode: judgeCredentialMode,
     acceptCloud: acceptCloud && Boolean(judgeEndpoint),
-    interactiveTTY: true,
+    // `prompts` is a scripted stand-in for interactive responses in tests.
+    interactiveTTY: isInteractiveTTY() || Boolean(options.prompts),
     interactiveConsentApproved: acceptCloud && Boolean(judgeEndpoint),
   })
   if (patch.errors.length > 0) {
@@ -585,7 +678,9 @@ async function runBelayConfigJudgeOnlyWithPrompter(
 export async function runBelayConfigFullInteractive(
   options: BelayConfigInteractiveOptions = {},
 ): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
-  return withConfigPrompter((ask) => runBelayConfigFullWithPrompter(ask, options), options.prompts)
+  return withConfigWizardPrompter(options, (prompter) =>
+    runBelayConfigFullWithWizard(prompter, options),
+  )
 }
 
 export async function runBelayConfigJudgeOnlyInteractive(
@@ -595,9 +690,8 @@ export async function runBelayConfigJudgeOnlyInteractive(
   const config = await loadConfigFile(repoRoot)
   const adapter = resolveAdapterName(config)
 
-  return withConfigPrompter(
-    (ask) => runBelayConfigJudgeOnlyWithPrompter(ask, options, repoRoot, config, adapter),
-    options.prompts,
+  return withConfigWizardPrompter(options, (prompter) =>
+    runBelayConfigJudgeOnlyWithWizard(prompter, options, repoRoot, config, adapter),
   )
 }
 
@@ -623,22 +717,22 @@ export async function runBelayConfigInteractive(options: BelayConfigInteractiveO
       })
     }
 
-    return withConfigPrompter(async (ask) => {
-      output.write('belay config\n')
-      const judgeOnly = parseYesNo(await ask('Configure judge only? [Y/n]: '), true)
-      if (judgeOnly) {
-        const config = await loadConfigFile(repoRoot)
-        const adapter = resolveAdapterName(config)
-        return runBelayConfigJudgeOnlyWithPrompter(
-          ask,
-          { ...options, skipBanner: true },
-          repoRoot,
-          config,
-          adapter,
-        )
+    return withConfigWizardPrompter(options, async (prompter) => {
+      writeConfigWizardBanner(options, 'belay config')
+      const judgeOnly = await prompter.askConfirm('Configure judge only?', true)
+      if (!judgeOnly) {
+        return runBelayConfigFullWithWizard(prompter, { ...options, skipBanner: true })
       }
-      return runBelayConfigFullWithPrompter(ask, { ...options, skipBanner: true })
-    }, options.prompts)
+      const config = await loadConfigFile(repoRoot)
+      const adapter = resolveAdapterName(config)
+      return runBelayConfigJudgeOnlyWithWizard(
+        prompter,
+        { ...options, skipBanner: true },
+        repoRoot,
+        config,
+        adapter,
+      )
+    })
   }
 
   return runBelayConfigFullInteractive(options)
