@@ -55,6 +55,15 @@ compatibility layer (`judge.provider`); **host** = install target (`config.adapt
 | `keepAlive` | string | `"30m"` (ollama only) |
 | `cloudConsent` | object | unset until TTY or capability approval records egress opt-in |
 | `credential` | `{ mode: "project" }` \| `{ mode: "apiKey", ref: "store:judge" \| "env:NAME" }` | `project` on fresh init; never `apiKey` in team config |
+
+`credential.mode` controls how Tier1 cloud Judge obtains API keys:
+
+| Mode | Runtime source | Notes |
+|------|----------------|-------|
+| `project` | Shell `process.env`, then host CLI session when available | Checks `BELAY_JUDGE_API_KEY` first, then provider vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`). **Does not read `.env` files** — export vars in your shell/IDE or use direnv. |
+| `apiKey` | `credentials.json` (`store:judge`) or `env:NAME` | `store:judge` writes to Belay state (`~/.config/belay/` when control plane is enabled, otherwise repo-local). File mode `0600`. Team config cannot set `apiKey`. |
+
+Interactive `belay config` asks for **Judge API key source** with these two choices instead of a yes/no confirm.
 | `runtime` | object | optional session/shadow transport tuning (see [judge session rollout](./judge-session-rollout.md)) |
 
 `belay judge bench` reports in-process Tier0/Tier1 latency percentiles and SLO status.
@@ -65,8 +74,9 @@ Fresh default follows **host** (`config.adapter`): `cursor` → `cursor`, `claud
 `codex` → `codex`. Prefer **`belay config`** (interactive) or `belay config set judge.providerId <id>`
 for judge changes. `belay judge use` remains a secondary path. Cloud egress requires recorded
 `cloudConsent` (during `belay config`, interactive TTY with `--accept-cloud`, or capability
-approval); `--accept-cloud` is ignored in non-interactive mode. API keys: env vars, or
-`belay config credential set --key-stdin`. Cloud providers may use native CLI transport
+approval); `--accept-cloud` is ignored in non-interactive mode. API keys: `project` mode
+reads shell env vars (see table above; no `.env` auto-load), or `belay config credential set --key-stdin`
+for `apiKey` mode. Cloud providers may use native CLI transport
 without `judge.endpoint` when the host CLI is available; HTTP transport requires endpoint
 and recorded `cloudConsent`. Use `--migrate-judge-default` on `belay init` / `belay upgrade`
 to opt in to migrating an implicit factory-default `ollama` judge to the host default provider.

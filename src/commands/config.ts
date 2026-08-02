@@ -22,6 +22,7 @@ import {
 import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import {
+  getJudgeProviderSpec,
   isJudgeProviderId,
   JUDGE_PROVIDER_IDS,
   type JudgeProviderId,
@@ -416,7 +417,55 @@ interface CloudJudgeWizardAnswers {
   acceptCloud: boolean
 }
 
+export const JUDGE_CREDENTIAL_MODE_PROMPT = 'Judge API key source'
+
+export const JUDGE_CREDENTIAL_STORE_KEY_PROMPT =
+  'Paste API key to store locally (visible input; prefer belay config credential set --key-stdin): '
+
+export function buildJudgeCredentialModeSelectOptions(
+  judgeProviderId: JudgeProviderId,
+): SelectOptions<'project' | 'apiKey'> {
+  const spec = getJudgeProviderSpec(judgeProviderId)
+  const providerEnvVars =
+    spec?.apiKeyEnvVars.filter((name) => name !== 'BELAY_JUDGE_API_KEY') ?? []
+  const envNames =
+    providerEnvVars.length > 0
+      ? ['BELAY_JUDGE_API_KEY', ...providerEnvVars].join(', ')
+      : 'BELAY_JUDGE_API_KEY'
+  const projectHint =
+    providerEnvVars.length > 0
+      ? `Uses ${envNames} from the shell; does not read .env files. Or host CLI login when available.`
+      : 'Uses BELAY_JUDGE_API_KEY from the shell; does not read .env files.'
+
+  return {
+    message: JUDGE_CREDENTIAL_MODE_PROMPT,
+    defaultValue: 'project',
+    choices: [
+      {
+        value: 'project',
+        label: 'Environment variables or host CLI',
+        hint: projectHint,
+      },
+      {
+        value: 'apiKey',
+        label: 'Store in Belay credential store',
+        hint: 'Saved to credentials.json (mode 0600) on the next step.',
+      },
+    ],
+  }
+}
+
 function formatSelectPrompt<T extends string>(options: SelectOptions<T>): string {
+  const hasDetails = options.choices.some((choice) => choice.hint || choice.label)
+  if (hasDetails) {
+    const lines = options.choices.map((choice) => {
+      const label = choice.label ?? choice.value
+      const hint = choice.hint ? ` — ${choice.hint}` : ''
+      return `  ${choice.value}: ${label}${hint}`
+    })
+    const values = options.choices.map((choice) => choice.value).join(' | ')
+    return `${options.message}\n${lines.join('\n')}\n[${values}] (${options.defaultValue}): `
+  }
   const values = options.choices.map((choice) => choice.value).join(' | ')
   return `${options.message} [${values}] (${options.defaultValue}): `
 }
@@ -514,6 +563,18 @@ function writeConfigWizardBanner(options: BelayConfigInteractiveOptions, title: 
   output.write(`${title}\n`)
 }
 
+async function askJudgeCredentialStoreKey(prompter: ConfigWizardPrompter): Promise<string> {
+  while (true) {
+    const key = (await prompter.askText(JUDGE_CREDENTIAL_STORE_KEY_PROMPT)).trim()
+    if (key) {
+      return key
+    }
+    process.stderr.write(
+      'Warning: API key cannot be empty. Paste a key or re-run belay config and choose environment variables.\n',
+    )
+  }
+}
+
 async function collectCloudJudgeWizardAnswers(
   prompter: ConfigWizardPrompter,
   judgeProviderId: JudgeProviderId,
@@ -522,18 +583,15 @@ async function collectCloudJudgeWizardAnswers(
     return { acceptCloud: false }
   }
 
-  const judgeCredentialMode = (await prompter.askConfirm('Use project env for credentials?', true))
-    ? 'project'
-    : 'apiKey'
+  const judgeCredentialMode = await prompter.askSelect<'project' | 'apiKey'>(
+    buildJudgeCredentialModeSelectOptions(judgeProviderId),
+  )
 
   const optionalEndpoint = (await prompter.askText('Judge endpoint URL (optional): ')).trim()
   const judgeEndpoint = optionalEndpoint || undefined
 
   if (judgeCredentialMode === 'apiKey') {
-    const key = await prompter.askText('Paste API key (hidden input not available in all shells): ')
-    if (key.trim()) {
-      process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY = key.trim()
-    }
+    process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY = await askJudgeCredentialStoreKey(prompter)
   }
 
   let acceptCloud = false

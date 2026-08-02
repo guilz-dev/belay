@@ -244,7 +244,13 @@ Notable settings:
   (`judge.providerId`); **driver** is the API compatibility layer (`judge.provider`:
   `ollama`, `openai-compatible`, or `anthropic`); **host** is where hooks install
   (`config.adapter`: `cursor`, `claude`, `codex`). Set `judge.endpoint` when needed;
-  credentials via `belay config credential mode project|apiKey` or env vars. Record egress
+  credentials via `belay config credential mode project|apiKey` or env vars. **`project`**
+  reads API keys from the shell environment at runtime (`BELAY_JUDGE_API_KEY`, then provider
+  vars such as `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `CURSOR_API_KEY`); Belay does **not**
+  load `.env` files for Judge. When the native CLI is available, `project` can also use the
+  host login session without a stored key. **`apiKey`** stores a key in Belay's credential store
+  (`credentials.json`, mode `0600`; under `~/.config/belay/` when control plane is enabled).
+  Record egress
   consent during `belay config` or via `belay judge consent` → `belay approve` →
   `belay judge use … --cloud-consent-approval-id`. Cloud providers can use native CLI
   transport without `judge.endpoint` when the host CLI is available (`codex-cli`,

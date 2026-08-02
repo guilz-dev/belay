@@ -99,7 +99,10 @@ describe('config wizard TUI integration', () => {
     await vi.waitFor(() => expect(writes.join('')).toContain('Judge provider'))
     await emitKeypress('k') // cursor -> claude
     await emitKeypress('enter')
-    await vi.waitFor(() => expect(writes.join('')).toContain('Use project env for credentials?'))
+    await vi.waitFor(() => expect(writes.join('')).toContain('Judge API key source'))
+    await vi.waitFor(() =>
+      expect(writes.join('')).toContain('Environment variables or host CLI'),
+    )
     await emitKeypress('enter')
     await vi.waitFor(() => expect(question).toHaveBeenCalledTimes(1))
     await vi.waitFor(() => expect(writes.join('')).toContain('Accept cloud judge egress'))
@@ -120,7 +123,7 @@ describe('config wizard TUI integration', () => {
     await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
     restoreTTY = mockInteractiveTTY(false)
 
-    const answers = ['openai', 'y', '']
+    const answers = ['openai', 'project', '']
     const question = vi.fn(async () => answers.shift() ?? '')
     const close = vi.fn()
     vi.resetModules()
