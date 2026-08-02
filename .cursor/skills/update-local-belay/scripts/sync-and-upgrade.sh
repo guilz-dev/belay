@@ -43,3 +43,5 @@ fi
 "${BELAY[@]}" --version
 
 echo "sync-and-upgrade: done"
+echo "  dogfood:  make dogfood      # audit mode (build + node dist/cli.js dogfood)"
+echo "  refresh:  make dev-refresh  # upgrade hooks/runtime + dogfood (no git pull)"
