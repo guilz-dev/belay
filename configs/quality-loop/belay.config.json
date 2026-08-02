@@ -1,0 +1,60 @@
+{
+  "version": 4,
+  "installScope": "project",
+  "mode": "enforce",
+  "approvalTtlMinutes": 15,
+  "tokenPrefix": "/belay-approve",
+  "gates": {
+    "shell": true,
+    "subagent": true,
+    "fileMutation": true,
+    "toolShell": true
+  },
+  "policy": {
+    "unknownLocalEffect": "deny",
+    "unparseableShell": "deny",
+    "codexUnmappedTool": "deny",
+    "fenceWarnThreshold": 0.5,
+    "confidenceThresholds": {
+      "allow": 0.88,
+      "flag": 0.72
+    },
+    "transactional": {
+      "enabled": true,
+      "minConfidence": 0.72,
+      "maxConfidence": 0.88,
+      "timeoutMs": 30000,
+      "maxDeletionCount": 10,
+      "gates": {
+        "shell": true
+      }
+    }
+  },
+  "controlPlane": {
+    "enabled": true,
+    "configDir": null,
+    "integrity": "hash-pinned",
+    "isolation": {
+      "mode": "none",
+      "verifyAgentWritable": true
+    }
+  },
+  "approvalSigning": {
+    "required": false
+  },
+  "egress": {
+    "enabled": false,
+    "listenHost": "127.0.0.1",
+    "listenPort": 17831,
+    "demoteL3External": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "runtime": "container",
+    "denyNetworkByDefault": true
+  },
+  "audit": {
+    "logPath": ".cursor/belay/audit-quality-loop.ndjson",
+    "includeAssessment": true
+  }
+}

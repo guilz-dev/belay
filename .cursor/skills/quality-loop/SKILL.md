@@ -42,6 +42,40 @@ EVALUATE を厚くする場合:
 ./scripts/quality-loop-session.sh --full --verify
 ```
 
+### 1.5 修正ループ（Stage 1 / 隔離 worktree）
+
+既存の probe artifact から修正ループを開始する場合:
+
+```bash
+./scripts/quality-loop-runner.sh \
+  --from-artifact artifacts/quality-loop/iteration-<batchId>.json \
+  --belay-config configs/quality-loop/belay.config.json
+```
+
+verify まで一気に回す場合:
+
+```bash
+./scripts/quality-loop-runner.sh \
+  --from-artifact artifacts/quality-loop/iteration-<batchId>.json \
+  --belay-config configs/quality-loop/belay.config.json \
+  --run-verify
+```
+
+Orbit 実行コマンドも同じ worktree で走らせる場合（任意）:
+
+```bash
+./scripts/quality-loop-runner.sh \
+  --from-artifact artifacts/quality-loop/iteration-<batchId>.json \
+  --workflow-command "<orbit-engine-cli> run quality-loop-fix --context \"\$QUALITY_LOOP_ARTIFACT\""
+```
+
+安全境界:
+
+- `BELAY_CONFIG_PATH=configs/quality-loop/belay.config.json`（`mode: enforce`）を使用する
+- `quality-loop-runner.sh` は `workflow-routing.yaml` 上で `quality-loop-fix` の `safetyTier: sandboxed-write` を事前検証する
+- `deny_pending_approval` は自動承認しない（停止して人間へエスカレーション）
+- 到達点は PR 準備まで。マージは人間レビュー後に実行する
+
 ### 2. 敵対プローブ単体
 
 ```bash

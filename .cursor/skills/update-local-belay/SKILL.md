@@ -98,6 +98,18 @@ $BELAY --version
 
 スクリプトは **未コミット変更があると exit 1** で止まる。続行する場合はユーザー確認後に手順を分けて実行する。
 
+### dogfood モードだけ切り替えたいとき
+
+`belay` が PATH に無くても、リポジトリルートで:
+
+```bash
+make dogfood
+# または
+pnpm dogfood
+```
+
+ビルド → `mode: audit` → `status` 表示まで一括。hooks/runtime も最新ソースに揃えたい場合は `make dev-refresh`（pull なし）。main 同期込みは上記 `sync-and-upgrade.sh` のあと `make dogfood`。
+
 ## 報告形式（必須・日本語）
 
 ```markdown
