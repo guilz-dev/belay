@@ -6,18 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.4.0 — 2026-08-02
+
 ### Added
 
 - **`approval.flow`** — `one_step` (default) and `two_step` modes for post-approval UX.
 - **Replay envelope** — pending approvals store `cwd`, `toolName`, and payload hash for strict replay validation.
 - **`belay approve --replay`** — explicit shell subprocess replay after approval; successful replay consumes the one-shot grant.
 - **Adapter replay hints** — optional `replay` field on approval hook responses (Cursor, Claude, Codex).
+- **Trusted workspace roots** — sandbox approvals and runtime containment for safe non-git local roots without weakening high-risk path protections.
+- **Judge session transport** — opt-in unix-socket broker to reuse Tier1 judge sessions and reduce spawn latency (fail-closed spawn fallback, shadow comparison, kill switch).
+- **Corpus labels** — `must-ask`, `provably-benign`, and `accepted-benign` fixture labels with stable runtime fingerprints.
+- **Hard corpus gates** — zero-tolerance CI gates for must-ask FN and provably-benign FP (replaces miss-tolerance baseline).
+- **Standing-allow** — silence repeat asks for provably-benign corpus and MUST-ALLOW catalog matches without conflating with one-shot `approved_once` grants.
+- **Audit metrics** — repeat asks and availability-caused asks surfaced separately in `belay metrics`.
+- **Recursive quality loop** — shell audit harvest, `replayContext` for faithful simulate triage, and `belay quality` with corpus gates and harvest queues.
+- **Autonomous quality loop** — adversarial probe, nightly strict CI, corpus ratchet with provenance, action snapshots for simulate replay, and operator playbook/skill.
+- **Config wizard TUI** — arrow-key select/confirm prompts with readline fallback for non-TTY.
+- **Dogfood helpers** — `pnpm` aliases that always use the repo-built CLI.
+- **Quality-loop runner** — `scripts/quality-loop-runner.sh` for isolated worktree fix loops with enforce config and optional workflow validation.
+- **Agent guidelines** — `AGENTS.md` documenting Belay project boundaries for repository agents.
 
 ### Changed
 
 - Default approval UX is **`one_step`**: shell actions get replay hints; tool/subagent fall back to manual retry unless `approval.autoReplayScopes` enables them.
 - `approval.executionLeaseMs` replaces the hard-coded 60s execution lease default.
 - Replay scrub/fingerprint inputs are unified via `replay-scrub.ts` (tool `tool_input`, subagent description/prompt subset).
+- **Judge diagnostics** — Tier1 CLI transport failures show improved fallback visibility; live probing is opt-in.
+
+### Fixed
+
+- **Shell tokenizer** — FD input redirects (`3<file`, `3<&1`, plain `<`) and arbitrary FD redirects (`3>&1`, `12>>log`) participate in path analysis consistently.
+- **One-step replay** — approval prompt replay no longer fails closed when replay execution or approval consumption raises an exception.
+- **Harvest apply** — reject treated as successful review; standing-allow catalog regen blocked when corpus hard gates fail.
+- **Typecheck** — standing-allow test state annotated; harvest and replay-context formatting restored for CI.
 
 ## 0.3.0 — 2026-06-15
 
