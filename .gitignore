@@ -67,6 +67,11 @@ skills-lock.json
 # Temporary files
 tmp/
 temp/
+docs/.tmp/
+
+# Local workflow / orbit experiments (not part of published package)
+.planetz/
+.takt/
 
 # Quality loop probe artifacts (CI uploads via workflow; do not commit)
 artifacts/quality-loop/
