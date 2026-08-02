@@ -39,7 +39,9 @@ check "npm registry version" bash -c "
 "
 
 check "npx invocation" bash -c "
-  out=\$(npx -y ${PKG}@${VERSION} --version 2>&1) &&
+  tmp=\$(mktemp -d) &&
+  out=\$(cd \"\${tmp}\" && npx -y ${PKG}@${VERSION} --version 2>&1) &&
+  rm -rf \"\${tmp}\" &&
   [[ \"\${out}\" == *\"${VERSION}\"* ]]
 "
 
