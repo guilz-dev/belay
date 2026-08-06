@@ -60,7 +60,11 @@ export async function sandboxStatus(
     config,
     egressProxyRunning,
   })
-  const attestation = await loadBoundaryAttestation(boundaryAttestationPath(repoRoot, config))
+  const attestation = await loadBoundaryAttestation(
+    boundaryAttestationPath(repoRoot, config),
+    repoRoot,
+    configuredControlPlaneDir(config),
+  )
   const guaranteePosture = evaluateGuaranteePosture({
     config,
     attestation,

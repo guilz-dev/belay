@@ -240,6 +240,27 @@ export interface BelayCapabilityConfig {
   attestationRelPath?: string
 }
 
+export const DEFAULT_CAPABILITY_V5: BelayCapabilityConfig = {
+  grantsEnabled: true,
+  boundaryDriver: 'host-integration',
+  attestationRelPath: '.belay/attestation.json',
+}
+
+function normalizeCapabilityConfig(
+  capability: BelayCapabilityConfig | undefined,
+): BelayCapabilityConfig | undefined {
+  if (!capability) {
+    return undefined
+  }
+  return {
+    ...DEFAULT_CAPABILITY_V5,
+    ...capability,
+    grantsEnabled: capability.grantsEnabled !== false,
+    boundaryDriver: capability.boundaryDriver ?? DEFAULT_CAPABILITY_V5.boundaryDriver,
+    attestationRelPath: capability.attestationRelPath ?? DEFAULT_CAPABILITY_V5.attestationRelPath,
+  }
+}
+
 export interface BelayConfigV4 {
   version: 4 | 5
   adapter?: 'cursor' | 'claude' | 'codex'
@@ -965,8 +986,9 @@ export function normalizeConfig(
   }
 
   const v4 = config as BelayConfigV4
-  return {
-    version: 4,
+  const version: 4 | 5 = v4.version === 5 ? 5 : 4
+  const normalized: BelayConfigV4 = {
+    version,
     ...(v4.installScope === 'global' || v4.installScope === 'project'
       ? { installScope: v4.installScope }
       : {}),
@@ -1155,6 +1177,10 @@ export function normalizeConfig(
     },
     judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA),
   }
+  if (version === 5 || v4.capability) {
+    normalized.capability = normalizeCapabilityConfig(v4.capability ?? DEFAULT_CAPABILITY_V5)
+  }
+  return normalized
 }
 
 export function isFreshConfigInput(loaded: unknown): boolean {
@@ -1231,6 +1257,15 @@ export function mergeConfig(
       ...migrated.audit,
     },
     ...(migrated.installScope ? { installScope: migrated.installScope } : {}),
+    ...(migrated.version === 5 || migrated.capability
+      ? {
+          version: migrated.version === 5 ? 5 : 4,
+          capability: normalizeCapabilityConfig({
+            ...DEFAULT_CAPABILITY_V5,
+            ...migrated.capability,
+          }),
+        }
+      : {}),
   })
 }
 

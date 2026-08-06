@@ -59,6 +59,19 @@ export function policyJudgeMismatch(result: ClassifyResult, judgeVerdict: Tier1V
   return policyWouldBlock(result) !== judgeWouldBlock(judgeVerdict)
 }
 
+function queueDeferredGatePolicyShadow(params: {
+  repoRoot: string
+  config: BelayConfigV4
+  providerId: Exclude<JudgeProviderId, 'ollama'>
+  command: string
+  result: ClassifyResult
+  stateDir?: string
+}): void {
+  setImmediate(() => {
+    void runGatePolicyShadowComparison(params).catch(() => {})
+  })
+}
+
 export function scheduleGateShadowAudit(params: {
   repoRoot: string
   config: BelayConfigV4
@@ -73,23 +86,31 @@ export function scheduleGateShadowAudit(params: {
   if (mode !== 'shadow' || !judge.runtime?.shadow?.enabled) {
     return trace
   }
-  if (!shouldRunShadowComparison(params.repoRoot, params.providerId, judge.runtime.shadow)) {
-    return { ...trace, judgeShadowScheduled: false }
-  }
-  if (params.command?.trim()) {
-    void runGatePolicyShadowComparison({
-      repoRoot: params.repoRoot,
-      config: params.config,
-      providerId: params.providerId as Exclude<JudgeProviderId, 'ollama'>,
-      command: params.command,
-      result: params.result,
-      stateDir: params.stateDir,
-    }).catch(() => {})
-  }
-  return {
+  const deferredTrace = {
     ...trace,
     ...judgeShadowAuditFields(params.repoRoot),
-    judgeShadowScheduled: true,
+    judgeShadowScheduled: false,
+    judgeShadowDeferred: true,
+  }
+  const command = params.command?.trim()
+  if (
+    !command ||
+    params.providerId === 'ollama' ||
+    !shouldRunShadowComparison(params.repoRoot, params.providerId, judge.runtime.shadow)
+  ) {
+    return deferredTrace
+  }
+  queueDeferredGatePolicyShadow({
+    repoRoot: params.repoRoot,
+    config: params.config,
+    providerId: params.providerId as Exclude<JudgeProviderId, 'ollama'>,
+    command,
+    result: params.result,
+    stateDir: params.stateDir,
+  })
+  return {
+    ...deferredTrace,
+    judgeShadowQueued: true,
   }
 }
 

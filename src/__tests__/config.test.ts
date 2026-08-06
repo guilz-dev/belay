@@ -261,6 +261,33 @@ describe('migrateV2ToV3', () => {
     expect(fromV2.overrides.allow).toEqual(['make deploy'])
     expect(fromV2.overrides.external).toEqual(['curl'])
   })
+
+  it('preserves v5 capability settings through normalizeConfig and mergeConfig', () => {
+    const normalized = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      version: 5 as const,
+      capability: {
+        boundaryDriver: 'container',
+        attestationRelPath: '.belay/custom-attestation.json',
+        grantsEnabled: true,
+      },
+    })
+    expect(normalized.version).toBe(5)
+    expect(normalized.capability?.boundaryDriver).toBe('container')
+    expect(normalized.capability?.attestationRelPath).toBe('.belay/custom-attestation.json')
+    expect(normalized.capability?.grantsEnabled).toBe(true)
+
+    const merged = mergeConfig({
+      version: 5,
+      capability: {
+        boundaryDriver: 'container',
+        grantsEnabled: true,
+      },
+    })
+    expect(merged.version).toBe(5)
+    expect(merged.capability?.boundaryDriver).toBe('container')
+    expect(merged.capability?.grantsEnabled).toBe(true)
+  })
 })
 
 describe('policy defaults', () => {

@@ -13,7 +13,7 @@ import {
 import { boundaryVerifiedAllowEnabled } from './boundary-profile.js'
 import type { CapabilityGrantV1 } from './grant.js'
 import { isGrantScopeTooBroad } from './grant.js'
-import { grantMatchesRequest, grantTargetsRequest } from './grant-match.js'
+import { broadGrantTargetsRequest, grantMatchesRequest } from './grant-match.js'
 import type { AuthorizationContext, PolicyDecision, PolicyEngine } from './policy-types.js'
 import {
   CAPABILITY_REQUEST_VERSION,
@@ -564,7 +564,9 @@ export function createTypeScriptPolicyEngine(): PolicyEngine {
 
       const grants = context.grants
       if (
-        grants?.some((grant) => isGrantScopeTooBroad(grant) && grantTargetsRequest(grant, request))
+        grants?.some(
+          (grant) => isGrantScopeTooBroad(grant) && broadGrantTargetsRequest(grant, request),
+        )
       ) {
         return {
           outcome: 'deny',

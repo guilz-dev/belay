@@ -120,7 +120,7 @@ function classifyFileMutationWithPolicy(params: {
   options: ClassifierOptions
   signals: string[]
   isDelete: boolean
-  locationLabel: 'outside_repo' | 'sensitive_path'
+  locationLabel: 'outside_repo' | 'sensitive_path' | 'repo_local' | 'control_plane'
 }): ClassifyResult {
   const trustedCwd = resolveClassifierTrustedCwd(params.cwd, params.options)
   const prescan = mutationPrescanRequiresAsk({
@@ -351,19 +351,19 @@ export async function classifyToolUse(
     const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))
     if (hitsProtectedRoot) {
       signals.push('control_plane_path')
-      return {
-        verdict: 'deny_pending_approval',
-        reason: 'control_plane_mutation',
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: 'irreversible',
-          external: false,
-          blastRadius: 'agent-belay control plane',
-          confidence: 0.97,
-          signals,
-        },
-      }
+      return classifyFileMutationWithPolicy({
+        toolName,
+        toolKind,
+        filePath,
+        resolvedPath,
+        repoRoot,
+        cwd,
+        config,
+        options,
+        signals,
+        isDelete: FILE_DELETE_TOOL_NAMES.has(toolKind),
+        locationLabel: 'control_plane',
+      })
     }
 
     const workspaceMatch = resolveWorkspaceRootMatch(
@@ -438,35 +438,35 @@ export async function classifyToolUse(
 
     if (FILE_DELETE_TOOL_NAMES.has(toolKind)) {
       signals.push('file_delete')
-      return {
-        verdict: 'allow_flagged',
-        reason: 'file_delete',
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: 'recoverable_with_cost',
-          external: false,
-          blastRadius: 'this repository',
-          confidence: 0.7,
-          signals,
-        },
-      }
+      return classifyFileMutationWithPolicy({
+        toolName,
+        toolKind,
+        filePath,
+        resolvedPath,
+        repoRoot,
+        cwd,
+        config,
+        options,
+        signals,
+        isDelete: true,
+        locationLabel: 'repo_local',
+      })
     }
 
     signals.push('file_mutation')
-    return {
-      verdict: 'allow_flagged',
-      reason: 'file_mutation',
-      summary: filePath,
-      fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-      assessment: {
-        reversibility: 'recoverable_with_cost',
-        external: false,
-        blastRadius: 'this repository',
-        confidence: 0.68,
-        signals,
-      },
-    }
+    return classifyFileMutationWithPolicy({
+      toolName,
+      toolKind,
+      filePath,
+      resolvedPath,
+      repoRoot,
+      cwd,
+      config,
+      options,
+      signals,
+      isDelete: false,
+      locationLabel: 'repo_local',
+    })
   }
 
   if (APPLY_PATCH_TOOL_NAMES.has(toolKind)) {

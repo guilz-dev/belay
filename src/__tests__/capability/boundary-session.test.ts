@@ -28,7 +28,9 @@ describe('boundary session', () => {
     }
     const started = await startBoundarySession({ repoRoot, config })
     const raw = JSON.parse(await readFile(started.attestationPath, 'utf8'))
-    expect(raw.driver).toBe('host-integration')
+    expect(raw.version).toBe(1)
+    expect(raw.attestation.driver).toBe('host-integration')
+    expect(typeof raw.signature).toBe('string')
     const status = await boundarySessionStatus({ repoRoot, config })
     expect(status.attestation?.driver).toBe('host-integration')
     expect(status.fresh).toBe(true)

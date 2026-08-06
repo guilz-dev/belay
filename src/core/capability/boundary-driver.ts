@@ -36,6 +36,7 @@ export interface BoundaryDriver {
 export interface BoundaryDriverOptions {
   egressProxyEnv?: Record<string, string>
   image?: string
+  repoRoot?: string
 }
 
 const ATTESTATION_TTL_MS = 15 * 60_000
@@ -76,6 +77,7 @@ export function getDefaultBoundaryDriver(
     return createContainerBoundaryDriver({
       image: options.image,
       egressProxyEnv: options.egressProxyEnv,
+      repoRoot: options.repoRoot,
     })
   }
   return createHostIntegrationDriver()

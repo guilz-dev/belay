@@ -2,17 +2,42 @@ import path from 'node:path'
 import process from 'node:process'
 
 import { loadConfigFile } from '../config-io.js'
-import { boundarySessionStatus, startBoundarySession } from '../core/capability/boundary-session.js'
+import {
+  boundarySessionStatus,
+  runBoundaryAgentCommand,
+  startBoundarySession,
+} from '../core/capability/boundary-session.js'
+
 export async function sessionStartProject(params: {
   targetDir?: string
-}): Promise<{ ok: boolean; message: string; attestationPath?: string }> {
+  agentCommand?: string
+}): Promise<{
+  ok: boolean
+  message: string
+  attestationPath?: string
+  exitCode?: number | null
+}> {
   const repoRoot = path.resolve(params.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const started = await startBoundarySession({ repoRoot, config })
+  if (!params.agentCommand) {
+    return {
+      ok: true,
+      message: `Boundary session started (${started.attestation.driver}); attestation written to ${path.relative(repoRoot, started.attestationPath)}.`,
+      attestationPath: started.attestationPath,
+    }
+  }
+  const run = await runBoundaryAgentCommand({
+    repoRoot,
+    config,
+    command: params.agentCommand,
+  })
+  const exitCode = run.exitCode ?? 1
   return {
-    ok: true,
-    message: `Boundary session started (${started.attestation.driver}); attestation written to ${path.relative(repoRoot, started.attestationPath)}.`,
+    ok: exitCode === 0,
+    message: `Boundary session started (${started.attestation.driver}); agent exited with code ${exitCode}.`,
     attestationPath: started.attestationPath,
+    exitCode,
   }
 }
 

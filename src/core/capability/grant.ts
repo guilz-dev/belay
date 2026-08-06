@@ -20,6 +20,9 @@ export function isGrantScopeTooBroad(grant: CapabilityGrantV1): boolean {
   if (grant.action === 'network.connect' && grant.resource.kind === 'unknown') {
     return true
   }
+  if (grant.resource.kind === 'network' && grant.resource.host === '*') {
+    return true
+  }
   if (grant.action === 'fs.write' && grant.resource.kind === 'unknown') {
     return true
   }

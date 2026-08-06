@@ -1,4 +1,5 @@
 import type { BelayConfigV4 } from '../config.js'
+import { configuredControlPlaneDir } from '../config.js'
 import type { ApprovalStateFile, ClassifierOptions } from '../types.js'
 import type { BoundaryAttestation } from './attestation.js'
 import { type BoundaryProfileId, resolveBoundaryProfile } from './boundary-profile.js'
@@ -30,6 +31,8 @@ export async function loadClassifierAuthorization(params: {
   const grants = grantsFromApprovalState(params.approvedState, params.repoRoot, params.config)
   const attestation = await loadBoundaryAttestation(
     boundaryAttestationPath(params.repoRoot, params.config),
+    params.repoRoot,
+    configuredControlPlaneDir(params.config),
   )
   const boundaryProfile: BoundaryProfileId = resolveBoundaryProfile({
     config: params.config,

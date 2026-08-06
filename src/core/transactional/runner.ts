@@ -48,6 +48,7 @@ export async function runTransactionalExecution(
     const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd)
     const driver = getDefaultBoundaryDriver(params.boundaryDriverId ?? 'host-integration', {
       egressProxyEnv: params.egressProxyEnv,
+      repoRoot: params.repoRoot,
     })
     const shellResult = await driver.run(command, execCwd, timeoutMs, {
       mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),

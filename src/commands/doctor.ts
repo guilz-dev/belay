@@ -15,7 +15,11 @@ import {
   repoLocalStateDirFor,
 } from '../config-io.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
-import { boundarySessionStatus } from '../core/capability/boundary-session.js'
+import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
+import {
+  boundaryAttestationPath,
+  boundarySessionStatus,
+} from '../core/capability/boundary-session.js'
 import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
@@ -360,6 +364,19 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const boundaryDriver =
       loadedConfig.capability?.boundaryDriver ??
       (loadedConfig.sandbox.runtime === 'container' ? 'container' : null)
+    if (loadedConfig.capability || boundaryDriver === 'container') {
+      const attestationPath = boundaryAttestationPath(repoRoot, loadedConfig)
+      const attestationFormat = await inspectBoundaryAttestationFile(attestationPath)
+      if (attestationFormat === 'legacy') {
+        warnings.push(
+          'Boundary attestation uses an unsigned legacy format. Run belay session start to re-sign it.',
+        )
+      } else if (attestationFormat === 'invalid') {
+        warnings.push(
+          'Boundary attestation file is present but invalid. Run belay session start to regenerate it.',
+        )
+      }
+    }
     if (boundaryDriver === 'container') {
       const session = await boundarySessionStatus({ repoRoot, config: loadedConfig })
       if (!session.attestation) {

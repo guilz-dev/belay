@@ -4,7 +4,7 @@ import { canonicalPath } from '../path-utils.js'
 import type { ShellRunResult } from '../transactional/git-worktree.js'
 import type { BoundaryAttestation } from './attestation.js'
 import type { BoundaryDriver, BoundaryMaterializeContext } from './boundary-driver.js'
-import { dockerEnvArgs } from './boundary-egress.js'
+import { dockerEnvArgs, dockerNetworkArgs, ensureBelayContainerNetwork } from './boundary-egress.js'
 import { materializeContainerBoundaryGrant } from './boundary-grant-materialize.js'
 import type { BoundaryRunOptions } from './boundary-run.js'
 
@@ -55,11 +55,12 @@ function runInContainer(
   timeoutMs: number,
   proxyEnv: Record<string, string>,
   mountReadOnly: boolean,
+  repoRoot?: string,
 ): Promise<ShellRunResult> {
   const mount = canonicalPath(cwd)
   const mountSpec = mountReadOnly ? `${mount}:${mount}:ro` : `${mount}:${mount}`
-  const networkArgs =
-    Object.keys(proxyEnv).length > 0 ? ['--network', 'bridge'] : ['--network', 'none']
+  const proxyActive = Object.keys(proxyEnv).length > 0
+  const networkArgs = dockerNetworkArgs(proxyActive, repoRoot)
   const args = [
     'run',
     '--rm',
@@ -97,10 +98,11 @@ function runInContainer(
 }
 
 export function createContainerBoundaryDriver(
-  options: { image?: string; egressProxyEnv?: Record<string, string> } = {},
+  options: { image?: string; egressProxyEnv?: Record<string, string>; repoRoot?: string } = {},
 ): BoundaryDriver {
   const image = options.image ?? DEFAULT_IMAGE
   const proxyEnv = options.egressProxyEnv ?? {}
+  const repoRoot = options.repoRoot
   return {
     id: 'container',
     async probe() {
@@ -112,9 +114,13 @@ export function createContainerBoundaryDriver(
       }
       return containerAttestation(proxyEnv)
     },
-    run(command, cwd, timeoutMs, options?: BoundaryRunOptions) {
+    async run(command, cwd, timeoutMs, options?: BoundaryRunOptions) {
       const mountReadOnly = options?.mountReadOnly !== false
-      return runInContainer(image, command, cwd, timeoutMs, proxyEnv, mountReadOnly)
+      const proxyActive = Object.keys(proxyEnv).length > 0
+      if (proxyActive && repoRoot) {
+        await ensureBelayContainerNetwork(repoRoot)
+      }
+      return runInContainer(image, command, cwd, timeoutMs, proxyEnv, mountReadOnly, repoRoot)
     },
     materializeGrant(request, context: BoundaryMaterializeContext) {
       return materializeContainerBoundaryGrant(request, {

@@ -1,10 +1,21 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { egressStatus } from '../../services/egress-service.js'
 import type { BelayConfigV4 } from '../config.js'
+import { configuredControlPlaneDir } from '../config.js'
 import type { BoundaryAttestation, BoundaryDriverId } from './attestation.js'
+import { isAttestationFresh } from './attestation.js'
+import {
+  readSignedAttestationFile,
+  signBoundaryAttestation,
+  verifySignedBoundaryAttestation,
+} from './boundary-attestation-sign.js'
 import { getDefaultBoundaryDriver } from './boundary-driver.js'
-import { egressProxyEnvFromConfig, isEgressProxyActive } from './boundary-egress.js'
+import {
+  dockerNetworkArgs,
+  isEgressProxyActive,
+  resolveBoundaryEgressProxyEnv,
+} from './boundary-egress.js'
 
 export interface BoundarySessionOptions {
   egressProxyRunning?: boolean
@@ -17,13 +28,19 @@ export function boundaryAttestationPath(repoRoot: string, config: BelayConfigV4)
 
 export async function loadBoundaryAttestation(
   filePath: string,
+  expectedRepoRoot?: string,
+  controlPlaneDir?: string,
 ): Promise<BoundaryAttestation | null> {
   try {
-    const raw = JSON.parse(await readFile(filePath, 'utf8')) as BoundaryAttestation
-    if (raw.version !== 1 || typeof raw.driver !== 'string') {
-      return null
+    const raw = await readSignedAttestationFile(filePath)
+    if (expectedRepoRoot && controlPlaneDir) {
+      return verifySignedBoundaryAttestation({
+        file: raw,
+        expectedRepoRoot,
+        controlPlaneDir,
+      })
     }
-    return raw
+    return null
   } catch {
     return null
   }
@@ -32,9 +49,16 @@ export async function loadBoundaryAttestation(
 export async function saveBoundaryAttestation(
   filePath: string,
   attestation: BoundaryAttestation,
+  repoRoot: string,
+  controlPlaneDir: string,
 ): Promise<void> {
+  const signed = await signBoundaryAttestation({
+    repoRoot,
+    attestation,
+    controlPlaneDir,
+  })
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
-  await writeFile(filePath, `${JSON.stringify(attestation, null, 2)}\n`, {
+  await writeFile(filePath, `${JSON.stringify(signed, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600,
   })
@@ -57,11 +81,23 @@ export async function startBoundarySession(params: {
       repoRootMismatch: egress.repoRootMismatch,
     })
   }
-  const proxyEnv = egressProxyEnvFromConfig(params.config, proxyActive)
-  const driver = getDefaultBoundaryDriver(driverId, { egressProxyEnv: proxyEnv })
+  const proxyEnv = resolveBoundaryEgressProxyEnv({
+    driverId,
+    config: params.config,
+    proxyActive,
+  })
+  const driver = getDefaultBoundaryDriver(driverId, {
+    egressProxyEnv: proxyEnv,
+    repoRoot: params.repoRoot,
+  })
   const attestation = await driver.probe()
   const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
-  await saveBoundaryAttestation(attestationPath, attestation)
+  await saveBoundaryAttestation(
+    attestationPath,
+    attestation,
+    params.repoRoot,
+    configuredControlPlaneDir(params.config),
+  )
   return { attestation, attestationPath }
 }
 
@@ -70,11 +106,43 @@ export async function boundarySessionStatus(params: {
   config: BelayConfigV4
 }): Promise<{ attestationPath: string; attestation: BoundaryAttestation | null; fresh: boolean }> {
   const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
-  const attestation = await loadBoundaryAttestation(attestationPath)
-  const { isAttestationFresh } = await import('./attestation.js')
+  const attestation = await loadBoundaryAttestation(
+    attestationPath,
+    params.repoRoot,
+    configuredControlPlaneDir(params.config),
+  )
   return {
     attestationPath,
     attestation,
     fresh: attestation ? isAttestationFresh(attestation) : false,
   }
 }
+
+export async function runBoundaryAgentCommand(params: {
+  repoRoot: string
+  config: BelayConfigV4
+  command: string
+  cwd?: string
+  timeoutMs?: number
+}): Promise<Awaited<ReturnType<ReturnType<typeof getDefaultBoundaryDriver>['run']>>> {
+  const driverId = params.config.capability?.boundaryDriver ?? 'host-integration'
+  const egress = await egressStatus({ targetDir: params.repoRoot })
+  const proxyActive = isEgressProxyActive({
+    config: params.config,
+    running: egress.running,
+    foreignProxy: egress.foreignProxy,
+    repoRootMismatch: egress.repoRootMismatch,
+  })
+  const proxyEnv = resolveBoundaryEgressProxyEnv({
+    driverId,
+    config: params.config,
+    proxyActive,
+  })
+  const driver = getDefaultBoundaryDriver(driverId, {
+    egressProxyEnv: proxyEnv,
+    repoRoot: params.repoRoot,
+  })
+  return driver.run(params.command, params.cwd ?? params.repoRoot, params.timeoutMs ?? 30 * 60_000)
+}
+
+export { dockerNetworkArgs }

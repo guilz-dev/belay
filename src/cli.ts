@@ -75,6 +75,7 @@ function parseArgs(argv: string[]) {
     approveReplay?: boolean
     sandboxSubcommand?: 'status'
     sessionSubcommand?: 'start' | 'status'
+    sessionAgentCommand?: string
     installScope?: 'project' | 'global'
     preset?: ConfigPresetName
     judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
@@ -458,7 +459,12 @@ function parseArgs(argv: string[]) {
       return { command: 'help', options }
     }
     if (token === '--') {
-      options.explainCommand = rest.slice(index + 1).join(' ')
+      const remainder = rest.slice(index + 1).join(' ')
+      if (command === 'session' && options.sessionSubcommand === 'start') {
+        options.sessionAgentCommand = remainder
+      } else {
+        options.explainCommand = remainder
+      }
       break
     }
     if (command === 'audit' && !options.auditSubcommand) {
@@ -622,6 +628,7 @@ Usage:
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
   ${c} session <start|status> [--target <dir>] [--json]
+  ${c} session start [--target <dir>] [-- <agent command>]
   ${c} judge <status|list|use|test|bench|consent> [--target <dir>] [--json]
   ${c} judge test [--target <dir>] [--json] [--live-probe]
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
@@ -1024,7 +1031,10 @@ async function main() {
         throw new Error('session requires subcommand: start or status')
       }
       if (options.sessionSubcommand === 'start') {
-        const result = await sessionStartProject({ targetDir: options.targetDir })
+        const result = await sessionStartProject({
+          targetDir: options.targetDir,
+          agentCommand: options.sessionAgentCommand,
+        })
         process.stdout.write(`${result.message}\n`)
         process.exitCode = result.ok ? 0 : 1
         return
