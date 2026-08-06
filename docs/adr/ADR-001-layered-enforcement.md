@@ -1,6 +1,6 @@
 # ADR-001: From prediction-based classification to layered enforcement
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-11
 **Deciders:** kaz (maintainer)
 **Related:** [`ROADMAP.md`](../ROADMAP.md), [`SECURITY.md`](../../SECURITY.md)

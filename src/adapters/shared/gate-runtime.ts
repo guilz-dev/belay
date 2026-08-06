@@ -23,6 +23,23 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
+import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
+import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
+import {
+  egressProxyEnvFromConfig,
+  isEgressProxyActive,
+} from '../../core/capability/boundary-egress.js'
+import { hashCapabilityRequests } from '../../core/capability/capability-request-hash.js'
+import {
+  recordGateApprovalAsk,
+  scheduleGateShadowAudit,
+} from '../../core/capability/gate-shadow-audit.js'
+import {
+  consumeGrantLease,
+  findMatchingGrant,
+  grantsFromApprovedState,
+} from '../../core/capability/grant-lease.js'
+import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
   collectOutsideRepoPaths,
   collectOutsideRepoPathsFromToolPayload,
@@ -36,9 +53,10 @@ import {
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
-import type { GatedAction, GatedActionKind } from '../../core/gate-contract.js'
 import {
   classifyResultToGateVerdict,
+  type GatedAction,
+  type GatedActionKind,
   type GatePermissionResponse,
   type GateVerdict,
   unnormalizedGateVerdict,
@@ -54,6 +72,7 @@ import {
   approvalCommandMatch,
   approvedApprovalsFile,
   type BelayConfigV3,
+  belayStateDir,
   type ClassifyResult,
   canonicalStringify,
   classifierOptionsFromConfig,
@@ -85,11 +104,13 @@ import {
   TRANSACTIONAL_APPROVAL_BYPASS_REASONS,
 } from '../../core/transactional/index.js'
 import type {
+  ApprovalRecord,
   ApprovalScopeHint,
   ApprovalStateFile,
   Assessment,
   ClassifierOptions,
 } from '../../core/types.js'
+import { egressStatus } from '../../services/egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -172,10 +193,12 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
           ? pendingApprovalsFile(ctx.config, repoLocalStateDir)
           : approvedApprovalsFile(ctx.config, repoLocalStateDir)
       const loaded = await loadJsonFile<ApprovalStateFile>(filePath, EMPTY_APPROVALS)
+      const version = loaded.version === 3 ? 3 : loaded.version === 2 ? 2 : 1
       return {
         filePath,
         state: {
-          version: loaded.version === 2 ? 2 : 1,
+          version,
+          ...(loaded.revision !== undefined ? { revision: loaded.revision } : {}),
           approvals: Array.isArray(loaded.approvals) ? loaded.approvals : [],
         },
       }
@@ -259,7 +282,10 @@ async function ensurePendingApproval(
     payload?: Record<string, unknown>
   },
   scopeHint?: ApprovalScopeHint,
-) {
+): Promise<{
+  approval: Awaited<ReturnType<typeof createApprovalRecordWithEnvelope>>
+  created: boolean
+}> {
   const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
   pending.state = compactApprovals(pending.state)
   const existing = pending.state.approvals.find(
@@ -270,7 +296,7 @@ async function ensurePendingApproval(
   )
   if (existing) {
     await deps.writeApprovals(pending.filePath, pending.state)
-    return existing
+    return { approval: existing, created: false }
   }
 
   const approval = createApprovalRecordWithEnvelope({
@@ -283,11 +309,13 @@ async function ensurePendingApproval(
     approvalId: `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
     approvalInput,
     scopeHint,
+    capabilityRequests: result.capabilityRequests,
   })
-  pending.state.version = 2
+  pending.state.version = APPROVAL_STATE_VERSION_V3
+  pending.state.revision = (pending.state.revision ?? 0) + 1
   pending.state.approvals.push(approval)
   await deps.writeApprovals(pending.filePath, pending.state)
-  return approval
+  return { approval, created: true }
 }
 
 function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
@@ -376,32 +404,66 @@ async function consumeApprovedApproval(
   deps: GateRuntimeDeps,
   kind: GatedActionKind,
   fingerprint: string,
-) {
-  const approved = await deps.loadApprovals(ctx, 'approved-approvals.json')
-  approved.state = compactApprovals(approved.state)
-  const index = approved.state.approvals.findIndex(
+): Promise<{ approval: ApprovalRecord; firstExecution: boolean } | null> {
+  const loaded = await deps.loadApprovals(ctx, 'approved-approvals.json')
+  loaded.state = compactApprovals(loaded.state)
+  const index = loaded.state.approvals.findIndex(
     (approval) =>
       approval.kind === kind &&
       approval.fingerprint === fingerprint &&
       approval.repoRoot === ctx.repoRoot,
   )
   if (index === -1) {
-    await deps.writeApprovals(approved.filePath, approved.state)
+    await deps.writeApprovals(loaded.filePath, loaded.state)
     return null
   }
 
-  const approval = approved.state.approvals[index]
+  const approval = loaded.state.approvals[index]
   if (approval.executionLeaseExpiresAt) {
-    await deps.writeApprovals(approved.filePath, approved.state)
-    return approval
+    await deps.writeApprovals(loaded.filePath, loaded.state)
+    return { approval, firstExecution: false }
   }
 
-  approved.state.approvals[index] = {
-    ...approval,
-    executionLeaseExpiresAt: new Date(Date.now() + getExecutionLeaseMs(ctx.config)).toISOString(),
+  const consumed = await mutateApprovalStateWithRetry({
+    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const matchIndex = compacted.approvals.findIndex(
+        (approval) =>
+          approval.kind === kind &&
+          approval.fingerprint === fingerprint &&
+          approval.repoRoot === ctx.repoRoot,
+      )
+      if (matchIndex === -1) {
+        return null
+      }
+
+      const approval = compacted.approvals[matchIndex]
+      if (approval.grant && approval.grant.usesRemaining <= 0) {
+        compacted.approvals.splice(matchIndex, 1)
+        return { state: compacted, result: null }
+      }
+
+      compacted.approvals[matchIndex] = {
+        ...approval,
+        executionLeaseExpiresAt: new Date(
+          Date.now() + getExecutionLeaseMs(ctx.config),
+        ).toISOString(),
+        grant: approval.grant
+          ? {
+              ...approval.grant,
+              usesRemaining: Math.max(0, approval.grant.usesRemaining - 1),
+            }
+          : undefined,
+      }
+      return { state: compacted, result: approval }
+    },
+  })
+  if (!consumed) {
+    return null
   }
-  await deps.writeApprovals(approved.filePath, approved.state)
-  return approval
+  return { approval: consumed, firstExecution: true }
 }
 
 export async function evaluateGatedAction(
@@ -466,7 +528,25 @@ export async function evaluateGatedAction(
   }
 
   const classifierOptions = runtimeClassifierOptions(ctx, ctx.config)
-  const predicted = await classifyGatedActionAsync(action, ctx.config, classifierOptions)
+  const approvedForAuth = await deps.loadApprovals(ctx, 'approved-approvals.json')
+  const authorization = await loadClassifierAuthorization({
+    repoRoot: ctx.repoRoot,
+    config: ctx.config,
+    approvedState: compactApprovals(approvedForAuth.state),
+  })
+  const egress = await egressStatus({ targetDir: ctx.repoRoot })
+  const egressProxyActive = isEgressProxyActive({
+    config: ctx.config,
+    running: egress.running,
+    foreignProxy: egress.foreignProxy,
+    repoRootMismatch: egress.repoRootMismatch,
+  })
+  const enrichedClassifierOptions = {
+    ...classifierOptions,
+    ...authorization,
+    egressProxyActive,
+  }
+  const predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
 
   let result = predicted
   let predictedAssessment: Assessment | undefined
@@ -489,9 +569,13 @@ export async function evaluateGatedAction(
       diffContext: {
         repoRoot: ctx.repoRoot,
         sensitivePaths: ctx.config.classifier.sensitivePaths,
-        protectedRoots: classifierOptions.protectedArtifactRoots ?? [],
+        protectedRoots: enrichedClassifierOptions.protectedArtifactRoots ?? [],
         maxDeletionCount: transactional.maxDeletionCount,
       },
+      boundaryDriverId:
+        ctx.config.capability?.boundaryDriver ??
+        (ctx.config.sandbox.runtime === 'container' ? 'container' : 'host-integration'),
+      egressProxyEnv: egressProxyEnvFromConfig(ctx.config, egressProxyActive),
     })
 
     if (!txResult.skipped && txResult.observed) {
@@ -547,7 +631,7 @@ export async function evaluateGatedAction(
       fingerprint: result.fingerprint,
       repoRoot: ctx.repoRoot,
     },
-    classifierOptions,
+    classifierOptions: enrichedClassifierOptions,
     scopeHintPayload: params.payload,
   })
 }
@@ -593,6 +677,40 @@ export async function gateUnmappedToolVerdict(
   })
 }
 
+async function consumeCapabilityGrantIfUsed(
+  ctx: GateRuntimeContext,
+  deps: GateRuntimeDeps,
+  result: ClassifyResult,
+): Promise<boolean> {
+  if (
+    result.reason !== 'capability_grant' &&
+    result.authorizationDecision?.matchedRule !== 'grant.exact'
+  ) {
+    return true
+  }
+  const request = result.capabilityRequests?.[0]
+  if (!request) {
+    return false
+  }
+  const consumed = await mutateApprovalStateWithRetry({
+    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const grant = findMatchingGrant(grantsFromApprovedState(compacted, ctx.repoRoot), request)
+      if (!grant) {
+        return null
+      }
+      const lease = consumeGrantLease(compacted, grant.grantId)
+      if (!lease.consumed) {
+        return null
+      }
+      return { state: lease.state, result: true }
+    },
+  })
+  return consumed === true
+}
+
 async function gateDecisionToVerdict(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
@@ -616,6 +734,18 @@ async function gateDecisionToVerdict(
 ): Promise<GateVerdict> {
   const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
   const actionSnapshot = buildAuditActionSnapshot(kind, result, auditExtras.replayAction)
+  const providerId = String(ctx.config.judge?.providerId ?? 'cursor')
+  const stateDir = belayStateDir(ctx.config, ctx.layout.repoLocalStateDir(ctx.repoRoot))
+  const capabilityAudit = scheduleGateShadowAudit({
+    repoRoot: ctx.repoRoot,
+    config: ctx.config,
+    providerId,
+    result,
+    command:
+      auditExtras.replayAction?.command ??
+      (kind === 'shell' ? auditExtras.approvalInput?.input : undefined),
+    stateDir,
+  })
   const gateBase = {
     event: gateAuditEventName(kind),
     kind,
@@ -628,6 +758,7 @@ async function gateDecisionToVerdict(
     schemaVersion: result.axes ? 2 : 1,
     ...(result.axes ?? {}),
     ...auditExtras.transactionalLayer,
+    ...capabilityAudit,
     ...(replayContext ? { replayContext } : {}),
     ...(actionSnapshot ? { actionSnapshot } : {}),
   }
@@ -708,6 +839,36 @@ async function gateDecisionToVerdict(
     if (!shouldSkipBrokerApprovedRecord(brokerActive, matchedApproval?.reason)) {
       if (
         matchedApproval &&
+        matchedApproval.capabilityRequestHash &&
+        result.capabilityRequests?.length &&
+        matchedApproval.capabilityRequestHash !== hashCapabilityRequests(result.capabilityRequests)
+      ) {
+        await deps.appendAudit(ctx, {
+          ...gateBase,
+          verdict: 'deny_pending_approval',
+          reason: 'approval_replay_mismatch',
+          approvalId: matchedApproval.approvalId,
+          wouldBlock: true,
+          permission: 'deny',
+        })
+        return classifyResultToGateVerdict({
+          result: {
+            ...result,
+            verdict: 'deny_pending_approval',
+            reason: 'approval_replay_mismatch',
+          },
+          mode: ctx.config.mode,
+          permission: 'deny',
+          wouldBlock: true,
+          approvalId: matchedApproval.approvalId,
+          user_message:
+            'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
+          agent_message:
+            'Belay denied this action because capability requests changed after approval.',
+        })
+      }
+      if (
+        matchedApproval &&
         auditExtras.replayAction &&
         !validateReplayEnvelope(matchedApproval, auditExtras.replayAction)
       ) {
@@ -739,11 +900,14 @@ async function gateDecisionToVerdict(
     }
   }
   if (approved) {
+    if (approved.firstExecution) {
+      await recordGateApprovalAsk(stateDir, result.reason, true)
+    }
     await deps.appendAudit(ctx, {
       ...gateBase,
       verdict: 'allow',
       reason: 'approved_once',
-      approvalId: approved.approvalId,
+      approvalId: approved.approval.approvalId,
       wouldBlock: false,
       permission: 'allow',
     })
@@ -752,11 +916,35 @@ async function gateDecisionToVerdict(
       mode: ctx.config.mode,
       permission: 'allow',
       wouldBlock: false,
-      approvalId: approved.approvalId,
+      approvalId: approved.approval.approvalId,
     })
   }
 
   if (result.verdict === 'allow' || result.verdict === 'allow_flagged') {
+    const grantConsumed = await consumeCapabilityGrantIfUsed(ctx, deps, result)
+    if (!grantConsumed) {
+      await deps.appendAudit(ctx, {
+        ...gateBase,
+        verdict: 'deny_pending_approval',
+        reason: 'capability_grant_unavailable',
+        wouldBlock: true,
+        permission: 'deny',
+      })
+      return classifyResultToGateVerdict({
+        result: {
+          ...result,
+          verdict: 'deny_pending_approval',
+          reason: 'capability_grant_unavailable',
+        },
+        mode: ctx.config.mode,
+        permission: 'deny',
+        wouldBlock: true,
+        user_message:
+          'Belay denied this action because the capability grant could not be consumed. Re-approve or run belay explain.',
+        agent_message:
+          'Belay denied this action because the capability grant was missing, expired, or already used.',
+      })
+    }
     await deps.appendAudit(ctx, {
       ...gateBase,
       verdict: result.verdict,
@@ -821,7 +1009,7 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const approval = await ensurePendingApproval(
+  const { approval, created } = await ensurePendingApproval(
     ctx,
     deps,
     kind,
@@ -834,6 +1022,9 @@ async function gateDecisionToVerdict(
       options: auditExtras.classifierOptions ?? {},
     }),
   )
+  if (created) {
+    await recordGateApprovalAsk(stateDir, result.reason, false)
+  }
   let approvalToken: string | undefined
   try {
     approvalToken = await issueApprovalToken(

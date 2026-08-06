@@ -37,21 +37,6 @@ export const STANDING_ALLOW_CATALOG: StandingAllowCatalog = {
         normalizedCommand: "find . -name '*.ts'",
         runtimeKey: '782298e3015fcb9c17bee2dad12a395a8859043481f93f0ca596499028bb8af2',
       },
-      {
-        command: 'curl https://example.com',
-        normalizedCommand: 'curl https://example.com',
-        runtimeKey: '09fa1bf897aa68a2d0be02cff3b0cbfa44a28fa17c501e8a39f2081208785e55',
-      },
-      {
-        command: 'wget https://example.com',
-        normalizedCommand: 'wget https://example.com',
-        runtimeKey: 'c408836b4bb4498b68b52e08a7c852757a19e156cae7579ffd5c98f13728cacb',
-      },
-      {
-        command: 'ls\ncurl https://example.com',
-        normalizedCommand: 'ls\ncurl https://example.com',
-        runtimeKey: 'a895f27dda259649bbe0d27fcc04ab7076fadfcd4c2ea3ab55f557028b01b11f',
-      },
     ],
     mustAllow: [
       {

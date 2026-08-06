@@ -136,6 +136,7 @@ export function resolveJudgeFromCatalog(input: ResolveJudgeFromCatalogInput): Be
   const endpoint =
     input.endpoint !== undefined ? input.endpoint?.trim() || null : spec.defaultEndpoint
   return {
+    mode: 'shadow',
     provider: spec.driver,
     providerId: spec.id,
     model,

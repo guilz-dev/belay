@@ -1,3 +1,7 @@
+import type { PolicyDecision } from '../capability/policy-types.js'
+import type { CapabilityRequestV1 } from '../capability/request.js'
+import type { BelayConfigV4 } from '../config.js'
+
 export type VerdictPermission = 'allow' | 'ask'
 
 export type VerdictLocation = 'repo_local' | 'repo_outside' | 'external' | 'mixed' | 'unknown'
@@ -23,6 +27,8 @@ export interface VerdictResult {
   fingerprint: string
   signals: string[]
   judgeTrace?: JudgeTrace
+  capabilityRequests?: CapabilityRequestV1[]
+  authorizationDecision?: PolicyDecision
 }
 
 export interface Tier1Verdict {
@@ -42,6 +48,7 @@ export interface Tier1EvaluateInput {
   innerCode?: string
 }
 
+/** @deprecated Sync gate path no longer invokes Tier1 judge. Retained for shadow tooling. */
 export interface Tier1Judge {
   evaluate(input: Tier1EvaluateInput): Promise<Tier1Verdict>
 }
@@ -83,17 +90,20 @@ export type VerdictMode = 'enforce' | 'audit'
 export interface VerdictContext {
   cwd: string
   repoRoot: string
+  config: BelayConfigV4
   trustedCwd: boolean
   trustedWorkspaceRoots?: string[]
   sensitivePaths: string[]
   protectedArtifactRoots?: string[]
   customAllowCommands?: string[]
   customExternalCommands?: string[]
-  judge: Tier1Judge
   mode: VerdictMode
   unknownLocalEffect: 'allow_flagged' | 'deny'
   unparseableShell: 'allow_flagged' | 'deny'
   maxRecursionDepth?: number
+  grants?: import('../capability/grant.js').CapabilityGrantV1[]
+  attestation?: import('../capability/attestation.js').BoundaryAttestation | null
+  egressProxyActive?: boolean
 }
 
 export interface InternalSegmentVerdict {
@@ -105,4 +115,6 @@ export interface InternalSegmentVerdict {
   reason: string
   signals: string[]
   judgeTrace?: JudgeTrace
+  capabilityRequests?: CapabilityRequestV1[]
+  authorizationDecision?: PolicyDecision
 }

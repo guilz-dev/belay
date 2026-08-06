@@ -66,18 +66,18 @@ describe('structural suite', () => {
     })
   })
 
-  describe('ADR-002 MUST-ALLOW ledger (benign repo-outside local)', () => {
-    it('allows Cursor plan redirect after Tier1', async () => {
+  describe('ADR-002 repo-outside local (policy requires approval)', () => {
+    it('requires approval for Cursor plan redirect', async () => {
       const home = process.env.HOME ?? '/home/user'
       const result = await verdict(`echo hi >> ${home}/.cursor/plans/foo.plan.md`, context)
-      expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('repo_outside_local_mutation')
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('outside_repo_mutation')
     })
 
-    it('allows /tmp redirect after Tier1', async () => {
+    it('requires approval for /tmp redirect', async () => {
       const result = await verdict('echo hi >> /tmp/benign.txt', context)
-      expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('repo_outside_local_mutation')
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('outside_repo_mutation')
     })
   })
 
@@ -147,10 +147,10 @@ describe('structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
-    it('allows outside-repo mutation after resolved cd chain when Tier1 says local-recoverable', async () => {
+    it('requires approval for outside-repo mutation after resolved cd chain', async () => {
       const result = await verdict('cd /tmp && rm -rf foo', context)
-      expect(result.permission).toBe('allow')
-      expect(result.reason).toBe('repo_outside_local_mutation')
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('outside_repo_mutation')
     })
 
     it('asks on mutation after opaque cd chain', async () => {
@@ -173,7 +173,7 @@ describe('structural suite', () => {
   })
 
   describe('egress read/mutate (SPEC R33)', () => {
-    const MUST_ALLOW_EGRESS = [
+    const NETWORK_READ_REQUIRES_ASK = [
       'curl https://example.com',
       'wget https://example.com/file',
       'aws s3 ls',
@@ -183,9 +183,9 @@ describe('structural suite', () => {
       'vercel ls',
     ]
 
-    it.each(MUST_ALLOW_EGRESS)('%s → allow (not tier0_external)', async (command) => {
+    it.each(NETWORK_READ_REQUIRES_ASK)('%s → ask (network policy)', async (command) => {
       const result = await verdict(command, context)
-      expect(result.permission, `false ask for read egress: ${command}`).not.toBe('ask')
+      expect(result.permission, `network read egress must require approval: ${command}`).toBe('ask')
       expect(result.signals).not.toContain('tier0_external')
     })
 
@@ -205,7 +205,7 @@ describe('structural suite', () => {
       expect(result.permission, `false allow for destructive egress: ${command}`).toBe('ask')
     })
 
-    it('ambiguous egress delegates to Tier1 and fails closed without judge', async () => {
+    it('ambiguous egress requires approval without sync judge', async () => {
       const result = await verdict('aws s3 mb s3://new-bucket', context)
       expect(result.permission).toBe('ask')
     })

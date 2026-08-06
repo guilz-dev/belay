@@ -1,5 +1,6 @@
 import type { LayerConformanceScenario, LayerProfileId } from './types.js'
 
+export { evaluateGuaranteePosture, type GuaranteePosture } from './guarantee-posture.js'
 export type { LayerConformanceScenario, LayerProfileId } from './types.js'
 
 export interface GuaranteeTableRow {
@@ -50,9 +51,10 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'allow',
     },
     {
-      id: 'l3-allow-read-egress',
+      id: 'l3-deny-read-egress',
       command: 'curl https://example.com',
-      permission: 'allow',
+      permission: 'deny',
+      reason: 'external_effect',
     },
   ],
   'l1-partial-egress': [
@@ -62,9 +64,10 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'allow',
     },
     {
-      id: 'l1p-allow-read-egress',
+      id: 'l1p-deny-read-egress',
       command: 'curl https://example.com',
-      permission: 'allow',
+      permission: 'deny',
+      reason: 'external_effect',
     },
     {
       id: 'l1p-deny-write-egress',
@@ -80,9 +83,10 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'allow',
     },
     {
-      id: 'l2-allow-read-egress',
+      id: 'l2-deny-read-egress',
       command: 'curl https://example.com',
-      permission: 'allow',
+      permission: 'deny',
+      reason: 'external_effect',
     },
   ],
   'l1-full': [
@@ -92,9 +96,10 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'allow',
     },
     {
-      id: 'l1f-allow-read-egress',
+      id: 'l1f-deny-read-egress',
       command: 'curl https://example.com',
-      permission: 'allow',
+      permission: 'deny',
+      reason: 'external_effect',
     },
     {
       id: 'l1f-deny-write-egress',
@@ -107,7 +112,7 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       id: 'l1f-deny-outside-repo',
       command: 'echo hi > ../../outside.txt',
       permission: 'deny',
-      reason: 'outside_repo_redirect',
+      reason: 'outside_repo_mutation',
     },
     {
       id: 'l1f-deny-outside-repo-write',

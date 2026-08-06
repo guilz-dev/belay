@@ -1,6 +1,7 @@
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
+import { evaluateGuaranteePosture } from '../../conformance/guarantee-posture.js'
 import type { GuaranteeScenario } from '../../conformance/guarantee-table.js'
 import { GUARANTEE_SCENARIOS, GUARANTEE_TABLE_ROWS } from '../../conformance/guarantee-table.js'
 import type { LayerProfileId } from '../../conformance/types.js'
@@ -8,7 +9,6 @@ import { DEFAULT_CONFIG_V3 } from '../../core/config.js'
 import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
 import { classifyGatedAction } from '../../core/gate-engine.js'
 import { isTransactionalEligible } from '../../core/transactional/index.js'
-import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
 import { classifyShellCore, classifyShellGated } from '../helpers/shell-classify.js'
 
 const repoRoot = '/workspace/project'
@@ -27,7 +27,6 @@ async function classifyScenario(profile: LayerProfileId, scenario: GuaranteeScen
       DEFAULT_CONFIG_V3,
       {
         brokerFsScope: true,
-        tier1Judge: createDeterministicJudgeStub(),
       },
     )
   }
@@ -87,6 +86,27 @@ describe('guarantee table conformance', () => {
       unknownLocalEffect: 'allow_flagged',
     })
     expect(isTransactionalEligible(config, 'shell', predicted)).toBe(true)
+  })
+
+  it('reports posture mismatch when L1-full is configured without attestation', () => {
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: true, runtime: 'container' as const },
+      egress: { ...DEFAULT_CONFIG_V3.egress, enabled: true, demoteL3External: true },
+      approvalSigning: { required: true },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        isolation: { mode: 'separate-user' as const, verifyAgentWritable: true },
+      },
+    }
+    const posture = evaluateGuaranteePosture({
+      config,
+      attestation: null,
+      egressProxyRunning: true,
+    })
+    expect(posture.configuredProfile).toBe('l1-full')
+    expect(posture.attestedProfile).toBe('l3-l4-only')
+    expect(posture.postureMismatch).toBe(true)
   })
 
   it('requires sandbox runtime for capability broker demotion', () => {

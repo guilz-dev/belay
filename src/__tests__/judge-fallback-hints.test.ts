@@ -22,7 +22,13 @@ function classifyResult(
 describe('judge-fallback-hints', () => {
   it('detects infrastructure failure from judge fallback axes', () => {
     const result = classifyResult({
-      assessment: { reversibility: 'reversible', external: false, blastRadius: 'none', confidence: 0.7, signals: ['tier1_catastrophic', 'cursor_cli_nonzero'] },
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 0.7,
+        signals: ['tier1_catastrophic', 'cursor_cli_nonzero'],
+      },
       axes: {
         location: 'repo_local',
         opacity: 'transparent',

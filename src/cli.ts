@@ -13,6 +13,11 @@ import { formatQualityReport, qualityCheck } from './commands/quality.js'
 import { formatRecoverReport, recoverProject } from './commands/recover.js'
 import { formatReport, reportProject } from './commands/report.js'
 import { revokeApproval } from './commands/revoke.js'
+import {
+  formatSessionStatusReport,
+  sessionStartProject,
+  sessionStatusProject,
+} from './commands/session.js'
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
 import { revokeStandingAllow } from './commands/standing-allow.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
@@ -69,6 +74,7 @@ function parseArgs(argv: string[]) {
     approvePath?: string
     approveReplay?: boolean
     sandboxSubcommand?: 'status'
+    sessionSubcommand?: 'start' | 'status'
     installScope?: 'project' | 'global'
     preset?: ConfigPresetName
     judgeProfile?: 'local-ollama' | 'cursor' | 'claude' | 'codex'
@@ -476,6 +482,13 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('sandbox requires subcommand: status')
     }
+    if (command === 'session' && !options.sessionSubcommand) {
+      if (token === 'start' || token === 'status') {
+        options.sessionSubcommand = token
+        continue
+      }
+      throw new Error('session requires subcommand: start or status')
+    }
     if (command === 'standing-allow' && !options.standingAllowSubcommand) {
       if (token === 'revoke') {
         options.standingAllowSubcommand = token
@@ -608,6 +621,7 @@ Usage:
   ${c} explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
   ${c} sandbox status [--target <dir>] [--json]
+  ${c} session <start|status> [--target <dir>] [--json]
   ${c} judge <status|list|use|test|bench|consent> [--target <dir>] [--json]
   ${c} judge test [--target <dir>] [--json] [--live-probe]
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
@@ -1002,6 +1016,29 @@ async function main() {
         process.stdout.write(formatSandboxStatusReport(report))
       }
       process.exitCode = report.issues.length > 0 && report.sandboxEnabled ? 1 : 0
+      return
+    }
+
+    if (command === 'session') {
+      if (!options.sessionSubcommand) {
+        throw new Error('session requires subcommand: start or status')
+      }
+      if (options.sessionSubcommand === 'start') {
+        const result = await sessionStartProject({ targetDir: options.targetDir })
+        process.stdout.write(`${result.message}\n`)
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      const report = await sessionStatusProject({
+        targetDir: options.targetDir,
+        json: options.json,
+      })
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      } else {
+        process.stdout.write(`${formatSessionStatusReport(report)}\n`)
+      }
+      process.exitCode = report.ok ? 0 : 1
       return
     }
 

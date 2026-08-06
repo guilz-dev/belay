@@ -2,6 +2,7 @@ import { JUDGE_LATENCY_SLO } from './judge-runtime-config.js'
 
 export type JudgeLatencyPhase =
   | 'tier0'
+  | 'gate'
   | 'tier1_spawn'
   | 'tier1_session'
   | 'tier1_connect'
@@ -68,6 +69,7 @@ export function judgeLatencySloReport(): {
 } {
   const measured = {
     tier0: judgeLatencyPercentiles('tier0'),
+    gate: judgeLatencyPercentiles('gate'),
     tier1_spawn: judgeLatencyPercentiles('tier1_spawn'),
     tier1_session: judgeLatencyPercentiles('tier1_session'),
     tier1_connect: judgeLatencyPercentiles('tier1_connect'),

@@ -41,7 +41,8 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.includes('API key'))).toBe(true)
+    expect(report.warnings.some((warning) => warning.includes('API key'))).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('API key'))).toBe(false)
     if (previousBelay) {
       process.env.BELAY_JUDGE_API_KEY = previousBelay
     }
@@ -79,7 +80,8 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.toLowerCase().includes('ollama'))).toBe(true)
+    expect(report.warnings.some((warning) => warning.toLowerCase().includes('ollama'))).toBe(true)
+    expect(report.issues.some((issue) => issue.toLowerCase().includes('ollama'))).toBe(false)
   })
 
   it('reports smoke probe failures as issues with recovery hints', async () => {
@@ -125,10 +127,15 @@ describe('T12 doctor judge matrix', () => {
     try {
       const report = await diagnoseJudge(config, process.cwd(), { liveProbe: true })
       expect(
+        report.warnings.some(
+          (warning) => warning.includes('cursor_cli_nonzero') && warning.includes('agent login'),
+        ),
+      ).toBe(true)
+      expect(
         report.issues.some(
           (issue) => issue.includes('cursor_cli_nonzero') && issue.includes('agent login'),
         ),
-      ).toBe(true)
+      ).toBe(false)
     } finally {
       vi.restoreAllMocks()
       if (previousVitest) {

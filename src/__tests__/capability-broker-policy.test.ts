@@ -36,8 +36,8 @@ describe('capability broker policy', () => {
       brokerFsScope: false,
       unknownLocalEffect: 'deny',
     })
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('repo_outside_local_mutation')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
   })
 
   it('demotes outside-repo shell denies to capability hints when paths are allowlisted', async () => {
@@ -62,12 +62,12 @@ describe('capability broker policy', () => {
     expect(result.assessment.signals).toContain('sandbox_boundary_expected')
   })
 
-  it('allows outside-repo shell when broker is inactive (default L3)', async () => {
+  it('requires approval for outside-repo shell when broker is inactive (default L3)', async () => {
     const result = await classifyShellCore('cp README.md ../copy.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'deny',
     })
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('repo_outside_local_mutation')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
   })
 
   it('matches allowlisted path prefixes', () => {

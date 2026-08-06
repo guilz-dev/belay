@@ -14,7 +14,6 @@ const { classifyShell } = await import(path.join(root, 'dist/core/verdict/adapte
 const { DEFAULT_CONFIG_V3, classifierOptionsFromConfig } = await import(
   path.join(root, 'dist/core/config.js')
 )
-const { createDeterministicJudgeStub } = await import(path.join(root, 'dist/core/verdict/judge.js'))
 
 const corpusDir = path.join(root, 'corpus')
 const corpusMetrics = await runCorpusEvaluation(corpusDir)
@@ -27,10 +26,9 @@ const cases = await loadCorpusCases(corpusDir)
 const repoRoot = DEFAULT_CORPUS_REPO_ROOT
 const cwd = path.join(repoRoot, 'src')
 const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-const judge = createDeterministicJudgeStub()
 
 async function shellCatalogEntry(command) {
-  const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options, judge)
+  const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
   return {
     command,
     normalizedCommand: result.normalizedCommand ?? command,

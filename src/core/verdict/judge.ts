@@ -1,14 +1,15 @@
-import { matchesSensitivePath } from '../glob.js'
-import { resolveMutationTarget, resolveWorkspaceRootMatch } from '../path-utils.js'
 import type { ScrubOptions } from '../types.js'
-import { resolveTrustedPath } from './containment.js'
 import { scrubOutboundForJudge } from './judge-outbound.js'
-import { isOutsideRepoSecretCredentialPath, isPersistentAgentPath } from './persistent-paths.js'
+import { prescanInterpreterCode } from './prescan.js'
 import type { Tier1Judge, Tier1Verdict } from './types.js'
 
-const SECRET_PATTERNS = [/\.env\b/i, /\.pem\b/i, /id_rsa\b/i, /credentials/i, /secrets?\b/i]
-const DESTRUCTIVE_VERBS = /\b(rm|rmtree|unlink|delete|truncate|shred|destroy|drop)\b/i
-const GIT_PATTERNS = /\.git\b/i
+export {
+  type MutationPrescanParams,
+  mutationPrescanRequiresAsk,
+  prescanInterpreterCode,
+  prescanMutationTargets,
+  tier1RequiresAsk,
+} from './prescan.js'
 
 const TIER1_PROMPT = `Answer ONLY with JSON: {"local_recoverable":boolean,"destroys_history_or_secrets":boolean,"reason":string}
 reason should be a short snake_case label.
@@ -111,85 +112,6 @@ export function parseTier1Json(raw: string): Tier1Verdict | null {
   } catch {
     return null
   }
-}
-
-export function prescanInterpreterCode(code: string): Tier1Verdict | null {
-  const normalized = code.replaceAll('\\', '/')
-  const hitsSecret = SECRET_PATTERNS.some((pattern) => pattern.test(normalized))
-  const hitsGit = GIT_PATTERNS.test(normalized)
-  const hitsDestructive = DESTRUCTIVE_VERBS.test(normalized)
-  if ((hitsSecret || hitsGit) && hitsDestructive) {
-    return {
-      local_recoverable: true,
-      destroys_outside_repo: false,
-      destroys_history_or_secrets: true,
-      reason: 'prescan_destructive_secret',
-    }
-  }
-  return null
-}
-
-export interface MutationPrescanParams {
-  targets: string[]
-  cwd: string
-  repoRoot: string
-  trustedCwd: boolean
-  trustedWorkspaceRoots?: string[]
-  sensitivePaths: string[]
-}
-
-/** ADR-002 M3: structural prescan for sensitive / persistent mutation targets (shell redirects, etc.). */
-export function prescanMutationTargets(params: MutationPrescanParams): Tier1Verdict | null {
-  for (const target of params.targets) {
-    const resolved =
-      resolveTrustedPath(target, params.cwd, params.trustedCwd) ??
-      resolveMutationTarget(target, params.cwd)
-    if (!resolved) {
-      continue
-    }
-    const workspaceMatch = resolveWorkspaceRootMatch(
-      params.repoRoot,
-      params.trustedWorkspaceRoots,
-      resolved,
-    )
-    if (
-      workspaceMatch !== null &&
-      matchesSensitivePath(workspaceMatch.relativePath.replaceAll('\\', '/'), params.sensitivePaths)
-    ) {
-      return {
-        local_recoverable: false,
-        destroys_outside_repo: false,
-        destroys_history_or_secrets: true,
-        reason: 'sensitive_path_mutation',
-      }
-    }
-    if (
-      (workspaceMatch === null || workspaceMatch.kind === 'trusted') &&
-      isOutsideRepoSecretCredentialPath(resolved)
-    ) {
-      return {
-        local_recoverable: false,
-        destroys_outside_repo: false,
-        destroys_history_or_secrets: true,
-        reason: 'outside_repo_secret_credential_path',
-      }
-    }
-    if (isPersistentAgentPath(resolved)) {
-      return {
-        local_recoverable: false,
-        destroys_outside_repo: false,
-        destroys_history_or_secrets: true,
-        reason: 'persistent_agent_path',
-      }
-    }
-  }
-  return null
-}
-
-/** Returns prescan verdict when structural M3 rules require ask (before Tier1 LLM). */
-export function mutationPrescanRequiresAsk(params: MutationPrescanParams): Tier1Verdict | null {
-  const prescan = prescanMutationTargets(params)
-  return prescan && tier1RequiresAsk(prescan) ? prescan : null
 }
 
 /** Conservative stub: Tier1 defers to Tier0; returns safe negatives for structural suite. */
@@ -438,7 +360,3 @@ export function createOpenAiCompatibleJudge(
 export const createCursorJudge = createOpenAiCompatibleJudge
 
 export interface CursorJudgeOptions extends OpenAiCompatibleJudgeOptions {}
-
-export function tier1RequiresAsk(verdict: Tier1Verdict): boolean {
-  return !verdict.local_recoverable || verdict.destroys_history_or_secrets
-}

@@ -42,6 +42,10 @@ export interface DiagnoseJudgeOptions {
   liveProbe?: boolean
 }
 
+function judgeShadowAdvisory(warnings: string[], message: string): void {
+  warnings.push(`[judge shadow advisory] ${message}`)
+}
+
 export async function diagnoseJudge(
   config: BelayConfigV4,
   repoRoot: string = process.cwd(),
@@ -54,6 +58,14 @@ export async function diagnoseJudge(
   const warnings: string[] = []
   const notes: string[] = []
   const judge = config.judge
+  const gateMode = judge.mode ?? 'shadow'
+  notes.push(
+    `Judge gate mode: ${gateMode} (sync Tier1 removed from hook gate; judge is shadow/async only)`,
+  )
+  if (gateMode === 'off') {
+    notes.push('Judge shadow is disabled (judge.mode=off).')
+  }
+
   const provider = normalizeJudgeProvider(judge.provider)
   const rawProviderId = judge.providerId ? String(judge.providerId) : undefined
 
@@ -97,8 +109,9 @@ export async function diagnoseJudge(
   }
 
   if (capabilities?.requiresConsent && !hasValidCloudConsent(judge) && transport === 'http') {
-    issues.push(
-      'Cloud judge consent is not recorded. Tier1 cloud judge will fail closed until consent is granted.',
+    judgeShadowAdvisory(
+      warnings,
+      'Cloud judge consent is not recorded. Shadow cloud judge will fail until consent is granted.',
     )
   } else if (judge.cloudConsent?.accepted) {
     notes.push(`Cloud consent: accepted ${judge.cloudConsent.at} by ${judge.cloudConsent.by}`)
@@ -138,11 +151,17 @@ export async function diagnoseJudge(
   if (providerId === 'ollama') {
     notes.push(`Ollama endpoint: ${endpoint}`)
     if (discovery.modelIds.length === 0) {
-      issues.push(`Ollama endpoint unreachable or returned no models. Tier1 will fail closed.`)
+      judgeShadowAdvisory(
+        warnings,
+        'Ollama endpoint unreachable or returned no models. Shadow judge will not run.',
+      )
     } else {
       const hasModel = modelCheck.status === 'found'
       if (!hasModel) {
-        issues.push(`Ollama model "${judge.model}" is not present. Pull it before enforce mode.`)
+        judgeShadowAdvisory(
+          warnings,
+          `Ollama model "${judge.model}" is not present. Pull it before enabling shadow comparisons.`,
+        )
       } else {
         notes.push(`Ollama model "${judge.model}" is available.`)
       }
@@ -170,7 +189,7 @@ export async function diagnoseJudge(
       context: { cwd: process.cwd(), repoRoot: process.cwd() },
     })
     if (warmResult.reason === 'ollama_unavailable' || warmResult.reason === 'ollama_parse_error') {
-      issues.push(`Ollama warm call failed: ${warmResult.reason}`)
+      judgeShadowAdvisory(warnings, `Ollama warm call failed: ${warmResult.reason}`)
     } else {
       notes.push('Ollama warm call succeeded.')
     }
@@ -178,20 +197,23 @@ export async function diagnoseJudge(
   }
 
   if (transport === 'unavailable') {
-    issues.push(
-      'No judge transport is available (configure endpoint or install native CLI). Tier1 will fail closed to ask.',
+    judgeShadowAdvisory(
+      warnings,
+      'No judge transport is available (configure endpoint or install native CLI). Shadow judge will not run.',
     )
     return { issues, warnings, notes, modelCheck }
   }
 
   if (transport.endsWith('-cli')) {
     if (!runtime.cliTransport) {
-      issues.push(
-        `Native CLI transport (${transport}) is not available. Tier1 judge will fail closed to ask.`,
+      judgeShadowAdvisory(
+        warnings,
+        `Native CLI transport (${transport}) is not available. Shadow judge will not run.`,
       )
     } else if (!keyInfo.key && keyInfo.sourceKind !== 'host-session') {
-      issues.push(
-        'Judge API key is not set for the configured credential mode. Tier1 cloud judge will fail closed to ask.',
+      judgeShadowAdvisory(
+        warnings,
+        'Judge API key is not set for the configured credential mode. Shadow cloud judge will not run.',
       )
     } else {
       notes.push(
@@ -227,10 +249,11 @@ export async function diagnoseJudge(
             smokeFallback,
           )
           const smokeLabel = cursorAcpEnabled ? 'Cursor ACP' : 'Native CLI transport'
-          issues.push(
+          judgeShadowAdvisory(
+            warnings,
             recoveryHint
-              ? `${smokeLabel} smoke probe failed (${smokeFallback}). Tier1 will fail-closed. ${recoveryHint}`
-              : `${smokeLabel} smoke probe failed (${smokeFallback}). Tier1 will fail closed to ask.`,
+              ? `${smokeLabel} smoke probe failed (${smokeFallback}). ${recoveryHint}`
+              : `${smokeLabel} smoke probe failed (${smokeFallback}).`,
           )
         } else {
           notes.push(
@@ -249,8 +272,9 @@ export async function diagnoseJudge(
   }
 
   if (!keyInfo.key) {
-    issues.push(
-      'Judge API key is not set for the configured credential mode. Tier1 cloud judge will fail closed to ask.',
+    judgeShadowAdvisory(
+      warnings,
+      'Judge API key is not set for the configured credential mode. Shadow cloud judge will not run.',
     )
   } else {
     notes.push(`Credential source: ${keyInfo.source ?? keyInfo.sourceKind}`)
@@ -292,7 +316,7 @@ export async function diagnoseJudge(
       dryRun.reason.startsWith('openai_compatible_') ||
       dryRun.reason === 'outbound_scrub_failed'
     ) {
-      issues.push(`HTTP judge dry-run failed: ${dryRun.reason}`)
+      judgeShadowAdvisory(warnings, `HTTP judge dry-run failed: ${dryRun.reason}`)
     } else {
       notes.push('HTTP judge dry-run succeeded.')
     }

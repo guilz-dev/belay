@@ -1,4 +1,7 @@
-import { resolveMutationTarget } from '../path-utils.js'
+import path from 'node:path'
+import { policyDecisionToLegacyReason } from '../capability/policy-bridge.js'
+import { policyDecisionRequiresAsk } from '../capability/policy-engine.js'
+import { canonicalPath, resolveMutationTarget } from '../path-utils.js'
 import {
   extractRedirectTargets,
   isFdDuplication,
@@ -14,9 +17,11 @@ import {
 } from './containment.js'
 import { classifyEgressTool } from './egress-classify.js'
 import { verdictFingerprint } from './fingerprint.js'
-import type { TracedTier1Judge } from './judge.js'
-import { mutationPrescanRequiresAsk, prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
-import { isReadOnlyLauncherInvocation, isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
+import {
+  isReadOnlyLauncherInvocation,
+  isRoutineLauncher,
+  resolveLauncherRecipe,
+} from './launcher-resolve.js'
 import {
   allowFromCustomOverride,
   askFromCustomExternal,
@@ -34,9 +39,14 @@ import {
   splitTopLevelSegments,
   substitutionInners,
 } from './parser.js'
+import { mutationPrescanRequiresAsk, prescanInterpreterCode, tier1RequiresAsk } from './prescan.js'
+import {
+  evaluateSegmentShellPolicy,
+  type SegmentShellPolicyInput,
+  shellPolicyMetadata,
+} from './shell-policy.js'
 import type {
   InternalSegmentVerdict,
-  JudgeTrace,
   VerdictContext,
   VerdictEffect,
   VerdictLocation,
@@ -189,7 +199,7 @@ async function evaluateSubstitutions(
     worst = worst ? combineInternal(worst, innerVerdict) : innerVerdict
   }
 
-  if (!worst) {
+  if (!worst || worst.permission === 'allow') {
     return null
   }
 
@@ -250,6 +260,13 @@ function combineInternal(
         : right.reason,
     signals: [...new Set([...left.signals, ...right.signals])],
     judgeTrace: right.judgeTrace ?? left.judgeTrace,
+    capabilityRequests: [...(left.capabilityRequests ?? []), ...(right.capabilityRequests ?? [])],
+    authorizationDecision:
+      worsePermission(left.permission, right.permission) === 'ask'
+        ? right.permission === 'ask'
+          ? (right.authorizationDecision ?? left.authorizationDecision)
+          : left.authorizationDecision
+        : (right.authorizationDecision ?? left.authorizationDecision),
   }
 }
 
@@ -257,18 +274,34 @@ function askVerdict(params: Omit<InternalSegmentVerdict, 'permission'>): Interna
   return { ...params, permission: 'ask' }
 }
 
-function allowVerdict(params: Omit<InternalSegmentVerdict, 'permission'>): InternalSegmentVerdict {
-  return { ...params, permission: 'allow' }
+function resolveShellPathTargets(pathArgs: string[], context: VerdictContext): string[] {
+  if (!context.cwd) {
+    return []
+  }
+  return pathArgs.map((target) => {
+    const resolved =
+      (context.trustedCwd ? resolveTrustedPath(target, context.cwd, context.trustedCwd) : null) ??
+      resolveMutationTarget(target, context.cwd)
+    if (!resolved) {
+      const joined = path.isAbsolute(target) ? target : path.join(context.cwd, target)
+      return canonicalPath(joined)
+    }
+    return canonicalPath(resolved)
+  })
 }
 
-function withJudgeTrace(
-  verdict: InternalSegmentVerdict,
-  judgeTrace?: JudgeTrace,
-): InternalSegmentVerdict {
-  if (!judgeTrace) {
-    return verdict
+function withShellPolicyMetadata(
+  input: SegmentShellPolicyInput,
+  existing: Pick<InternalSegmentVerdict, 'capabilityRequests' | 'authorizationDecision'> = {},
+): Pick<InternalSegmentVerdict, 'capabilityRequests' | 'authorizationDecision'> {
+  if (existing.capabilityRequests?.length) {
+    return existing
   }
-  return { ...verdict, judgeTrace }
+  return shellPolicyMetadata(input)
+}
+
+function allowVerdict(params: Omit<InternalSegmentVerdict, 'permission'>): InternalSegmentVerdict {
+  return { ...params, permission: 'allow' }
 }
 
 function extractPathArgs(tokens: string[]): string[] {
@@ -467,6 +500,49 @@ function tier0HighStakesRm(
   return null
 }
 
+function verdictFromOpacityPolicy(params: {
+  command: string
+  segmentHead: string
+  opacity: import('./types.js').VerdictOpacity
+  effect: import('./types.js').VerdictEffect
+  location: import('./types.js').VerdictLocation
+  pathArgs: string[]
+  signals: string[]
+  context: import('./types.js').VerdictContext
+}): InternalSegmentVerdict {
+  const { request, decision } = evaluateSegmentShellPolicy({
+    command: params.command,
+    segmentHead: params.segmentHead,
+    effect: params.effect,
+    location: params.location,
+    opacity: params.opacity,
+    pathArgs: params.pathArgs,
+    signals: params.signals,
+    context: params.context,
+  })
+  const base = {
+    location: params.location,
+    opacity: params.opacity,
+    effect: params.effect,
+    confidence: 'deterministic' as const,
+    signals: [...params.signals, ...decision.signals],
+    capabilityRequests: [request],
+    authorizationDecision: decision,
+  }
+  if (policyDecisionRequiresAsk(decision)) {
+    return {
+      permission: 'ask',
+      reason: policyDecisionToLegacyReason(decision),
+      ...base,
+    }
+  }
+  return {
+    permission: 'allow',
+    reason: policyDecisionToLegacyReason(decision),
+    ...base,
+  }
+}
+
 async function evaluateSegment(
   command: string,
   context: VerdictContext,
@@ -486,23 +562,15 @@ async function evaluateSegment(
 
   const opacity = segmentOpacity(command)
   if (opacity === 'unparseable') {
-    if (context.unparseableShell === 'deny') {
-      return askVerdict({
-        location: 'unknown',
-        opacity: 'unparseable',
-        effect: 'unknown',
-        confidence: 'deterministic',
-        reason: 'unparseable_shell',
-        signals: ['unparseable_shell'],
-      })
-    }
-    return allowVerdict({
-      location: 'unknown',
+    return verdictFromOpacityPolicy({
+      command,
+      segmentHead: parseSegment(command).head,
       opacity: 'unparseable',
       effect: 'unknown',
-      confidence: 'deterministic',
-      reason: 'unparseable_shell',
+      location: 'unknown',
+      pathArgs: [],
       signals: ['unparseable_shell'],
+      context,
     })
   }
 
@@ -514,13 +582,15 @@ async function evaluateSegment(
   const tokens = tokenizeShell(command)
   const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens)
   if (xargsStdinOpaque || isBareInterpreter(tokens)) {
-    return askVerdict({
-      location: 'unknown',
+    return verdictFromOpacityPolicy({
+      command,
+      segmentHead: parseSegment(command).head,
       opacity: 'opaque',
       effect: 'unknown',
-      confidence: 'deterministic',
-      reason: 'opaque_execution',
+      location: 'unknown',
+      pathArgs: [],
       signals: ['opaque_execution'],
+      context,
     })
   }
 
@@ -552,13 +622,28 @@ async function evaluateSegment(
   if (recursiveScript) {
     const prescan = prescanInterpreterCode(recursiveScript)
     if (prescan && tier1RequiresAsk(prescan)) {
+      const { request, decision } = evaluateSegmentShellPolicy({
+        command: recursiveScript,
+        segmentHead: segment.head,
+        effect: 'unknown',
+        location: 'unknown',
+        opacity: 'recursive',
+        pathArgs: [],
+        signals: ['interpreter_secret_prescan', prescan.reason],
+        context,
+      })
+      const legacyReason = policyDecisionRequiresAsk(decision)
+        ? policyDecisionToLegacyReason(decision)
+        : 'interpreter_secret_prescan'
       return askVerdict({
         location: 'unknown',
         opacity: 'recursive',
         effect: 'unknown',
         confidence: 'deterministic',
-        reason: 'interpreter_secret_prescan',
-        signals: ['interpreter_secret_prescan'],
+        reason: legacyReason,
+        signals: ['interpreter_secret_prescan', prescan.reason, ...decision.signals],
+        capabilityRequests: [request],
+        authorizationDecision: decision,
       })
     }
     const innerVerdict = await evaluateSegment(recursiveScript, context, depth + 1)
@@ -627,34 +712,48 @@ async function evaluateSegment(
 
   const egressClass = classifyEgressTool(segment.head, peeled)
   if (egressClass === 'destructive') {
-    return askVerdict({
+    const { request, decision } = evaluateSegmentShellPolicy({
+      command,
+      segmentHead: segment.head,
+      effect: 'remote_mutation',
       location: 'external',
       opacity: 'transparent',
-      effect: 'remote_mutation',
-      confidence: 'deterministic',
-      reason: 'tier0_external',
+      egressClass: 'destructive',
+      pathArgs: [],
       signals: ['tier0_external', segment.head],
+      context,
     })
-  }
-  if (egressClass === 'read') {
-    return allowVerdict({
-      location: 'external',
-      opacity: 'transparent',
-      effect: 'read_only',
-      confidence: 'deterministic',
-      reason: 'egress_read',
-      signals: ['egress_read', segment.head],
-    })
-  }
-
-  if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
     return askVerdict({
       location: 'external',
       opacity: 'transparent',
       effect: 'remote_mutation',
       confidence: 'deterministic',
       reason: 'tier0_external',
+      signals: ['tier0_external', segment.head, ...decision.signals],
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+    })
+  }
+  if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
+    const { request, decision } = evaluateSegmentShellPolicy({
+      command,
+      segmentHead: segment.head,
+      effect: 'remote_mutation',
+      location: 'external',
+      opacity: 'transparent',
+      pathArgs: [],
       signals: ['tier0_external', segment.key],
+      context,
+    })
+    return askVerdict({
+      location: 'external',
+      opacity: 'transparent',
+      effect: 'remote_mutation',
+      confidence: 'deterministic',
+      reason: 'tier0_external',
+      signals: ['tier0_external', segment.key, ...decision.signals],
+      capabilityRequests: [request],
+      authorizationDecision: decision,
     })
   }
 
@@ -818,6 +917,22 @@ async function evaluateSegment(
     })
   }
 
+  const resolvedPathTargets = resolveShellPathTargets(pathArgs, context)
+  const buildPolicyInput = (
+    overrides: Partial<SegmentShellPolicyInput> &
+      Pick<SegmentShellPolicyInput, 'effect' | 'location'>,
+  ): SegmentShellPolicyInput => ({
+    command: recursiveScript ?? command,
+    segmentHead: segment.head,
+    opacity,
+    egressClass: egressClass ?? undefined,
+    pathArgs,
+    resolvedPathTargets,
+    signals: pathAnalysis.signals,
+    context,
+    ...overrides,
+  })
+
   const outsideMutation =
     pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed'
   const mutationPrescan =
@@ -832,6 +947,21 @@ async function evaluateSegment(
         })
       : null
   if (mutationPrescan) {
+    const { request, decision } = evaluateSegmentShellPolicy(
+      buildPolicyInput({
+        effect: 'local_mutation',
+        location:
+          pathAnalysis.location === 'unknown'
+            ? 'unknown'
+            : pathAnalysis.location === 'repo_outside' || pathAnalysis.location === 'mixed'
+              ? pathAnalysis.location
+              : 'repo_local',
+        signals: ['tier1_catastrophic', mutationPrescan.reason, ...pathAnalysis.signals],
+      }),
+    )
+    const legacyReason = policyDecisionRequiresAsk(decision)
+      ? policyDecisionToLegacyReason(decision, { outsideMutation, effect: 'local_mutation' })
+      : 'tier1_catastrophic'
     return askVerdict({
       location:
         pathAnalysis.location === 'unknown'
@@ -842,26 +972,33 @@ async function evaluateSegment(
       opacity,
       effect: 'local_mutation',
       confidence: 'deterministic',
-      reason: 'tier1_catastrophic',
-      signals: ['tier1_catastrophic', mutationPrescan.reason],
+      reason: legacyReason,
+      signals: ['tier1_catastrophic', mutationPrescan.reason, ...decision.signals],
+      capabilityRequests: [request],
+      authorizationDecision: decision,
     })
   }
-  const needsTier1 =
+  const needsPolicy =
     effect === 'unknown' ||
     TIER0_EXTERNAL_HEADS.has(segment.head) ||
     egressClass === 'ambiguous' ||
+    egressClass === 'read' ||
     (outsideMutation && effect !== 'read_only')
 
-  let tier1Trace: JudgeTrace | undefined
-  if (needsTier1) {
-    const tier1Text = recursiveScript ?? command
-    const tier1 = await context.judge.evaluate({
-      text: tier1Text,
-      context: { cwd: context.cwd, repoRoot: context.repoRoot },
-      innerCode: recursiveScript ?? undefined,
-    })
-    tier1Trace = (context.judge as TracedTier1Judge).lastTrace as JudgeTrace | undefined
-    if (tier1RequiresAsk(tier1)) {
+  let policyMetadata: Pick<InternalSegmentVerdict, 'capabilityRequests' | 'authorizationDecision'> =
+    {}
+  if (needsPolicy) {
+    const { request, decision } = evaluateSegmentShellPolicy(
+      buildPolicyInput({
+        effect,
+        location: pathAnalysis.location,
+      }),
+    )
+    policyMetadata = {
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+    }
+    if (policyDecisionRequiresAsk(decision)) {
       return askVerdict({
         location:
           pathAnalysis.location === 'unknown'
@@ -870,27 +1007,52 @@ async function evaluateSegment(
               ? pathAnalysis.location
               : 'repo_local',
         opacity,
-        effect: !tier1.local_recoverable ? 'remote_mutation' : effect,
-        confidence: 'llm',
-        reason: 'tier1_catastrophic',
-        signals: ['tier1_catastrophic', tier1.reason],
-        judgeTrace: tier1Trace,
+        effect:
+          decision.reason === 'external_effect' || decision.reason === 'network_connect'
+            ? 'remote_mutation'
+            : effect,
+        confidence: 'deterministic',
+        reason: policyDecisionToLegacyReason(decision, { outsideMutation, effect }),
+        signals: ['policy_required', ...decision.signals],
+        ...policyMetadata,
       })
     }
   }
 
   if (outsideMutation && effect !== 'read_only') {
-    return withJudgeTrace(
-      allowVerdict({
+    const policyAllowsOutside =
+      policyMetadata.authorizationDecision?.outcome === 'allow' &&
+      (policyMetadata.authorizationDecision.matchedRule === 'grant.exact' ||
+        policyMetadata.authorizationDecision.matchedRule === 'boundary.verified' ||
+        policyMetadata.authorizationDecision.matchedRule === 'builtin.trusted_workspace')
+    if (!policyAllowsOutside) {
+      const legacyReason =
+        policyMetadata.authorizationDecision &&
+        policyDecisionRequiresAsk(policyMetadata.authorizationDecision)
+          ? policyDecisionToLegacyReason(policyMetadata.authorizationDecision, {
+              outsideMutation,
+              effect,
+            })
+          : 'outside_repo_mutation'
+      return askVerdict({
         location: pathAnalysis.location,
         opacity,
         effect: 'local_mutation',
-        confidence: tier1Trace ? 'llm' : 'deterministic',
-        reason: 'repo_outside_local_mutation',
-        signals: ['repo_outside_local_mutation', ...pathAnalysis.signals],
-      }),
-      tier1Trace,
-    )
+        confidence: 'deterministic',
+        reason: legacyReason,
+        signals: ['outside_repo_mutation', ...pathAnalysis.signals],
+        ...policyMetadata,
+      })
+    }
+    return allowVerdict({
+      location: pathAnalysis.location,
+      opacity,
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: 'repo_outside_local_mutation',
+      signals: ['repo_outside_local_mutation', ...pathAnalysis.signals],
+      ...policyMetadata,
+    })
   }
 
   if (
@@ -898,17 +1060,18 @@ async function evaluateSegment(
     (effect === 'read_only' || effect === 'local_mutation') &&
     opacity !== 'opaque'
   ) {
-    return withJudgeTrace(
-      allowVerdict({
-        location: 'repo_local',
-        opacity,
-        effect,
-        confidence: 'assumed_repo_local',
-        reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
-        signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
-      }),
-      tier1Trace,
-    )
+    return allowVerdict({
+      location: 'repo_local',
+      opacity,
+      effect,
+      confidence: 'assumed_repo_local',
+      reason: effect === 'read_only' ? 'read_only' : 'repo_local_mutation',
+      signals: effect === 'read_only' ? ['read_only'] : ['repo_local_mutation'],
+      ...withShellPolicyMetadata(
+        buildPolicyInput({ effect, location: 'repo_local' }),
+        policyMetadata,
+      ),
+    })
   }
 
   if (effect === 'read_only') {
@@ -918,48 +1081,54 @@ async function evaluateSegment(
           ? 'repo_local'
           : pathAnalysis.location
         : 'unknown'
-    return withJudgeTrace(
-      allowVerdict({
-        location: readOnlyLocation,
-        opacity,
-        effect: 'read_only',
-        confidence: context.trustedCwd && context.cwd ? 'assumed_repo_local' : 'deterministic',
-        reason: 'read_only',
-        signals: ['read_only'],
-      }),
-      tier1Trace,
-    )
+    return allowVerdict({
+      location: readOnlyLocation,
+      opacity,
+      effect: 'read_only',
+      confidence: context.trustedCwd && context.cwd ? 'assumed_repo_local' : 'deterministic',
+      reason: 'read_only',
+      signals: ['read_only'],
+      ...withShellPolicyMetadata(
+        buildPolicyInput({ effect: 'read_only', location: readOnlyLocation }),
+        policyMetadata,
+      ),
+    })
   }
 
   if (allowOverride) {
-    return withJudgeTrace(allowFromCustomOverride(opacity), tier1Trace)
+    return allowFromCustomOverride(opacity)
   }
 
   if (context.unknownLocalEffect === 'allow_flagged') {
-    return withJudgeTrace(
-      allowVerdict({
-        location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
-        opacity,
-        effect: 'unknown',
-        confidence: 'assumed_repo_local',
-        reason: 'unknown_local_effect',
-        signals: ['unknown_local_effect'],
-      }),
-      tier1Trace,
-    )
-  }
-
-  return withJudgeTrace(
-    askVerdict({
-      location: pathAnalysis.location,
+    return allowVerdict({
+      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
       opacity,
-      effect,
-      confidence: 'deterministic',
+      effect: 'unknown',
+      confidence: 'assumed_repo_local',
       reason: 'unknown_local_effect',
       signals: ['unknown_local_effect'],
-    }),
-    tier1Trace,
-  )
+      ...withShellPolicyMetadata(
+        buildPolicyInput({
+          effect: 'unknown',
+          location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+        }),
+        policyMetadata,
+      ),
+    })
+  }
+
+  return askVerdict({
+    location: pathAnalysis.location,
+    opacity,
+    effect,
+    confidence: 'deterministic',
+    reason: 'unknown_local_effect',
+    signals: ['unknown_local_effect'],
+    ...withShellPolicyMetadata(
+      buildPolicyInput({ effect, location: pathAnalysis.location }),
+      policyMetadata,
+    ),
+  })
 }
 
 function toVerdictResult(
@@ -981,6 +1150,8 @@ function toVerdictResult(
     fingerprint: verdictFingerprint(relative, commandRedacted),
     signals: internal.signals,
     judgeTrace: internal.judgeTrace,
+    capabilityRequests: internal.capabilityRequests,
+    authorizationDecision: internal.authorizationDecision,
   }
 }
 

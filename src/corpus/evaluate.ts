@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import type { Assessment, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
-import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
 import {
   type CorpusGateMetrics,
@@ -99,16 +98,8 @@ export async function evaluateCorpus(
     confusion[expected] = { allow: 0, allow_flagged: 0, deny_pending_approval: 0 }
   }
 
-  const judge = createDeterministicJudgeStub()
   for (const testCase of cases) {
-    const result = await classifyShell(
-      testCase.command,
-      cwd,
-      repoRoot,
-      DEFAULT_CONFIG_V3,
-      options,
-      judge,
-    )
+    const result = await classifyShell(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
     results.push({ actual: result.verdict, reason: result.reason })
     confusion[testCase.verdict][result.verdict] += 1
     const verdictOk = result.verdict === testCase.verdict
@@ -183,18 +174,10 @@ export async function evaluateCommandBatch(
 ): Promise<CommandBatchResult[]> {
   const { cwd } = defaultCorpusEvalPaths(repoRoot)
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-  const judge = createDeterministicJudgeStub()
   const results: CommandBatchResult[] = []
 
   for (const testCase of cases) {
-    const result = await classifyShell(
-      testCase.command,
-      cwd,
-      repoRoot,
-      DEFAULT_CONFIG_V3,
-      options,
-      judge,
-    )
+    const result = await classifyShell(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
     const isFn = isMustAskMiss(
       {
         category: 'must-ask',
@@ -234,18 +217,10 @@ export async function evaluateFpCommandBatch(
 ): Promise<FpCommandBatchResult[]> {
   const { cwd } = defaultCorpusEvalPaths(repoRoot)
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-  const judge = createDeterministicJudgeStub()
   const results: FpCommandBatchResult[] = []
 
   for (const testCase of cases) {
-    const result = await classifyShell(
-      testCase.command,
-      cwd,
-      repoRoot,
-      DEFAULT_CONFIG_V3,
-      options,
-      judge,
-    )
+    const result = await classifyShell(testCase.command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
     results.push({
       command: testCase.command,
       actual: result.verdict,

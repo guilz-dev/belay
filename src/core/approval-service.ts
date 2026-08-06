@@ -7,6 +7,7 @@ import {
 import { compactApprovals } from './approval.js'
 import { buildApprovalRecordedMessage, type ReplayAdapterId } from './approval-replay.js'
 import { verifyApprovalToken } from './approval-token.js'
+import { APPROVAL_STATE_VERSION_V3, mintGrantForApprovedRecord } from './capability/approval-v3.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
 import type { ApprovalStateFile } from './types.js'
@@ -58,16 +59,19 @@ export async function recordApproval(params: {
 
   const approved = await store.loadApproved()
   approved.state = compactApprovals(approved.state)
-  approved.state.approvals.push({
+  const approvedRecord = mintGrantForApprovedRecord({
     ...approval,
     approvedAt: new Date().toISOString(),
   })
+  approved.state.version = APPROVAL_STATE_VERSION_V3
+  approved.state.revision = (approved.state.revision ?? 0) + 1
+  approved.state.approvals.push(approvedRecord)
   await store.writeApproved(approved.filePath, approved.state)
 
   return {
     ok: true,
     message: buildApprovalRecordedMessage(config, approval, adapter),
-    approval,
+    approval: approvedRecord,
   }
 }
 

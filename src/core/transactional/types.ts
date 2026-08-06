@@ -1,3 +1,4 @@
+import type { BoundaryDriverId } from '../capability/attestation.js'
 import type { Assessment, ClassifyResult, HookVerdict } from '../types.js'
 
 export type TransactionalFileChangeKind = 'added' | 'modified' | 'deleted'
@@ -56,4 +57,6 @@ export interface TransactionalRunnerParams {
   timeoutMs: number
   predicted: ClassifyResult
   diffContext: TransactionalDiffContext
+  boundaryDriverId?: BoundaryDriverId
+  egressProxyEnv?: Record<string, string>
 }

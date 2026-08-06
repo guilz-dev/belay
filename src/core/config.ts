@@ -1,6 +1,8 @@
 import path from 'node:path'
+import type { BoundaryDriverId } from './capability/attestation.js'
 import { warnDeprecatedJudgeModelAuto } from './judge-model-policy.js'
 import type {
+  BelayMode,
   ClassifierOptions,
   ControlPlaneIntegrity,
   ScrubOptions,
@@ -18,8 +20,6 @@ import {
   type BelayJudgeRuntimeConfig,
   normalizeJudgeRuntimeConfig,
 } from './verdict/judge-runtime-config.js'
-
-export type BelayMode = 'enforce' | 'audit'
 
 export type { UnknownLocalEffectPolicy }
 
@@ -135,7 +135,11 @@ export interface JudgeCloudConsent {
   by: string
 }
 
+export type BelayJudgeMode = 'shadow' | 'off'
+
 export interface BelayJudgeConfig {
+  /** Gate uses PolicyEngine; judge runs async shadow/compare only. */
+  mode?: BelayJudgeMode
   provider: JudgeProvider
   providerId?: JudgeProviderId | DeprecatedJudgeProviderId
   model: string
@@ -148,6 +152,7 @@ export interface BelayJudgeConfig {
 }
 
 export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
+  mode: 'shadow',
   provider: 'ollama',
   providerId: 'ollama',
   model: 'gemma4:e2b',
@@ -157,6 +162,7 @@ export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
 }
 
 export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig = {
+  mode: 'shadow',
   provider: 'openai-compatible',
   providerId: 'codex',
   model: 'gpt-5.3-codex-high',
@@ -228,8 +234,14 @@ export interface BelayEgressConfig {
   demoteL3External: boolean
 }
 
+export interface BelayCapabilityConfig {
+  grantsEnabled?: boolean
+  boundaryDriver?: BoundaryDriverId
+  attestationRelPath?: string
+}
+
 export interface BelayConfigV4 {
-  version: 4
+  version: 4 | 5
   adapter?: 'cursor' | 'claude' | 'codex'
   /** Where hooks/runtime/skill artifacts are installed. Defaults to project. */
   installScope?: 'project' | 'global'
@@ -249,6 +261,7 @@ export interface BelayConfigV4 {
   sandbox: BelaySandboxConfig
   audit: BelayConfigV2['audit']
   judge: BelayJudgeConfig
+  capability?: BelayCapabilityConfig
 }
 
 /** @deprecated Use BelayConfigV4 */
@@ -493,7 +506,9 @@ export function isConfigV3(value: unknown): value is BelayConfigV4 {
 }
 
 export function isConfigV4(value: unknown): value is BelayConfigV4 {
-  return typeof value === 'object' && value !== null && (value as BelayConfigV4).version === 4
+  const version =
+    typeof value === 'object' && value !== null ? (value as BelayConfigV4).version : null
+  return version === 4 || version === 5
 }
 
 export function normalizeJudgeProvider(
@@ -516,6 +531,7 @@ function defaultJudgeTemplateForProvider(
   }
   if (provider === 'anthropic') {
     return {
+      mode: 'shadow',
       provider: 'anthropic',
       providerId: 'claude',
       model: 'claude-sonnet-4-6',
@@ -567,6 +583,7 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
     const endpoint: string | null =
       typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null
     return {
+      mode: judge.mode === 'off' ? 'off' : 'shadow',
       provider,
       providerId: rawProviderId as DeprecatedJudgeProviderId,
       model,
@@ -615,6 +632,7 @@ export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig 
   }
 
   const normalized: BelayJudgeConfig = {
+    mode: judge.mode === 'off' ? 'off' : 'shadow',
     provider,
     providerId,
     model,
@@ -695,6 +713,7 @@ type RawConfigInput = Partial<{
   sandbox: Partial<BelaySandboxConfig>
   audit: Partial<BelayConfigV2['audit']>
   installScope: 'project' | 'global'
+  capability: Partial<BelayCapabilityConfig>
 }>
 
 function hasV3Sections(raw: RawConfigInput): boolean {
@@ -827,6 +846,20 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
   })
 }
 
+function normalizeV5Raw(raw: RawConfigInput): BelayConfigV4 {
+  const base = normalizeV3Raw({ ...raw, version: 4 })
+  return {
+    ...base,
+    version: 5,
+    capability: {
+      grantsEnabled: raw.capability?.grantsEnabled !== false,
+      boundaryDriver: raw.capability?.boundaryDriver ?? 'host-integration',
+      attestationRelPath: raw.capability?.attestationRelPath ?? '.belay/attestation.json',
+      ...(raw.capability ?? {}),
+    },
+  }
+}
+
 export function migrateConfig(loaded: unknown): BelayConfigV4 {
   if (typeof loaded !== 'object' || loaded === null) {
     return { ...DEFAULT_CONFIG_V4 }
@@ -836,6 +869,10 @@ export function migrateConfig(loaded: unknown): BelayConfigV4 {
 
   if (raw.version === 4) {
     return normalizeV3Raw(raw)
+  }
+
+  if (raw.version === 5) {
+    return normalizeV5Raw(raw)
   }
 
   if (raw.version === 3 || (raw.version === undefined && hasV3Sections(raw))) {

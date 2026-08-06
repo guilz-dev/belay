@@ -2,7 +2,6 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../../core/config.js'
 import { classifyShell } from '../../core/verdict/adapter.js'
-import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
 import { generateProbeCases } from '../../corpus/adversarial-probe.js'
 import { evaluateCommandBatch } from '../../corpus/evaluate.js'
 import { AUTO_LABEL_MUTATORS, CATASTROPHIC_CORES } from '../../corpus/mutators.js'
@@ -15,7 +14,6 @@ import { defaultCorpusEvalPaths } from '../../corpus/runtime-match.js'
 describe('corpus eval context (probe-aligned)', () => {
   const { repoRoot, cwd } = defaultCorpusEvalPaths()
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-  const judge = createDeterministicJudgeStub()
 
   it('denies rm -rf .git wrappers from subdirectory cwd (nested .git resolution)', async () => {
     const commands = [
@@ -25,7 +23,7 @@ describe('corpus eval context (probe-aligned)', () => {
       '(rm -rf .git)',
     ]
     for (const command of commands) {
-      const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options, judge)
+      const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
       expect(result.verdict, command).toBe('deny_pending_approval')
     }
   })

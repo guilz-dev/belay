@@ -1,4 +1,5 @@
 import { buildReplayEnvelopeFields } from './approval-replay.js'
+import { attachCapabilityEnvelope } from './capability/approval-v3.js'
 import { DEFAULT_APPROVAL_CONFIG } from './config.js'
 import type { ApprovalRecord, ApprovalStateFile } from './types.js'
 
@@ -21,12 +22,16 @@ export function isExecutionLeaseExpired(approval: ApprovalRecord): boolean {
 }
 
 export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
-  return {
+  const compacted: ApprovalStateFile = {
     version: state.version,
     approvals: state.approvals.filter(
       (approval) => !isExpired(approval) && !isExecutionLeaseExpired(approval),
     ),
   }
+  if (state.revision !== undefined) {
+    compacted.revision = state.revision
+  }
+  return compacted
 }
 
 export function mergeApprovalStates(
@@ -43,7 +48,13 @@ export function mergeApprovalStates(
     }
   }
   return compactApprovals({
-    version: target.version === 2 || source.version === 2 ? 2 : 1,
+    version:
+      target.version === 3 || source.version === 3
+        ? 3
+        : target.version === 2 || source.version === 2
+          ? 2
+          : 1,
+    revision: Math.max(target.revision ?? 0, source.revision ?? 0),
     approvals: [...byId.values()],
   })
 }
@@ -82,6 +93,7 @@ export function createApprovalRecordWithEnvelope(params: {
     payload?: Record<string, unknown>
   }
   scopeHint?: ApprovalRecord['scopeHint']
+  capabilityRequests?: ApprovalRecord['capabilityRequests']
 }): ApprovalRecord {
   const envelope = buildReplayEnvelopeFields({
     kind: params.kind,
@@ -109,6 +121,7 @@ export function createApprovalRecordWithEnvelope(params: {
     payloadHash: envelope.payloadHash,
     payloadJson: envelope.payloadJson,
     scopeHint: params.scopeHint,
+    capabilityRequests: params.capabilityRequests,
   })
 }
 
@@ -127,6 +140,7 @@ export function createApprovalRecord(params: {
   payloadHash?: string
   payloadJson?: string
   scopeHint?: ApprovalRecord['scopeHint']
+  capabilityRequests?: ApprovalRecord['capabilityRequests']
 }): ApprovalRecord {
   const createdAt = nowIso()
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString()
@@ -159,5 +173,5 @@ export function createApprovalRecord(params: {
   if (params.scopeHint) {
     record.scopeHint = params.scopeHint
   }
-  return record
+  return attachCapabilityEnvelope(record, params.capabilityRequests)
 }

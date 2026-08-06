@@ -1,3 +1,7 @@
+import { BOUNDARY_PROFILE_L3_L4_ONLY } from './capability/boundary-profile.js'
+import { policyReasonToLegacyReason } from './capability/policy-bridge.js'
+import { evaluateSubagentPolicy, policyDecisionRequiresAsk } from './capability/policy-engine.js'
+import type { BelayConfigV3 } from './config.js'
 import { canonicalStringify, subagentFingerprint } from './fingerprint.js'
 import { subagentFingerprintSource } from './replay-scrub.js'
 import { scrubValue } from './scrub.js'
@@ -34,6 +38,7 @@ export function classifySubagent(
   payload: Record<string, unknown>,
   repoRoot: string,
   options: ClassifierOptions = {},
+  config: BelayConfigV3,
 ): ClassifyResult {
   const kind =
     payload.tool_name === 'Task' ? 'Task' : String(payload.subagent_type ?? 'generalPurpose')
@@ -45,6 +50,42 @@ export function classifySubagent(
     const pattern = new RegExp(`\\b${term}\\b`, 'i')
     return pattern.test(lowered)
   })
+  const signals = hasExternalTerm ? ['subagent_external_intent_hint'] : ['subagent_default_review']
+
+  const { request, decision } = evaluateSubagentPolicy(
+    {
+      subagentType: kind,
+      summary,
+      repoRoot,
+      cwd: repoRoot,
+      inputFingerprint: fingerprint,
+      signals,
+    },
+    config,
+    {
+      grants: options.grants,
+      attestation: options.attestation,
+      egressProxyActive: options.egressProxyActive,
+    },
+  )
+
+  if (policyDecisionRequiresAsk(decision)) {
+    return {
+      verdict: 'deny_pending_approval',
+      reason: policyReasonToLegacyReason(decision),
+      summary,
+      fingerprint,
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: hasExternalTerm,
+        blastRadius: 'subagent task scope',
+        confidence: hasExternalTerm ? 0.7 : 0.67,
+        signals: [...signals, ...decision.signals],
+      },
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+    }
+  }
 
   return {
     verdict: 'allow_flagged',
@@ -56,7 +97,10 @@ export function classifySubagent(
       external: false,
       blastRadius: 'subagent task scope',
       confidence: hasExternalTerm ? 0.7 : 0.67,
-      signals: hasExternalTerm ? ['subagent_external_intent_hint'] : ['subagent_default_review'],
+      signals,
     },
+    capabilityRequests: [request],
+    authorizationDecision: decision,
+    boundaryProfile: options.boundaryProfile ?? BOUNDARY_PROFILE_L3_L4_ONLY,
   }
 }
