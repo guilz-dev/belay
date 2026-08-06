@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.5.0 — 2026-08-07
+
+### Added
+
+- **Capability-based policy engine** — synchronous `PolicyEngine` with `CapabilityRequestV1`, `PolicyDecision` (allow / require_approval / deny), and resource-scoped grants (`CapabilityGrantV1`).
+- **Boundary drivers** — `BoundaryDriver` interface with host-integration stub, Docker container isolation, and egress-proxy chokepoint; transactional runner executes via drivers.
+- **`belay session start`** — attested editor sessions with boundary profile propagation through adapters and gate contract.
+- **Approval state v3** — capability-grant normalization, atomic lease consumption, replay envelope with capability request hash; v1/v2 migration preserved.
+- **Judge shadow mode** — Tier1 judge removed from synchronous gate path; `judge.mode: shadow | off` with decision trace in gate audit.
+- **Cursor ACP judge session transport** — optional unix-socket broker reuse with fail-closed spawn fallback and fallback hints.
+- **Corpus latency budget** — p95 classification budget tests for shell, tool, and subagent gate paths.
+- **Container integration tests** — basic mount RO/RW, echo, and `materializeGrant` coverage.
+
+### Changed
+
+- Shell / tool / subagent classification routes through `PolicyEngine` (deterministic core); file-mutation LLM verdict removed from gate.
+- Policy precedence: forbid → grant → boundary → builtin → default; stale attestation fails closed.
+- `GateVerdict` extended with `capabilityRequests`, `authorizationDecision`, and `boundaryProfile`.
+- Judge doctor downgraded to shadow advisory; config wizard clarifies credential source.
+- Post-release verify runs `npx` check outside package root.
+
+### Fixed
+
+- Capability boundary enforcement hardened after policy-engine review.
+- Judge-doctor smoke probe tests independent of host CLI availability.
+
 ## 0.4.0 — 2026-08-02
 
 ### Added
