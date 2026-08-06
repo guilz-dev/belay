@@ -232,9 +232,9 @@ describe('config-io control plane migration', () => {
     await expect(
       readFile(path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'), 'utf8'),
     ).rejects.toThrow()
-    expect(await readFile(path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json'), 'utf8')).toBe(
-      '{not-json',
-    )
+    expect(
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json'), 'utf8'),
+    ).toBe('{not-json')
   })
 
   it('does not re-merge control-plane approvals on upgrade when repo-local files already exist', async () => {
