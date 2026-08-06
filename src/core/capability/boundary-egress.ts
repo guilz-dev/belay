@@ -79,6 +79,10 @@ function dockerNetworkInspect(name: string): Promise<boolean> {
   })
 }
 
+export async function isBelayContainerNetworkReady(repoRoot: string): Promise<boolean> {
+  return dockerNetworkInspect(belayContainerNetworkName(repoRoot))
+}
+
 function dockerNetworkCreateInternal(name: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', ['network', 'create', '--internal', '--label', 'belay=1', name], {

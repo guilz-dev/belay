@@ -6,7 +6,7 @@ import type { BoundaryAttestation } from './attestation.js'
 import type { BoundaryDriver, BoundaryMaterializeContext } from './boundary-driver.js'
 import { dockerEnvArgs, dockerNetworkArgs, ensureBelayContainerNetwork } from './boundary-egress.js'
 import { materializeContainerBoundaryGrant } from './boundary-grant-materialize.js'
-import type { BoundaryRunOptions } from './boundary-run.js'
+import type { BoundaryPrepareContext, BoundaryRunOptions } from './boundary-run.js'
 
 const ATTESTATION_TTL_MS = 15 * 60_000
 const DEFAULT_IMAGE = 'alpine:3.20'
@@ -103,6 +103,7 @@ export function createContainerBoundaryDriver(
   const image = options.image ?? DEFAULT_IMAGE
   const proxyEnv = options.egressProxyEnv ?? {}
   const repoRoot = options.repoRoot
+  let preparedNetwork = false
   return {
     id: 'container',
     async probe() {
@@ -114,10 +115,16 @@ export function createContainerBoundaryDriver(
       }
       return containerAttestation(proxyEnv)
     },
+    async prepare(context: BoundaryPrepareContext) {
+      if (context.egressProxyActive && context.repoRoot) {
+        await ensureBelayContainerNetwork(context.repoRoot)
+        preparedNetwork = true
+      }
+    },
     async run(command, cwd, timeoutMs, options?: BoundaryRunOptions) {
       const mountReadOnly = options?.mountReadOnly !== false
       const proxyActive = Object.keys(proxyEnv).length > 0
-      if (proxyActive && repoRoot) {
+      if (proxyActive && repoRoot && !preparedNetwork) {
         await ensureBelayContainerNetwork(repoRoot)
       }
       return runInContainer(image, command, cwd, timeoutMs, proxyEnv, mountReadOnly, repoRoot)

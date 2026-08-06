@@ -55,9 +55,28 @@ describe('grant lease', () => {
   it('consumes grant uses atomically in memory', () => {
     const state = { version: 3 as const, approvals: [approvedWithGrant()] }
     const grant = grantsFromApprovedState(state, '/repo')[0]
-    expect(grant).toBeDefined()
-    const consumed = consumeGrantLease(state, grant!.grantId)
+    expect(grant?.grantId).toBe('grant_a1')
+    if (!grant) {
+      throw new Error('expected grant')
+    }
+    const consumed = consumeGrantLease(state, grant.grantId)
     expect(consumed.consumed).toBe(true)
     expect(consumed.state.approvals[0]?.grant?.usesRemaining).toBe(0)
+  })
+
+  it('rejects second lease consumption for one-shot grants', () => {
+    const state = { version: 3 as const, approvals: [approvedWithGrant()] }
+    const grant = grantsFromApprovedState(state, '/repo')[0]
+    expect(grant?.grantId).toBe('grant_a1')
+    if (!grant) {
+      throw new Error('expected grant')
+    }
+    const first = consumeGrantLease(state, grant.grantId)
+    expect(first.consumed).toBe(true)
+    const second = consumeGrantLease(first.state, grant.grantId)
+    expect(second.consumed).toBe(false)
+    expect(
+      findMatchingGrant(grantsFromApprovedState(second.state, '/repo'), request),
+    ).toBeUndefined()
   })
 })

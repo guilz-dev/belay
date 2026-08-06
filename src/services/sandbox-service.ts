@@ -11,6 +11,7 @@ import {
   evaluateL1FullStatus,
   isCapabilityBrokerDemotionActive,
 } from '../core/capability/broker.js'
+import { evaluateGateLatencyRatchetAdvisories } from '../core/capability/gate-latency-ratchet.js'
 import { loadShadowRatchetWarnings } from '../core/capability/gate-shadow-ratchet.js'
 import { trustedWorkspaceRootsPath } from '../core/capability/trusted-workspace-roots.js'
 import { belayStateDir, configuredControlPlaneDir } from '../core/config.js'
@@ -40,6 +41,8 @@ export interface SandboxStatusReport {
     approvalSigningRequired: boolean
   }
   issues: string[]
+  /** Quality-loop ratchet hints — do not affect sandbox status exit code. */
+  advisories: string[]
 }
 
 export async function sandboxStatus(
@@ -92,7 +95,7 @@ export async function sandboxStatus(
       `L1-full is configured but attestation only supports ${guaranteePosture.attestedProfile} (run belay session start)`,
     )
   }
-  issues.push(...shadowRatchetWarnings)
+  const advisories = [...evaluateGateLatencyRatchetAdvisories(), ...shadowRatchetWarnings]
 
   return {
     repoRoot,
@@ -107,6 +110,7 @@ export async function sandboxStatus(
     guaranteePosture,
     l1Full,
     issues,
+    advisories,
   }
 }
 
@@ -162,6 +166,12 @@ export function formatSandboxStatusReport(report: SandboxStatusReport): string {
     lines.push('Issues:')
     for (const issue of report.issues) {
       lines.push(`  - ${issue}`)
+    }
+  }
+  if (report.advisories.length > 0) {
+    lines.push('Advisories:')
+    for (const advisory of report.advisories) {
+      lines.push(`  - ${advisory}`)
     }
   }
   return `${lines.join('\n')}\n`

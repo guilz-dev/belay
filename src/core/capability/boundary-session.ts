@@ -10,15 +10,28 @@ import {
   signBoundaryAttestation,
   verifySignedBoundaryAttestation,
 } from './boundary-attestation-sign.js'
-import { getDefaultBoundaryDriver } from './boundary-driver.js'
+import { type BoundaryDriver, getDefaultBoundaryDriver } from './boundary-driver.js'
 import {
   dockerNetworkArgs,
   isEgressProxyActive,
   resolveBoundaryEgressProxyEnv,
 } from './boundary-egress.js'
+import {
+  type BoundaryPrepareContext,
+  type BoundaryRunOptions,
+  runWithBoundaryRunnable,
+} from './boundary-run.js'
 
 export interface BoundarySessionOptions {
   egressProxyRunning?: boolean
+}
+
+export interface ResolvedBoundaryDriverContext {
+  driver: BoundaryDriver
+  driverId: BoundaryDriverId
+  proxyActive: boolean
+  proxyEnv: Record<string, string>
+  prepareContext: BoundaryPrepareContext
 }
 
 export function boundaryAttestationPath(repoRoot: string, config: BelayConfigV4): string {
@@ -64,12 +77,12 @@ export async function saveBoundaryAttestation(
   })
 }
 
-export async function startBoundarySession(params: {
+export async function resolveBoundaryDriverContext(params: {
   repoRoot: string
   config: BelayConfigV4
   driverId?: BoundaryDriverId
   egressProxyRunning?: boolean
-}): Promise<{ attestation: BoundaryAttestation; attestationPath: string }> {
+}): Promise<ResolvedBoundaryDriverContext> {
   const driverId = params.driverId ?? params.config.capability?.boundaryDriver ?? 'host-integration'
   let proxyActive = params.egressProxyRunning === true
   if (params.egressProxyRunning === undefined) {
@@ -90,7 +103,46 @@ export async function startBoundarySession(params: {
     egressProxyEnv: proxyEnv,
     repoRoot: params.repoRoot,
   })
-  const attestation = await driver.probe()
+  return {
+    driver,
+    driverId,
+    proxyActive,
+    proxyEnv,
+    prepareContext: {
+      repoRoot: params.repoRoot,
+      egressProxyActive: proxyActive,
+      proxyEnv,
+    },
+  }
+}
+
+export async function runWithBoundaryDriver(params: {
+  context: ResolvedBoundaryDriverContext
+  command: string
+  cwd: string
+  timeoutMs: number
+  runOptions?: BoundaryRunOptions
+}): Promise<Awaited<ReturnType<BoundaryDriver['run']>>> {
+  return runWithBoundaryRunnable(params.context.driver, {
+    prepareContext: params.context.prepareContext,
+    command: params.command,
+    cwd: params.cwd,
+    timeoutMs: params.timeoutMs,
+    runOptions: params.runOptions,
+  })
+}
+
+export async function startBoundarySession(params: {
+  repoRoot: string
+  config: BelayConfigV4
+  driverId?: BoundaryDriverId
+  egressProxyRunning?: boolean
+}): Promise<{ attestation: BoundaryAttestation; attestationPath: string }> {
+  const resolved = await resolveBoundaryDriverContext(params)
+  const attestation = await resolved.driver.probe()
+  if (resolved.driver.prepare) {
+    await resolved.driver.prepare(resolved.prepareContext)
+  }
   const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
   await saveBoundaryAttestation(
     attestationPath,
@@ -124,25 +176,17 @@ export async function runBoundaryAgentCommand(params: {
   command: string
   cwd?: string
   timeoutMs?: number
-}): Promise<Awaited<ReturnType<ReturnType<typeof getDefaultBoundaryDriver>['run']>>> {
-  const driverId = params.config.capability?.boundaryDriver ?? 'host-integration'
-  const egress = await egressStatus({ targetDir: params.repoRoot })
-  const proxyActive = isEgressProxyActive({
-    config: params.config,
-    running: egress.running,
-    foreignProxy: egress.foreignProxy,
-    repoRootMismatch: egress.repoRootMismatch,
-  })
-  const proxyEnv = resolveBoundaryEgressProxyEnv({
-    driverId,
-    config: params.config,
-    proxyActive,
-  })
-  const driver = getDefaultBoundaryDriver(driverId, {
-    egressProxyEnv: proxyEnv,
+}): Promise<Awaited<ReturnType<BoundaryDriver['run']>>> {
+  const context = await resolveBoundaryDriverContext({
     repoRoot: params.repoRoot,
+    config: params.config,
   })
-  return driver.run(params.command, params.cwd ?? params.repoRoot, params.timeoutMs ?? 30 * 60_000)
+  return runWithBoundaryDriver({
+    context,
+    command: params.command,
+    cwd: params.cwd ?? params.repoRoot,
+    timeoutMs: params.timeoutMs ?? 30 * 60_000,
+  })
 }
 
 export { dockerNetworkArgs }

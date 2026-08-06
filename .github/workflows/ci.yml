@@ -48,6 +48,32 @@ jobs:
       - name: Check CLI version
         run: pnpm check:version
 
+  verify-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Container boundary tests (Docker)
+        run: >-
+          pnpm test --
+          src/__tests__/capability/boundary-container-isolation.test.ts
+          src/__tests__/capability/boundary-driver-container.test.ts
+
   verify-macos:
     runs-on: macos-latest
     steps:

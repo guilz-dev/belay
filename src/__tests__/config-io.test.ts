@@ -189,6 +189,54 @@ describe('config-io control plane migration', () => {
     expect(migrated.approvals[0].approvalId).toBe('belay_cp_only')
   })
 
+  it('does not migrate control-plane approvals when repo-local approval files are corrupt', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cp-corrupt-local-'))
+    tempDirs.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
+
+    await initProject({ targetDir: repoRoot })
+    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json'), '{not-json')
+    await mkdir(controlPlaneDir, { recursive: true })
+    await writeFile(
+      path.join(controlPlaneDir, 'pending-approvals.json'),
+      `${JSON.stringify({
+        version: 1,
+        approvals: [
+          {
+            approvalId: 'belay_cp_should_not_restore',
+            kind: 'shell',
+            fingerprint: 'cp',
+            repoRoot,
+            reason: 'external_effect',
+            summary: 'cp push',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const existing = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...existing,
+        version: 3,
+        controlPlane: { enabled: false, configDir: controlPlaneDir },
+      })}\n`,
+    )
+
+    await mergeAndWriteConfig(repoRoot)
+
+    await expect(
+      readFile(path.join(repoRoot, '.cursor', 'belay', 'pending-approvals.json'), 'utf8'),
+    ).rejects.toThrow()
+    expect(await readFile(path.join(repoRoot, '.cursor', 'belay', 'approved-approvals.json'), 'utf8')).toBe(
+      '{not-json',
+    )
+  })
+
   it('does not re-merge control-plane approvals on upgrade when repo-local files already exist', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cp-skip-'))
     tempDirs.push(repoRoot)

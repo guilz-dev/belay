@@ -1,7 +1,7 @@
 import { runShellCommand, type ShellRunResult } from '../transactional/git-worktree.js'
 import type { BoundaryAttestation, BoundaryDriverId } from './attestation.js'
 import { createContainerBoundaryDriver } from './boundary-driver-container.js'
-import type { BoundaryRunOptions } from './boundary-run.js'
+import type { BoundaryPrepareContext, BoundaryRunOptions } from './boundary-run.js'
 import type { CapabilityGrantV1 } from './grant.js'
 import type { CapabilityRequestV1 } from './request.js'
 
@@ -21,6 +21,7 @@ export { boundaryMountReadOnlyFromPrediction } from './boundary-run.js'
 export interface BoundaryDriver {
   id: BoundaryDriverId
   probe(): Promise<BoundaryAttestation>
+  prepare?(context: BoundaryPrepareContext): Promise<void>
   run(
     command: string,
     cwd: string,
@@ -59,6 +60,9 @@ export function createHostIntegrationDriver(): BoundaryDriver {
     id: 'host-integration',
     async probe() {
       return hostIntegrationAttestation('host-integration')
+    },
+    async prepare() {
+      // L3 host path has no runtime preparation.
     },
     run(command, cwd, timeoutMs) {
       return runShellCommand(command, cwd, timeoutMs)

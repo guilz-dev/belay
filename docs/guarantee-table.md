@@ -13,7 +13,7 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 
 | Configuration | Layers active | Cooperative agent | Adversarial same-OS-user | Tested scenarios |
 |---------------|---------------|-------------------|---------------------------|------------------|
-| Default (L3+L4) | Prediction + approval | Heuristic gates + human approval for high-risk actions; **repo-outside local-recoverable mutations pass after Tier1** (ADR-002) | Not protected — control plane and hooks are detect-only | `l3-allow-readonly`, `l3-allow-read-egress` |
+| Default (L3+L4) | Prediction + approval | Heuristic gates + human approval for high-risk actions; **repo-outside mutations require approval** at L3 (ADR-003 PolicyEngine; supersedes ADR-002 Tier1 path) | Not protected — control plane and hooks are detect-only | `l3-allow-readonly`, `l3-allow-read-egress` |
 | L1 partial (egress) | Egress proxy + L3+L4 | Read-only egress passes; mutate/exfil still requires approval | Not protected — proxy bypass / raw sockets remain | `l1p-allow-readonly`, `l1p-allow-read-egress`, `l1p-deny-write-egress` |
 | L2 (transactional) | Observed diff + L3+L4 | Low-confidence local mutations observed in git worktree before commit | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-read-egress` |
 | L1-full (sandbox + egress + isolation + signing) | Sandbox + egress broker + signed control plane + L3+L4 | Read-only egress passes; external sends and outside-repo writes require approval when the outer boundary can see them | Protected **only** when OS sandbox enforces FS/network deny-all and control plane is on a separate trust domain | `l1f-allow-readonly`, `l1f-allow-read-egress`, `l1f-deny-write-egress`, `l1f-deny-outside-repo` |
@@ -41,9 +41,10 @@ Recommended starting point: `belay init --preset l1-full-recommended`.
 Command-name lists are **noise-reduction caches** for the prediction layer (L3), not
 security boundaries. See [semver-policy.md](./ops/semver-policy.md).
 
-**Outside-repo FS (ADR-002):** at default L3, local-recoverable mutations outside the
-repository are allowed after Tier1 (`repo_outside_local_mutation`). Denying them requires
-L1-full (`sandbox.runtime` engaged) via `gate-engine` fs-scope boundary — not a Tier0 broad ask.
+**Outside-repo FS (ADR-003):** at default L3, mutations outside the repository are
+`require_approval` via PolicyEngine (`outside_repo_mutation`). L1-full (`sandbox.runtime`
+engaged) adds container FS enforcement via `gate-engine` fs-scope boundary and attested
+boundary grants.
 
 ## What is never guaranteed
 
