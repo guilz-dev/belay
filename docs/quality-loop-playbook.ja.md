@@ -51,6 +51,20 @@ GENERATE → LABEL → EVALUATE → DIAGNOSE → FIX → VERIFY → RATCHET
 
 候補コマンドは **生成・分類のみ**。実行器へ渡さない。
 
+## Gate latency ratchet（capability 移行 Phase 3）
+
+同期 gate 分類の p95/max を PLAN 目標（100ms / 500ms）へ段階的に引き上げる。
+
+| 段階 | 内容 |
+|------|------|
+| 計測 | `pnpm build && node scripts/measure-gate-latency.mjs` |
+| 記録 | `src/corpus/gate-latency-budget.ts` の `GATE_LATENCY_MEASURED_BASELINE` を更新 |
+| 閾値 | `max(実測 × 1.2, Step 1 床値)` — 床値を下げながら CI を維持 |
+| advisory | `belay sandbox status` の `advisories`（exit code 非影響） |
+| 検証 | `pnpm test -- src/__tests__/capability/gate-latency-p95.test.ts` |
+
+床値を下げる前に `make verify-parallel` または `pnpm test:stable` で flake がないことを確認する。
+
 ## ローカル実行
 
 ```bash

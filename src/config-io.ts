@@ -77,6 +77,44 @@ function approvalFilesExist(dir: string): boolean {
   return APPROVAL_STATE_FILES.some((fileName) => existsSync(path.join(dir, fileName)))
 }
 
+async function isCorruptApprovalStateFile(filePath: string): Promise<boolean> {
+  const raw = await readFile(filePath, 'utf8')
+  try {
+    JSON.parse(raw)
+    return false
+  } catch (error) {
+    return error instanceof SyntaxError
+  }
+}
+
+function normalizeApprovalStateFile(parsed: ApprovalStateFile): ApprovalStateFile {
+  const version = parsed.version === 3 ? 3 : parsed.version === 2 ? 2 : 1
+  return {
+    version,
+    revision: typeof parsed.revision === 'number' ? parsed.revision : undefined,
+    approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
+  }
+}
+
+/** Gate reads: corrupt JSON is treated as empty state (fail-closed). */
+async function readApprovalStateFileForGate(filePath: string): Promise<ApprovalStateFile> {
+  const raw = await readFile(filePath, 'utf8')
+  try {
+    return normalizeApprovalStateFile(JSON.parse(raw) as ApprovalStateFile)
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { version: 1, approvals: [] }
+    }
+    throw error
+  }
+}
+
+/** Migration reads: corrupt JSON must not be treated as empty. */
+async function readApprovalStateFileStrict(filePath: string): Promise<ApprovalStateFile> {
+  const raw = await readFile(filePath, 'utf8')
+  return normalizeApprovalStateFile(JSON.parse(raw) as ApprovalStateFile)
+}
+
 async function repoLocalApprovalsEmpty(repoRoot: string, config: BelayConfigV3): Promise<boolean> {
   const repoLocalDir = repoLocalStateDirFor(repoRoot, config)
   if (!approvalFilesExist(repoLocalDir)) {
@@ -87,23 +125,15 @@ async function repoLocalApprovalsEmpty(repoRoot: string, config: BelayConfigV3):
     if (!existsSync(filePath)) {
       continue
     }
-    const state = await readApprovalStateFile(filePath)
+    if (await isCorruptApprovalStateFile(filePath)) {
+      return false
+    }
+    const state = await readApprovalStateFileForGate(filePath)
     if (state.approvals.length > 0) {
       return false
     }
   }
   return true
-}
-
-async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFile> {
-  const raw = await readFile(filePath, 'utf8')
-  const parsed = JSON.parse(raw) as ApprovalStateFile
-  const version = parsed.version === 3 ? 3 : parsed.version === 2 ? 2 : 1
-  return {
-    version,
-    revision: typeof parsed.revision === 'number' ? parsed.revision : undefined,
-    approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
-  }
 }
 
 async function writeApprovalStateFile(filePath: string, state: ApprovalStateFile): Promise<void> {
@@ -124,12 +154,18 @@ async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string)
       continue
     }
     if (!existsSync(to)) {
+      if (await isCorruptApprovalStateFile(from)) {
+        continue
+      }
       await copyFile(from, to)
       await chmod(to, 0o600)
       continue
     }
-    const targetState = await readApprovalStateFile(to)
-    const sourceState = await readApprovalStateFile(from)
+    if ((await isCorruptApprovalStateFile(from)) || (await isCorruptApprovalStateFile(to))) {
+      continue
+    }
+    const targetState = await readApprovalStateFileStrict(to)
+    const sourceState = await readApprovalStateFileStrict(from)
     await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState))
   }
 }
@@ -238,7 +274,7 @@ export async function loadApprovalState(
   if (!existsSync(filePath)) {
     return { version: 1, approvals: [] }
   }
-  return readApprovalStateFile(filePath)
+  return readApprovalStateFileForGate(filePath)
 }
 
 export async function saveApprovalState(

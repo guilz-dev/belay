@@ -1,6 +1,6 @@
 /**
- * Tier0 egress tool classification (SPEC v2.1.3 R33–R34).
- * destructive → Tier0 ask | read → Tier0 allow | ambiguous → Tier1 (fail-closed)
+ * Egress tool classification (SPEC v2.1.3 R33–R34).
+ * destructive → ask | read → allow at egress layer | ambiguous → require_approval via PolicyEngine
  */
 
 export type EgressClassification = 'destructive' | 'read' | 'ambiguous'

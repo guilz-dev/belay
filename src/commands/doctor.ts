@@ -359,6 +359,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       for (const issue of sandbox.issues) {
         warnings.push(issue)
       }
+      for (const advisory of sandbox.advisories) {
+        warnings.push(advisory)
+      }
     }
 
     const boundaryDriver =

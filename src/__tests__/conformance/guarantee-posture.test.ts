@@ -26,6 +26,38 @@ describe('guarantee posture', () => {
     expect(posture.postureMismatch).toBe(true)
   })
 
+  it('downgrades configured profile when L1 egress proxy is not running', () => {
+    const config = {
+      ...DEFAULT_CONFIG_V4,
+      version: 5 as const,
+      sandbox: { ...DEFAULT_CONFIG_V4.sandbox, enabled: true, runtime: 'container' as const },
+      egress: { ...DEFAULT_CONFIG_V4.egress, enabled: true },
+      approvalSigning: { required: true },
+      controlPlane: {
+        ...DEFAULT_CONFIG_V4.controlPlane,
+        isolation: { mode: 'separate-user' as const, verifyAgentWritable: true },
+      },
+    }
+    const posture = evaluateGuaranteePosture({
+      config,
+      attestation: {
+        version: 1,
+        driver: 'container',
+        probedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        deniesUngrantedEffects: true,
+        materializesGrants: true,
+        probeSignals: ['docker'],
+      },
+      egressProxyRunning: false,
+    })
+    expect(posture.configuredProfile).toBe('l1-partial-egress')
+    expect(posture.attestedProfile).toBe('l3-l4-only')
+    expect(posture.l1FullConfigured).toBe(false)
+    expect(posture.l1FullAttested).toBe(false)
+    expect(posture.postureMismatch).toBe(false)
+  })
+
   it('aligns configured and attested profiles with fresh container attestation', () => {
     const config = {
       ...DEFAULT_CONFIG_V4,

@@ -150,6 +150,15 @@ const xargsProbe: CommandMutator = {
   apply: (core) => `xargs ${core} <<< ''`,
 }
 
+const findExecProbe: CommandMutator = {
+  id: 'find_exec',
+  purpose: 'find -exec invocation probe',
+  preservesSemantics: 'Not semantics-preserving — find -exec changes execution context',
+  forbiddenWhen: 'Always probe-only; do not auto-label',
+  tests: ['structural-suite MUST-ASK catastrophic bypass equivalence'],
+  apply: (core) => `find . -name '*.tmp' -exec ${core} {} \\;`,
+}
+
 /** Structural probes and promotion candidates — not used for auto-label in Phase A. */
 export const STRUCTURAL_PROBES: readonly CommandMutator[] = [
   nohup,
@@ -160,6 +169,7 @@ export const STRUCTURAL_PROBES: readonly CommandMutator[] = [
   base64PipeSh,
   pythonPipe,
   xargsProbe,
+  findExecProbe,
 ]
 
 /** All wrappers for structural-suite catastrophic bypass tests. */

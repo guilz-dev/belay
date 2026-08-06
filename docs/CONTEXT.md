@@ -44,12 +44,19 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - `authorizationDecision`
 - `boundaryProfile`
 
-## Out of scope (later phases)
+## Completed migration work
 
 - Approval state v3 migration and grant lease consumption at reference monitors
-- Docker `BoundaryDriver` and host `spawn` removal from transactional runner
+- Docker `BoundaryDriver` and transactional runner execution via `BoundaryDriver`
+- `belay session start` for boundary attestation
+- Gate sync classification latency budgets (`gate-latency-budget.ts`) and quality-loop ratchet advisories (`sandbox advisories`; PLAN 100ms/500ms tightening is ongoing via floor ratchet)
+
+## Out of scope (later phases)
+
 - Cedar WASM policy backend
-- p95 latency ratchet for full corpus (tracked separately in quality loop)
+- Seatbelt / Landlock `BoundaryDriver` implementations (types only today)
+- Legacy sync judge transport removal (after one release of shadow observation)
+- Host `spawn(env: process.env)` removal from L3 `host-integration` driver
 
 ## Layer split (L1 vs L3)
 

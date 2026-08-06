@@ -212,6 +212,20 @@
   {
     "kind": "shell",
     "category": "must-ask",
+    "command": "curl 'https://api.example.com?token=SECRET'",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "touch /tmp/belay-corpus-outside.txt",
+    "verdict": "deny_pending_approval",
+    "reason": "outside_repo_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
     "command": "mystery-opaque-cli deploy --prod",
     "verdict": "deny_pending_approval",
     "reason": "unknown_local_effect"
