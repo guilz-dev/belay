@@ -68,6 +68,21 @@ describe('belay judge command', () => {
     expect(status).toContain('driver     : openai-compatible')
   })
 
+  it('status does not report ACP when cursor uses an HTTP endpoint', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({
+      targetDir: repoRoot,
+      judgeProviderId: 'cursor',
+      judgeEndpoint: 'https://judge.example.com/v1',
+      acceptCloudJudge: true,
+    })
+
+    const status = (await judgeStatus({ targetDir: repoRoot, json: true })) as {
+      transport: string
+    }
+    expect(status.transport).toBe('http')
+  })
+
   it('allows cursor without endpoint on use', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })

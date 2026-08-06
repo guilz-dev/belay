@@ -1,6 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import path from 'node:path'
+import { CursorAcpJudgeRunner } from './core/verdict/cursor-acp-client.js'
 import {
   cleanupJudgeBrokerArtifacts,
   JUDGE_BROKER_SESSION,
@@ -48,11 +49,22 @@ async function main(): Promise<void> {
 
   const sessionConfig = await loadBrokerSessionConfig(stateDir)
   const defaultEvalTimeoutMs = resolveSessionEvalTimeoutMs(sessionConfig, 25_000)
+  const judgeWorkspace = path.join(stateDir, 'judge-workspace')
+  await mkdir(judgeWorkspace, { recursive: true, mode: 0o700 })
+  const cursorAcp = new CursorAcpJudgeRunner({
+    cwd: judgeWorkspace,
+    connectTimeoutMs: sessionConfig.connectTimeoutMs,
+  })
 
   const broker = new JudgeSessionBroker({
     config: sessionConfig,
-    runCommand: (invocation, timeoutMs) =>
-      runCliJsonWithTimeouts(invocation, { evalTimeoutMs: timeoutMs }),
+    runCommand: (invocation, timeoutMs) => {
+      if (invocation.binary === 'cursor-agent') {
+        return cursorAcp.run(invocation, timeoutMs)
+      }
+      return runCliJsonWithTimeouts(invocation, { evalTimeoutMs: timeoutMs })
+    },
+    extractResumeId: (providerId) => (providerId === 'cursor' ? cursorAcp.sessionId : null),
   })
 
   let idleTimer: NodeJS.Timeout | null = null
@@ -69,6 +81,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (reason: string) => {
     broker.stopAll('manual_stop')
+    await cursorAcp.stop()
     server?.close()
     await cleanupJudgeBrokerArtifacts(paths)
     process.stderr.write(`judge broker stopped (${reason})\n`)

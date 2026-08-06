@@ -43,7 +43,7 @@ export interface JudgeSessionBrokerOptions {
 
 export class JudgeSessionBroker {
   private readonly sessions = new Map<string, BrokerSessionRecord>()
-  private readonly mutexes = new MutexRegistry()
+  private readonly providerMutexes = new MutexRegistry()
   private readonly options: JudgeSessionBrokerOptions
 
   constructor(options: JudgeSessionBrokerOptions) {
@@ -70,13 +70,16 @@ export class JudgeSessionBroker {
       session.state = 'idle'
     }
     this.sessions.clear()
-    this.mutexes.clear()
+    this.providerMutexes.clear()
     return count
   }
 
   async evaluate(request: BrokerEvaluateRequest, timeoutMs: number): Promise<BrokerEvaluateResult> {
-    const sessionKey = buildJudgeSessionKey(request.keyParts)
-    return this.mutexes.forKey(sessionKey).run(() => this.evaluateExclusive(request, timeoutMs))
+    // One persistent provider process may back several logical session keys. Serialize at the
+    // provider boundary so a key rotation cannot close a conversation that is still evaluating.
+    return this.providerMutexes
+      .forKey(request.keyParts.providerId)
+      .run(() => this.evaluateExclusive(request, timeoutMs))
   }
 
   private async evaluateExclusive(
@@ -121,6 +124,7 @@ export class JudgeSessionBroker {
         ? this.buildResumeInvocation(request.invocation, providerId, session.providerResumeId)
         : request.invocation
     const resumed = reuseDecision.canReuse && Boolean(session.providerResumeId)
+    const appliedResetReason = session.lastResetReason
 
     try {
       const raw = await this.options.runCommand(invocation, timeoutMs)
@@ -128,6 +132,7 @@ export class JudgeSessionBroker {
       session.budget.promptBytes += request.promptBytes
       session.budget.lastUsedAtMs = Date.now()
       session.state = 'idle'
+      session.lastResetReason = undefined
 
       const extracted =
         this.options.extractResumeId?.(providerId, raw) ??
@@ -140,7 +145,7 @@ export class JudgeSessionBroker {
       return {
         raw,
         reused: resumed,
-        resetReason: session.lastResetReason,
+        resetReason: appliedResetReason,
         providerResumeId: session.providerResumeId,
       }
     } catch (error) {

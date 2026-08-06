@@ -2,6 +2,12 @@ import path from 'node:path'
 
 import { loadApprovalState, loadConfigFile } from '../config-io.js'
 import { compactApprovals } from '../core/approval.js'
+import {
+  extractJudgeFallbackReason,
+  formatJudgeRecoveryHint,
+  inferProviderIdFromFallbackReason,
+  isJudgeInfrastructureFailure,
+} from '../core/judge-fallback-hints.js'
 import type { ExplainOptions, ExplainReport } from '../types.js'
 import { classifyForReport } from './classify-for-report.js'
 
@@ -149,5 +155,16 @@ export function formatExplainReport(report: ExplainReport): string {
       ? 'Observed assessment: measured in an isolated git worktree at gate time. Observed-safe commands are applied once and the hook denies re-execution (transactional_already_applied).'
       : 'Observed assessment: not applicable (transactional path not eligible).',
   ]
-  return `${lines.join('\n')}\n`
+
+  const recoveryLines: string[] = []
+  if (isJudgeInfrastructureFailure(result)) {
+    const fallbackReason = extractJudgeFallbackReason(result)
+    const providerId = inferProviderIdFromFallbackReason(fallbackReason)
+    const recoveryHint = formatJudgeRecoveryHint(providerId, fallbackReason)
+    if (recoveryHint) {
+      recoveryLines.push('', 'Recovery:', `  ${recoveryHint}`, '  Then verify: belay judge test --live-probe')
+    }
+  }
+
+  return `${[...lines, ...recoveryLines].join('\n')}\n`
 }

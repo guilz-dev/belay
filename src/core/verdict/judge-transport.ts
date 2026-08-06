@@ -10,7 +10,7 @@ import {
   parseCliJudgeOutput,
   runCliJsonWithTimeouts,
 } from './judge-cli.js'
-import { resolveCliVersionFingerprint } from './judge-cli-fingerprint.js'
+import { resolveJudgeSessionFingerprint } from './judge-cli-fingerprint.js'
 import { assertReadOnlyInvocationArgs, providerSupportsSession } from './judge-provider-matrix.js'
 import type { BelayJudgeRuntimeConfig } from './judge-runtime-config.js'
 import { resolveSessionEvalTimeoutMs } from './judge-runtime-config.js'
@@ -49,7 +49,7 @@ export interface JudgeTransportEvaluateRequest {
 export interface JudgeTransportEvaluateResult {
   raw: string
   verdict: Tier1Verdict | null
-  transport: 'spawn' | 'session'
+  transport: 'spawn' | 'session' | 'acp'
   sessionUsed: boolean
   sessionReused: boolean
   fallbackReason?: JudgeFallbackReason
@@ -202,7 +202,7 @@ async function runSessionTransport(
 
   let cliVersion = 'unknown'
   try {
-    cliVersion = await resolveCliVersionFingerprint(
+    cliVersion = await resolveJudgeSessionFingerprint(
       context.providerId,
       sessionConfig.connectTimeoutMs,
     )
@@ -262,15 +262,20 @@ async function runSessionTransport(
       runCommand,
     })
   } catch (error) {
-    const spawnResult = await runSpawnTransport(request, runCommand)
+    const evalMs = Date.now() - evalStarted
+    const fallbackReason = spawnFallbackReason(context.providerId, error)
     return {
-      ...spawnResult,
-      transport: 'session',
+      raw: '',
+      verdict: null,
+      transport: context.providerId === 'cursor' ? 'acp' : 'session',
       sessionUsed: true,
       sessionReused: false,
-      fallbackReason: spawnFallbackReason(context.providerId, error),
-      sessionResetReason: 'cli_error',
+      fallbackReason,
+      sessionResetReason: fallbackReason === 'eval_timeout' ? 'timeout' : 'cli_error',
       sessionRefHash,
+      connectMs,
+      evalMs,
+      parseMs: 0,
     }
   }
   const evalMs = Date.now() - evalStarted
@@ -288,10 +293,10 @@ async function runSessionTransport(
       sessionKey,
       reason: parseReason === 'non_json_response' ? 'non_json_response' : 'parse_failure',
     })
-    const spawnResult = await runSpawnTransport(request, runCommand)
     return {
-      ...spawnResult,
-      transport: 'session',
+      raw: brokerResult.raw,
+      verdict: null,
+      transport: context.providerId === 'cursor' ? 'acp' : 'session',
       sessionUsed: true,
       sessionReused: brokerResult.reused,
       fallbackReason: guardFailClosedFallbackReason(
@@ -300,13 +305,16 @@ async function runSessionTransport(
       sessionResetReason:
         parseReason === 'non_json_response' ? 'non_json_response' : 'parse_failure',
       sessionRefHash,
+      connectMs,
+      evalMs,
+      parseMs: parsed.parseMs,
     }
   }
 
   return {
     raw: brokerResult.raw,
     verdict: parsed.verdict,
-    transport: 'session',
+    transport: context.providerId === 'cursor' ? 'acp' : 'session',
     sessionUsed: true,
     sessionReused: brokerResult.reused,
     sessionResetReason: brokerResult.resetReason,
@@ -339,7 +347,7 @@ export async function evaluateWithJudgeTransport(
   }
 
   const shadowSpawn =
-    primary.transport === 'session' ? await runSpawnTransport(request, runCommand) : primary
+    primary.transport !== 'spawn' ? await runSpawnTransport(request, runCommand) : primary
 
   if (!primary.verdict || !shadowSpawn.verdict) {
     return primary

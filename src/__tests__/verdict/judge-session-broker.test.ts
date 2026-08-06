@@ -26,18 +26,24 @@ describe('judge-session-broker', () => {
   it('serializes concurrent evaluates with distinct results per prompt', async () => {
     resetJudgeSessionBrokersForTests()
     let calls = 0
+    let activeCalls = 0
+    let maxActiveCalls = 0
     const broker = new JudgeSessionBroker({
       config: { ...DEFAULT_JUDGE_SESSION_CONFIG, enabled: true },
       runCommand: async (invocation) => {
         calls += 1
+        activeCalls += 1
+        maxActiveCalls = Math.max(maxActiveCalls, activeCalls)
         await new Promise((resolve) => setTimeout(resolve, 20))
         const prompt = invocation.args[invocation.args.length - 1] ?? ''
-        return JSON.stringify({
+        const result = JSON.stringify({
           local_recoverable: prompt.startsWith('allow:'),
           destroys_history_or_secrets: false,
           reason: prompt.startsWith('allow:') ? 'safe' : 'unsafe',
           chat_id: 'chat-123',
         })
+        activeCalls -= 1
+        return result
       },
     })
 
@@ -46,10 +52,18 @@ describe('judge-session-broker', () => {
 
     const [first, second] = await Promise.all([
       broker.evaluate({ keyParts: KEY_PARTS, invocation: invocationA, promptBytes: 10 }, 1_000),
-      broker.evaluate({ keyParts: KEY_PARTS, invocation: invocationB, promptBytes: 10 }, 1_000),
+      broker.evaluate(
+        {
+          keyParts: { ...KEY_PARTS, judgeMode: 'enforce' },
+          invocation: invocationB,
+          promptBytes: 10,
+        },
+        1_000,
+      ),
     ])
 
     expect(calls).toBe(2)
+    expect(maxActiveCalls).toBe(1)
     expect(JSON.parse(first.raw).local_recoverable).toBe(true)
     expect(JSON.parse(second.raw).local_recoverable).toBe(false)
   })

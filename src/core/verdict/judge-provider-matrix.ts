@@ -40,7 +40,8 @@ export const JUDGE_PROVIDER_SESSION_MATRIX: Record<
       'io_error',
       'version_mismatch',
     ],
-    notes: 'Pilot provider: ask mode + sandbox enabled; resume via --resume <chatId>.',
+    notes:
+      'Pilot provider: persistent ACP in ask mode; bounded conversation reuse is broker-controlled.',
   },
   codex: {
     providerId: 'codex',

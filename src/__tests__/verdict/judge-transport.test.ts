@@ -52,7 +52,10 @@ describe('judge-transport', () => {
           repoRoot: '/repo/a',
           stateDir: '/tmp/belay-state-a',
           judgeMode: 'audit',
-          runtime: DEFAULT_JUDGE_RUNTIME_CONFIG,
+          runtime: {
+            ...DEFAULT_JUDGE_RUNTIME_CONFIG,
+            session: { ...DEFAULT_JUDGE_SESSION_CONFIG, enabled: false },
+          },
           judgeTimeoutMs: 5_000,
         },
       },
@@ -69,7 +72,7 @@ describe('judge-transport', () => {
     expect(result.verdict).toEqual(SAFE_VERDICT)
   })
 
-  it('falls back to spawn on parse failure (fail-closed)', async () => {
+  it('fails closed without a second CLI attempt on ACP parse failure', async () => {
     let calls = 0
     const result = await evaluateWithJudgeTransport(
       {
@@ -95,9 +98,10 @@ describe('judge-transport', () => {
       },
     )
 
-    expect(calls).toBe(2)
+    expect(calls).toBe(1)
+    expect(result.transport).toBe('acp')
     expect(result.fallbackReason).toBe('non_json_response')
-    expect(result.verdict).toEqual(SAFE_VERDICT)
+    expect(result.verdict).toBeNull()
   })
 
   it('triggers kill switch when shadow mismatch rate exceeds threshold', async () => {
@@ -308,7 +312,7 @@ describe('judge-transport', () => {
     expect(second.sessionReused).toBe(false)
   })
 
-  it('handles broken JSON envelopes via spawn fallback', async () => {
+  it('fails closed on broken ACP JSON envelopes', async () => {
     const broken = JSON.stringify({ type: 'result', message: 'not-a-verdict' })
     let calls = 0
     const result = await evaluateWithJudgeTransport(
@@ -334,9 +338,10 @@ describe('judge-transport', () => {
         },
       },
     )
-    expect(calls).toBe(2)
+    expect(calls).toBe(1)
+    expect(result.transport).toBe('acp')
     expect(result.fallbackReason).toBe('parse_error')
-    expect(result.verdict).toEqual(SAFE_VERDICT)
+    expect(result.verdict).toBeNull()
   })
 
   it('enforces read-only cursor invocation args', () => {

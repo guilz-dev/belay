@@ -16,7 +16,7 @@ import { classifyEgressTool } from './egress-classify.js'
 import { verdictFingerprint } from './fingerprint.js'
 import type { TracedTier1Judge } from './judge.js'
 import { mutationPrescanRequiresAsk, prescanInterpreterCode, tier1RequiresAsk } from './judge.js'
-import { isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
+import { isReadOnlyLauncherInvocation, isRoutineLauncher, resolveLauncherRecipe } from './launcher-resolve.js'
 import {
   allowFromCustomOverride,
   askFromCustomExternal,
@@ -675,7 +675,9 @@ async function evaluateSegment(
   }
 
   let effect: VerdictEffect = 'unknown'
-  if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
+  if (isReadOnlyLauncherInvocation(peeled)) {
+    effect = 'read_only'
+  } else if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
     effect = 'read_only'
   } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
     effect = 'local_mutation'

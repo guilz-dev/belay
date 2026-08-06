@@ -18,6 +18,7 @@ import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summar
 import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
+import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { egressStatus } from '../services/egress-service.js'
@@ -99,7 +100,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           `Config version is ${loadedConfig.version}; expected 4. Run belay upgrade to migrate.`,
         )
       }
-      const judgeDoctor = await diagnoseJudge(loadedConfig)
+      const transport = resolveJudgeTransport(loadedConfig.judge)
+      const shouldProbe = transport.endsWith('-cli')
+      const judgeDoctor = await diagnoseJudge(loadedConfig, repoRoot, { liveProbe: shouldProbe })
       issues.push(...judgeDoctor.issues)
       warnings.push(...judgeDoctor.warnings)
       notes.push(...judgeDoctor.notes)

@@ -4,6 +4,10 @@ import { normalizeJudgeProvider, scrubOptionsFromConfig } from './config.js'
 import { resolveJudgeCredential } from './judge-api-key.js'
 import { hasValidCloudConsent } from './judge-config.js'
 import {
+  formatJudgeRecoveryHint,
+  inferProviderIdFromFallbackReason,
+} from './judge-fallback-hints.js'
+import {
   type CheckJudgeModelPresenceResult,
   discoverJudgeModels,
   type JudgeModelDiscoveryDeps,
@@ -19,6 +23,7 @@ import {
   normalizeLegacyProviderId,
 } from './verdict/judge-catalog.js'
 import { createJudgeFromConfig, resolveJudgeModel } from './verdict/judge-factory.js'
+import { resolveJudgeSmokeProbeTimeoutMs } from './verdict/judge-runtime-config.js'
 import {
   listRepoJudgeSessionBrokers,
   stopRepoJudgeSessionBroker,
@@ -74,11 +79,16 @@ export async function diagnoseJudge(
   const capabilities = getJudgeProviderCapabilities(providerId)
   const transport = resolveJudgeTransport(judge)
   const runtime = detectJudgeRuntimeCapabilities(providerId)
+  const cursorAcpEnabled =
+    transport === 'cursor-cli' &&
+    providerId === 'cursor' &&
+    config.judge.runtime?.session.enabled === true
+  const effectiveTransport = cursorAcpEnabled ? 'cursor-acp' : transport
 
   notes.push(`Judge providerId: ${providerId}`)
   notes.push(`Judge driver: ${provider}`)
   notes.push(`Judge model requested: ${judge.model}`)
-  notes.push(`Judge transport: ${transport}`)
+  notes.push(`Judge transport: ${effectiveTransport}`)
 
   if (config.policy.modelAssist.enabled) {
     warnings.push(
@@ -184,13 +194,22 @@ export async function diagnoseJudge(
         'Judge API key is not set for the configured credential mode. Tier1 cloud judge will fail closed to ask.',
       )
     } else {
-      notes.push(`Native CLI transport available: ${transport}`)
+      notes.push(
+        cursorAcpEnabled
+          ? 'Cursor ACP transport available.'
+          : `Native CLI transport available: ${transport}`,
+      )
+      if (cursorAcpEnabled) {
+        notes.push(
+          `Cursor ACP session transport enabled (max ${config.judge.runtime?.session.maxTurns ?? 'unknown'} turns).`,
+        )
+      }
       if (shouldRunLiveProbe) {
         const smokeConfig: BelayConfigV4 = {
           ...config,
           judge: {
             ...judge,
-            timeoutMs: Math.min(judge.timeoutMs, 5000),
+            timeoutMs: resolveJudgeSmokeProbeTimeoutMs(judge.timeoutMs),
           },
         }
         const smokeJudge = createJudgeFromConfig(smokeConfig, { repoRoot })
@@ -203,11 +222,22 @@ export async function diagnoseJudge(
           smokeJudge.lastTrace?.fallbackReason ??
           smokeResult.reason
         if (smokeJudge.lastTrace?.provider === 'fallback') {
+          const recoveryHint = formatJudgeRecoveryHint(
+            inferProviderIdFromFallbackReason(smokeFallback, providerId),
+            smokeFallback,
+          )
+          const smokeLabel = cursorAcpEnabled ? 'Cursor ACP' : 'Native CLI transport'
           issues.push(
-            `Native CLI transport smoke probe failed (${smokeFallback}). Tier1 will fail closed to ask.`,
+            recoveryHint
+              ? `${smokeLabel} smoke probe failed (${smokeFallback}). Tier1 will fail-closed. ${recoveryHint}`
+              : `${smokeLabel} smoke probe failed (${smokeFallback}). Tier1 will fail closed to ask.`,
           )
         } else {
-          notes.push('Native CLI transport smoke probe succeeded.')
+          notes.push(
+            cursorAcpEnabled
+              ? 'Cursor ACP smoke probe succeeded.'
+              : 'Native CLI transport smoke probe succeeded.',
+          )
         }
       }
     }

@@ -104,12 +104,15 @@ describe('config wizard TUI integration', () => {
       expect(writes.join('')).toContain('Environment variables or host CLI'),
     )
     await emitKeypress('enter')
+    await vi.waitFor(() => expect(writes.join('')).toContain('How should Belay reach the judge?'))
+    await emitKeypress('down') // cli -> http
+    await emitKeypress('enter')
     await vi.waitFor(() => expect(question).toHaveBeenCalledTimes(1))
     await vi.waitFor(() => expect(writes.join('')).toContain('Accept cloud judge egress'))
     await emitKeypress('k') // no -> yes
     await emitKeypress('enter')
     await expect(promise).resolves.toMatchObject({ repoRoot: dir, adapter: 'cursor' })
-    expect(raw.calls).toEqual([true, false, true, false, true, false])
+    expect(raw.calls).toEqual([true, false, true, false, true, false, true, false])
     expect(close).toHaveBeenCalledTimes(1)
 
     const config = await loadConfigFile(dir)
@@ -123,7 +126,7 @@ describe('config wizard TUI integration', () => {
     await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
     restoreTTY = mockInteractiveTTY(false)
 
-    const answers = ['openai', 'project', '']
+    const answers = ['openai', 'project', 'cli']
     const question = vi.fn(async () => answers.shift() ?? '')
     const close = vi.fn()
     vi.resetModules()

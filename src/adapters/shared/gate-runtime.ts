@@ -64,6 +64,12 @@ import {
   scrubValue,
   toolFingerprint,
 } from '../../core/index.js'
+import {
+  extractJudgeFallbackReason,
+  formatJudgeInfrastructureDenyMessage,
+  inferProviderIdFromFallbackReason,
+  isJudgeInfrastructureFailure,
+} from '../../core/judge-fallback-hints.js'
 import { notifyDeny } from '../../core/notify.js'
 import { canonicalPath } from '../../core/path-utils.js'
 import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
@@ -779,6 +785,39 @@ async function gateDecisionToVerdict(
       mode: ctx.config.mode,
       permission: 'allow',
       wouldBlock: true,
+    })
+  }
+
+  if (isJudgeInfrastructureFailure(result)) {
+    const fallbackReason = extractJudgeFallbackReason(result)
+    const providerId = inferProviderIdFromFallbackReason(
+      fallbackReason,
+      String(ctx.config.judge.providerId ?? 'cursor'),
+    )
+    const denyMessages = formatJudgeInfrastructureDenyMessage({
+      providerId,
+      fallbackReason,
+      command: result.normalizedCommand ?? result.summary,
+    })
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: 'judge_transport_unavailable',
+      judgeFallbackReason: fallbackReason,
+      wouldBlock: true,
+      permission: 'deny',
+    })
+    return classifyResultToGateVerdict({
+      result: {
+        ...result,
+        verdict: 'deny_pending_approval',
+        reason: 'judge_transport_unavailable',
+      },
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      user_message: denyMessages.user_message,
+      agent_message: denyMessages.agent_message,
     })
   }
 

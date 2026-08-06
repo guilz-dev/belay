@@ -165,4 +165,61 @@ describe('gate-runtime integration', () => {
     expect(snapshot?.cwd).toBe(srcCwd)
     expect(snapshot?.normalizedAction).toContain('rm')
   })
+
+  it('denies judge infrastructure failures with recovery hints and without approval ids', async () => {
+    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
+      verdict: 'deny_pending_approval',
+      reason: 'tier1_catastrophic',
+      summary: 'node --version',
+      normalizedCommand: 'node --version',
+      fingerprint: 'judge-infra-failure-fp',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 0.7,
+        signals: ['tier1_catastrophic', 'cursor_cli_nonzero'],
+      },
+      axes: {
+        location: 'repo_local',
+        opacity: 'transparent',
+        effect: 'unknown',
+        confidence: 'llm',
+        would: 'ask',
+        by: 'verdict',
+        judgeProvider: 'fallback',
+        judgeFallbackReason: 'cursor_cli_nonzero',
+      },
+    })
+
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-judge-infra-gate-'))
+    const configPath = path.join(repoRoot, '.belay', 'config.json')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')
+
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    const verdict = await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'node --version',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.approvalId).toBeUndefined()
+    expect(verdict.user_message).toContain('cursor_cli_nonzero')
+    expect(verdict.user_message).toContain('agent login')
+    expect(verdict.user_message).not.toContain('Approval ID')
+    expect(auditEvents[0]?.reason).toBe('judge_transport_unavailable')
+    expect(auditEvents[0]?.judgeFallbackReason).toBe('cursor_cli_nonzero')
+  })
 })

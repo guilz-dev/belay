@@ -40,11 +40,11 @@ export const JUDGE_LATENCY_SLO = {
 } as const
 
 export const DEFAULT_JUDGE_SESSION_CONFIG: BelayJudgeSessionConfig = {
-  enabled: false,
-  maxTurns: 32,
-  maxAgeMs: 30 * 60 * 1000,
-  maxIdleMs: 5 * 60 * 1000,
-  maxPromptBytes: 64 * 1024,
+  enabled: true,
+  maxTurns: 8,
+  maxAgeMs: 10 * 60 * 1000,
+  maxIdleMs: 2 * 60 * 1000,
+  maxPromptBytes: 32 * 1024,
   providerAllowlist: ['cursor'],
   connectTimeoutMs: 5_000,
   evalTimeoutMs: null,
@@ -135,7 +135,8 @@ export function normalizeJudgeSessionConfig(
 ): BelayJudgeSessionConfig {
   const input = session ?? {}
   return {
-    enabled: input.enabled === true,
+    enabled:
+      typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_JUDGE_SESSION_CONFIG.enabled,
     maxTurns: normalizePositiveInt(input.maxTurns, DEFAULT_JUDGE_SESSION_CONFIG.maxTurns),
     maxAgeMs: normalizePositiveInt(input.maxAgeMs, DEFAULT_JUDGE_SESSION_CONFIG.maxAgeMs),
     maxIdleMs: normalizePositiveInt(input.maxIdleMs, DEFAULT_JUDGE_SESSION_CONFIG.maxIdleMs),
@@ -171,4 +172,9 @@ export function resolveSessionEvalTimeoutMs(
   judgeTimeoutMs: number,
 ): number {
   return sessionConfig.evalTimeoutMs ?? judgeTimeoutMs
+}
+
+/** Live CLI smoke probes use the configured judge timeout without an artificial cap. */
+export function resolveJudgeSmokeProbeTimeoutMs(judgeTimeoutMs: number): number {
+  return judgeTimeoutMs
 }

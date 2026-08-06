@@ -298,7 +298,22 @@ export function resolveLauncherRecipe(params: {
   return null
 }
 
+const READ_ONLY_LAUNCHER_SUFFIXES = new Set(['--version', '-v', '--help', '-h'])
+
+function isReadOnlyLauncherInvocation(tokens: string[]): boolean {
+  const head = tokens[1]
+  return Boolean(head && READ_ONLY_LAUNCHER_SUFFIXES.has(head))
+}
+
+export { isReadOnlyLauncherInvocation }
+
 export function isRoutineLauncher(tokens: string[]): boolean {
+  if (
+    (tokens[0] === 'pnpm' || tokens[0] === 'npm') &&
+    isReadOnlyLauncherInvocation(tokens)
+  ) {
+    return false
+  }
   return (
     (tokens[0] === 'npm' && (tokens[1] === 'run' || tokens[1] === 'test')) ||
     tokens[0] === 'pnpm' ||

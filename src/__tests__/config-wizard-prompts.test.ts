@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   buildJudgeCredentialModeSelectOptions,
+  buildJudgeTransportSelectOptions,
   JUDGE_CREDENTIAL_MODE_PROMPT,
   JUDGE_CREDENTIAL_STORE_KEY_PROMPT,
+  JUDGE_HTTP_ENDPOINT_PROMPT,
+  JUDGE_TRANSPORT_MODE_PROMPT,
   runBelayConfigJudgeOnlyInteractive,
 } from '../commands/config.js'
 import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
@@ -53,13 +56,24 @@ describe('config wizard credential prompts', () => {
     expect(JUDGE_CREDENTIAL_STORE_KEY_PROMPT).toContain('--key-stdin')
   })
 
+  it('defaults transport to host CLI with provider-specific labels', () => {
+    const cursor = buildJudgeTransportSelectOptions('cursor')
+    expect(JUDGE_TRANSPORT_MODE_PROMPT).toBe('How should Belay reach the judge?')
+    expect(cursor.defaultValue).toBe('cli')
+    expect(cursor.choices[0]?.label).toContain('Cursor CLI')
+    expect(cursor.choices[0]?.hint).toContain('no URL needed')
+    expect(cursor.choices[1]?.label).toContain('Custom HTTP API endpoint')
+    expect(JUDGE_HTTP_ENDPOINT_PROMPT).toBe('Judge HTTP API URL:')
+    expect(JUDGE_HTTP_ENDPOINT_PROMPT).not.toContain('optional')
+  })
+
   it('stores apiKey when wizard prompts provide a key', async () => {
     const dir = await createTempRepo()
     await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'apiKey', '', 'sk-wizard-key'],
+      prompts: ['codex', 'apiKey', 'cli', 'sk-wizard-key'],
     })
 
     const config = await loadConfigFile(dir)
@@ -76,7 +90,7 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'apiKey', '', '', 'sk-wizard-key'],
+      prompts: ['codex', 'apiKey', 'cli', '', 'sk-wizard-key'],
     })
 
     const config = await loadConfigFile(dir)
@@ -91,12 +105,27 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'project', ''],
+      prompts: ['codex', 'project', 'cli'],
     })
 
     const config = await loadConfigFile(dir)
     expect(config.judge.credential?.mode).toBe('project')
+    expect(config.judge.endpoint).toBeNull()
     const stateDir = belayStateDir(config, repoLocalStateDirFor(dir, config))
     expect(await readJudgeCredentialStore(stateDir)).toBeNull()
+  })
+
+  it('records HTTP endpoint and cloud consent when custom API is chosen', async () => {
+    const dir = await createTempRepo()
+    await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
+
+    await runBelayConfigJudgeOnlyInteractive({
+      targetDir: dir,
+      prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y'],
+    })
+
+    const config = await loadConfigFile(dir)
+    expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
+    expect(config.judge.cloudConsent?.accepted).toBe(true)
   })
 })

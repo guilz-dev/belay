@@ -125,6 +125,20 @@ describe('Phase 2 plan — Config UX', () => {
       expect(String(value)).toMatch(/composer-2\.5/)
     })
 
+    it('belay config can disable synchronous judge shadow comparisons', async () => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: 'cursor' })
+      const mod = await importConfigModule()
+      await mod.runBelayConfig({
+        targetDir: dir,
+        subcommand: 'set',
+        path: 'judge.runtime.shadow.enabled',
+        value: 'false',
+      })
+      const config = await loadConfigFile(dir)
+      expect(config.judge.runtime?.shadow.enabled).toBe(false)
+    })
+
     it('belay config judge summarizes judge block', async () => {
       const dir = await createTempRepo()
       await initProject({ targetDir: dir, adapter: 'cursor' })

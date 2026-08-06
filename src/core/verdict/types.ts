@@ -51,6 +51,17 @@ export interface JudgeTrace {
   modelRequested: string
   modelResolved: string
   latencyMs: number
+  transport?:
+    | 'http'
+    | 'ollama-http'
+    | 'codex-cli'
+    | 'cursor-cli'
+    | 'claude-cli'
+    | 'codex-cli-session'
+    | 'cursor-cli-session'
+    | 'claude-cli-session'
+    | 'cursor-acp'
+    | 'unavailable'
   outboundRedacted?: boolean
   fallbackReason?: string
   judgeSessionUsed?: boolean

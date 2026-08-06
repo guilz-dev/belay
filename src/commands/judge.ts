@@ -112,11 +112,13 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
   })
   const { resolved } = resolveJudgeModel(judge)
   const transport = resolveJudgeTransport(judge)
+  const effectiveTransport =
+    transport === 'cursor-cli' && judge.runtime?.session.enabled ? 'cursor-acp' : transport
 
   const lines = [
     `Judge providerId : ${judge.providerId ?? '(inferred)'}`,
     `Judge driver     : ${judge.provider}`,
-    `Transport        : ${transport}`,
+    `Transport        : ${effectiveTransport}`,
     `Endpoint         : ${judge.endpoint ?? '(none)'}`,
     `Model            : ${resolved} (requested: ${judge.model})`,
     `Credential       : ${credential.mode} (${credential.sourceKind})${credential.source ? ` → ${credential.source}` : ''} ${credential.key ? '✓ set' : '✗ missing'}`,
@@ -135,7 +137,7 @@ export async function judgeStatus(options: JudgeCommandOptions = {}) {
       endpoint: judge.endpoint,
       model: judge.model,
       modelResolved: resolved,
-      transport,
+      transport: effectiveTransport,
       credential,
       cloudConsent: judge.cloudConsent ?? null,
       cloudJudgeActive: isCloudJudgeConfig(judge) && hasValidCloudConsent(judge),

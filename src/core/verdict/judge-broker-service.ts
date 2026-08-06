@@ -269,6 +269,17 @@ export async function stopJudgeBrokerDaemon(stateDir: string): Promise<number> {
     } catch {
       // already stopped
     }
+    const deadline = Date.now() + 1_000
+    while (isProcessAlive(status.pid) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    if (isProcessAlive(status.pid)) {
+      try {
+        process.kill(status.pid, 'SIGKILL')
+      } catch {
+        // already stopped
+      }
+    }
   }
   await cleanupJudgeBrokerArtifacts(paths)
   return status?.pid ? 1 : 0

@@ -130,6 +130,16 @@ describe('launcher-resolve', () => {
     expect(result.reason).toBe('tier0_external')
     expect(result.effect).toBe('remote_mutation')
   })
+
+  it('resolves pnpm --version as read-only builtin', async () => {
+    const result = await verdict('pnpm --version', ctx)
+    expect(result.permission).toBe('allow')
+  })
+
+  it('resolves npm --version as read-only builtin', async () => {
+    const result = await verdict('npm --version', ctx)
+    expect(result.permission).toBe('allow')
+  })
 })
 
 async function rmSafe(dir: string) {

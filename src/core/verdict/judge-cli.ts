@@ -424,9 +424,11 @@ function createCliJudge(options: CliJudgeOptions): TracedTier1Judge {
         )
 
         const traceTransport: Tier1JudgeTransport =
-          transportResult.transport === 'session'
-            ? (`${providerId}-cli-session` as Tier1JudgeTransport)
-            : transport
+          transportResult.transport === 'acp'
+            ? 'cursor-acp'
+            : transportResult.transport === 'session'
+              ? (`${providerId}-cli-session` as Tier1JudgeTransport)
+              : transport
 
         if (!transportResult.verdict) {
           const fallbackReason =

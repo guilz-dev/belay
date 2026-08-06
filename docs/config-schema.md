@@ -64,7 +64,8 @@ compatibility layer (`judge.provider`); **host** = install target (`config.adapt
 | `apiKey` | `credentials.json` (`store:judge`) or `env:NAME` | `store:judge` writes to Belay state (`~/.config/belay/` when control plane is enabled, otherwise repo-local). File mode `0600`. Team config cannot set `apiKey`. |
 
 Interactive `belay config` asks for **Judge API key source** with these two choices instead of a yes/no confirm.
-| `runtime` | object | optional session/shadow transport tuning (see [judge session rollout](./judge-session-rollout.md)) |
+For cloud providers it then asks **how Belay should reach the judge**: host CLI (recommended, no URL) or a custom HTTP API endpoint (requires `judge.endpoint` and cloud egress consent).
+| `runtime` | object | optional session/shadow transport tuning; Cursor session mode uses persistent ACP (see [judge session rollout](./judge-session-rollout.md)) |
 
 `belay judge bench` reports in-process Tier0/Tier1 latency percentiles and SLO status.
 
@@ -98,6 +99,8 @@ belay config                              # interactive setup (primary)
 belay config list
 belay config get judge.model
 belay config set judge.providerId codex
+belay config set judge.runtime.session.enabled true
+belay config set judge.runtime.shadow.enabled false
 belay config unset judge.endpoint
 belay config credential mode project
 belay config credential set --key-stdin

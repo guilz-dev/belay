@@ -75,6 +75,16 @@ export async function resolveCliVersionFingerprint(
   return version
 }
 
+export async function resolveJudgeSessionFingerprint(
+  providerId: Exclude<JudgeProviderId, 'ollama'>,
+  timeoutMs = 3_000,
+): Promise<string> {
+  if (providerId === 'cursor' && !fingerprintResolver) {
+    return 'cursor-acp-v1'
+  }
+  return resolveCliVersionFingerprint(providerId, timeoutMs)
+}
+
 export function resetCliFingerprintCache(): void {
   fingerprintCache.clear()
 }

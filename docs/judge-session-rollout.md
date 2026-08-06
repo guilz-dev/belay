@@ -1,29 +1,30 @@
 # Judge session transport rollout
 
 This document describes the optional Tier1 judge session transport introduced to reduce
-`spawn` latency **without reducing hook trigger counts**.
+`spawn` latency **without reducing hook trigger counts**. Cursor uses a persistent
+`cursor-agent acp` process; other providers retain their existing CLI behavior.
 
 ## Goals
 
 - Keep hook evaluation frequency unchanged (Tier0/Tier1 trigger parity).
-- Reuse provider CLI sessions only behind strict context guards.
-- Fail closed to `spawn` on any anomaly.
+- Reuse provider sessions only behind strict context guards.
+- Fail closed to approval on any session anomaly without adding a second slow CLI attempt.
 - Never persist session context (prompt/response/chat id) to disk or audit logs.
 
 ## Configuration (`judge.runtime`)
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `session.enabled` | `false` | Master switch; safe default |
-| `session.maxTurns` | `32` | Force new session after N evaluates |
-| `session.maxAgeMs` | `1800000` | Wall-clock session cap |
-| `session.maxIdleMs` | `300000` | Idle cap between evaluates |
-| `session.maxPromptBytes` | `65536` | Per-eval prompt budget |
+| `session.enabled` | `true` | Enabled for the Cursor allowlist; explicit `false` remains respected |
+| `session.maxTurns` | `8` | Force a fresh ACP conversation after N evaluates |
+| `session.maxAgeMs` | `600000` | Wall-clock session cap |
+| `session.maxIdleMs` | `120000` | Idle cap between evaluates |
+| `session.maxPromptBytes` | `32768` | Accumulated prompt budget per conversation |
 | `session.providerAllowlist` | `["cursor"]` | Pilot: cursor only |
-| `session.connectTimeoutMs` | `5000` | CLI `--version` fingerprint budget |
+| `session.connectTimeoutMs` | `5000` | ACP initialization and session setup budget |
 | `session.evalTimeoutMs` | `null` | Falls back to `judge.timeoutMs` |
 | `session.parseTimeoutMs` | `2000` | Parse budget |
-| `shadow.enabled` | `false` | Shadow compare vs spawn |
+| `shadow.enabled` | `false` | Shadow compare vs spawn; keep disabled on latency-sensitive hooks |
 | `shadow.sampleRate` | `0.01` | Base sample rate |
 | `shadow.dailyRequestCap` | `500` | Egress budget |
 
@@ -38,7 +39,7 @@ Example (local dogfood):
         "providerAllowlist": ["cursor"]
       },
       "shadow": {
-        "enabled": true,
+        "enabled": false,
         "sampleRate": 0.01
       }
     }
@@ -46,12 +47,15 @@ Example (local dogfood):
 }
 ```
 
+Shadow comparison invokes the one-shot CLI and waits for it. Enable it only during a bounded
+measurement window; it is intentionally disabled for normal hook execution.
+
 ## Rollout phases
 
-1. **Phase A** — ship with `session.enabled=false` (no behavior change).
-2. **Phase B** — enable cursor session locally with strict budgets.
-3. **Phase C** — verify p95 improvement, fallback rate, shadow mismatch rate in CI/dogfood.
-4. **Phase D** — expand `providerAllowlist` for codex/claude after matrix verification.
+1. **Phase A** — ship the ACP path behind `session.enabled` and strict guards.
+2. **Phase B** — verify Cursor in a bounded measurement window with a manual rollback switch.
+3. **Phase C** — enable Cursor by default and monitor p95, fallback, and mismatch rates.
+4. **Phase D** — expand `providerAllowlist` only after provider-specific verification.
 
 ## Immediate rollback
 
@@ -71,8 +75,11 @@ Or run `belay doctor --fix` to stop the unix-socket broker daemon and clear the 
 ## Cross-hook session reuse
 
 When `session.enabled=true`, hooks spawn a repo-scoped **unix socket broker daemon**
-(`judge-broker.sock` under the Belay state dir). Session context (prompt, response, chat id)
-lives in the daemon process memory only. The daemon shuts down after `maxIdleMs` idle.
+(`judge-broker.sock` under the Belay state dir). For Cursor, the daemon owns one persistent
+ACP process and reuses its conversation only within the limits above. ACP runs in a dedicated
+judge workspace with MCP, client filesystem access, terminal access, and permission grants
+disabled. Session context lives in process memory only. The daemon shuts down after
+`maxIdleMs` idle.
 
 ## Observability (audit fields)
 
@@ -95,7 +102,7 @@ See `JUDGE_LATENCY_SLO` in `src/core/verdict/judge-runtime-config.ts`.
 
 ## Trust boundary (MUST)
 
-- Session state lives in process memory only (repo-scoped broker map).
+- Session state lives in process memory only (repo-scoped broker and ACP process).
 - No raw prompt/response/chat id in control plane or audit storage.
 - Provider/model/repo/mode/cli-version mismatch forces a new session.
 - Shadow uses spawn verdict as source of truth on mismatch.

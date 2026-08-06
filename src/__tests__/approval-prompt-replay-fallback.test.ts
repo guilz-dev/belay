@@ -41,11 +41,13 @@ async function createTempRepo() {
 
 describe('approval prompt replay fallback (cursor)', () => {
   afterEach(async () => {
+    delete process.env.BELAY_DETERMINISTIC_JUDGE
     delete process.env.BELAY_TEST_APPROVAL_REPLAY
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
   it('consumes approved grant when fallback replay succeeds', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
     const config = await loadConfigFile(repoRoot, 'cursor')
@@ -83,6 +85,7 @@ describe('approval prompt replay fallback (cursor)', () => {
   })
 
   it('keeps approved grant when fallback replay fails', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
     const config = await loadConfigFile(repoRoot, 'cursor')
@@ -120,6 +123,7 @@ describe('approval prompt replay fallback (cursor)', () => {
   })
 
   it('keeps approved grant when fallback replay throws', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
     const config = await loadConfigFile(repoRoot, 'cursor')
@@ -160,6 +164,7 @@ describe('approval prompt replay fallback (cursor)', () => {
   })
 
   it('keeps approved grant when replay consumption fails after success', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
     const config = await loadConfigFile(repoRoot, 'cursor')
@@ -213,6 +218,7 @@ describe('approval prompt replay fallback (cursor)', () => {
   })
 
   it('does not auto-replay by default in test runtime', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     const repoRoot = await createTempRepo()
     const config = await loadConfigFile(repoRoot, 'cursor')
     const ctx = {

@@ -20,7 +20,10 @@ import {
   resolveJudgeUsePatch,
 } from '../core/judge-config.js'
 import { rejectDeprecatedJudgeModelAuto } from '../core/judge-model-policy.js'
-import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
+import {
+  detectJudgeRuntimeCapabilities,
+  resolveJudgeTransport,
+} from '../core/judge-runtime-detection.js'
 import {
   getJudgeProviderSpec,
   isJudgeProviderId,
@@ -28,6 +31,7 @@ import {
   type JudgeProviderId,
   normalizeLegacyProviderId,
 } from '../core/verdict/judge-catalog.js'
+import { normalizeJudgeRuntimeConfig } from '../core/verdict/judge-runtime-config.js'
 import { initProject } from '../installer.js'
 import type { AdapterName, InitOptions } from '../types.js'
 import { isBelayFloorInstalled } from './health-snapshot.js'
@@ -54,6 +58,8 @@ const JUDGE_CONFIG_PATHS = [
   'judge.timeoutMs',
   'judge.credential.mode',
   'judge.credential.ref',
+  'judge.runtime.session.enabled',
+  'judge.runtime.shadow.enabled',
 ] as const
 
 export interface BelayConfigOptions {
@@ -154,6 +160,12 @@ function getJudgeField(judge: BelayJudgeConfig, pathKey: string): unknown {
   if (pathKey === 'judge.timeoutMs') return judge.timeoutMs
   if (pathKey === 'judge.credential.mode') return judge.credential?.mode ?? null
   if (pathKey === 'judge.credential.ref') return judge.credential?.ref ?? null
+  if (pathKey === 'judge.runtime.session.enabled') {
+    return normalizeJudgeRuntimeConfig(judge.runtime).session.enabled
+  }
+  if (pathKey === 'judge.runtime.shadow.enabled') {
+    return normalizeJudgeRuntimeConfig(judge.runtime).shadow.enabled
+  }
   throw new Error(`Unknown judge config path: ${pathKey}`)
 }
 
@@ -259,6 +271,38 @@ async function applyJudgeSet(
     const judge = normalizeJudgeConfig({
       ...config.judge,
       credential: { mode: 'apiKey', ref: value as JudgeCredentialRef },
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.runtime.session.enabled') {
+    if (value !== 'true' && value !== 'false') {
+      throw new Error('judge.runtime.session.enabled must be true or false.')
+    }
+    const runtime = normalizeJudgeRuntimeConfig(config.judge.runtime)
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      runtime: {
+        ...runtime,
+        session: { ...runtime.session, enabled: value === 'true' },
+      },
+    })
+    await persistJudge(repoRoot, config, judge, adapter)
+    return judge
+  }
+
+  if (pathKey === 'judge.runtime.shadow.enabled') {
+    if (value !== 'true' && value !== 'false') {
+      throw new Error('judge.runtime.shadow.enabled must be true or false.')
+    }
+    const runtime = normalizeJudgeRuntimeConfig(config.judge.runtime)
+    const judge = normalizeJudgeConfig({
+      ...config.judge,
+      runtime: {
+        ...runtime,
+        shadow: { ...runtime.shadow, enabled: value === 'true' },
+      },
     })
     await persistJudge(repoRoot, config, judge, adapter)
     return judge
@@ -422,12 +466,50 @@ export const JUDGE_CREDENTIAL_MODE_PROMPT = 'Judge API key source'
 export const JUDGE_CREDENTIAL_STORE_KEY_PROMPT =
   'Paste API key to store locally (visible input; prefer belay config credential set --key-stdin): '
 
+export const JUDGE_TRANSPORT_MODE_PROMPT = 'How should Belay reach the judge?'
+
+export const JUDGE_HTTP_ENDPOINT_PROMPT = 'Judge HTTP API URL:'
+
+export type JudgeTransportWizardMode = 'cli' | 'http'
+
+const CLOUD_CLI_LABELS: Record<Exclude<JudgeProviderId, 'ollama'>, string> = {
+  codex: 'Codex CLI',
+  claude: 'Claude CLI',
+  cursor: 'Cursor CLI',
+}
+
+export function buildJudgeTransportSelectOptions(
+  judgeProviderId: JudgeProviderId,
+): SelectOptions<JudgeTransportWizardMode> {
+  const cliLabel = CLOUD_CLI_LABELS[judgeProviderId as Exclude<JudgeProviderId, 'ollama'>]
+  const runtime = detectJudgeRuntimeCapabilities(judgeProviderId)
+  const cliHint = runtime.cliTransport
+    ? 'Uses your logged-in host session; no URL needed.'
+    : 'Host CLI not found on PATH — install it or choose custom HTTP API.'
+
+  return {
+    message: JUDGE_TRANSPORT_MODE_PROMPT,
+    defaultValue: 'cli',
+    choices: [
+      {
+        value: 'cli',
+        label: `Use ${cliLabel} (recommended)`,
+        hint: cliHint,
+      },
+      {
+        value: 'http',
+        label: 'Custom HTTP API endpoint',
+        hint: 'Requires a provider API URL and cloud egress consent.',
+      },
+    ],
+  }
+}
+
 export function buildJudgeCredentialModeSelectOptions(
   judgeProviderId: JudgeProviderId,
 ): SelectOptions<'project' | 'apiKey'> {
   const spec = getJudgeProviderSpec(judgeProviderId)
-  const providerEnvVars =
-    spec?.apiKeyEnvVars.filter((name) => name !== 'BELAY_JUDGE_API_KEY') ?? []
+  const providerEnvVars = spec?.apiKeyEnvVars.filter((name) => name !== 'BELAY_JUDGE_API_KEY') ?? []
   const envNames =
     providerEnvVars.length > 0
       ? ['BELAY_JUDGE_API_KEY', ...providerEnvVars].join(', ')
@@ -563,6 +645,18 @@ function writeConfigWizardBanner(options: BelayConfigInteractiveOptions, title: 
   output.write(`${title}\n`)
 }
 
+async function askJudgeHttpEndpoint(prompter: ConfigWizardPrompter): Promise<string> {
+  while (true) {
+    const endpoint = (await prompter.askText(JUDGE_HTTP_ENDPOINT_PROMPT)).trim()
+    if (endpoint) {
+      return endpoint
+    }
+    process.stderr.write(
+      'Warning: HTTP endpoint URL is required when using custom HTTP API. Paste a URL or re-run belay config and choose host CLI.\n',
+    )
+  }
+}
+
 async function askJudgeCredentialStoreKey(prompter: ConfigWizardPrompter): Promise<string> {
   while (true) {
     const key = (await prompter.askText(JUDGE_CREDENTIAL_STORE_KEY_PROMPT)).trim()
@@ -587,8 +681,14 @@ async function collectCloudJudgeWizardAnswers(
     buildJudgeCredentialModeSelectOptions(judgeProviderId),
   )
 
-  const optionalEndpoint = (await prompter.askText('Judge endpoint URL (optional): ')).trim()
-  const judgeEndpoint = optionalEndpoint || undefined
+  const transportMode = await prompter.askSelect<JudgeTransportWizardMode>(
+    buildJudgeTransportSelectOptions(judgeProviderId),
+  )
+
+  let judgeEndpoint: string | undefined
+  if (transportMode === 'http') {
+    judgeEndpoint = await askJudgeHttpEndpoint(prompter)
+  }
 
   if (judgeCredentialMode === 'apiKey') {
     process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY = await askJudgeCredentialStoreKey(prompter)

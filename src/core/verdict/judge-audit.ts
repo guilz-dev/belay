@@ -15,6 +15,7 @@ export function judgeTraceAuditFields(trace?: JudgeTrace): Record<string, unknow
     judgeModelRequested: trace.modelRequested,
     judgeModelResolved: trace.modelResolved,
     judgeLatencyMs: trace.latencyMs,
+    ...(trace.transport ? { judgeTransport: trace.transport } : {}),
     ...(trace.outboundRedacted !== undefined
       ? { judgeOutboundRedacted: trace.outboundRedacted }
       : {}),
