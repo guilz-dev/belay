@@ -98,8 +98,10 @@ async function repoLocalApprovalsEmpty(repoRoot: string, config: BelayConfigV3):
 async function readApprovalStateFile(filePath: string): Promise<ApprovalStateFile> {
   const raw = await readFile(filePath, 'utf8')
   const parsed = JSON.parse(raw) as ApprovalStateFile
+  const version = parsed.version === 3 ? 3 : parsed.version === 2 ? 2 : 1
   return {
-    version: parsed.version === 2 ? 2 : 1,
+    version,
+    revision: typeof parsed.revision === 'number' ? parsed.revision : undefined,
     approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [],
   }
 }

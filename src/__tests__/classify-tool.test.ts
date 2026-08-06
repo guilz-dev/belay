@@ -6,21 +6,10 @@ import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { classifyShell } from '../core/verdict/adapter.js'
-import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
 const repoRoot = '/workspace/project'
 const cwd = repoRoot
 const config = mergeConfig({})
-const benignJudge = createDeterministicJudgeStub()
-const catastrophicJudge = {
-  evaluate: () =>
-    Promise.resolve({
-      local_recoverable: false,
-      destroys_outside_repo: false,
-      destroys_history_or_secrets: false,
-      reason: 'persistent_harm',
-    }),
-}
 
 describe('classifyToolUse', () => {
   it('reuses v2 shell classification and fingerprint for Shell tool', async () => {
@@ -38,20 +27,19 @@ describe('classifyToolUse', () => {
     expect(shellOnly.fingerprint).toBe(shellCore.fingerprint)
   })
 
-  it('allows benign writes outside the repository via Tier1', async () => {
+  it('requires approval for writes outside the repository', async () => {
     const result = await classifyToolUse(
       { tool_name: 'Write', tool_input: { path: '/tmp/outside.txt', contents: 'x' } },
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('file_mutation')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
     expect(result.assessment.external).toBe(true)
   })
 
-  it('allows Cursor plan document writes outside the repository', async () => {
+  it('requires approval for Cursor plan document writes outside the repository', async () => {
     const home = process.env.HOME ?? '/home/user'
     const result = await classifyToolUse(
       {
@@ -61,10 +49,9 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.assessment.signals).toContain('tier1_restorable')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
   })
 
   it('treats trusted workspace root writes as repo-local equivalent', async () => {
@@ -80,7 +67,6 @@ describe('classifyToolUse', () => {
       cwd,
       config,
       {
-        tier1Judge: benignJudge,
         trustedWorkspaceRoots: [trustedRoot],
       },
     )
@@ -104,7 +90,6 @@ describe('classifyToolUse', () => {
       cwd,
       config,
       {
-        tier1Judge: benignJudge,
         trustedWorkspaceRoots: [trustedRoot],
       },
     )
@@ -126,7 +111,6 @@ describe('classifyToolUse', () => {
       cwd,
       config,
       {
-        tier1Judge: benignJudge,
         trustedWorkspaceRoots: [trustedRoot],
       },
     )
@@ -135,32 +119,30 @@ describe('classifyToolUse', () => {
     expect(result.assessment.signals).toContain('outside_repo_secret_credential_path')
   })
 
-  it('asks on sensitive path mutations when Tier1 says not local-recoverable', async () => {
+  it('asks on sensitive path mutations via policy engine', async () => {
     const result = await classifyToolUse(
       { tool_name: 'Write', tool_input: { path: '.env', contents: 'SECRET=1' } },
       repoRoot,
       cwd,
       config,
-      { tier1Judge: catastrophicJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('tier1_catastrophic')
   })
 
-  it('asks on sensitive path writes via structural prescan before Tier1', async () => {
+  it('asks on sensitive path writes via structural prescan', async () => {
     const result = await classifyToolUse(
       { tool_name: 'Write', tool_input: { path: '.env', contents: 'SECRET=1' } },
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('tier1_catastrophic')
     expect(result.assessment.signals).toContain('sensitive_path_mutation')
   })
 
-  it('asks on ~/.ssh/authorized_keys via structural prescan before Tier1', async () => {
+  it('asks on ~/.ssh/authorized_keys via structural prescan', async () => {
     const home = process.env.HOME ?? '/home/user'
     const result = await classifyToolUse(
       {
@@ -170,14 +152,13 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.reason).toBe('outside_repo_mutation')
     expect(result.assessment.signals).toContain('persistent_agent_path')
   })
 
-  it('asks on ~/.ssh/authorized_keys when Tier1 says not local-recoverable', async () => {
+  it('asks on ~/.ssh/authorized_keys via policy engine', async () => {
     const home = process.env.HOME ?? '/home/user'
     const result = await classifyToolUse(
       {
@@ -187,13 +168,12 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: catastrophicJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.reason).toBe('outside_repo_mutation')
   })
 
-  it('asks on outside-repo credential writes via structural prescan before Tier1', async () => {
+  it('asks on outside-repo credential writes via structural prescan', async () => {
     const home = process.env.HOME ?? '/home/user'
     const result = await classifyToolUse(
       {
@@ -203,10 +183,9 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.reason).toBe('outside_repo_mutation')
     expect(result.assessment.signals).toContain('outside_repo_secret_credential_path')
   })
 
@@ -248,13 +227,12 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: benignJudge },
     )
     expect(result.verdict).toBe('allow_flagged')
     expect(result.reason).toBe('file_mutation')
   })
 
-  it('asks apply_patch when Tier1 flags sensitive paths', async () => {
+  it('asks apply_patch when policy flags sensitive paths', async () => {
     const result = await classifyToolUse(
       {
         tool_name: 'ApplyPatch',
@@ -271,13 +249,12 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: catastrophicJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('tier1_catastrophic')
   })
 
-  it('asks apply_patch moves into sensitive paths when Tier1 flags risk', async () => {
+  it('asks apply_patch moves into sensitive paths via policy', async () => {
     const result = await classifyToolUse(
       {
         tool_name: 'ApplyPatch',
@@ -295,7 +272,6 @@ describe('classifyToolUse', () => {
       repoRoot,
       cwd,
       config,
-      { tier1Judge: catastrophicJudge },
     )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('tier1_catastrophic')

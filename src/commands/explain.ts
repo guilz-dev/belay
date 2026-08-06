@@ -162,7 +162,12 @@ export function formatExplainReport(report: ExplainReport): string {
     const providerId = inferProviderIdFromFallbackReason(fallbackReason)
     const recoveryHint = formatJudgeRecoveryHint(providerId, fallbackReason)
     if (recoveryHint) {
-      recoveryLines.push('', 'Recovery:', `  ${recoveryHint}`, '  Then verify: belay judge test --live-probe')
+      recoveryLines.push(
+        '',
+        'Recovery:',
+        `  ${recoveryHint}`,
+        '  Then verify: belay judge test --live-probe',
+      )
     }
   }
 

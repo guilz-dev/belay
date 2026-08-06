@@ -1,3 +1,5 @@
+import { getDefaultBoundaryDriver } from '../capability/boundary-driver.js'
+import { boundaryMountReadOnlyFromPrediction } from '../capability/boundary-run.js'
 import type { ClassifyResult } from '../types.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import {
@@ -7,7 +9,6 @@ import {
   isDirtyWorktree,
   isGitWorktreeAvailable,
   resolveWorktreeCwd,
-  runShellCommand,
 } from './git-worktree.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -45,7 +46,13 @@ export async function runTransactionalExecution(
   try {
     snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir)
     const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd)
-    const shellResult = await runShellCommand(command, execCwd, timeoutMs)
+    const driver = getDefaultBoundaryDriver(params.boundaryDriverId ?? 'host-integration', {
+      egressProxyEnv: params.egressProxyEnv,
+      repoRoot: params.repoRoot,
+    })
+    const shellResult = await driver.run(command, execCwd, timeoutMs, {
+      mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
+    })
 
     if (shellResult.timedOut) {
       return {

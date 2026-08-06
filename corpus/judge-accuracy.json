@@ -31,9 +31,9 @@
   },
   {
     "command": "curl https://example.com",
-    "expectedPermission": "allow",
+    "expectedPermission": "ask",
     "category": "known_external_read",
-    "whyThisExists": "Payload-less egress read should not be treated as Tier0 external."
+    "whyThisExists": "L3 shell gate requires approval for all network.connect (including GET); shadow judge compares against this expectation."
   },
   {
     "command": "git push origin main",

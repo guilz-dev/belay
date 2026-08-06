@@ -1,8 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CONFIG_V4, normalizeConfig } from '../../core/config.js'
+import * as judgeApiKey from '../../core/judge-api-key.js'
 import { diagnoseJudge } from '../../core/judge-doctor.js'
+import * as judgeRuntime from '../../core/judge-runtime-detection.js'
 import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
 import * as judgeFactory from '../../core/verdict/judge-factory.js'
+
+function mockCursorCliLiveProbe(): void {
+  vi.spyOn(judgeRuntime, 'detectJudgeRuntimeCapabilities').mockReturnValue({
+    http: false,
+    cliTransport: 'cursor-cli',
+  })
+  vi.spyOn(judgeRuntime, 'resolveJudgeTransport').mockReturnValue('cursor-cli')
+  vi.spyOn(judgeApiKey, 'resolveJudgeCredential').mockResolvedValue({
+    key: null,
+    source: null,
+    sourceKind: 'host-session',
+    mode: 'project',
+  })
+}
 
 describe('T12 doctor judge matrix', () => {
   it('warns when policy.modelAssist is enabled', async () => {
@@ -41,7 +57,8 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.includes('API key'))).toBe(true)
+    expect(report.warnings.some((warning) => warning.includes('API key'))).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('API key'))).toBe(false)
     if (previousBelay) {
       process.env.BELAY_JUDGE_API_KEY = previousBelay
     }
@@ -79,7 +96,8 @@ describe('T12 doctor judge matrix', () => {
       },
     })
     const report = await diagnoseJudge(config)
-    expect(report.issues.some((issue) => issue.toLowerCase().includes('ollama'))).toBe(true)
+    expect(report.warnings.some((warning) => warning.toLowerCase().includes('ollama'))).toBe(true)
+    expect(report.issues.some((issue) => issue.toLowerCase().includes('ollama'))).toBe(false)
   })
 
   it('reports smoke probe failures as issues with recovery hints', async () => {
@@ -87,6 +105,7 @@ describe('T12 doctor judge matrix', () => {
     const previousVitestWorker = process.env.VITEST_WORKER_ID
     delete process.env.VITEST
     delete process.env.VITEST_WORKER_ID
+    mockCursorCliLiveProbe()
 
     const judge = createDeterministicJudgeStub()
     vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue({
@@ -125,10 +144,15 @@ describe('T12 doctor judge matrix', () => {
     try {
       const report = await diagnoseJudge(config, process.cwd(), { liveProbe: true })
       expect(
+        report.warnings.some(
+          (warning) => warning.includes('cursor_cli_nonzero') && warning.includes('agent login'),
+        ),
+      ).toBe(true)
+      expect(
         report.issues.some(
           (issue) => issue.includes('cursor_cli_nonzero') && issue.includes('agent login'),
         ),
-      ).toBe(true)
+      ).toBe(false)
     } finally {
       vi.restoreAllMocks()
       if (previousVitest) {
@@ -145,6 +169,7 @@ describe('T12 doctor judge matrix', () => {
     const previousVitestWorker = process.env.VITEST_WORKER_ID
     delete process.env.VITEST
     delete process.env.VITEST_WORKER_ID
+    mockCursorCliLiveProbe()
 
     const judge = createDeterministicJudgeStub()
     const createSpy = vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue({

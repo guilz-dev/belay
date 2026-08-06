@@ -66,6 +66,10 @@ export interface JudgeTransportEvaluateResult {
 
 export interface JudgeTransportBridgeOptions {
   runCommand?: CliJudgeRunCommand
+  /** Gate policy shadow: skip session-vs-spawn transport shadow inside evaluateWithJudgeTransport. */
+  skipTransportShadow?: boolean
+  /** Gate policy shadow: always use spawn transport (no session broker). */
+  spawnOnly?: boolean
 }
 
 function isEvalTimeoutError(error: unknown): boolean {
@@ -334,6 +338,7 @@ export async function evaluateWithJudgeTransport(
     ((invocation, timeoutMs) => runCliJsonWithTimeouts(invocation, { evalTimeoutMs: timeoutMs }))
   const { context } = request
   const useSession =
+    !options.spawnOnly &&
     context.runtime.session.enabled &&
     providerSupportsSession(context.providerId, context.runtime.session.providerAllowlist) &&
     !(await isJudgeSessionKillSwitchActive(context.repoRoot, context.stateDir))
@@ -342,7 +347,10 @@ export async function evaluateWithJudgeTransport(
     ? await runSessionTransport(request, runCommand)
     : await runSpawnTransport(request, runCommand)
 
-  if (!shouldRunShadowComparison(context.repoRoot, context.providerId, context.runtime.shadow)) {
+  if (
+    options.skipTransportShadow ||
+    !shouldRunShadowComparison(context.repoRoot, context.providerId, context.runtime.shadow)
+  ) {
     return primary
   }
 

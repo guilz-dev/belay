@@ -1,13 +1,19 @@
 import path from 'node:path'
 
 import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
+import { evaluateGuaranteePosture } from '../conformance/guarantee-posture.js'
 import { fsScopeAllowlistPath, loadFsScopeAllowlist } from '../core/capability/allowlist.js'
+import {
+  boundaryAttestationPath,
+  loadBoundaryAttestation,
+} from '../core/capability/boundary-session.js'
 import {
   evaluateL1FullStatus,
   isCapabilityBrokerDemotionActive,
 } from '../core/capability/broker.js'
+import { loadShadowRatchetWarnings } from '../core/capability/gate-shadow-ratchet.js'
 import { trustedWorkspaceRootsPath } from '../core/capability/trusted-workspace-roots.js'
-import { configuredControlPlaneDir } from '../core/config.js'
+import { belayStateDir, configuredControlPlaneDir } from '../core/config.js'
 import { verifyControlPlaneIsolation } from '../core/control-plane-isolation.js'
 import { egressStatus } from './egress-service.js'
 
@@ -25,6 +31,7 @@ export interface SandboxStatusReport {
   controlPlaneIsolationMode: string
   controlPlaneIsolationOk: boolean
   l1FullActive: boolean
+  guaranteePosture: ReturnType<typeof evaluateGuaranteePosture>
   l1Full: {
     sandbox: boolean
     egress: boolean
@@ -48,10 +55,24 @@ export async function sandboxStatus(
     configuredControlPlaneDir(config),
     config.controlPlane.isolation,
   )
+  const egressProxyRunning = egress.running && !egress.foreignProxy && !egress.repoRootMismatch
   const l1Full = evaluateL1FullStatus({
     config,
-    egressProxyRunning: egress.running && !egress.foreignProxy && !egress.repoRootMismatch,
+    egressProxyRunning,
   })
+  const attestation = await loadBoundaryAttestation(
+    boundaryAttestationPath(repoRoot, config),
+    repoRoot,
+    configuredControlPlaneDir(config),
+  )
+  const guaranteePosture = evaluateGuaranteePosture({
+    config,
+    attestation,
+    egressProxyRunning,
+  })
+  const shadowRatchetWarnings = await loadShadowRatchetWarnings(
+    belayStateDir(config, repoLocalStateDir),
+  )
 
   const issues: string[] = [...isolation.issues]
   if (config.sandbox.enabled && config.sandbox.runtime === 'none') {
@@ -66,6 +87,12 @@ export async function sandboxStatus(
   if (l1Full.sandbox && !l1Full.approvalSigningRequired) {
     issues.push('L1-full requires approvalSigning.required=true')
   }
+  if (guaranteePosture.postureMismatch) {
+    issues.push(
+      `L1-full is configured but attestation only supports ${guaranteePosture.attestedProfile} (run belay session start)`,
+    )
+  }
+  issues.push(...shadowRatchetWarnings)
 
   return {
     repoRoot,
@@ -77,6 +104,7 @@ export async function sandboxStatus(
     controlPlaneIsolationMode: config.controlPlane.isolation.mode,
     controlPlaneIsolationOk: isolation.ok,
     l1FullActive: l1Full.active,
+    guaranteePosture,
     l1Full,
     issues,
   }
@@ -125,6 +153,8 @@ export function formatSandboxStatusReport(report: SandboxStatusReport): string {
     `FS-scope allowlist entries: ${report.fsScopeAllowlistCount}`,
     `Control-plane isolation: ${report.controlPlaneIsolationMode} (ok=${report.controlPlaneIsolationOk})`,
     `L1-full active: ${report.l1FullActive}`,
+    `Guarantee posture: configured=${report.guaranteePosture.configuredProfile} attested=${report.guaranteePosture.attestedProfile}`,
+    `  attestationFresh=${report.guaranteePosture.attestationFresh} l1FullConfigured=${report.guaranteePosture.l1FullConfigured} l1FullAttested=${report.guaranteePosture.l1FullAttested}`,
     `  sandbox=${report.l1Full.sandbox} egress=${report.l1Full.egress} proxy=${report.l1Full.egressProxyRunning}`,
     `  isolation=${report.l1Full.controlPlaneIsolation} signing=${report.l1Full.approvalSigningRequired}`,
   ]

@@ -100,9 +100,7 @@ describe('config wizard TUI integration', () => {
     await emitKeypress('k') // cursor -> claude
     await emitKeypress('enter')
     await vi.waitFor(() => expect(writes.join('')).toContain('Judge API key source'))
-    await vi.waitFor(() =>
-      expect(writes.join('')).toContain('Environment variables or host CLI'),
-    )
+    await vi.waitFor(() => expect(writes.join('')).toContain('Environment variables or host CLI'))
     await emitKeypress('enter')
     await vi.waitFor(() => expect(writes.join('')).toContain('How should Belay reach the judge?'))
     await emitKeypress('down') // cli -> http

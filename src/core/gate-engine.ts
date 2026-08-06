@@ -1,4 +1,5 @@
 import { allPathsAllowlisted } from './capability/allowlist.js'
+import { checkGatedActionLimits } from './capability/limits.js'
 import {
   collectOutsideRepoPaths,
   collectOutsideRepoPathsFromToolPayload,
@@ -286,6 +287,11 @@ export async function classifyGatedAction(
   config: BelayConfigV3,
   extraOptions: ClassifierOptions = {},
 ): Promise<ClassifyResult> {
+  const limitResult = checkGatedActionLimits(action)
+  if (limitResult) {
+    return limitResult
+  }
+
   const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
 
   if (action.kind === 'shell') {
@@ -312,7 +318,7 @@ export async function classifyGatedAction(
   }
 
   if (action.kind === 'subagent') {
-    return classifySubagent(action.payload ?? {}, action.repoRoot, options)
+    return classifySubagent(action.payload ?? {}, action.repoRoot, options, config)
   }
 
   let result = await classifyToolUse(

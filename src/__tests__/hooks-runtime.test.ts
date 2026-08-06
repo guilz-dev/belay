@@ -12,6 +12,7 @@ import {
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
+import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 
@@ -157,14 +158,14 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(deniedAgain.stdout).permission).toBe('deny')
   })
 
-  it('allows read-only shell commands and flags local mutations in the audit log', async () => {
+  it('requires approval for read-only network shell commands', async () => {
     const repoRoot = await initIsolatedRepo()
 
-    const readonly = await runRunner(repoRoot, 'belay-shell-gate', {
+    const networkRead = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'curl https://example.com',
       cwd: repoRoot,
     })
-    expect(JSON.parse(readonly.stdout)).toEqual({ permission: 'allow' })
+    expect(JSON.parse(networkRead.stdout).permission).toBe('deny')
 
     const flagged = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'touch notes.txt',
@@ -173,25 +174,28 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(flagged.stdout)).toEqual({ permission: 'allow' })
 
     const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
-    expect(auditRaw).toContain('"verdict":"allow"')
+    expect(auditRaw).toContain('"verdict":"deny_pending_approval"')
     expect(auditRaw).toContain('"verdict":"allow_flagged"')
   })
 
-  it('allows relative repo-external shell mutations under default L3 (ADR-002)', async () => {
+  it('requires approval for relative repo-external shell mutations under default L3', async () => {
     const repoRoot = await initIsolatedRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# test\n')
 
-    const allowedRedirect = await runRunner(repoRoot, 'belay-shell-gate', {
+    const deniedRedirect = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'echo hi > ../outside.txt',
       cwd: repoRoot,
     })
-    expect(JSON.parse(allowedRedirect.stdout).permission).toBe('allow')
+    expect(JSON.parse(deniedRedirect.stdout).permission).toBe('deny')
 
-    const allowedCopy = await runRunner(repoRoot, 'belay-shell-gate', {
-      command: 'cp README.md ../copy.txt',
-      cwd: repoRoot,
-    })
-    expect(JSON.parse(allowedCopy.stdout).permission).toBe('allow')
+    const predicted = await classifyShellGated(
+      'cp README.md ../copy.txt',
+      repoRoot,
+      repoRoot,
+      await loadConfigFile(repoRoot),
+    )
+    expect(predicted.verdict).toBe('deny_pending_approval')
+    expect(predicted.reason).toBe('outside_repo_mutation')
   })
 
   it('denies chained shell commands when a later segment is external', async () => {

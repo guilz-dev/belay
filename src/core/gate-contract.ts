@@ -34,6 +34,9 @@ export interface GateVerdict extends GatePermissionResponse {
   wouldBlock: boolean
   mode: 'enforce' | 'audit'
   axes?: ClassifyResult['axes']
+  capabilityRequests?: ClassifyResult['capabilityRequests']
+  authorizationDecision?: ClassifyResult['authorizationDecision']
+  boundaryProfile?: string
 }
 
 export function isGatedAction(value: unknown): value is GatedAction {
@@ -74,6 +77,9 @@ export function classifyResultToGateVerdict(params: {
     user_message,
     agent_message,
     axes: result.axes,
+    capabilityRequests: result.capabilityRequests,
+    authorizationDecision: result.authorizationDecision,
+    boundaryProfile: result.boundaryProfile,
   }
 }
 

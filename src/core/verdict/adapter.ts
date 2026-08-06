@@ -1,9 +1,12 @@
+import {
+  BOUNDARY_PROFILE_L3_L4_ONLY,
+  resolveBoundaryProfile,
+} from '../capability/boundary-profile.js'
 import type { BelayConfigV4 } from '../config.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
 import { judgeTraceAuditFields } from './judge-audit.js'
 import { recordJudgeLatency } from './judge-baseline.js'
-import { createJudgeFromConfig } from './judge-factory.js'
-import type { Tier1Judge, VerdictContext, VerdictResult } from './types.js'
+import type { VerdictContext, VerdictResult } from './types.js'
 import { verdict } from './verdict.js'
 
 export function resolveClassifierTrustedCwd(
@@ -22,7 +25,6 @@ export function buildVerdictContext(params: {
   repoRoot: string
   config: BelayConfigV4
   options?: ClassifierOptions
-  judge?: Tier1Judge
   trustedCwd?: boolean
 }): VerdictContext {
   const protectedArtifactRoots = [
@@ -33,6 +35,7 @@ export function buildVerdictContext(params: {
   return {
     cwd: params.cwd,
     repoRoot: params.repoRoot,
+    config: params.config,
     trustedCwd: resolveClassifierTrustedCwd(params.cwd, params.options, params.trustedCwd),
     trustedWorkspaceRoots: params.options?.trustedWorkspaceRoots ?? [],
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
@@ -41,14 +44,13 @@ export function buildVerdictContext(params: {
     customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
     customExternalCommands:
       params.options?.customExternalCommands ?? params.config.overrides.external,
-    judge:
-      params.judge ??
-      params.options?.tier1Judge ??
-      createJudgeFromConfig(params.config, { repoRoot: params.repoRoot }),
     mode: params.config.mode,
     unknownLocalEffect:
       params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
     unparseableShell: params.options?.unparseableShell ?? params.config.policy.unparseableShell,
+    grants: params.options?.grants,
+    attestation: params.options?.attestation,
+    egressProxyActive: params.options?.egressProxyActive,
   }
 }
 
@@ -58,16 +60,12 @@ export async function classifyShell(
   repoRoot: string,
   config: BelayConfigV4,
   options: ClassifierOptions = {},
-  judge?: Tier1Judge,
 ): Promise<ClassifyResult> {
-  const context = buildVerdictContext({ cwd, repoRoot, config, options, judge })
+  const context = buildVerdictContext({ cwd, repoRoot, config, options })
   const started = Date.now()
   const result = await verdict(command, context)
-  const elapsed = Date.now() - started
-  if (result.confidence !== 'llm') {
-    recordJudgeLatency('tier0', elapsed)
-  }
-  return verdictToClassifyResult(result)
+  recordJudgeLatency('gate', Date.now() - started)
+  return verdictToClassifyResult(result, config, options)
 }
 
 function mapLegacyReason(result: VerdictResult): string {
@@ -104,7 +102,11 @@ function mapLegacyReason(result: VerdictResult): string {
   return result.reason
 }
 
-export function verdictToClassifyResult(result: VerdictResult): ClassifyResult {
+export function verdictToClassifyResult(
+  result: VerdictResult,
+  config?: BelayConfigV4,
+  options: ClassifierOptions = {},
+): ClassifyResult {
   const external =
     result.location === 'external' ||
     result.location === 'repo_outside' ||
@@ -161,6 +163,13 @@ export function verdictToClassifyResult(result: VerdictResult): ClassifyResult {
       signals: result.signals,
       ...judgeTraceAuditFields(result.judgeTrace),
     },
+    capabilityRequests: result.capabilityRequests,
+    authorizationDecision: result.authorizationDecision,
+    boundaryProfile:
+      options.boundaryProfile ??
+      (config
+        ? resolveBoundaryProfile({ config, attestation: options.attestation })
+        : BOUNDARY_PROFILE_L3_L4_ONLY),
   }
 }
 

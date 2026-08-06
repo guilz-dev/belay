@@ -15,6 +15,11 @@ import {
   repoLocalStateDirFor,
 } from '../config-io.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
+import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
+import {
+  boundaryAttestationPath,
+  boundarySessionStatus,
+} from '../core/capability/boundary-session.js'
 import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
@@ -353,6 +358,43 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
       for (const issue of sandbox.issues) {
         warnings.push(issue)
+      }
+    }
+
+    const boundaryDriver =
+      loadedConfig.capability?.boundaryDriver ??
+      (loadedConfig.sandbox.runtime === 'container' ? 'container' : null)
+    if (loadedConfig.capability || boundaryDriver === 'container') {
+      const attestationPath = boundaryAttestationPath(repoRoot, loadedConfig)
+      const attestationFormat = await inspectBoundaryAttestationFile(attestationPath)
+      if (attestationFormat === 'legacy') {
+        warnings.push(
+          'Boundary attestation uses an unsigned legacy format. Run belay session start to re-sign it.',
+        )
+      } else if (attestationFormat === 'invalid') {
+        warnings.push(
+          'Boundary attestation file is present but invalid. Run belay session start to regenerate it.',
+        )
+      }
+    }
+    if (boundaryDriver === 'container') {
+      const session = await boundarySessionStatus({ repoRoot, config: loadedConfig })
+      if (!session.attestation) {
+        warnings.push(
+          'Container boundary driver is configured but no attestation was found. Run belay session start.',
+        )
+      } else if (!session.fresh) {
+        warnings.push(
+          'Boundary attestation is stale or expired. Run belay session start to refresh.',
+        )
+      } else if (session.attestation.probeSignals.includes('repo-mount-ro-default')) {
+        notes.push(
+          'Container boundary defaults to read-only directory mounts; predicted writes use read-write mounts for the working directory only.',
+        )
+      } else if (session.attestation.probeSignals.includes('repo-mount-rw')) {
+        notes.push(
+          'Container boundary mounts the working directory read-write (repo-mount-rw). Policy grants scope widening; paths outside the mount are not container-enforced.',
+        )
       }
     }
 

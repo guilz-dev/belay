@@ -1,6 +1,6 @@
 # ADR-001: 予測ベース分類から階層型エンフォースメントへの移行
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-11
 **Deciders:** kaz(メンテナ)
 **関連:** [`ROADMAP.md`](../ROADMAP.md), [`SECURITY.md`](../../SECURITY.md)

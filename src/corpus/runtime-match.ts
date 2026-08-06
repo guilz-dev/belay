@@ -2,7 +2,6 @@ import path from 'node:path'
 
 import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { classifyShell } from '../core/verdict/adapter.js'
-import { createDeterministicJudgeStub } from '../core/verdict/judge.js'
 
 import { type CorpusCase, CorpusSchemaError } from './types.js'
 
@@ -26,8 +25,7 @@ export async function deriveShellCorpusRuntimeKey(
   cwd = path.join(repoRoot, 'src'),
 ): Promise<string> {
   const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
-  const judge = createDeterministicJudgeStub()
-  const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options, judge)
+  const result = await classifyShell(command, cwd, repoRoot, DEFAULT_CONFIG_V3, options)
   return result.fingerprint
 }
 

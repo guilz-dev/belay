@@ -9,8 +9,6 @@ import {
 } from '../../adapters/shared/gate-runtime.js'
 import { mergeConfig } from '../../core/config.js'
 import * as gateEngine from '../../core/gate-engine.js'
-import { createDeterministicJudgeStub } from '../../core/verdict/judge.js'
-import * as judgeFactory from '../../core/verdict/judge-factory.js'
 
 describe('gate-runtime integration', () => {
   afterEach(() => {
@@ -29,8 +27,6 @@ describe('gate-runtime integration', () => {
   }
 
   it('allows git status through verdict engine', async () => {
-    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
-
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-verdict-gate-'))
     const configPath = path.join(repoRoot, '.belay', 'config.json')
     await mkdir(path.dirname(configPath), { recursive: true })
@@ -59,7 +55,6 @@ describe('gate-runtime integration', () => {
   })
 
   it('applies standing-allow when classifier would ask for a provably-benign catalog command', async () => {
-    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
@@ -102,8 +97,6 @@ describe('gate-runtime integration', () => {
   })
 
   it('blocks rm -rf .git and creates verdict audit trace', async () => {
-    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
-
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-verdict-gate-'))
     const configPath = path.join(repoRoot, '.belay', 'config.json')
     await mkdir(path.dirname(configPath), { recursive: true })
@@ -136,8 +129,6 @@ describe('gate-runtime integration', () => {
   })
 
   it('writes actionSnapshot with subdirectory cwd for simulate replay', async () => {
-    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
-
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-snapshot-gate-'))
     const srcCwd = path.join(repoRoot, 'src')
     await mkdir(srcCwd, { recursive: true })
@@ -167,7 +158,6 @@ describe('gate-runtime integration', () => {
   })
 
   it('denies judge infrastructure failures with recovery hints and without approval ids', async () => {
-    vi.spyOn(judgeFactory, 'createJudgeFromConfig').mockReturnValue(createDeterministicJudgeStub())
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
       verdict: 'deny_pending_approval',
       reason: 'tier1_catastrophic',

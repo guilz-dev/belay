@@ -308,10 +308,7 @@ function isReadOnlyLauncherInvocation(tokens: string[]): boolean {
 export { isReadOnlyLauncherInvocation }
 
 export function isRoutineLauncher(tokens: string[]): boolean {
-  if (
-    (tokens[0] === 'pnpm' || tokens[0] === 'npm') &&
-    isReadOnlyLauncherInvocation(tokens)
-  ) {
+  if ((tokens[0] === 'pnpm' || tokens[0] === 'npm') && isReadOnlyLauncherInvocation(tokens)) {
     return false
   }
   return (

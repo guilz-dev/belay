@@ -1,3 +1,7 @@
+import type { BoundaryAttestation } from './capability/attestation.js'
+import type { CapabilityGrantV1 } from './capability/grant.js'
+import type { PolicyDecision } from './capability/policy-types.js'
+import type { CapabilityRequestV1 } from './capability/request.js'
 import type { FsScopeAllowlistFile } from './capability/types.js'
 
 export type BelayMode = 'enforce' | 'audit'
@@ -40,6 +44,9 @@ export interface ClassifyResult {
   normalizedCommand?: string
   summary?: string
   axes?: VerdictAxes
+  capabilityRequests?: CapabilityRequestV1[]
+  authorizationDecision?: PolicyDecision
+  boundaryProfile?: string
 }
 
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny'
@@ -80,10 +87,13 @@ export interface ClassifierOptions {
   brokerFsScope?: boolean
   fsScopeAllowlist?: FsScopeAllowlistFile
   trustedWorkspaceRoots?: string[]
-  /** Test override: inject Tier1 judge without changing config.judge. */
-  tier1Judge?: import('./verdict/types.js').Tier1Judge
   /** When false, path resolution stays fail-closed (opaque cd chains). Default: Boolean(cwd). */
   trustedCwd?: boolean
+  grants?: CapabilityGrantV1[]
+  attestation?: BoundaryAttestation | null
+  boundaryProfile?: string
+  /** True when egress proxy is running and bound to this repository. */
+  egressProxyActive?: boolean
 }
 
 export interface ApprovalScopeHint {
@@ -116,9 +126,17 @@ export interface ApprovalRecord {
   payloadJson?: string
   /** Optional scope hint for structured capability approvals. */
   scopeHint?: ApprovalScopeHint
+  /** Approval state v3: normalized capability requests at ask time. */
+  capabilityRequests?: CapabilityRequestV1[]
+  /** Approval state v3: hash of capabilityRequests for replay binding. */
+  capabilityRequestHash?: string
+  /** Approval state v3: minted grant after human approval. */
+  grant?: CapabilityGrantV1
 }
 
 export interface ApprovalStateFile {
-  version: 1 | 2
+  version: 1 | 2 | 3
+  /** Optimistic concurrency revision (v3). */
+  revision?: number
   approvals: ApprovalRecord[]
 }

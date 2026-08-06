@@ -1,6 +1,8 @@
 # ADR-002 — Concept conformance: すべてのルールは restorability floor に奉仕する
 
-Status: Accepted（拘束力のある運用規律）
+Status: Accepted（拘束力のある運用規律）  
+**Amended 2026-08-06 (ADR-003):** L3 shell/tool hook gate の network 判定は restorability floor ではなく resource-scoped capability authorization（`network.connect` は承認対象）を優先する。§1 の `curl` / `aws s3 ls` 等の MUST-ALLOW 例は **L3 hook 経路には適用されない**。L1 egress proxy 経路では GET 許可が残る。
+
 Date: 2026-06-13
 Context: egress 過剰ブロック（v2.1.3）を起点に、コードがコンセプトから繰り返し
 ずれていた問題への再発防止。

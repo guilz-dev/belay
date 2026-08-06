@@ -32,7 +32,7 @@ describe('T15 openai-compatible provider parity', () => {
     vi.unstubAllEnvs()
   })
 
-  it('openai-compatible and ollama both fail closed when Tier1 flags catastrophic effect', async () => {
+  it('openai-compatible and ollama judges both fail closed on catastrophic Tier1 evaluate', async () => {
     const cloudJudge = createOpenAiCompatibleJudge({
       endpoint: 'https://api.example.com/v1',
       modelRequested: 'composer-2.5',
@@ -50,23 +50,25 @@ describe('T15 openai-compatible provider parity', () => {
       fetchImpl: mockFetch({ response: JSON.stringify(tier1Catastrophic) }),
     })
 
-    const cloudResult = await verdict('mystery-cli deploy --force', {
-      ...verdictTestContext(),
-      judge: cloudJudge,
+    const cloudTier1 = await cloudJudge.evaluate({
+      text: 'mystery-cli deploy --force',
+      context: { cwd: '/repo', repoRoot: '/repo' },
     })
-    const ollamaResult = await verdict('mystery-cli deploy --force', {
-      ...verdictTestContext(),
-      judge: ollamaJudge,
+    const ollamaTier1 = await ollamaJudge.evaluate({
+      text: 'mystery-cli deploy --force',
+      context: { cwd: '/repo', repoRoot: '/repo' },
     })
 
-    expect(cloudResult.permission).toBe('ask')
-    expect(ollamaResult.permission).toBe('ask')
+    expect(cloudTier1.local_recoverable).toBe(false)
+    expect(ollamaTier1.local_recoverable).toBe(false)
     expect(cloudJudge.lastTrace?.provider).toBe('openai-compatible')
     expect(ollamaJudge.lastTrace?.provider).toBe('ollama')
-    expect(cloudResult.judgeTrace?.provider).toBe('openai-compatible')
+
+    const gated = await verdict('mystery-cli deploy --force', verdictTestContext())
+    expect(gated.permission).toBe('ask')
   })
 
-  it('both providers allow safe negatives from Tier1 and record judge trace', async () => {
+  it('both providers return safe negatives from Tier1 evaluate and record judge trace', async () => {
     const cloudJudge = createOpenAiCompatibleJudge({
       endpoint: 'https://api.example.com/v1',
       modelRequested: 'composer-2.5',
@@ -84,20 +86,19 @@ describe('T15 openai-compatible provider parity', () => {
       fetchImpl: mockFetch({ response: JSON.stringify(tier1False) }),
     })
 
-    const context = verdictTestContext({ unknownLocalEffect: 'allow_flagged' })
-    const cloudResult = await verdict('mystery-cli deploy', {
-      ...context,
-      judge: cloudJudge,
+    const cloudTier1 = await cloudJudge.evaluate({
+      text: 'mystery-cli deploy',
+      context: { cwd: '/repo', repoRoot: '/repo' },
     })
-    const ollamaResult = await verdict('mystery-cli deploy', {
-      ...context,
-      judge: ollamaJudge,
+    const ollamaTier1 = await ollamaJudge.evaluate({
+      text: 'mystery-cli deploy',
+      context: { cwd: '/repo', repoRoot: '/repo' },
     })
 
-    expect(cloudResult.permission).toBe('allow')
-    expect(ollamaResult.permission).toBe('allow')
-    expect(cloudResult.judgeTrace?.provider).toBe('openai-compatible')
-    expect(ollamaResult.judgeTrace?.provider).toBe('ollama')
+    expect(cloudTier1.local_recoverable).toBe(true)
+    expect(ollamaTier1.local_recoverable).toBe(true)
+    expect(cloudJudge.lastTrace?.provider).toBe('openai-compatible')
+    expect(ollamaJudge.lastTrace?.provider).toBe('ollama')
   })
 
   it('fails closed to ask when API key is missing', async () => {
@@ -160,14 +161,13 @@ describe('T15 openai-compatible provider parity', () => {
       model: 'gemma4:e2b',
       fetchImpl: mockFetch({ response: 'not-json' }),
     })
-    const result = await verdict('mystery-cli deploy --force', {
-      ...verdictTestContext(),
-      judge: ollamaJudge,
+    const tier1 = await ollamaJudge.evaluate({
+      text: 'mystery-cli deploy --force',
+      context: { cwd: '/repo', repoRoot: '/repo' },
     })
-    expect(result.permission).toBe('ask')
+    expect(tier1.local_recoverable).toBe(false)
     expect(ollamaJudge.lastTrace?.provider).toBe('fallback')
     expect(ollamaJudge.lastTrace?.fallbackReason).toBe('ollama_parse_error')
-    expect(result.judgeTrace?.fallbackReason).toBe('ollama_parse_error')
   })
 
   it('scrubs secrets from outbound POST body before cloud call', async () => {
@@ -233,10 +233,7 @@ describe('T15 openai-compatible provider parity', () => {
     })
     expect(result.reason).toBe('openai_compatible_endpoint_missing')
     expect(judge.lastTrace?.fallbackReason).toBe('missing_endpoint')
-    const gated = await verdict('mystery-cli deploy --force', {
-      ...verdictTestContext(),
-      judge,
-    })
+    const gated = await verdict('mystery-cli deploy --force', verdictTestContext())
     expect(gated.permission).toBe('ask')
   })
 
@@ -283,10 +280,7 @@ describe('T15 openai-compatible provider parity', () => {
     })
     expect(result.reason).toBe('anthropic_not_implemented')
     expect(judge.lastTrace?.fallbackReason).toBe('anthropic_runtime_unavailable')
-    const gated = await verdict('rm -rf /', {
-      ...verdictTestContext(),
-      judge,
-    })
+    const gated = await verdict('rm -rf /', verdictTestContext())
     expect(gated.permission).toBe('ask')
   })
 })

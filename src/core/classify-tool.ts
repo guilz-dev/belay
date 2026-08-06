@@ -1,4 +1,11 @@
 import path from 'node:path'
+import { BOUNDARY_PROFILE_L3_L4_ONLY } from './capability/boundary-profile.js'
+import { policyReasonToLegacyReason } from './capability/policy-bridge.js'
+import {
+  evaluateFileMutationPolicy,
+  type PolicyAuthExtras,
+  policyDecisionRequiresAsk,
+} from './capability/policy-engine.js'
 import type { BelayConfigV3 } from './config.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
@@ -6,9 +13,7 @@ import { pathWithinRoot, resolveWorkspaceRootMatch } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell, resolveClassifierTrustedCwd } from './verdict/adapter.js'
-import { mutationPrescanRequiresAsk, tier1RequiresAsk } from './verdict/judge.js'
-import { createJudgeFromConfig } from './verdict/judge-factory.js'
-import type { Tier1Judge } from './verdict/types.js'
+import { mutationPrescanRequiresAsk } from './verdict/prescan.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
 const FILE_WRITE_TOOL_NAMES = new Set(['write'])
@@ -22,6 +27,22 @@ const FILE_EDIT_TOOL_NAMES = new Set([
 ])
 const FILE_DELETE_TOOL_NAMES = new Set(['delete'])
 const APPLY_PATCH_TOOL_NAMES = new Set(['apply_patch', 'applypatch'])
+
+function policyAuth(options: ClassifierOptions): PolicyAuthExtras | undefined {
+  if (
+    !options.grants &&
+    options.attestation === undefined &&
+    options.egressProxyActive === undefined
+  ) {
+    return undefined
+  }
+  return {
+    grants: options.grants,
+    attestation: options.attestation,
+    egressProxyActive: options.egressProxyActive,
+    sensitivePaths: options.sensitivePaths,
+  }
+}
 
 function scrubPayload(value: unknown, options: ClassifierOptions): unknown {
   return scrubValue(value, options.scrubOptions)
@@ -88,15 +109,7 @@ function normalizedToolName(toolName: string): string {
   return toolName.trim().toLowerCase()
 }
 
-function resolveFileTier1Judge(
-  config: BelayConfigV3,
-  options: ClassifierOptions,
-  repoRoot: string,
-): Tier1Judge {
-  return options.tier1Judge ?? createJudgeFromConfig(config, { repoRoot })
-}
-
-async function classifyFileMutationWithTier1(params: {
+function classifyFileMutationWithPolicy(params: {
   toolName: string
   toolKind: string
   filePath: string
@@ -107,9 +120,8 @@ async function classifyFileMutationWithTier1(params: {
   options: ClassifierOptions
   signals: string[]
   isDelete: boolean
-  locationLabel: 'outside_repo' | 'sensitive_path'
-}): Promise<ClassifyResult> {
-  const judge = resolveFileTier1Judge(params.config, params.options, params.repoRoot)
+  locationLabel: 'outside_repo' | 'sensitive_path' | 'repo_local' | 'control_plane'
+}): ClassifyResult {
   const trustedCwd = resolveClassifierTrustedCwd(params.cwd, params.options)
   const prescan = mutationPrescanRequiresAsk({
     targets: [params.filePath],
@@ -120,35 +132,31 @@ async function classifyFileMutationWithTier1(params: {
     sensitivePaths: params.options.sensitivePaths ?? params.config.classifier.sensitivePaths,
   })
   if (prescan) {
-    return {
-      verdict: 'deny_pending_approval',
-      reason: 'tier1_catastrophic',
-      summary: params.filePath,
-      fingerprint: toolFingerprint(params.toolName, { path: params.filePath }, params.repoRoot),
-      assessment: {
-        reversibility: 'irreversible',
-        external: params.locationLabel === 'outside_repo',
-        blastRadius:
-          params.locationLabel === 'outside_repo'
-            ? 'outside the repository'
-            : 'sensitive repository file',
-        confidence: 0.95,
+    const fingerprint = toolFingerprint(params.toolName, { path: params.filePath }, params.repoRoot)
+    const { request, decision } = evaluateFileMutationPolicy(
+      {
+        hookKind: 'tool',
+        toolKind: params.toolKind,
+        filePath: params.filePath,
+        resolvedPath: params.resolvedPath,
+        repoRoot: params.repoRoot,
+        cwd: params.cwd,
+        inputFingerprint: fingerprint,
         signals: [...params.signals, 'tier1_catastrophic', prescan.reason],
+        isDelete: params.isDelete,
+        locationLabel: params.locationLabel,
+        trustedWorkspaceRoots: params.options.trustedWorkspaceRoots,
+        sensitivePaths: params.options.sensitivePaths ?? params.config.classifier.sensitivePaths,
       },
-    }
-  }
-  const tier1Text = `file_mutation: ${params.toolKind} path=${params.resolvedPath} location=${params.locationLabel}`
-  const tier1 = await judge.evaluate({
-    text: tier1Text,
-    context: { cwd: params.cwd, repoRoot: params.repoRoot },
-  })
-
-  const fingerprint = toolFingerprint(params.toolName, { path: params.filePath }, params.repoRoot)
-
-  if (tier1RequiresAsk(tier1)) {
+      params.config,
+      policyAuth(params.options),
+    )
+    const legacyReason = policyDecisionRequiresAsk(decision)
+      ? policyReasonToLegacyReason(decision)
+      : 'tier1_catastrophic'
     return {
       verdict: 'deny_pending_approval',
-      reason: 'tier1_catastrophic',
+      reason: legacyReason,
       summary: params.filePath,
       fingerprint,
       assessment: {
@@ -158,9 +166,54 @@ async function classifyFileMutationWithTier1(params: {
           params.locationLabel === 'outside_repo'
             ? 'outside the repository'
             : 'sensitive repository file',
-        confidence: 0.82,
-        signals: [...params.signals, 'tier1_catastrophic', tier1.reason],
+        confidence: 0.95,
+        signals: [...params.signals, 'tier1_catastrophic', prescan.reason, ...decision.signals],
       },
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+      boundaryProfile: params.options.boundaryProfile ?? BOUNDARY_PROFILE_L3_L4_ONLY,
+    }
+  }
+
+  const fingerprint = toolFingerprint(params.toolName, { path: params.filePath }, params.repoRoot)
+  const { request, decision } = evaluateFileMutationPolicy(
+    {
+      hookKind: 'tool',
+      toolKind: params.toolKind,
+      filePath: params.filePath,
+      resolvedPath: params.resolvedPath,
+      repoRoot: params.repoRoot,
+      cwd: params.cwd,
+      inputFingerprint: fingerprint,
+      signals: params.signals,
+      isDelete: params.isDelete,
+      locationLabel: params.locationLabel,
+      trustedWorkspaceRoots: params.options.trustedWorkspaceRoots,
+      sensitivePaths: params.options.sensitivePaths ?? params.config.classifier.sensitivePaths,
+    },
+    params.config,
+    policyAuth(params.options),
+  )
+
+  if (policyDecisionRequiresAsk(decision)) {
+    return {
+      verdict: 'deny_pending_approval',
+      reason: policyReasonToLegacyReason(decision),
+      summary: params.filePath,
+      fingerprint,
+      assessment: {
+        reversibility: 'irreversible',
+        external: params.locationLabel === 'outside_repo',
+        blastRadius:
+          params.locationLabel === 'outside_repo'
+            ? 'outside the repository'
+            : 'sensitive repository file',
+        confidence: 0.95,
+        signals: [...params.signals, ...decision.signals],
+      },
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+      boundaryProfile: params.options.boundaryProfile ?? BOUNDARY_PROFILE_L3_L4_ONLY,
     }
   }
 
@@ -176,8 +229,11 @@ async function classifyFileMutationWithTier1(params: {
       blastRadius:
         params.locationLabel === 'outside_repo' ? 'outside the repository' : 'this repository',
       confidence: 0.72,
-      signals: [...params.signals, 'tier1_restorable', tier1.reason],
+      signals: [...params.signals, ...decision.signals],
     },
+    capabilityRequests: [request],
+    authorizationDecision: decision,
+    boundaryProfile: params.options.boundaryProfile ?? BOUNDARY_PROFILE_L3_L4_ONLY,
   }
 }
 
@@ -295,19 +351,19 @@ export async function classifyToolUse(
     const hitsProtectedRoot = protectedRoots.some((root) => pathWithinRoot(root, resolvedPath))
     if (hitsProtectedRoot) {
       signals.push('control_plane_path')
-      return {
-        verdict: 'deny_pending_approval',
-        reason: 'control_plane_mutation',
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: 'irreversible',
-          external: false,
-          blastRadius: 'agent-belay control plane',
-          confidence: 0.97,
-          signals,
-        },
-      }
+      return classifyFileMutationWithPolicy({
+        toolName,
+        toolKind,
+        filePath,
+        resolvedPath,
+        repoRoot,
+        cwd,
+        config,
+        options,
+        signals,
+        isDelete: FILE_DELETE_TOOL_NAMES.has(toolKind),
+        locationLabel: 'control_plane',
+      })
     }
 
     const workspaceMatch = resolveWorkspaceRootMatch(
@@ -317,7 +373,7 @@ export async function classifyToolUse(
     )
     if (workspaceMatch === null) {
       signals.push('outside_repo_path')
-      return classifyFileMutationWithTier1({
+      return classifyFileMutationWithPolicy({
         toolName,
         toolKind,
         filePath,
@@ -346,7 +402,7 @@ export async function classifyToolUse(
       sensitivePaths,
     })
     if (workspacePrescan) {
-      return classifyFileMutationWithTier1({
+      return classifyFileMutationWithPolicy({
         toolName,
         toolKind,
         filePath,
@@ -365,7 +421,7 @@ export async function classifyToolUse(
 
     if (matchesSensitivePath(relativePath, sensitivePaths)) {
       signals.push('sensitive_path')
-      return classifyFileMutationWithTier1({
+      return classifyFileMutationWithPolicy({
         toolName,
         toolKind,
         filePath,
@@ -382,35 +438,35 @@ export async function classifyToolUse(
 
     if (FILE_DELETE_TOOL_NAMES.has(toolKind)) {
       signals.push('file_delete')
-      return {
-        verdict: 'allow_flagged',
-        reason: 'file_delete',
-        summary: filePath,
-        fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-        assessment: {
-          reversibility: 'recoverable_with_cost',
-          external: false,
-          blastRadius: 'this repository',
-          confidence: 0.7,
-          signals,
-        },
-      }
+      return classifyFileMutationWithPolicy({
+        toolName,
+        toolKind,
+        filePath,
+        resolvedPath,
+        repoRoot,
+        cwd,
+        config,
+        options,
+        signals,
+        isDelete: true,
+        locationLabel: 'repo_local',
+      })
     }
 
     signals.push('file_mutation')
-    return {
-      verdict: 'allow_flagged',
-      reason: 'file_mutation',
-      summary: filePath,
-      fingerprint: toolFingerprint(toolName, { path: filePath }, repoRoot),
-      assessment: {
-        reversibility: 'recoverable_with_cost',
-        external: false,
-        blastRadius: 'this repository',
-        confidence: 0.68,
-        signals,
-      },
-    }
+    return classifyFileMutationWithPolicy({
+      toolName,
+      toolKind,
+      filePath,
+      resolvedPath,
+      repoRoot,
+      cwd,
+      config,
+      options,
+      signals,
+      isDelete: false,
+      locationLabel: 'repo_local',
+    })
   }
 
   if (APPLY_PATCH_TOOL_NAMES.has(toolKind)) {

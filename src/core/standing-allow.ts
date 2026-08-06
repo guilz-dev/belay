@@ -59,6 +59,9 @@ const STANDING_ALLOW_BLOCKED_REASONS = new Set([
   'protected_artifact',
   'pipe_to_shell',
   'command_substitution',
+  'outside_repo_mutation',
+  'outside_repo_redirect',
+  'control_plane_mutation',
 ])
 
 export function standingAllowFile(config: BelayConfigV4, repoLocalStateDir: string): string {

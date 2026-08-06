@@ -50,7 +50,7 @@ export async function classifyForReport(params: {
         'classify-for-report requires command or payload for subagent classification.',
       )
     }
-    result = classifySubagent(payload, repoRoot, classifierOptions)
+    result = classifySubagent(payload, repoRoot, classifierOptions, config)
     input = params.command ?? JSON.stringify(payload)
   } else if (kind === 'tool') {
     const payload =

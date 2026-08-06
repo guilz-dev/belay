@@ -4,9 +4,12 @@ This table states what belay guarantees **per configuration**. Adversarial
 resistance is claimed **only** for the L1-full row when the external sandbox runtime
 actually enforces deny-all (container / seatbelt / landlock / Cursor sandbox).
 
-Machine-readable source: `src/conformance/guarantee-table.ts`.  
+Machine-readable source: `src/conformance/guarantee-table.ts` and `src/conformance/guarantee-posture.ts`.  
 Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
-`src/__tests__/conformance/guarantee-table.test.ts`.
+`src/__tests__/conformance/guarantee-table.test.ts`,
+`src/__tests__/conformance/guarantee-posture.test.ts`.
+
+**Configured vs attested:** `belay sandbox status` reports both `configuredProfile` (from config) and `attestedProfile` (from boundary attestation). L1-full adversarial guarantees apply only when both align (`l1FullAttested: true`). Run `belay session start` to refresh attestation after enabling container sandbox.
 
 | Configuration | Layers active | Cooperative agent | Adversarial same-OS-user | Tested scenarios |
 |---------------|---------------|-------------------|---------------------------|------------------|

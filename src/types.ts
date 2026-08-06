@@ -5,7 +5,6 @@ export type {
   BelayConfigV3,
   BelayControlPlaneConfig,
   BelayEgressConfig,
-  BelayMode,
   BelayOverridesConfig,
   BelayPolicyConfig,
   BelayRedactionConfig,
@@ -17,6 +16,7 @@ export type {
   ApprovalRecord,
   ApprovalStateFile,
   Assessment,
+  BelayMode,
   ClassifyResult,
   HookVerdict,
 } from './core/types.js'

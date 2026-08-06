@@ -3,9 +3,7 @@ import path from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
 import { createOllamaJudge } from '../../../core/verdict/judge.js'
-import { verdict } from '../../../core/verdict/verdict.js'
 import { loadJudgeAccuracyCases } from '../../../corpus/judge-accuracy.js'
-import { verdictTestContext } from '../helpers.js'
 
 async function ollamaAvailable(): Promise<boolean> {
   try {
@@ -45,16 +43,17 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness', () => {
   let report: AccuracyReport | null = null
 
   it('measures Tier1 floor accuracy on fixed corpus', async () => {
-    const context = verdictTestContext({
-      judge: createOllamaJudge({ model }),
-    })
+    const judge = createOllamaJudge({ model })
     const cases: AccuracyReport['cases'] = []
     let falseNegatives = 0
     let falsePositives = 0
 
     for (const sample of TIER1_ACCURACY_CORPUS) {
-      const result = await verdict(sample.command, context)
-      const actual = result.permission
+      const tier1 = await judge.evaluate({
+        text: sample.command,
+        context: { cwd: '/workspace/project/src', repoRoot: '/workspace/project' },
+      })
+      const actual = tier1.local_recoverable && !tier1.destroys_history_or_secrets ? 'allow' : 'ask'
       const correct = actual === sample.expectedPermission
       if (!correct) {
         if (sample.expectedPermission === 'ask' && actual === 'allow') {
@@ -70,11 +69,11 @@ describe.skipIf(!hasOllama)('T19 LLM judge accuracy harness', () => {
         expected: sample.expectedPermission,
         actual,
         correct,
-        reason: result.reason,
+        reason: tier1.reason,
       })
       expect(
         actual,
-        `${sample.command} (${sample.category}): expected ${sample.expectedPermission}, got ${actual} (${result.reason})`,
+        `${sample.command} (${sample.category}): expected ${sample.expectedPermission}, got ${actual} (${tier1.reason})`,
       ).toBe(sample.expectedPermission)
     }
 
