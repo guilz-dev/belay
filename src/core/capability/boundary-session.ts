@@ -77,6 +77,21 @@ export async function saveBoundaryAttestation(
   })
 }
 
+export function hostIntegrationBoundaryContext(repoRoot: string): ResolvedBoundaryDriverContext {
+  const driver = getDefaultBoundaryDriver('host-integration', { repoRoot })
+  return {
+    driver,
+    driverId: 'host-integration',
+    proxyActive: false,
+    proxyEnv: {},
+    prepareContext: {
+      repoRoot,
+      egressProxyActive: false,
+      proxyEnv: {},
+    },
+  }
+}
+
 export async function resolveBoundaryDriverContext(params: {
   repoRoot: string
   config: BelayConfigV4

@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- `docs/grant-consumption-paths.md` — grant 消費経路（`approved_once` vs `capability_grant`）の設計メモ。
+
+### Changed
+
+- `TransactionalRunnerParams` は `boundaryContext` を受け取る（`boundaryDriverId` / `egressProxyEnv` を削除）。gate-runtime からの内部利用のみ。
+- transactional runner は `resolveBoundaryDriverContext` と同じ proxy 判定で `BoundaryDriver` を実行する。
+- `hostIntegrationBoundaryContext` を `boundary-session` に集約（テスト向け transactional フォールバック）。
+
 ## 0.5.0 — 2026-08-07
 
 ### Added

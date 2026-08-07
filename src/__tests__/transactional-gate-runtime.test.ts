@@ -4,19 +4,22 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
+import { isDockerAvailable } from '../core/capability/boundary-driver-container.js'
+import * as boundarySession from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
+const dockerAvailable = await isDockerAvailable()
 
 async function createGitRepo(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-'))
@@ -52,8 +55,25 @@ function transactionalConfig() {
   }
 }
 
+function transactionalContainerConfig() {
+  return {
+    ...transactionalConfig(),
+    sandbox: {
+      ...DEFAULT_CONFIG_V3.sandbox,
+      enabled: true,
+      runtime: 'container' as const,
+    },
+    capability: {
+      grantsEnabled: true,
+      boundaryDriver: 'container' as const,
+      attestationRelPath: '.belay/attestation.json',
+    },
+  }
+}
+
 describe('transactional gate runtime', () => {
   afterEach(async () => {
+    vi.restoreAllMocks()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -129,4 +149,58 @@ describe('transactional gate runtime', () => {
     expect(verdict.reason).toBe('transactional_observed_risk')
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toContain('# test')
   })
+
+  it('passes container driver id into resolveBoundaryDriverContext for transactional shell', async () => {
+    const resolveSpy = vi.spyOn(boundarySession, 'resolveBoundaryDriverContext')
+    const repoRoot = await createGitRepo()
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalContainerConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(resolveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot,
+        driverId: 'container',
+      }),
+    )
+    const resolved = await resolveSpy.mock.results[0]?.value
+    expect(resolved?.driverId).toBe('container')
+  })
+
+  it.skipIf(!dockerAvailable)(
+    'applies observed-safe shell effects via container boundary driver',
+    async () => {
+      const repoRoot = await createGitRepo()
+      await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+      const ctx = {
+        layout: cursorAdapter.layout,
+        repoRoot,
+        config: transactionalContainerConfig(),
+        configPath: cursorAdapter.layout.configPath(repoRoot),
+      }
+      const deps = createDefaultGateRuntimeDeps()
+
+      const verdict = await evaluateGatedAction(ctx, deps, {
+        kind: 'shell',
+        cwd: repoRoot,
+        command: 'touch safe.txt',
+      })
+
+      expect(verdict.permission).toBe('deny')
+      expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+      await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
+    },
+    30_000,
+  )
 })
