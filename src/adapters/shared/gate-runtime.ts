@@ -25,10 +25,8 @@ import {
 } from '../../core/audit-replay-context.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
-import {
-  isEgressProxyActive,
-  resolveBoundaryEgressProxyEnv,
-} from '../../core/capability/boundary-egress.js'
+import { isEgressProxyActive } from '../../core/capability/boundary-egress.js'
+import { resolveBoundaryDriverContext } from '../../core/capability/boundary-session.js'
 import { hashCapabilityRequests } from '../../core/capability/capability-request-hash.js'
 import {
   recordGateApprovalAsk,
@@ -562,6 +560,12 @@ export async function evaluateGatedAction(
     const boundaryDriverId =
       ctx.config.capability?.boundaryDriver ??
       (ctx.config.sandbox.runtime === 'container' ? 'container' : 'host-integration')
+    const boundaryContext = await resolveBoundaryDriverContext({
+      repoRoot: ctx.repoRoot,
+      config: ctx.config,
+      driverId: boundaryDriverId,
+      egressProxyRunning: egressProxyActive,
+    })
     const txResult = await runTransactionalExecution({
       command: params.command,
       cwd: params.cwd,
@@ -575,12 +579,7 @@ export async function evaluateGatedAction(
         protectedRoots: enrichedClassifierOptions.protectedArtifactRoots ?? [],
         maxDeletionCount: transactional.maxDeletionCount,
       },
-      boundaryDriverId,
-      egressProxyEnv: resolveBoundaryEgressProxyEnv({
-        driverId: boundaryDriverId,
-        config: ctx.config,
-        proxyActive: egressProxyActive,
-      }),
+      boundaryContext,
     })
 
     if (!txResult.skipped && txResult.observed) {

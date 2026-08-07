@@ -49,6 +49,7 @@ Thumbs.db
 skills-lock.json
 
 # Belay runtime artifacts (installed by `belay init`; do not commit)
+.belay/
 .cursor/belay/
 .cursor/belay.config.json
 .cursor/hooks/belay-*

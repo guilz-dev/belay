@@ -6,6 +6,7 @@
 
 ## TL;DR
 
+- **現状メモ（2026-08, PR #42 以降）**: Step 1（実境界 / `BoundaryDriver`）は `container` と `host-integration` で実装済み。Step 2（capability token）は未着手・任意。grant 消費経路は [grant-consumption-paths.md](./grant-consumption-paths.md) を参照。
 - **Koka / Flix / Unison / Mercury / Jacquard を実装言語として採用するのは非現実的**。Belayは「Node組み込みのみ・ゼロ依存CLI」という設計方針で、かつ agent が渡してくる shell command / tool payload は実行前には静的に分からない**実行時文字列**であり、そもそも静的effect型の対象にならない。
 - ただし **Jacquard の設計思想（関数シグネチャに外界effectを列挙し、ランタイムは許可されていないeffectを拒否する）は、Belayの `gate-runtime` / `capability broker` がやろうとしていることとほぼ同型**。しかも Jacquard 自体が「AIが書き人間がレビューするコード」向けの研究言語であり、Belayの問題設定に驚くほど近い。
 - **前提更新（2026-08）**: `runTransactionalExecution` は [`BoundaryDriver`](../../src/core/transactional/runner.ts) 経由で実行する。`container` driver 選択時は Docker 隔離、`host-integration`（L3 editor hook 向けデフォルト）のみ [`runShellCommand`](../../src/core/transactional/git-worktree.ts) でホスト直 `spawn` が残る。git worktree はファイル変更の観測隔離。本提案の capability token は**隔離そのものではなく**、Belay 自身の副作用コードの誤用防止ガードレール（§5, §6）。

@@ -10,6 +10,7 @@ import {
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
+import { mintGrantForApprovedRecord } from '../core/capability/approval-v3.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { canonicalPath } from '../core/path-utils.js'
@@ -17,6 +18,25 @@ import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
+
+function brokerInactiveConfig(): BelayConfigV3 {
+  return {
+    ...DEFAULT_CONFIG_V3,
+    mode: 'enforce',
+    policy: {
+      ...DEFAULT_CONFIG_V3.policy,
+      unknownLocalEffect: 'deny' as const,
+    },
+    sandbox: { ...DEFAULT_CONFIG_V3.sandbox, enabled: false },
+    controlPlane: {
+      enabled: false,
+      configDir: null,
+      integrity: 'none' as const,
+      isolation: { mode: 'none' as const, verifyAgentWritable: true },
+    },
+    audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+  }
+}
 
 function sandboxBrokerConfig(): BelayConfigV3 {
   return {
@@ -266,5 +286,138 @@ describe('capability gate runtime', () => {
     }
     const approval = pending.approvals.find((entry) => entry.approvalId === blocked.approvalId)
     expect(approval?.scopeHint).toBeUndefined()
+  })
+
+  it('consumes capability grant at gate runtime when fingerprint does not match', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-grant-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    await writeFile(path.join(repoRoot, 'README.md'), '# hi\n')
+    const outsidePath = path.join(repoRoot, '..', 'grant-out.txt')
+    const command = `cp README.md ${outsidePath}`
+    const config = brokerInactiveConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const denied = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+    expect(denied.permission).toBe('deny')
+    expect(denied.approvalId).toBeTruthy()
+
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    const pendingPath = path.join(stateDir, 'pending-approvals.json')
+    const pending = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<{
+        approvalId: string
+        kind: string
+        fingerprint: string
+        repoRoot: string
+        reason: string
+        summary: string
+        createdAt: string
+        expiresAt: string
+        capabilityRequests?: NonNullable<
+          Awaited<ReturnType<typeof classifyShellGated>>['capabilityRequests']
+        >
+      }>
+    }
+    const pendingApproval = pending.approvals.find(
+      (entry) => entry.approvalId === denied.approvalId,
+    )
+    expect(pendingApproval?.capabilityRequests?.length).toBeGreaterThan(0)
+    if (!pendingApproval) {
+      throw new Error('expected pending approval')
+    }
+
+    const approvedRecord = mintGrantForApprovedRecord({
+      approvalId: pendingApproval.approvalId,
+      kind: 'shell',
+      fingerprint: 'mismatched-fingerprint',
+      repoRoot,
+      reason: pendingApproval.reason,
+      summary: pendingApproval.summary,
+      createdAt: pendingApproval.createdAt,
+      expiresAt: pendingApproval.expiresAt,
+      approvedAt: new Date().toISOString(),
+      capabilityRequests: pendingApproval.capabilityRequests ?? [],
+    })
+    await writeFile(
+      path.join(stateDir, 'approved-approvals.json'),
+      `${JSON.stringify({ version: 3, approvals: [approvedRecord] }, null, 2)}\n`,
+    )
+    await writeFile(pendingPath, `${JSON.stringify({ version: 3, approvals: [] }, null, 2)}\n`)
+
+    const first = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+    expect(first.permission).toBe('allow')
+    expect(first.reason).toBe('repo_outside_local_mutation')
+    expect(first.authorizationDecision?.matchedRule).toBe('grant.exact')
+
+    const approvedAfterFirst = JSON.parse(
+      await readFile(path.join(stateDir, 'approved-approvals.json'), 'utf8'),
+    ) as { approvals: Array<{ grant?: { usesRemaining: number } }> }
+    expect(approvedAfterFirst.approvals[0]?.grant?.usesRemaining).toBe(0)
+
+    const second = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+    expect(second.permission).toBe('deny')
+    expect(second.reason).toBe(pendingApproval.reason)
+  })
+
+  it('prefers approved_once when fingerprint matches an approved record', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-approved-once-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = brokerInactiveConfig()
+    const predicted = await classifyShellGated('false', repoRoot, repoRoot, config)
+    expect(predicted.verdict).toBe('deny_pending_approval')
+
+    const approval = createApprovalRecord({
+      kind: 'shell',
+      fingerprint: predicted.fingerprint,
+      repoRoot,
+      reason: predicted.reason,
+      summary: predicted.normalizedCommand ?? 'false',
+      approvalTtlMinutes: config.approvalTtlMinutes,
+      approvalId: 'belay_approved_once_gate',
+    })
+    approval.approvedAt = new Date().toISOString()
+
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    await mkdir(stateDir, { recursive: true })
+    await writeFile(
+      path.join(stateDir, 'approved-approvals.json'),
+      `${JSON.stringify({ version: 1, approvals: [approval] }, null, 2)}\n`,
+    )
+
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'false',
+    })
+
+    expect(verdict.permission).toBe('allow')
+    expect(verdict.reason).toBe('approved_once')
   })
 })

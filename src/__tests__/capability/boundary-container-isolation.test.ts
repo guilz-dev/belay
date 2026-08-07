@@ -41,7 +41,7 @@ describe('container boundary isolation', () => {
     'does not inject ambient host credentials into the container',
     async () => {
       const driver = createContainerBoundaryDriver()
-      const cwd = process.cwd()
+      const cwd = await mkdtemp(path.join(os.tmpdir(), 'belay-container-creds-'))
 
       const result = await driver.run(
         'test -z "$AWS_SECRET_ACCESS_KEY" && test -z "$GITHUB_TOKEN"',
@@ -56,7 +56,7 @@ describe('container boundary isolation', () => {
     'blocks direct network when egress proxy is not configured',
     async () => {
       const driver = createContainerBoundaryDriver()
-      const cwd = process.cwd()
+      const cwd = await mkdtemp(path.join(os.tmpdir(), 'belay-container-net-block-'))
 
       const result = await driver.run(
         'wget -q --spider --timeout=2 https://example.com',
