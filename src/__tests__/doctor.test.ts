@@ -113,4 +113,36 @@ describe('doctorProject', () => {
       report.warnings.some((warning) => warning.includes('Containment posture is best-effort')),
     ).toBe(true)
   })
+
+  it('warns when recovery checkpoint restore lacks a notification channel', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-recovery-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        version: 4,
+        policy: {
+          ...config.policy,
+          transactional: {
+            ...config.policy?.transactional,
+            enabled: true,
+            checkpoint: { enabled: true },
+          },
+        },
+      })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(
+      report.warnings.some((warning) => warning.includes('notification channel is configured')),
+    ).toBe(true)
+    expect(
+      report.notes.some((note) => note.includes('Recovery restore flow')),
+    ).toBe(true)
+  })
 })

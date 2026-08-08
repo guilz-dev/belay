@@ -20,6 +20,12 @@ import {
   restoreRecoveryCheckpoint,
   showRecoveryCheckpoint,
 } from '../core/recovery/checkpoint.js'
+import {
+  formatRecoveryStateDiagnostic,
+  recoveryNotificationConfigured,
+  recoveryNotificationSetupWarning,
+  summarizeRecoveryCheckpointDiagnostics,
+} from '../core/recovery/operator-guidance.js'
 import type { ApprovalRecord } from '../core/types.js'
 
 export type RecoveryCheckpointSubcommand = 'status' | 'list' | 'show' | 'apply'
@@ -159,6 +165,7 @@ export async function recoveryCheckpointCommand(options: {
         checkpoints.filter((checkpoint) => checkpoint.state === state).length,
       ]),
     )
+    const advisories = summarizeRecoveryCheckpointDiagnostics(checkpoints)
     return {
       ok: true,
       subcommand: 'status',
@@ -168,8 +175,12 @@ export async function recoveryCheckpointCommand(options: {
       checkpointCount: checkpoints.length,
       storageBytes: await recoveryCheckpointStorageBytes(stateDir, repoRoot),
       recoverableCount: checkpoints.filter((checkpoint) => checkpoint.state === 'applied').length,
+      needsManualRepairCount: checkpoints.filter(
+        (checkpoint) => checkpoint.state === 'needs_manual_repair',
+      ).length,
       verifiedReceiptCount: checkpoints.filter((checkpoint) => checkpoint.receiptHash).length,
       states,
+      advisories,
       limits: checkpointConfig,
     }
   }
@@ -243,9 +254,7 @@ export async function recoveryCheckpointCommand(options: {
       )
       throw error
     }
-    const notificationConfigured = Boolean(
-      config.notifications.webhookUrl || config.notifications.commandHook,
-    )
+    const notificationConfigured = recoveryNotificationConfigured(config)
     if (notificationConfigured) {
       const approvalToken = await issueApprovalToken(
         {
@@ -284,8 +293,8 @@ export async function recoveryCheckpointCommand(options: {
       paths: binding.paths,
       auditRecorded,
       message: notificationConfigured
-        ? `Signed out-of-band approval required for ${request.approvalId}. Use the token delivered through the configured notification channel.`
-        : 'Signed out-of-band approval required, but no notification channel is configured.',
+        ? `Signed out-of-band approval required for ${request.approvalId}. Use the token delivered through the configured notification channel, then run \`belay approve ${request.approvalId} --token <signed-token>\` and repeat this command.`
+        : `${recoveryNotificationSetupWarning()} Pending approval id: ${request.approvalId}.`,
     }
   }
 
@@ -324,35 +333,57 @@ export async function recoveryCheckpointCommand(options: {
 
 export function formatRecoveryCheckpointResult(result: Record<string, unknown>): string {
   if (result.subcommand === 'status') {
-    return [
+    const lines = [
       `belay recover status for ${result.repoRoot}`,
       `Backend: ${result.backend}`,
       `Checkpointing: ${result.enabled ? 'enabled' : 'disabled'}`,
       `Checkpoints: ${result.checkpointCount} (${result.recoverableCount} recoverable)`,
+      `Needs manual repair: ${result.needsManualRepairCount ?? 0}`,
       `Verified receipts: ${result.verifiedReceiptCount}`,
       `Storage: ${result.storageBytes} bytes`,
       `States: ${JSON.stringify(result.states)}`,
-      '',
-    ].join('\n')
+    ]
+    const advisories = result.advisories as string[] | undefined
+    if (advisories && advisories.length > 0) {
+      lines.push('', 'Advisories:')
+      for (const advisory of advisories) {
+        lines.push(`- ${advisory}`)
+      }
+    }
+    lines.push('')
+    return `${lines.join('\n')}\n`
   }
   if (result.subcommand === 'list') {
     const checkpoints = result.checkpoints as Array<{
       checkpointId: string
       state: string
+      stateDetail?: string
       createdAt: string
       changeCount: number
       receiptHash?: string
     }>
     if (checkpoints.length === 0) return 'No recovery checkpoints found.\n'
-    return `${checkpoints
-      .map(
-        (item) =>
-          `${item.checkpointId}\t${item.state}\t${item.changeCount} changes\treceipt:${item.receiptHash?.slice(0, 12) ?? '-'}\t${item.createdAt}`,
+    const lines = checkpoints.map((item) => {
+      const diagnostic = formatRecoveryStateDiagnostic(
+        item.state as Parameters<typeof formatRecoveryStateDiagnostic>[0],
+        item.stateDetail,
       )
-      .join('\n')}\n`
+      const base = `${item.checkpointId}\t${item.state}\t${item.changeCount} changes\treceipt:${item.receiptHash?.slice(0, 12) ?? '-'}\t${item.createdAt}`
+      return diagnostic ? `${base}\n  ${diagnostic}` : base
+    })
+    return `${lines.join('\n')}\n`
   }
   if (result.subcommand === 'show') {
-    return `${JSON.stringify(result, null, 2)}\n`
+    const state = result.state as { state?: string; detail?: string } | undefined
+    const diagnostic =
+      state?.state !== undefined
+        ? formatRecoveryStateDiagnostic(
+            state.state as Parameters<typeof formatRecoveryStateDiagnostic>[0],
+            state.detail,
+          )
+        : null
+    const payload = diagnostic ? { ...result, diagnostic } : result
+    return `${JSON.stringify(payload, null, 2)}\n`
   }
   return `${String(result.message ?? 'Recovery command completed.')}\n`
 }

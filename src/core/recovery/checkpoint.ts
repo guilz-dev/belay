@@ -726,6 +726,7 @@ export async function listRecoveryCheckpoints(
       summaries.push({
         checkpointId: id,
         state,
+        ...(loaded.state.detail ? { stateDetail: loaded.state.detail } : {}),
         backend: loaded.manifest.backend,
         repoRoot: loaded.manifest.repoRoot,
         commandFingerprint: loaded.manifest.commandFingerprint,

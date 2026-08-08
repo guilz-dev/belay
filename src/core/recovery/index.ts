@@ -21,6 +21,13 @@ export {
   recoveryFailClosedResult,
   recoveryFailReasonFromSkip,
 } from './fail-closed.js'
+export {
+  formatRecoveryStateDiagnostic,
+  recoveryApprovalSetupNotes,
+  recoveryNotificationConfigured,
+  recoveryNotificationSetupWarning,
+  summarizeRecoveryCheckpointDiagnostics,
+} from './operator-guidance.js'
 export type {
   RecoveryBackend,
   RecoveryCheckpointManifestV1,

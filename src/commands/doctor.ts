@@ -24,6 +24,14 @@ import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
+import { approvalSigningKeyPath } from '../core/approval-token.js'
+import { listRecoveryCheckpoints } from '../core/recovery/checkpoint.js'
+import {
+  recoveryApprovalSetupNotes,
+  recoveryNotificationConfigured,
+  recoveryNotificationSetupWarning,
+  summarizeRecoveryCheckpointDiagnostics,
+} from '../core/recovery/operator-guidance.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { egressStatus } from '../services/egress-service.js'
@@ -345,6 +353,42 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         warnings.push(
           'Transactional execution is enabled but this directory is not a git repository. Transactional worktrees will be skipped until git is available.',
         )
+      }
+    }
+
+    if (loadedConfig.policy.transactional.checkpoint?.enabled) {
+      notes.push(
+        'Recovery checkpoint: enabled — repo-local pre-images are persisted before observed-safe transactional apply.',
+      )
+      notes.push(...recoveryApprovalSetupNotes())
+      if (!recoveryNotificationConfigured(loadedConfig)) {
+        warnings.push(recoveryNotificationSetupWarning())
+      }
+      const signingKeyPath = approvalSigningKeyPath(
+        loadedConfig.controlPlane.enabled
+          ? belayStateDir(loadedConfig, repoLocalDir)
+          : loadedConfig.controlPlane.configDir ?? defaultControlPlaneDir(),
+      )
+      if (!existsSync(signingKeyPath)) {
+        notes.push(
+          `Approval signing key not yet created at ${signingKeyPath}; it will be generated on the first signed recovery approval request.`,
+        )
+      }
+      if (!loadedConfig.policy.transactional.enabled) {
+        warnings.push(
+          'Recovery checkpoint is enabled but transactional execution is disabled; checkpoints will not be created until transactional execution is enabled.',
+        )
+      }
+      try {
+        const stateDir = belayStateDir(loadedConfig, repoLocalDir)
+        const checkpoints = await listRecoveryCheckpoints(stateDir, repoRoot)
+        if (checkpoints.length > 0) {
+          notes.push(`Recovery checkpoints in this repository: ${checkpoints.length}.`)
+        }
+        const advisories = summarizeRecoveryCheckpointDiagnostics(checkpoints)
+        warnings.push(...advisories)
+      } catch {
+        // Checkpoint inspection is advisory only.
       }
     }
 

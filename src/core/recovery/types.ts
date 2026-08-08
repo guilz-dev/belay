@@ -76,6 +76,8 @@ export interface RecoveryReceiptV1 {
 export interface RecoveryCheckpointSummary {
   checkpointId: string
   state: RecoveryCheckpointState
+  /** Operator-facing detail from durable checkpoint state (e.g. mixed-state reason). */
+  stateDetail?: string
   backend: RecoveryBackend
   repoRoot: string
   commandFingerprint: string
