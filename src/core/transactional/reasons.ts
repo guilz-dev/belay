@@ -3,8 +3,8 @@ export const TRANSACTIONAL_OBSERVED_RISK = 'transactional_observed_risk'
 export const TRANSACTIONAL_APPLY_FAILED = 'transactional_apply_failed'
 
 export {
+  RECOVERY_DIRTY_WORKTREE,
   RECOVERY_EXECUTION_FAILED,
-  RECOVERY_OBSERVED_RISK,
   RECOVERY_SUBSTRATE_UNAVAILABLE,
 } from '../recovery/fail-closed.js'
 
@@ -14,5 +14,5 @@ export const TRANSACTIONAL_APPROVAL_BYPASS_REASONS = new Set([
   TRANSACTIONAL_APPLY_FAILED,
   'recovery_substrate_unavailable',
   'recovery_execution_failed',
-  'recovery_observed_risk',
+  'recovery_dirty_worktree',
 ])

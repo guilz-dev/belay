@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { CapabilityRequestV1 } from '../core/capability/request.js'
 import { capabilityRequestsBlockRecovery } from '../core/recovery/capability.js'
-import { recoveryFailClosedResult } from '../core/recovery/fail-closed.js'
+import {
+  recoveryFailClosedResult,
+  recoveryFailReasonFromSkip,
+} from '../core/recovery/fail-closed.js'
 
 function shellRequest(action: CapabilityRequestV1['action']): CapabilityRequestV1 {
   return {
@@ -49,5 +52,16 @@ describe('recovery capability guards', () => {
     expect(closed.verdict).toBe('deny_pending_approval')
     expect(closed.reason).toBe('recovery_substrate_unavailable')
     expect(closed.assessment.signals).toContain('recovery_fail_closed')
+  })
+
+  it('recoveryFailReasonFromSkip maps skip reasons to distinct fail reasons', () => {
+    expect(recoveryFailReasonFromSkip('dirty_worktree')).toBe('recovery_dirty_worktree')
+    expect(recoveryFailReasonFromSkip('git_worktree_unavailable')).toBe(
+      'recovery_substrate_unavailable',
+    )
+    expect(recoveryFailReasonFromSkip('transactional_command_failed')).toBe(
+      'recovery_execution_failed',
+    )
+    expect(recoveryFailReasonFromSkip('transactional_timed_out')).toBe('recovery_execution_failed')
   })
 })

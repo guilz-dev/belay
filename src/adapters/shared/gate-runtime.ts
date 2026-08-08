@@ -90,9 +90,8 @@ import {
 import { notifyDeny } from '../../core/notify.js'
 import { canonicalPath } from '../../core/path-utils.js'
 import {
-  RECOVERY_EXECUTION_FAILED,
-  RECOVERY_SUBSTRATE_UNAVAILABLE,
   recoveryFailClosedResult,
+  recoveryFailReasonFromSkip,
 } from '../../core/recovery/fail-closed.js'
 import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
@@ -600,11 +599,9 @@ export async function evaluateGatedAction(
       }
     } else {
       const skipReason = txResult.skipReason ?? 'recovery_observation_failed'
-      const failReason =
-        skipReason === 'transactional_command_failed' || skipReason === 'transactional_timed_out'
-          ? RECOVERY_EXECUTION_FAILED
-          : RECOVERY_SUBSTRATE_UNAVAILABLE
-      result = recoveryFailClosedResult(predicted, failReason, [skipReason])
+      result = recoveryFailClosedResult(predicted, recoveryFailReasonFromSkip(skipReason), [
+        skipReason,
+      ])
       transactionalLayer = {
         transactional: false,
         transactionalSkipReason: skipReason,

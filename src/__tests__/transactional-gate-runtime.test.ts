@@ -14,6 +14,7 @@ import { createApprovalRecord } from '../core/approval.js'
 import { isDockerAvailable } from '../core/capability/boundary-driver-container.js'
 import * as boundarySession from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { RECOVERY_DIRTY_WORKTREE } from '../core/recovery/fail-closed.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -98,6 +99,29 @@ describe('transactional gate runtime', () => {
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
+  })
+
+  it('fail-closes dirty worktree instead of falling back to host execution', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(RECOVERY_DIRTY_WORKTREE)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
   })
 
   it('does not let one-shot approval bypass transactional observed risk', async () => {
