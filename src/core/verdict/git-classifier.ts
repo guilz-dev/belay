@@ -14,6 +14,7 @@ export interface NormalizedGitInvocation {
 export interface GitCommandSemantics {
   effect: VerdictEffect
   pathTargets: string[]
+  scopeTargets: string[]
   signals: string[]
   egressClass?: 'read' | 'destructive' | 'ambiguous'
   requiresAsk?: { reason: string; signals: string[] }
@@ -293,25 +294,12 @@ function hasFlag(args: string[], ...flags: string[]): boolean {
   )
 }
 
-function hasShortFlag(args: string[], letters: string): boolean {
-  return args.some((token) => {
-    if (!/^-[^-]+$/.test(token)) {
-      return false
-    }
-    return [...token.slice(1)].some((flag) => letters.includes(flag))
-  })
-}
-
 function isDryRunClean(args: string[]): boolean {
   return hasFlag(args, '-n', '--dry-run', '--dry-run=')
 }
 
 function isHardReset(args: string[]): boolean {
   return hasFlag(args, '--hard')
-}
-
-function isCreateBranchCheckout(args: string[]): boolean {
-  return hasShortFlag(args, 'b') || hasFlag(args, '-b', '--branch')
 }
 
 function extractMessageSkippedIndices(args: string[]): Set<number> {
@@ -489,6 +477,11 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
   const { subcommand, args, effectiveCwd, gitDir, workTree } = normalized
   const normalizedKey = `git ${subcommand}`
   const gitWorkTree = resolveGitWorkTree(baseCwd, effectiveCwd, workTree, gitDir)
+  const effectiveGitDir = gitDir ? path.resolve(effectiveCwd ?? baseCwd, gitDir) : undefined
+  const scopeTargets = [effectiveCwd, gitWorkTree, effectiveGitDir].filter(
+    (target, index, targets): target is string =>
+      Boolean(target) && targets.indexOf(target) === index,
+  )
   const pathTargets = extractGitFileOperands(subcommand, args)
   const signals: string[] = [`git.${subcommand.replaceAll(' ', '.')}`]
 
@@ -497,6 +490,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'local_mutation',
       pathTargets,
+      scopeTargets,
       signals: [...signals, ...destructive.signals],
       requiresAsk: destructive,
       effectiveCwd,
@@ -510,6 +504,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'remote_mutation',
       pathTargets,
+      scopeTargets,
       signals: [...signals, 'git.push'],
       effectiveCwd,
       gitWorkTree,
@@ -522,6 +517,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'remote_mutation',
       pathTargets: [],
+      scopeTargets,
       signals: [...signals, 'git.remote'],
       egressClass: 'ambiguous',
       effectiveCwd,
@@ -536,6 +532,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect,
       pathTargets: [],
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -545,15 +542,15 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
   }
 
   if (subcommand === 'checkout') {
-    const effect = isCreateBranchCheckout(args) ? 'local_mutation' : 'read_only'
     return {
-      effect,
-      pathTargets: effect === 'read_only' ? pathTargets : [],
+      effect: 'local_mutation',
+      pathTargets,
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
       normalizedKey,
-      isReadOnly: effect === 'read_only',
+      isReadOnly: false,
     }
   }
 
@@ -561,6 +558,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'read_only',
       pathTargets: [],
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -573,6 +571,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'local_mutation',
       pathTargets: [],
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -585,6 +584,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'read_only',
       pathTargets: [],
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -597,6 +597,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'read_only',
       pathTargets: subcommand === 'show' || subcommand === 'diff' ? pathTargets : [],
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -612,6 +613,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     return {
       effect: 'local_mutation',
       pathTargets: subcommand === 'commit' ? [] : pathTargets,
+      scopeTargets,
       signals,
       effectiveCwd,
       gitWorkTree,
@@ -623,6 +625,7 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
   return {
     effect: 'unknown',
     pathTargets,
+    scopeTargets,
     signals,
     effectiveCwd,
     gitWorkTree,

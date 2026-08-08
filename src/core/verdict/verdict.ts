@@ -775,9 +775,10 @@ async function evaluateSegment(
   }
 
   const pathArgs = semantics.pathTargets
+  const policyPathArgs = [...new Set([...pathArgs, ...(semantics.scopeTargets ?? [])])]
 
   const pathAnalysis = analyzePathTargets({
-    targets: pathArgs,
+    targets: policyPathArgs,
     cwd: pathContext.cwd,
     repoRoot: pathContext.repoRoot,
     trustedCwd: pathContext.trustedCwd,
@@ -788,7 +789,7 @@ async function evaluateSegment(
 
   // Path-less read/mutation in a trusted cwd: assume repo-local (e.g. git status, tsc --noEmit).
   const effectiveLocation: VerdictLocation =
-    pathArgs.length === 0 &&
+    policyPathArgs.length === 0 &&
     pathContext.trustedCwd &&
     pathContext.cwd &&
     (effect === 'read_only' || effect === 'local_mutation') &&
@@ -914,7 +915,7 @@ async function evaluateSegment(
     })
   }
 
-  const resolvedPathTargets = resolveShellPathTargets(pathArgs, pathContext)
+  const resolvedPathTargets = resolveShellPathTargets(policyPathArgs, pathContext)
   const semanticSignals = semantics.signals
   const buildPolicyInput = (
     overrides: Partial<SegmentShellPolicyInput> &
@@ -924,7 +925,7 @@ async function evaluateSegment(
     segmentHead: segment.head,
     opacity,
     egressClass: egressClass ?? undefined,
-    pathArgs,
+    pathArgs: policyPathArgs,
     resolvedPathTargets,
     signals: [...semanticSignals, ...pathAnalysis.signals],
     context: pathContext,

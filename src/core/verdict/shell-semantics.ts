@@ -8,6 +8,7 @@ import type { VerdictEffect } from './types.js'
 export interface ShellCommandSemantics {
   effect: VerdictEffect
   pathTargets: string[]
+  scopeTargets?: string[]
   signals: string[]
   egressClass?: 'read' | 'destructive' | 'ambiguous'
   requiresAsk?: { reason: string; signals: string[] }
@@ -144,13 +145,16 @@ function extractFilePathOperands(tokens: string[]): string[] {
 }
 
 function isRsyncRemoteOperand(token: string): boolean {
-  if (/^[\w.-]+@[\w.-]+:/.test(token)) {
+  if (/^rsync:\/\/.+/.test(token)) {
     return true
   }
-  if (/^[\w.-]+::/.test(token)) {
+  if (/^(?:[^@\s/:]+@)?(?:\[[^\]]+\]|[^:/\s]+)::/.test(token)) {
     return true
   }
-  if (/^rsync:\/\/\/.+/.test(token)) {
+  if (
+    !/^[A-Za-z]:[\\/]/.test(token) &&
+    /^(?:[^@\s/:]+@)?(?:\[[^\]]+\]|[^:/\s]+):[^:].*/.test(token)
+  ) {
     return true
   }
   if (/^\/\/.+\//.test(token)) {
@@ -165,9 +169,9 @@ function classifyRsync(tokens: string[]): ShellCommandSemantics {
   const signals = ['rsync']
   const destructive = args.some(
     (token) =>
-      token === '--delete' ||
+      token.startsWith('--delete') ||
+      token === '--del' ||
       token === '--remove-source-files' ||
-      token.startsWith('--delete=') ||
       token.startsWith('--remove-source-files='),
   )
 
@@ -226,6 +230,7 @@ export function analyzeShellCommandSemantics(
       return {
         effect: gitSemantics.effect,
         pathTargets: gitSemantics.pathTargets,
+        scopeTargets: gitSemantics.scopeTargets,
         signals: gitSemantics.signals,
         egressClass: gitSemantics.egressClass,
         requiresAsk: gitSemantics.requiresAsk,

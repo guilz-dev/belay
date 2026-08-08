@@ -68,6 +68,30 @@ describe('shell semantics integration', () => {
     expect(destructive.reason).toBe('rsync_destructive')
   })
 
+  it.each([
+    'rsync -a src/ host:/dest',
+    'rsync -a src/ rsync://host/module',
+    'rsync -a host::module dest/',
+  ])('requires approval for standard rsync remote operands: %s', async (command) => {
+    const result = await classifyShell(command, cwd, repoRoot, config)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('external_effect')
+  })
+
+  it.each([
+    '--delete-before',
+    '--delete-during',
+    '--delete-delay',
+    '--delete-after',
+    '--delete-excluded',
+    '--delete-missing-args',
+    '--del',
+  ])('requires approval for rsync destructive option %s', async (flag) => {
+    const result = await classifyShell(`rsync -a ${flag} src/ dest/`, cwd, repoRoot, config)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('rsync_destructive')
+  })
+
   it('allows go test ./... as routine repo-local mutation', async () => {
     const result = await classifyShell('go test ./...', cwd, repoRoot, config)
     expect(result.verdict).toBe('allow_flagged')
@@ -93,10 +117,26 @@ describe('shell semantics integration', () => {
     expect(result.reason).toBe('local_mutation')
   })
 
-  it('allows git checkout ref names without secret-path ask', async () => {
+  it('flags git checkout ref names as local mutations without secret-path ask', async () => {
     const result = await classifyShell('git checkout feature/credentials', cwd, repoRoot, config)
-    expect(result.verdict).toBe('allow')
-    expect(result.reason).toBe('read_only')
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('local_mutation')
+  })
+
+  it('flags git checkout file restoration as a local mutation', async () => {
+    const result = await classifyShell('git checkout -- src/foo.ts', cwd, repoRoot, config)
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('local_mutation')
+  })
+
+  it.each([
+    'git -C /workspace/outside branch feature/x',
+    'git -C /workspace/outside commit -m test',
+    'git --git-dir=/workspace/outside.git branch feature/x',
+  ])('requires approval for git mutations scoped outside the repo: %s', async (command) => {
+    const result = await classifyShell(command, cwd, repoRoot, config)
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
   })
 
   it('allows git show ref names without secret-path ask', async () => {

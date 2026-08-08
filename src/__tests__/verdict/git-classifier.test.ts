@@ -77,10 +77,11 @@ describe('git-classifier', () => {
     )
   })
 
-  it('does not treat checkout ref names as file path targets', () => {
+  it('treats checkout refs as local mutations without file path targets', () => {
     const semantics = classifyGitCommand(['git', 'checkout', 'feature/credentials'], cwd)
     expect(semantics?.pathTargets).toEqual([])
-    expect(semantics?.effect).toBe('read_only')
+    expect(semantics?.effect).toBe('local_mutation')
+    expect(semantics?.isReadOnly).toBe(false)
   })
 
   it('does not treat show/log/diff ref names as file path targets', () => {
@@ -95,6 +96,7 @@ describe('git-classifier', () => {
   it('keeps checkout file operands after --', () => {
     const semantics = classifyGitCommand(['git', 'checkout', '--', 'src/foo.ts'], cwd)
     expect(semantics?.pathTargets).toEqual(['src/foo.ts'])
+    expect(semantics?.effect).toBe('local_mutation')
   })
 
   it('resolves git --work-tree for path operand analysis', () => {
@@ -104,6 +106,18 @@ describe('git-classifier', () => {
     )
     expect(semantics?.gitWorkTree).toBe('/workspace/other')
     expect(semantics?.pathTargets).toEqual(['src/foo.ts'])
+    expect(semantics?.scopeTargets).toContain('/workspace/other')
+  })
+
+  it('keeps explicit git execution roots as scope targets', () => {
+    expect(
+      classifyGitCommand(['git', '-C', '/workspace/other', 'branch', 'feature/x'], cwd)
+        ?.scopeTargets,
+    ).toContain('/workspace/other')
+    expect(
+      classifyGitCommand(['git', '--git-dir=/workspace/other.git', 'branch', 'feature/x'], cwd)
+        ?.scopeTargets,
+    ).toContain('/workspace/other.git')
   })
 
   it('detects read-only branch listing via helper', () => {
