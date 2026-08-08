@@ -6,26 +6,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.6.0 — 2026-08-08
+
 ### Added
 
-- `docs/grant-consumption-paths.md` — grant 消費経路（`approved_once` vs `capability_grant`）の設計メモ。
+- **Shell command semantics layer** — `git-classifier.ts` and `shell-semantics.ts` produce unified `ShellCommandSemantics` consumed by `verdict.ts`.
+- Expanded shell corpus to 53 labeled cases, including `git fetch` / `git pull` must-ask entries.
+- `docs/grant-consumption-paths.md` — design note for grant consumption paths (`approved_once` vs `capability_grant`).
 - Recovery execution fail-closed helpers (`recoveryFailClosedResult`, `recoveryFailReasonFromSkip`) and `RecoveryProofV1` type scaffolding (phase 1; proof mint/verify not yet wired).
+- `AGENTS.md` guidance: English-only text for Git commits, PRs, and GitHub comments.
 
 ### Changed
 
-- `TransactionalRunnerParams` は `boundaryContext` を受け取る（`boundaryDriverId` / `egressProxyEnv` を削除）。gate-runtime からの内部利用のみ。
-- transactional runner は `resolveBoundaryDriverContext` と同じ proxy 判定で `BoundaryDriver` を実行する。
-- `hostIntegrationBoundaryContext` を `boundary-session` に集約（テスト向け transactional フォールバック）。
-- **Transactional recovery (opt-in):** substrate skip or observation failure now maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or `recovery_execution_failed` and **denies** instead of falling back to unproven host execution.
-- Transactional diff evaluator denies observed `repo_outside`, `sensitive_path`, and `control_plane` mutations (not only `large_deletion`).
-- Transactional dirty-worktree check includes untracked files, excluding Belay-managed adapter state paths.
-- Transactional git worktrees are created under the system temp directory (not inside the repo).
-- Transactional apply verifies repo file hashes before copying observed-safe changes (TOCTOU guard).
+- Git classification handles global `-C` / `--work-tree`, separates ref operands from path targets, and splits branch read vs mutation flags.
+- `git fetch` and `git pull` now require approval (remote mutation + policy ask).
+- `rsync` is classified as local, remote, or destructive instead of blanket tier0 external.
+- `pnpm exec` launcher recipes expand before recursive verdict evaluation; npm script recipes split on top-level `&&` chains.
+- **Transactional recovery (opt-in):** substrate skip or observation failure maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or `recovery_execution_failed` and **denies** instead of falling back to unproven host execution.
+- `TransactionalRunnerParams` accepts `boundaryContext` (removed `boundaryDriverId` / `egressProxyEnv`); transactional runner uses the same proxy resolution as gate-runtime.
+- Transactional diff evaluator denies observed `repo_outside`, `sensitive_path`, and `control_plane` mutations.
+- Transactional git worktrees are created under the system temp directory; apply verifies repo file hashes before copying (TOCTOU guard).
+- `isGitRefWrite` policy detection uses the `git.push` signal instead of matching `push` in the command string.
 
 ### Fixed
 
+- Shell verdict false positives: git branch/ref names containing `/` or `credentials`, commit messages, `git -C` status, `tsc --noEmit`, routine launcher paths, and `...cache` repo-boundary checks.
+- `git reset -h` no longer treated as `--hard`; `rsync --delay-updates` no longer treated as destructive.
+- `git stash push` no longer emits `git.push`; checkout ref names no longer trigger secret-path asks.
 - Delete tool targeting `.git` paths now requires approval (`protected_artifact`), matching shell parity.
-- Transactional recovery no longer treats Belay init state (`.cursor/belay/`, config, hooks) as a dirty worktree when those paths are untracked.
+- Transactional recovery no longer treats Belay init state (`.cursor/belay/`, config, hooks) as a dirty worktree when untracked.
+- Docker integration tests use 60s timeouts to avoid flaky 5s vitest limits.
 
 ## 0.5.0 — 2026-08-07
 
