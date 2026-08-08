@@ -14,6 +14,7 @@ import {
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from '../config-io.js'
+import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
@@ -24,7 +25,6 @@ import { defaultControlPlaneDir } from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
-import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { listRecoveryCheckpoints } from '../core/recovery/checkpoint.js'
 import {
   recoveryApprovalSetupNotes,
@@ -367,7 +367,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       const signingKeyPath = approvalSigningKeyPath(
         loadedConfig.controlPlane.enabled
           ? belayStateDir(loadedConfig, repoLocalDir)
-          : loadedConfig.controlPlane.configDir ?? defaultControlPlaneDir(),
+          : (loadedConfig.controlPlane.configDir ?? defaultControlPlaneDir()),
       )
       if (!existsSync(signingKeyPath)) {
         notes.push(

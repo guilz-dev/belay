@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
-
+import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
 import {
   formatRecoveryStateDiagnostic,
   recoveryNotificationConfigured,
   recoveryNotificationSetupWarning,
 } from '../core/recovery/operator-guidance.js'
-import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
 
 describe('recovery operator guidance', () => {
   it('detects missing notification channels', () => {

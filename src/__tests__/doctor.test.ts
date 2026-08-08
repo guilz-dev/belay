@@ -141,8 +141,6 @@ describe('doctorProject', () => {
     expect(
       report.warnings.some((warning) => warning.includes('notification channel is configured')),
     ).toBe(true)
-    expect(
-      report.notes.some((note) => note.includes('Recovery restore flow')),
-    ).toBe(true)
+    expect(report.notes.some((note) => note.includes('Recovery restore flow'))).toBe(true)
   })
 })
