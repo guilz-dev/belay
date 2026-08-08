@@ -8,6 +8,7 @@ import {
   canonicalPath,
   containingGitRoot,
   hasOutsideRepoPath,
+  isPathOutsideRoot,
   pathWithinRoot,
   relativeWithinRepo,
   resolveWorkspaceRootMatch,
@@ -76,6 +77,25 @@ describe('canonicalPath', () => {
     expect(canonicalPath(outsidePath)).toBe(
       canonicalPath(path.resolve(repoRoot, '..', 'outside.txt')),
     )
+  })
+})
+
+describe('isPathOutsideRoot', () => {
+  it('treats only parent traversal as outside the repo', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-outside-root-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '...cache'), { recursive: true })
+    await mkdir(path.join(repoRoot, '..artifacts'), { recursive: true })
+
+    expect(isPathOutsideRoot('..')).toBe(true)
+    expect(isPathOutsideRoot(`..${path.sep}outside`)).toBe(true)
+    expect(isPathOutsideRoot('...cache')).toBe(false)
+    expect(isPathOutsideRoot('..artifacts')).toBe(false)
+    expect(isPathOutsideRoot('./...')).toBe(false)
+
+    expect(pathWithinRoot(repoRoot, path.join(repoRoot, '...cache'))).toBe(true)
+    expect(pathWithinRoot(repoRoot, path.join(repoRoot, '..artifacts'))).toBe(true)
+    expect(pathWithinRoot(repoRoot, path.join(repoRoot, '..', 'outside'))).toBe(false)
   })
 })
 

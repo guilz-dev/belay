@@ -172,7 +172,7 @@ function isGitRefWrite(analysis: ShellCapabilityAnalysis): boolean {
   if (analysis.segmentHead !== 'git') {
     return false
   }
-  return /\bpush\b/.test(analysis.command)
+  return analysis.signals.includes('git.push')
 }
 
 function actionForShellAnalysis(analysis: ShellCapabilityAnalysis): CapabilityAction {

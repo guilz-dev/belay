@@ -40,6 +40,10 @@ export function canonicalPath(targetPath: string): string {
   return current
 }
 
+export function isPathOutsideRoot(relativePath: string): boolean {
+  return relativePath === '..' || relativePath.startsWith(`..${path.sep}`)
+}
+
 export function pathWithinRoot(root: string, targetPath: string): boolean {
   const resolvedRoot = canonicalPath(root)
   const resolvedTarget = canonicalPath(targetPath)
@@ -47,7 +51,7 @@ export function pathWithinRoot(root: string, targetPath: string): boolean {
   if (relativePath === '') {
     return true
   }
-  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+  return !isPathOutsideRoot(relativePath) && !path.isAbsolute(relativePath)
 }
 
 function relativeWithinRoot(
@@ -61,7 +65,7 @@ function relativeWithinRoot(
   if (relativePath === '') {
     return '.'
   }
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+  if (isPathOutsideRoot(relativePath) || path.isAbsolute(relativePath)) {
     return null
   }
   return relativePath

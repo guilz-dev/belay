@@ -9,6 +9,20 @@
   {
     "kind": "shell",
     "category": "provably-benign",
+    "command": "git branch",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git branch --show-current",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "rg plan src",
     "verdict": "allow",
     "reason": "read_only"
@@ -29,6 +43,41 @@
   },
   {
     "kind": "shell",
+    "category": "provably-benign",
+    "command": "git -C /workspace/project status",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git show-ref --heads",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git reflog -5",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "grep -R pattern src",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "jq . package.json",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
     "category": "accepted-benign",
     "command": "touch notes.txt",
     "verdict": "allow_flagged",
@@ -43,8 +92,99 @@
   },
   {
     "kind": "shell",
+    "category": "accepted-benign",
+    "command": "git branch feature/corpus-check",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "git branch -D feature/corpus-check",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "git stash push -m \"wip\"",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "git checkout -b feature/x",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "go test ./...",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "tsc --noEmit",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "rsync -a src/ dest/",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
     "category": "must-ask",
     "command": "git push origin main",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "git fetch origin",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "git pull origin main",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "git reset --hard",
+    "verdict": "deny_pending_approval",
+    "reason": "git_history_destructive"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "git clean -fdx",
+    "verdict": "deny_pending_approval",
+    "reason": "git_history_destructive"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "rsync -a --delete src/ dest/",
+    "verdict": "deny_pending_approval",
+    "reason": "rsync_destructive"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "rsync -a src/ user@host:/dest",
     "verdict": "deny_pending_approval",
     "reason": "external_effect"
   },

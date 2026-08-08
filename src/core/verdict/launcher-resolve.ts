@@ -287,6 +287,14 @@ export function resolveLauncherRecipe(params: {
     return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1])
   }
 
+  if (tokens[0] === 'pnpm' && tokens[1] === 'exec' && tokens[2]) {
+    return {
+      recipes: [tokens.slice(2).join(' ')],
+      opaque: false,
+      reason: 'pnpm_exec',
+    }
+  }
+
   if (tokens[0] === 'pnpm' && tokens[1] && PNPM_EXEC_LIKE_HEADS.has(tokens[1])) {
     return {
       recipes: [tokens.slice(1).join(' ')],

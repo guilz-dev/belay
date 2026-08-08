@@ -100,6 +100,18 @@ describe('structural suite', () => {
   })
 
   describe('fixed edge cases', () => {
+    it('git reset --hard is ask', async () => {
+      const result = await verdict('git reset --hard', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('git_history_destructive')
+    })
+
+    it('git clean -fdx is ask', async () => {
+      const result = await verdict('git clean -fdx', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('git_history_destructive')
+    })
+
     it('rm -rf .git is ask', async () => {
       const result = await verdict('rm -rf .git', context)
       expect(result.permission).toBe('ask')
@@ -144,6 +156,11 @@ describe('structural suite', () => {
 
     it('npm run deploy resolves recipe and asks', async () => {
       const result = await verdict('npm run deploy', context)
+      expect(result.permission).toBe('ask')
+    })
+
+    it('pnpm run build-evil resolves chained recipe and asks on egress', async () => {
+      const result = await verdict('pnpm run build-evil', context)
       expect(result.permission).toBe('ask')
     })
 

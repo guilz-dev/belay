@@ -1,6 +1,8 @@
 import os from 'node:os'
 import path from 'node:path'
 
+import { isPathOutsideRoot } from '../../core/path-utils.js'
+
 import type { AdapterLayout, AdapterName } from './types.js'
 
 export type InstallScope = 'project' | 'global' | 'managed'
@@ -42,7 +44,7 @@ export function isPathInside(child: string, parent: string): boolean {
   const resolvedChild = path.resolve(child)
   const resolvedParent = path.resolve(parent)
   const relative = path.relative(resolvedParent, resolvedChild)
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+  return relative === '' || (!isPathOutsideRoot(relative) && !path.isAbsolute(relative))
 }
 
 export function buildRunnerInvocation(
@@ -56,7 +58,7 @@ export function buildRunnerInvocation(
   const runnerAbs = path.resolve(hooksDir, runnerFile)
   const relative = path.relative(path.resolve(repoRoot), runnerAbs)
   const useRelative =
-    relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative)
+    relative.length > 0 && !isPathOutsideRoot(relative) && !path.isAbsolute(relative)
   const runnerRef = useRelative
     ? platform === 'win32'
       ? `.\\${relative.split(path.sep).join('\\')}`

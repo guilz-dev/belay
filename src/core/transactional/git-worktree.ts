@@ -5,7 +5,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { canonicalPath, pathWithinRoot } from '../path-utils.js'
+import { canonicalPath, isPathOutsideRoot, pathWithinRoot } from '../path-utils.js'
 import type { TransactionalFileChange, TransactionalSnapshot } from './types.js'
 
 export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
@@ -144,7 +144,7 @@ export async function createGitWorktreeSnapshot(
 export function resolveWorktreeCwd(repoRoot: string, worktreePath: string, cwd: string): string {
   const resolvedCwd = canonicalPath(cwd)
   const relative = path.relative(canonicalPath(repoRoot), resolvedCwd)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (isPathOutsideRoot(relative) || path.isAbsolute(relative)) {
     return worktreePath
   }
   if (relative === '') {

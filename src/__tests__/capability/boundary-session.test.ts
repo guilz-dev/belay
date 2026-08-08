@@ -13,6 +13,7 @@ import {
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
 
 const dockerAvailable = await isDockerAvailable()
+const DOCKER_TEST_TIMEOUT_MS = 60_000
 
 describe('boundary session', () => {
   let repoRoot = ''
@@ -73,5 +74,6 @@ describe('boundary session', () => {
 
       expect(existsSync(attestationPath)).toBe(false)
     },
+    DOCKER_TEST_TIMEOUT_MS,
   )
 })
