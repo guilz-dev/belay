@@ -71,6 +71,16 @@ export interface BelayModelAssistConfig {
   timeoutMs?: number
 }
 
+export interface BelayFileCheckpointConfig {
+  enabled: boolean
+  allowNonGit: boolean
+  maxFiles: number
+  maxSourceBytes: number
+  maxWorkspaceBytes: number
+  prepareTimeoutMs: number
+  copyConcurrency: number
+}
+
 export interface BelayTransactionalConfig {
   enabled: boolean
   minConfidence: number
@@ -80,6 +90,7 @@ export interface BelayTransactionalConfig {
   gates: {
     shell: boolean
   }
+  fileCheckpoint: BelayFileCheckpointConfig
 }
 
 export interface BelayPolicyConfig {
@@ -306,6 +317,49 @@ export const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig = {
   timeoutMs: 3000,
 }
 
+export const DEFAULT_FILE_CHECKPOINT: BelayFileCheckpointConfig = {
+  enabled: false,
+  allowNonGit: false,
+  maxFiles: 100_000,
+  maxSourceBytes: 2_147_483_648,
+  maxWorkspaceBytes: 4_294_967_296,
+  prepareTimeoutMs: 30_000,
+  copyConcurrency: 8,
+}
+
+function clampCopyConcurrency(value: number): number {
+  return Math.min(32, Math.max(1, Math.floor(value)))
+}
+
+export function normalizeFileCheckpointConfig(
+  raw: Partial<BelayFileCheckpointConfig> | undefined,
+): BelayFileCheckpointConfig {
+  return {
+    enabled: raw?.enabled === true,
+    allowNonGit: raw?.allowNonGit === true,
+    maxFiles:
+      typeof raw?.maxFiles === 'number' && raw.maxFiles > 0
+        ? Math.floor(raw.maxFiles)
+        : DEFAULT_FILE_CHECKPOINT.maxFiles,
+    maxSourceBytes:
+      typeof raw?.maxSourceBytes === 'number' && raw.maxSourceBytes > 0
+        ? Math.floor(raw.maxSourceBytes)
+        : DEFAULT_FILE_CHECKPOINT.maxSourceBytes,
+    maxWorkspaceBytes:
+      typeof raw?.maxWorkspaceBytes === 'number' && raw.maxWorkspaceBytes > 0
+        ? Math.floor(raw.maxWorkspaceBytes)
+        : DEFAULT_FILE_CHECKPOINT.maxWorkspaceBytes,
+    prepareTimeoutMs:
+      typeof raw?.prepareTimeoutMs === 'number' && raw.prepareTimeoutMs > 0
+        ? Math.floor(raw.prepareTimeoutMs)
+        : DEFAULT_FILE_CHECKPOINT.prepareTimeoutMs,
+    copyConcurrency:
+      typeof raw?.copyConcurrency === 'number' && raw.copyConcurrency > 0
+        ? clampCopyConcurrency(raw.copyConcurrency)
+        : DEFAULT_FILE_CHECKPOINT.copyConcurrency,
+  }
+}
+
 export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
   enabled: false,
   minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
@@ -315,6 +369,7 @@ export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
   gates: {
     shell: true,
   },
+  fileCheckpoint: { ...DEFAULT_FILE_CHECKPOINT },
 }
 
 export const LEGACY_POLICY_V3: BelayPolicyConfig = {
@@ -1078,6 +1133,7 @@ export function normalizeConfig(
           gates: {
             shell: v4.policy?.transactional?.gates?.shell !== false,
           },
+          fileCheckpoint: normalizeFileCheckpointConfig(v4.policy?.transactional?.fileCheckpoint),
         }
       })(),
     },

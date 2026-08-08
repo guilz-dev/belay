@@ -121,12 +121,15 @@ describe('config migration', () => {
     const defaults = normalizeConfig({ ...DEFAULT_CONFIG_V3 })
     expect(defaults.policy.transactional.enabled).toBe(false)
     expect(defaults.policy.transactional.gates.shell).toBe(true)
+    expect(defaults.policy.transactional.fileCheckpoint.enabled).toBe(false)
+    expect(defaults.policy.transactional.fileCheckpoint.allowNonGit).toBe(false)
 
     const enabled = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
       policy: {
         ...DEFAULT_CONFIG_V3.policy,
         transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
           enabled: true,
           minConfidence: 0.6,
           maxConfidence: 0.85,

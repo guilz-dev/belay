@@ -35,6 +35,34 @@ function cursorDirtyIgnoreRoots(repoRoot: string): string[] {
   return protectedArtifactRoots(cursorAdapter.layout, repoRoot, null)
 }
 
+function runnerParams(input: {
+  command: string
+  cwd: string
+  repoRoot: string
+  predicted: Awaited<ReturnType<typeof classifyShellCore>>
+  stateDir: string
+  maxDeletionCount?: number
+  dirtyIgnoreRoots?: string[]
+}) {
+  return {
+    command: input.command,
+    cwd: input.cwd,
+    repoRoot: input.repoRoot,
+    stateDir: input.stateDir,
+    timeoutMs: 10_000,
+    predicted: input.predicted,
+    fileCheckpoint: DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+    durableCheckpointEnabled: false,
+    diffContext: {
+      repoRoot: input.repoRoot,
+      sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+      protectedRoots: [],
+      maxDeletionCount: input.maxDeletionCount ?? 10,
+    },
+    ...(input.dirtyIgnoreRoots ? { dirtyIgnoreRoots: input.dirtyIgnoreRoots } : {}),
+  }
+}
+
 describe('transactional runner', () => {
   afterEach(async () => {
     vi.restoreAllMocks()
@@ -48,20 +76,15 @@ describe('transactional runner', () => {
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
 
-    const result = await runTransactionalExecution({
-      command: 'touch safe.txt',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'touch safe.txt',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
+        stateDir,
+        predicted,
+      }),
+    )
 
     expect(result.ok).toBe(true)
     expect(result.observed?.verdict).toBe('allow')
@@ -77,20 +100,16 @@ describe('transactional runner', () => {
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
 
-    const result = await runTransactionalExecution({
-      command: 'rm -f README.md',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'rm -f README.md',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
+        stateDir,
+        predicted,
         maxDeletionCount: 0,
-      },
-    })
+      }),
+    )
 
     expect(result.ok).toBe(true)
     expect(result.observed?.verdict).toBe('deny_pending_approval')
@@ -106,20 +125,15 @@ describe('transactional runner', () => {
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
 
-    const result = await runTransactionalExecution({
-      command: 'touch safe.txt',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'touch safe.txt',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
+        stateDir,
+        predicted,
+      }),
+    )
 
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe('dirty_worktree')
@@ -134,20 +148,15 @@ describe('transactional runner', () => {
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
     vi.spyOn(gitWorktree, 'applyWorktreeChanges').mockRejectedValueOnce(new Error('apply failed'))
 
-    const result = await runTransactionalExecution({
-      command: 'touch safe.txt',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'touch safe.txt',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
+        stateDir,
+        predicted,
+      }),
+    )
 
     expect(result.ok).toBe(true)
     expect(result.result.verdict).toBe('deny_pending_approval')
@@ -161,20 +170,15 @@ describe('transactional runner', () => {
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
 
-    const result = await runTransactionalExecution({
-      command: 'false',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'false',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
+        stateDir,
+        predicted,
+      }),
+    )
 
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe('transactional_command_failed')
@@ -191,21 +195,16 @@ describe('transactional runner', () => {
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
 
-    const result = await runTransactionalExecution({
-      command: 'touch safe.txt',
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
-      diffContext: {
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'touch safe.txt',
+        cwd: repoRoot,
         repoRoot,
-        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
+        stateDir,
+        predicted,
+        dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+      }),
+    )
 
     expect(result.ok).toBe(true)
     expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
