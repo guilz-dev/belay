@@ -24,6 +24,8 @@ export interface MutatedCase {
 export const CATASTROPHIC_CORES = [
   'rm -rf .git',
   'git push --force',
+  'git reset --hard',
+  'git clean -fdx',
   'dropdb prod',
   'npm publish',
   'aws s3 rm s3://bucket/key',

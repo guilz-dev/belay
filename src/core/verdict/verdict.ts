@@ -45,6 +45,12 @@ import {
   type SegmentShellPolicyInput,
   shellPolicyMetadata,
 } from './shell-policy.js'
+import {
+  analyzeShellCommandSemantics,
+  isPureReadOnlySemantics,
+  LOCAL_MUTATION_KEYS,
+} from './shell-semantics.js'
+
 import type {
   InternalSegmentVerdict,
   VerdictContext,
@@ -68,7 +74,6 @@ const TIER0_EXTERNAL_KEYS = new Set([
   'supabase',
   'scp',
   'ssh',
-  'rsync',
 ])
 
 const TIER0_EXTERNAL_HEADS = new Set([
@@ -78,70 +83,6 @@ const TIER0_EXTERNAL_HEADS = new Set([
   'mysql',
   'mongosh',
   'redis-cli',
-])
-
-const READ_ONLY_KEYS = new Set([
-  'cat',
-  'cd',
-  'echo',
-  'git diff',
-  'git log',
-  'git rev-parse',
-  'git show',
-  'git status',
-  'head',
-  'ls',
-  'pwd',
-  'rg',
-  'sort',
-  'tail',
-  'wc',
-  'which',
-  'find',
-])
-
-const PURE_READ_ONLY_KEYS = new Set([
-  'echo',
-  'git diff',
-  'git log',
-  'git rev-parse',
-  'git show',
-  'git status',
-  'pwd',
-  'which',
-])
-
-const LOCAL_MUTATION_KEYS = new Set([
-  'chmod',
-  'cp',
-  'git add',
-  'git clean',
-  'git commit',
-  'git mv',
-  'git reset',
-  'mkdir',
-  'mv',
-  'rm',
-  'sed',
-  'tee',
-  'touch',
-  'truncate',
-])
-
-/** Routine local build/test runners resolved from launcher recipes. */
-const LOCAL_ROUTINE_HEADS = new Set([
-  'tsc',
-  'vitest',
-  'vite',
-  'webpack',
-  'esbuild',
-  'rollup',
-  'jest',
-  'mocha',
-  'cargo',
-  'go',
-  'make',
-  'cmake',
 ])
 
 const BELAY_SELF_COMMANDS = new Set(['approve', 'revoke'])
@@ -324,8 +265,22 @@ function isVariableOrOpaquePathToken(token: string): boolean {
   return token.includes('$') || token.includes('`')
 }
 
-function isPureReadOnlySegment(segment: ReturnType<typeof parseSegment>): boolean {
-  return PURE_READ_ONLY_KEYS.has(segment.key) || PURE_READ_ONLY_KEYS.has(segment.head)
+function pathContextFromSemantics(
+  context: VerdictContext,
+  semantics: ReturnType<typeof analyzeShellCommandSemantics>,
+): VerdictContext {
+  const cwd = semantics.gitWorkTree ?? semantics.effectiveCwd
+  if (!cwd || cwd === context.cwd) {
+    return context
+  }
+  return { ...context, cwd }
+}
+
+function isPureReadOnlySegment(
+  segment: ReturnType<typeof parseSegment>,
+  semantics: ReturnType<typeof analyzeShellCommandSemantics>,
+): boolean {
+  return isPureReadOnlySemantics(segment, semantics)
 }
 
 function updateChainState(command: string, state: ChainState): ChainState {
@@ -354,8 +309,16 @@ function updateChainState(command: string, state: ChainState): ChainState {
   }
 }
 
-function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolean {
+function tier0ExternalMatch(
+  key: string,
+  head: string,
+  tokens: string[],
+  signals: string[] = [],
+): boolean {
   if (TIER0_EXTERNAL_KEYS.has(key)) {
+    return true
+  }
+  if (signals.includes('git.push')) {
     return true
   }
   if (TIER0_EXTERNAL_HEADS.has(head)) {
@@ -369,9 +332,6 @@ function tier0ExternalMatch(key: string, head: string, tokens: string[]): boolea
     (tokens[1] === 'push' ||
       tokens.some((t) => t === '--push' || t.startsWith('--output=type=registry')))
   ) {
-    return true
-  }
-  if (head === 'git' && tokens[1] === 'push') {
     return true
   }
   if (head === 'terraform' && tokens[1] === 'apply') {
@@ -690,8 +650,10 @@ async function evaluateSegment(
     }
     let innerVerdict: InternalSegmentVerdict | null = null
     for (const recipe of resolution.recipes) {
-      const evaluated = await evaluateSegment(recipe, context, depth + 1)
-      innerVerdict = innerVerdict ? combineInternal(innerVerdict, evaluated) : evaluated
+      for (const sub of splitTopLevelSegments(recipe)) {
+        const evaluated = await evaluateSegment(sub, context, depth + 1)
+        innerVerdict = innerVerdict ? combineInternal(innerVerdict, evaluated) : evaluated
+      }
     }
     if (!innerVerdict) {
       return askVerdict({
@@ -710,7 +672,33 @@ async function evaluateSegment(
     }
   }
 
-  const egressClass = classifyEgressTool(segment.head, peeled)
+  const semantics = analyzeShellCommandSemantics(peeled, segment, context.cwd)
+  const pathContext = pathContextFromSemantics(context, semantics)
+
+  if (semantics.requiresAsk) {
+    const { request, decision } = evaluateSegmentShellPolicy({
+      command,
+      segmentHead: segment.head,
+      effect: 'local_mutation',
+      location: 'repo_local',
+      opacity: 'transparent',
+      pathArgs: semantics.pathTargets,
+      signals: semantics.requiresAsk.signals,
+      context: pathContext,
+    })
+    return askVerdict({
+      location: 'repo_local',
+      opacity: 'transparent',
+      effect: 'local_mutation',
+      confidence: 'deterministic',
+      reason: semantics.requiresAsk.reason,
+      signals: semantics.requiresAsk.signals,
+      capabilityRequests: [request],
+      authorizationDecision: decision,
+    })
+  }
+
+  const egressClass = semantics.egressClass ?? classifyEgressTool(segment.head, peeled)
   if (egressClass === 'destructive') {
     const { request, decision } = evaluateSegmentShellPolicy({
       command,
@@ -734,7 +722,15 @@ async function evaluateSegment(
       authorizationDecision: decision,
     })
   }
-  if (tier0ExternalMatch(segment.key, segment.head, peeled)) {
+  if (
+    tier0ExternalMatch(
+      semantics.normalizedKey ?? segment.key,
+      segment.head,
+      peeled,
+      semantics.signals,
+    )
+  ) {
+    const tier0Key = semantics.normalizedKey ?? segment.key
     const { request, decision } = evaluateSegmentShellPolicy({
       command,
       segmentHead: segment.head,
@@ -742,8 +738,8 @@ async function evaluateSegment(
       location: 'external',
       opacity: 'transparent',
       pathArgs: [],
-      signals: ['tier0_external', segment.key],
-      context,
+      signals: ['tier0_external', tier0Key, ...semantics.signals],
+      context: pathContext,
     })
     return askVerdict({
       location: 'external',
@@ -751,13 +747,13 @@ async function evaluateSegment(
       effect: 'remote_mutation',
       confidence: 'deterministic',
       reason: 'tier0_external',
-      signals: ['tier0_external', segment.key, ...decision.signals],
+      signals: ['tier0_external', tier0Key, ...decision.signals],
       capabilityRequests: [request],
       authorizationDecision: decision,
     })
   }
 
-  const rmVerdict = tier0HighStakesRm(peeled, context)
+  const rmVerdict = tier0HighStakesRm(peeled, pathContext)
   if (rmVerdict) {
     return rmVerdict
   }
@@ -773,31 +769,33 @@ async function evaluateSegment(
     })
   }
 
-  let effect: VerdictEffect = 'unknown'
+  let effect: VerdictEffect = semantics.effect
   if (isReadOnlyLauncherInvocation(peeled)) {
     effect = 'read_only'
-  } else if (READ_ONLY_KEYS.has(segment.key) || READ_ONLY_KEYS.has(segment.head)) {
-    effect = 'read_only'
-  } else if (LOCAL_MUTATION_KEYS.has(segment.key) || LOCAL_MUTATION_KEYS.has(segment.head)) {
-    effect = 'local_mutation'
-  } else if (LOCAL_ROUTINE_HEADS.has(segment.head)) {
-    effect = 'local_mutation'
   }
 
-  const pathArgs = extractPathArgs(peeled)
-  if (extractRedirectTargets(peeled).length > 0 && effect === 'read_only') {
-    effect = 'local_mutation'
-  }
+  const pathArgs = semantics.pathTargets
+  const policyPathArgs = [...new Set([...pathArgs, ...(semantics.scopeTargets ?? [])])]
 
   const pathAnalysis = analyzePathTargets({
-    targets: pathArgs,
-    cwd: context.cwd,
-    repoRoot: context.repoRoot,
-    trustedCwd: context.trustedCwd,
-    trustedWorkspaceRoots: context.trustedWorkspaceRoots,
-    sensitivePaths: context.sensitivePaths,
-    protectedArtifactRoots: context.protectedArtifactRoots,
+    targets: policyPathArgs,
+    cwd: pathContext.cwd,
+    repoRoot: pathContext.repoRoot,
+    trustedCwd: pathContext.trustedCwd,
+    trustedWorkspaceRoots: pathContext.trustedWorkspaceRoots,
+    sensitivePaths: pathContext.sensitivePaths,
+    protectedArtifactRoots: pathContext.protectedArtifactRoots,
   })
+
+  // Path-less read/mutation in a trusted cwd: assume repo-local (e.g. git status, tsc --noEmit).
+  const effectiveLocation: VerdictLocation =
+    policyPathArgs.length === 0 &&
+    pathContext.trustedCwd &&
+    pathContext.cwd &&
+    (effect === 'read_only' || effect === 'local_mutation') &&
+    pathAnalysis.location === 'unknown'
+      ? 'repo_local'
+      : pathAnalysis.location
 
   if (!context.trustedCwd || !context.cwd) {
     if (opacity === 'opaque' || effect === 'unknown' || effect === 'local_mutation') {
@@ -810,7 +808,7 @@ async function evaluateSegment(
         signals: ['missing_trusted_cwd'],
       })
     }
-    if (effect === 'read_only' && !isPureReadOnlySegment(segment)) {
+    if (effect === 'read_only' && !isPureReadOnlySegment(segment, semantics)) {
       return askVerdict({
         location: 'unknown',
         opacity,
@@ -829,9 +827,9 @@ async function evaluateSegment(
   ) {
     for (const target of pathArgs) {
       const resolved =
-        resolveTrustedPath(target, context.cwd, context.trustedCwd) ??
-        resolveMutationTarget(target, context.cwd)
-      if (resolved && touchesProtectedRoot(resolved, context.protectedArtifactRoots)) {
+        resolveTrustedPath(target, pathContext.cwd, pathContext.trustedCwd) ??
+        resolveMutationTarget(target, pathContext.cwd)
+      if (resolved && touchesProtectedRoot(resolved, pathContext.protectedArtifactRoots ?? [])) {
         return askVerdict({
           location: pathAnalysis.location,
           opacity: 'transparent',
@@ -848,17 +846,17 @@ async function evaluateSegment(
     let destructiveHighStakes = false
     for (const target of pathArgs) {
       const resolved =
-        resolveTrustedPath(target, context.cwd, context.trustedCwd) ??
-        resolveMutationTarget(target, context.cwd)
+        resolveTrustedPath(target, pathContext.cwd, pathContext.trustedCwd) ??
+        resolveMutationTarget(target, pathContext.cwd)
       if (
         resolved &&
         isDestructiveHighStakesMutation(
           segment.head,
           resolved,
-          context.repoRoot,
-          context.sensitivePaths,
-          context.protectedArtifactRoots,
-          context.trustedWorkspaceRoots,
+          pathContext.repoRoot,
+          pathContext.sensitivePaths,
+          pathContext.protectedArtifactRoots,
+          pathContext.trustedWorkspaceRoots,
         )
       ) {
         destructiveHighStakes = true
@@ -917,7 +915,8 @@ async function evaluateSegment(
     })
   }
 
-  const resolvedPathTargets = resolveShellPathTargets(pathArgs, context)
+  const resolvedPathTargets = resolveShellPathTargets(policyPathArgs, pathContext)
+  const semanticSignals = semantics.signals
   const buildPolicyInput = (
     overrides: Partial<SegmentShellPolicyInput> &
       Pick<SegmentShellPolicyInput, 'effect' | 'location'>,
@@ -926,10 +925,10 @@ async function evaluateSegment(
     segmentHead: segment.head,
     opacity,
     egressClass: egressClass ?? undefined,
-    pathArgs,
+    pathArgs: policyPathArgs,
     resolvedPathTargets,
-    signals: pathAnalysis.signals,
-    context,
+    signals: [...semanticSignals, ...pathAnalysis.signals],
+    context: pathContext,
     ...overrides,
   })
 
@@ -939,11 +938,11 @@ async function evaluateSegment(
     (effect === 'local_mutation' || effect === 'unknown') && pathArgs.length > 0
       ? mutationPrescanRequiresAsk({
           targets: pathArgs,
-          cwd: context.cwd,
-          repoRoot: context.repoRoot,
-          trustedCwd: context.trustedCwd,
-          trustedWorkspaceRoots: context.trustedWorkspaceRoots,
-          sensitivePaths: context.sensitivePaths,
+          cwd: pathContext.cwd,
+          repoRoot: pathContext.repoRoot,
+          trustedCwd: pathContext.trustedCwd,
+          trustedWorkspaceRoots: pathContext.trustedWorkspaceRoots,
+          sensitivePaths: pathContext.sensitivePaths,
         })
       : null
   if (mutationPrescan) {
@@ -1056,7 +1055,7 @@ async function evaluateSegment(
   }
 
   if (
-    pathAnalysis.location === 'repo_local' &&
+    effectiveLocation === 'repo_local' &&
     (effect === 'read_only' || effect === 'local_mutation') &&
     opacity !== 'opaque'
   ) {
@@ -1076,10 +1075,10 @@ async function evaluateSegment(
 
   if (effect === 'read_only') {
     const readOnlyLocation =
-      context.trustedCwd && context.cwd
-        ? pathAnalysis.location === 'unknown'
+      pathContext.trustedCwd && pathContext.cwd
+        ? effectiveLocation === 'unknown'
           ? 'repo_local'
-          : pathAnalysis.location
+          : effectiveLocation
         : 'unknown'
     return allowVerdict({
       location: readOnlyLocation,
@@ -1101,7 +1100,7 @@ async function evaluateSegment(
 
   if (context.unknownLocalEffect === 'allow_flagged') {
     return allowVerdict({
-      location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+      location: effectiveLocation === 'unknown' ? 'repo_local' : effectiveLocation,
       opacity,
       effect: 'unknown',
       confidence: 'assumed_repo_local',
@@ -1110,7 +1109,7 @@ async function evaluateSegment(
       ...withShellPolicyMetadata(
         buildPolicyInput({
           effect: 'unknown',
-          location: pathAnalysis.location === 'unknown' ? 'repo_local' : pathAnalysis.location,
+          location: effectiveLocation === 'unknown' ? 'repo_local' : effectiveLocation,
         }),
         policyMetadata,
       ),
@@ -1118,7 +1117,7 @@ async function evaluateSegment(
   }
 
   return askVerdict({
-    location: pathAnalysis.location,
+    location: effectiveLocation,
     opacity,
     effect,
     confidence: 'deterministic',

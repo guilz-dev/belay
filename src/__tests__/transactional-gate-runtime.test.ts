@@ -21,6 +21,7 @@ import { classifyShellCore } from './helpers/shell-classify.js'
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
 const dockerAvailable = await isDockerAvailable()
+const DOCKER_TEST_TIMEOUT_MS = 60_000
 
 async function createGitRepo(options?: { gitignoreCursor?: boolean }): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-'))
@@ -203,33 +204,37 @@ describe('transactional gate runtime', () => {
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toContain('# test')
   })
 
-  it('passes container driver id into resolveBoundaryDriverContext for transactional shell', async () => {
-    const resolveSpy = vi.spyOn(boundarySession, 'resolveBoundaryDriverContext')
-    const repoRoot = await createGitRepo()
-    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
-    const ctx = {
-      layout: cursorAdapter.layout,
-      repoRoot,
-      config: transactionalContainerConfig(),
-      configPath: cursorAdapter.layout.configPath(repoRoot),
-    }
-    const deps = createDefaultGateRuntimeDeps()
-
-    await evaluateGatedAction(ctx, deps, {
-      kind: 'shell',
-      cwd: repoRoot,
-      command: 'touch safe.txt',
-    })
-
-    expect(resolveSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
+  it.skipIf(!dockerAvailable)(
+    'passes container driver id into resolveBoundaryDriverContext for transactional shell',
+    async () => {
+      const resolveSpy = vi.spyOn(boundarySession, 'resolveBoundaryDriverContext')
+      const repoRoot = await createGitRepo()
+      await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+      const ctx = {
+        layout: cursorAdapter.layout,
         repoRoot,
-        driverId: 'container',
-      }),
-    )
-    const resolved = await resolveSpy.mock.results[0]?.value
-    expect(resolved?.driverId).toBe('container')
-  })
+        config: transactionalContainerConfig(),
+        configPath: cursorAdapter.layout.configPath(repoRoot),
+      }
+      const deps = createDefaultGateRuntimeDeps()
+
+      await evaluateGatedAction(ctx, deps, {
+        kind: 'shell',
+        cwd: repoRoot,
+        command: 'touch safe.txt',
+      })
+
+      expect(resolveSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoRoot,
+          driverId: 'container',
+        }),
+      )
+      const resolved = await resolveSpy.mock.results[0]?.value
+      expect(resolved?.driverId).toBe('container')
+    },
+    DOCKER_TEST_TIMEOUT_MS,
+  )
 
   it.skipIf(!dockerAvailable)(
     'applies observed-safe shell effects via container boundary driver',
@@ -254,6 +259,6 @@ describe('transactional gate runtime', () => {
       expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
       await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
     },
-    30_000,
+    DOCKER_TEST_TIMEOUT_MS,
   )
 })

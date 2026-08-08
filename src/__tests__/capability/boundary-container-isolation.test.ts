@@ -14,6 +14,7 @@ import {
 } from '../../core/capability/boundary-egress.js'
 
 const dockerAvailable = await isDockerAvailable()
+const DOCKER_TEST_TIMEOUT_MS = 60_000
 
 describe('container boundary isolation', () => {
   it.skipIf(!dockerAvailable)(
@@ -25,17 +26,22 @@ describe('container boundary isolation', () => {
       const result = await driver.run('touch blocked-in-mount.txt', cwd, 30_000)
       expect(result.exitCode).not.toBe(0)
     },
+    DOCKER_TEST_TIMEOUT_MS,
   )
 
-  it.skipIf(!dockerAvailable)('blocks control-plane writes on read-only mounts', async () => {
-    const driver = createContainerBoundaryDriver()
-    const cwd = await mkdtemp(path.join(os.tmpdir(), 'belay-container-cp-'))
-    await mkdir(path.join(cwd, '.cursor'), { recursive: true })
-    await writeFile(path.join(cwd, '.cursor', 'belay.config.json'), '{}')
+  it.skipIf(!dockerAvailable)(
+    'blocks control-plane writes on read-only mounts',
+    async () => {
+      const driver = createContainerBoundaryDriver()
+      const cwd = await mkdtemp(path.join(os.tmpdir(), 'belay-container-cp-'))
+      await mkdir(path.join(cwd, '.cursor'), { recursive: true })
+      await writeFile(path.join(cwd, '.cursor', 'belay.config.json'), '{}')
 
-    const result = await driver.run('echo x >> .cursor/belay.config.json', cwd, 30_000)
-    expect(result.exitCode).not.toBe(0)
-  })
+      const result = await driver.run('echo x >> .cursor/belay.config.json', cwd, 30_000)
+      expect(result.exitCode).not.toBe(0)
+    },
+    DOCKER_TEST_TIMEOUT_MS,
+  )
 
   it.skipIf(!dockerAvailable)(
     'does not inject ambient host credentials into the container',
@@ -50,6 +56,7 @@ describe('container boundary isolation', () => {
       )
       expect(result.exitCode).toBe(0)
     },
+    DOCKER_TEST_TIMEOUT_MS,
   )
 
   it.skipIf(!dockerAvailable)(
@@ -86,5 +93,6 @@ describe('container boundary isolation', () => {
       expect(await isBelayContainerNetworkReady(repoRoot)).toBe(true)
       expect(belayContainerNetworkName(repoRoot)).toMatch(/^belay-int-/)
     },
+    DOCKER_TEST_TIMEOUT_MS,
   )
 })

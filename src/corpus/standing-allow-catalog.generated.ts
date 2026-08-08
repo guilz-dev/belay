@@ -23,6 +23,16 @@ export const STANDING_ALLOW_CATALOG: StandingAllowCatalog = {
         runtimeKey: '37e6be21e63e6268ee6e4212ad811f6f48ab3c3c10ce1b971c1a90d92c753a2a',
       },
       {
+        command: 'git branch',
+        normalizedCommand: 'git branch',
+        runtimeKey: 'd7f8388c566e751503ab82ba1ed22787389803eb32d8b5f2294cc7ca448fa285',
+      },
+      {
+        command: 'git branch --show-current',
+        normalizedCommand: 'git branch --show-current',
+        runtimeKey: '98d585412d3cd7c3b5a87a417d91bc36d7b6791e11451b52ced7888e003d9d33',
+      },
+      {
         command: 'rg plan src',
         normalizedCommand: 'rg plan src',
         runtimeKey: '68ae7a96158719235d9314da7b00a5f8b2f40668e5d4f7f02e91f22284140a68',
@@ -36,6 +46,31 @@ export const STANDING_ALLOW_CATALOG: StandingAllowCatalog = {
         command: "find . -name '*.ts'",
         normalizedCommand: "find . -name '*.ts'",
         runtimeKey: '782298e3015fcb9c17bee2dad12a395a8859043481f93f0ca596499028bb8af2',
+      },
+      {
+        command: 'git -C /workspace/project status',
+        normalizedCommand: 'git -C /workspace/project status',
+        runtimeKey: '9f88bd017c52277f5dbfeafec7d845460035a7a14bfb37b55724d7e2a9fc238b',
+      },
+      {
+        command: 'git show-ref --heads',
+        normalizedCommand: 'git show-ref --heads',
+        runtimeKey: 'aa5aa0106dc7647003f254524becbf549673610d3672f28408ac0f60481124b7',
+      },
+      {
+        command: 'git reflog -5',
+        normalizedCommand: 'git reflog -5',
+        runtimeKey: '9213a9357953c24886a4e82c2c8cdc6db2d106c7ff98af525f7fbc2b70a58ff9',
+      },
+      {
+        command: 'grep -R pattern src',
+        normalizedCommand: 'grep -R pattern src',
+        runtimeKey: '40f5e0328e668909241aa0cd13ce2a51af269aa7ae600cc493dceae7b90dd9d8',
+      },
+      {
+        command: 'jq . package.json',
+        normalizedCommand: 'jq . package.json',
+        runtimeKey: 'dd7b14d350b84a41e0e73eae0d1a643c1b6c262df8d9007696987354f4f993e9',
       },
     ],
     mustAllow: [
