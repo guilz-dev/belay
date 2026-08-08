@@ -12,6 +12,7 @@ import type { CapabilityApprovalScope } from '../core/capability/types.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
 import type { EgressApprovalScope } from '../core/egress/types.js'
 import { recordEgressApproval } from '../core/egress-approval.js'
+import { RECOVERY_RESTORE_REASON } from '../core/recovery/checkpoint.js'
 import { createEgressApprovalStore } from '../services/egress-service.js'
 import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 
@@ -33,6 +34,20 @@ export async function approvePending(
   const config = await loadConfigFile(repoRoot)
   const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
   const match = pending.approvals.find((approval) => approval.approvalId === options.approvalId)
+
+  if (match?.reason === RECOVERY_RESTORE_REASON) {
+    if (options.scope && options.scope !== 'once') {
+      return { ok: false, message: 'Recovery restore approvals support one-shot scope only.' }
+    }
+    const result = await recordApproval({
+      approvalId: options.approvalId,
+      config,
+      token: options.token,
+      requireSignedToken: true,
+      store: createGateApprovalStore(repoRoot, config),
+    })
+    return { ok: result.ok, message: result.message }
+  }
 
   if (match?.reason === JUDGE_CLOUD_CONSENT_REASON) {
     const result = await recordCapabilityApproval({

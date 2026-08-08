@@ -111,6 +111,24 @@ export {
   relativeWithinRepo,
   resolveMutationTarget,
 } from './path-utils.js'
+export type {
+  RecoveryBackend,
+  RecoveryCheckpointManifestV1,
+  RecoveryCheckpointState,
+  RecoveryCheckpointSummary,
+  RecoveryProofV1,
+  RecoveryReceiptV1,
+} from './recovery/index.js'
+export {
+  listRecoveryCheckpoints,
+  RECOVERY_CHECKPOINT_CORRUPT,
+  RECOVERY_CHECKPOINT_QUOTA,
+  RECOVERY_RESTORE_CONFLICT,
+  recoveryCheckpointStorageBytes,
+  recoveryRestoreBinding,
+  restoreRecoveryCheckpoint,
+  showRecoveryCheckpoint,
+} from './recovery/index.js'
 export { fingerprintReplayPayload, subagentFingerprintSource } from './replay-scrub.js'
 export { scrubString, scrubValue } from './scrub.js'
 export { findCommandSubstitutions, MAX_SUBSTITUTION_DEPTH } from './shell-substitution.js'
