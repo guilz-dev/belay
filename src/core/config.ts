@@ -80,6 +80,13 @@ export interface BelayTransactionalConfig {
   gates: {
     shell: boolean
   }
+  checkpoint?: {
+    enabled: boolean
+    appliedRetentionHours: number
+    restoredRetentionHours: number
+    maxCheckpoints: number
+    maxBytes: number
+  }
 }
 
 export interface BelayPolicyConfig {
@@ -306,6 +313,14 @@ export const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig = {
   timeoutMs: 3000,
 }
 
+export const DEFAULT_RECOVERY_CHECKPOINT: NonNullable<BelayTransactionalConfig['checkpoint']> = {
+  enabled: false,
+  appliedRetentionHours: 7 * 24,
+  restoredRetentionHours: 24,
+  maxCheckpoints: 20,
+  maxBytes: 1024 * 1024 * 1024,
+}
+
 export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
   enabled: false,
   minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
@@ -315,6 +330,7 @@ export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
   gates: {
     shell: true,
   },
+  checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT },
 }
 
 export const LEGACY_POLICY_V3: BelayPolicyConfig = {
@@ -1077,6 +1093,29 @@ export function normalizeConfig(
               : DEFAULT_TRANSACTIONAL_V3.maxDeletionCount,
           gates: {
             shell: v4.policy?.transactional?.gates?.shell !== false,
+          },
+          checkpoint: {
+            enabled: v4.policy?.transactional?.checkpoint?.enabled === true,
+            appliedRetentionHours:
+              typeof v4.policy?.transactional?.checkpoint?.appliedRetentionHours === 'number' &&
+              v4.policy.transactional.checkpoint.appliedRetentionHours > 0
+                ? v4.policy.transactional.checkpoint.appliedRetentionHours
+                : DEFAULT_RECOVERY_CHECKPOINT.appliedRetentionHours,
+            restoredRetentionHours:
+              typeof v4.policy?.transactional?.checkpoint?.restoredRetentionHours === 'number' &&
+              v4.policy.transactional.checkpoint.restoredRetentionHours > 0
+                ? v4.policy.transactional.checkpoint.restoredRetentionHours
+                : DEFAULT_RECOVERY_CHECKPOINT.restoredRetentionHours,
+            maxCheckpoints:
+              typeof v4.policy?.transactional?.checkpoint?.maxCheckpoints === 'number' &&
+              v4.policy.transactional.checkpoint.maxCheckpoints > 0
+                ? Math.floor(v4.policy.transactional.checkpoint.maxCheckpoints)
+                : DEFAULT_RECOVERY_CHECKPOINT.maxCheckpoints,
+            maxBytes:
+              typeof v4.policy?.transactional?.checkpoint?.maxBytes === 'number' &&
+              v4.policy.transactional.checkpoint.maxBytes > 0
+                ? Math.floor(v4.policy.transactional.checkpoint.maxBytes)
+                : DEFAULT_RECOVERY_CHECKPOINT.maxBytes,
           },
         }
       })(),

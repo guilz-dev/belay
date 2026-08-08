@@ -1,4 +1,5 @@
 import type { ResolvedBoundaryDriverContext } from '../capability/boundary-session.js'
+import type { BelayTransactionalConfig } from '../config.js'
 import type { Assessment, ClassifyResult, HookVerdict } from '../types.js'
 
 export type TransactionalFileChangeKind = 'added' | 'modified' | 'deleted'
@@ -35,6 +36,10 @@ export interface TransactionalExecutionResult {
   commandExitCode?: number | null
   commandSignal?: string | null
   timedOut?: boolean
+  recoveryCheckpointId?: string
+  recoveryBackend?: 'git_worktree'
+  recoveryProofHash?: string
+  recoveryState?: 'applied'
 }
 
 export interface TransactionalSnapshot {
@@ -60,4 +65,5 @@ export interface TransactionalRunnerParams {
   boundaryContext?: ResolvedBoundaryDriverContext
   /** Repo-local Belay paths excluded from dirty-worktree gating (init artifacts). */
   dirtyIgnoreRoots?: string[]
+  checkpoint?: NonNullable<BelayTransactionalConfig['checkpoint']>
 }

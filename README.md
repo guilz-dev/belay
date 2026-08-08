@@ -239,6 +239,11 @@ Notable settings:
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges
   them back. File-mutation tools and shell redirects cannot write control-plane
   paths while it is enabled.
+- **`policy.transactional.checkpoint.enabled: true`** — after enabling the
+  transactional git-worktree runner, persist repo-local pre-images and expose them through
+  `belay recover list`. Restore is conflict-checked and always requires a signed
+  out-of-band, exact one-shot approval. Network, remote Git, databases, processes, and
+  repo-external effects are outside this guarantee.
 - **Cloud judge** — configure with `belay config` (interactive) or `belay config set judge.providerId <id>`.
   Providers: `ollama`, `codex`, `claude`, `cursor`. **Provider** is the vendor/service
   (`judge.providerId`); **driver** is the API compatibility layer (`judge.provider`:
@@ -281,7 +286,11 @@ belay doctor [--fix]             # check (and repair) floor health
 belay status                     # show install scope / skill-only state
 belay metrics                    # would-block / verdict summary
 belay report                     # audit log report
-belay recover [--command "rm important.ts"]   # find recovery candidates
+belay recover [advice] [--command "rm important.ts"] # advisory candidates only
+belay recover status                          # checkpoint backend and state counts
+belay recover list                            # proven repo-local recovery points
+belay recover show <checkpoint-id>
+belay recover apply <checkpoint-id>           # signed OOB exact one-shot approval required
 belay explain -- <shell-command>              # inspect a verdict
 belay explain --kind subagent -- "deploy to production"
 belay explain --kind tool --tool Write -- .env
