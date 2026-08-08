@@ -28,7 +28,8 @@ async function createGitRepo(): Promise<string> {
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
   await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: dir })
   await writeFile(path.join(dir, 'README.md'), '# test\n')
-  await execFileAsync('git', ['add', 'README.md'], { cwd: dir })
+  await writeFile(path.join(dir, '.gitignore'), '.cursor/\n')
+  await execFileAsync('git', ['add', 'README.md', '.gitignore'], { cwd: dir })
   await execFileAsync('git', ['commit', '-m', 'init'], { cwd: dir })
   return dir
 }

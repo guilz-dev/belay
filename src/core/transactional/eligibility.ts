@@ -1,5 +1,6 @@
 import type { BelayConfigV3 } from '../config.js'
 import type { GatedActionKind } from '../gate-contract.js'
+import { capabilityRequestsBlockRecovery } from '../recovery/capability.js'
 import type { ClassifyResult } from '../types.js'
 
 const EXCLUDED_REASONS = new Set([
@@ -33,6 +34,9 @@ export function isTransactionalEligible(
     return false
   }
   if (EXCLUDED_REASONS.has(result.reason)) {
+    return false
+  }
+  if (capabilityRequestsBlockRecovery(result.capabilityRequests)) {
     return false
   }
 

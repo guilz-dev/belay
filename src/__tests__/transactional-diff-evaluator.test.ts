@@ -21,31 +21,31 @@ describe('transactional diff evaluator', () => {
     expect(evaluation.assessment.signals).toContain('transactional_observed')
   })
 
-  it('observes repo-outside changes without auto-deny (L2 observation only)', () => {
+  it('denies repo-outside changes observed in worktree', () => {
     const evaluation = evaluateTransactionalDiff(
       [{ relativePath: '../outside.txt', kind: 'added' }],
       diffContext,
     )
-    expect(evaluation.verdict).toBe('allow')
+    expect(evaluation.verdict).toBe('deny_pending_approval')
     expect(evaluation.categories).toContain('repo_outside')
-    expect(evaluation.assessment.reversibility).not.toBe('irreversible')
+    expect(evaluation.reason).toBe('transactional_observed_risk')
   })
 
-  it('observes sensitive path mutations without auto-deny', () => {
+  it('denies sensitive path mutations observed in worktree', () => {
     const evaluation = evaluateTransactionalDiff(
       [{ relativePath: '.env', kind: 'modified' }],
       diffContext,
     )
-    expect(evaluation.verdict).toBe('allow')
+    expect(evaluation.verdict).toBe('deny_pending_approval')
     expect(evaluation.categories).toContain('sensitive_path')
   })
 
-  it('observes control-plane mutations without auto-deny', () => {
+  it('denies control-plane mutations observed in worktree', () => {
     const evaluation = evaluateTransactionalDiff(
       [{ relativePath: '.cursor/belay.config.json', kind: 'modified' }],
       diffContext,
     )
-    expect(evaluation.verdict).toBe('allow')
+    expect(evaluation.verdict).toBe('deny_pending_approval')
     expect(evaluation.categories).toContain('control_plane')
   })
 

@@ -173,6 +173,17 @@ describe('classifyToolUse', () => {
     expect(result.reason).toBe('outside_repo_mutation')
   })
 
+  it('asks on Delete tool targeting .git (shell parity)', async () => {
+    const result = await classifyToolUse(
+      { tool_name: 'Delete', tool_input: { path: path.join(repoRoot, '.git') } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.assessment.signals).toContain('protected_artifact')
+  })
+
   it('asks on outside-repo credential writes via structural prescan', async () => {
     const home = process.env.HOME ?? '/home/user'
     const result = await classifyToolUse(
