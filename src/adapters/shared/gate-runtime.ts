@@ -584,6 +584,11 @@ export async function evaluateGatedAction(
         maxDeletionCount: transactional.maxDeletionCount,
       },
       boundaryContext,
+      dirtyIgnoreRoots: protectedArtifactRoots(
+        ctx.layout,
+        ctx.repoRoot,
+        ctx.config.controlPlane.enabled ? configuredControlPlaneDir(ctx.config) : null,
+      ),
     })
 
     if (!txResult.skipped && txResult.observed) {

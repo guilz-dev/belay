@@ -25,10 +25,11 @@ authorization model. It complements [ADR-003](./adr/ADR-003-resource-scoped-capa
    silently allowed at L3.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
 5. `deny_pending_approval` is never auto-approved; human escalation is mandatory.
-6. **Recovery execution** (transactional / checkpoint): when enabled, local mutations run only
-   after an observed-safe worktree proof. Substrate or observation failure maps to
-   `recovery_substrate_unavailable` / `recovery_execution_failed` — the host must not fall back
-   to unproven execution.
+6. **Recovery execution** (transactional; checkpoint backend is phase 2): when enabled, local
+   mutations run only after an observed-safe git worktree proof. Substrate or observation failure
+   maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or
+   `recovery_execution_failed` — the host must not fall back to unproven execution. Belay-managed
+   init artifacts under adapter state paths are excluded from dirty-worktree gating.
 
 ## Policy precedence
 

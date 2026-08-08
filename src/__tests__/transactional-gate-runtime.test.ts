@@ -22,15 +22,19 @@ const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
 const dockerAvailable = await isDockerAvailable()
 
-async function createGitRepo(): Promise<string> {
+async function createGitRepo(options?: { gitignoreCursor?: boolean }): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-'))
   tempDirs.push(dir)
   await execFileAsync('git', ['init'], { cwd: dir })
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
   await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: dir })
   await writeFile(path.join(dir, 'README.md'), '# test\n')
-  await writeFile(path.join(dir, '.gitignore'), '.cursor/\n')
-  await execFileAsync('git', ['add', 'README.md', '.gitignore'], { cwd: dir })
+  if (options?.gitignoreCursor !== false) {
+    await writeFile(path.join(dir, '.gitignore'), '.cursor/\n')
+    await execFileAsync('git', ['add', 'README.md', '.gitignore'], { cwd: dir })
+  } else {
+    await execFileAsync('git', ['add', 'README.md'], { cwd: dir })
+  }
   await execFileAsync('git', ['commit', '-m', 'init'], { cwd: dir })
   return dir
 }
@@ -122,6 +126,30 @@ describe('transactional gate runtime', () => {
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe(RECOVERY_DIRTY_WORKTREE)
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('runs transactional recovery when only belay init artifacts are untracked', async () => {
+    const repoRoot = await createGitRepo({ gitignoreCursor: false })
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
   })
 
   it('does not let one-shot approval bypass transactional observed risk', async () => {

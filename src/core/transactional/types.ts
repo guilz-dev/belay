@@ -58,4 +58,6 @@ export interface TransactionalRunnerParams {
   predicted: ClassifyResult
   diffContext: TransactionalDiffContext
   boundaryContext?: ResolvedBoundaryDriverContext
+  /** Repo-local Belay paths excluded from dirty-worktree gating (init artifacts). */
+  dirtyIgnoreRoots?: string[]
 }

@@ -454,22 +454,6 @@ export async function classifyToolUse(
           locationLabel: 'sensitive_path',
         })
       }
-      if (hitsProtectedRoot) {
-        signals.push('control_plane_path')
-        return classifyFileMutationWithPolicy({
-          toolName,
-          toolKind,
-          filePath,
-          resolvedPath,
-          repoRoot,
-          cwd,
-          config,
-          options,
-          signals,
-          isDelete: true,
-          locationLabel: 'control_plane',
-        })
-      }
       signals.push('file_delete')
       return classifyFileMutationWithPolicy({
         toolName,
