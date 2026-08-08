@@ -4,8 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cursorAdapter } from '../adapters/cursor/adapter.js'
+import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import * as gitWorktree from '../core/transactional/git-worktree.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPLY_FAILED,
@@ -28,8 +31,13 @@ async function createGitRepo(): Promise<string> {
   return dir
 }
 
+function cursorDirtyIgnoreRoots(repoRoot: string): string[] {
+  return protectedArtifactRoots(cursorAdapter.layout, repoRoot, null)
+}
+
 describe('transactional runner', () => {
   afterEach(async () => {
+    vi.restoreAllMocks()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -120,11 +128,11 @@ describe('transactional runner', () => {
 
   it('denies when applying observed-safe changes fails', async () => {
     const repoRoot = await createGitRepo()
-    await mkdir(path.join(repoRoot, 'safe.txt'))
     const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',
     })
     const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(gitWorktree, 'applyWorktreeChanges').mockRejectedValueOnce(new Error('apply failed'))
 
     const result = await runTransactionalExecution({
       command: 'touch safe.txt',
@@ -171,5 +179,36 @@ describe('transactional runner', () => {
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe('transactional_command_failed')
     expect(result.result).toEqual(predicted)
+  })
+
+  it('ignores untracked belay init artifacts when dirtyIgnoreRoots is provided', async () => {
+    const repoRoot = await createGitRepo()
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+
+    const result = await runTransactionalExecution({
+      command: 'touch safe.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      timeoutMs: 10_000,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+      diffContext: {
+        repoRoot,
+        sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,
+        protectedRoots: [],
+        maxDeletionCount: 10,
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
   })
 })

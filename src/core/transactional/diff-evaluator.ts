@@ -75,7 +75,11 @@ export function evaluateTransactionalDiff(
   }
 
   const categoryList = [...categories]
-  const dangerous = categoryList.includes('large_deletion')
+  const dangerous =
+    categoryList.includes('large_deletion') ||
+    categoryList.includes('repo_outside') ||
+    categoryList.includes('sensitive_path') ||
+    categoryList.includes('control_plane')
 
   const base = {
     categories: categoryList,

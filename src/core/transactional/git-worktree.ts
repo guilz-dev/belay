@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { canonicalPath } from '../path-utils.js'
+import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import type { TransactionalFileChange, TransactionalSnapshot } from './types.js'
+
+export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
 
 function execGit(repoRoot: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -32,6 +34,52 @@ function execGit(repoRoot: string, args: string[]): Promise<string> {
   })
 }
 
+function porcelainRelativePath(line: string): string | null {
+  if (line.length < 4) {
+    return null
+  }
+  const relativePath = line.slice(3).trim()
+  return relativePath || null
+}
+
+function isIgnoredDirtyPath(
+  repoRoot: string,
+  relativePath: string,
+  ignoreRoots: string[],
+): boolean {
+  if (ignoreRoots.length === 0) {
+    return false
+  }
+  const absolutePath = canonicalPath(path.join(repoRoot, relativePath))
+  return ignoreRoots.some(
+    (root) =>
+      pathWithinRoot(root, absolutePath) ||
+      root === absolutePath ||
+      pathWithinRoot(absolutePath, root),
+  )
+}
+
+export async function hashRepoFile(filePath: string): Promise<string> {
+  const content = await readFile(filePath)
+  return createHash('sha256').update(content).digest('hex')
+}
+
+export async function captureRepoFileHashes(
+  repoRoot: string,
+  changes: TransactionalFileChange[],
+): Promise<Map<string, string | null>> {
+  const hashes = new Map<string, string | null>()
+  for (const change of changes) {
+    const target = path.join(repoRoot, change.relativePath)
+    if (!existsSync(target)) {
+      hashes.set(change.relativePath, null)
+      continue
+    }
+    hashes.set(change.relativePath, await hashRepoFile(target))
+  }
+  return hashes
+}
+
 export async function isGitWorktreeAvailable(repoRoot: string): Promise<boolean> {
   try {
     await execGit(repoRoot, ['rev-parse', '--git-dir'])
@@ -41,10 +89,29 @@ export async function isGitWorktreeAvailable(repoRoot: string): Promise<boolean>
   }
 }
 
-export async function isDirtyWorktree(repoRoot: string): Promise<boolean> {
+export async function isDirtyWorktree(
+  repoRoot: string,
+  options?: { ignoreRoots?: string[] },
+): Promise<boolean> {
   try {
-    const status = await execGit(repoRoot, ['status', '--porcelain', '--untracked-files=no'])
-    return status.trim().length > 0
+    const status = await execGit(repoRoot, ['status', '--porcelain'])
+    const ignoreRoots = (options?.ignoreRoots ?? []).map((root) => canonicalPath(root))
+    const repoRootCanonical = canonicalPath(repoRoot)
+
+    for (const line of status.split('\n')) {
+      if (!line.trim()) {
+        continue
+      }
+      const relativePath = porcelainRelativePath(line)
+      if (!relativePath) {
+        continue
+      }
+      if (isIgnoredDirtyPath(repoRootCanonical, relativePath, ignoreRoots)) {
+        continue
+      }
+      return true
+    }
+    return false
   } catch {
     return true
   }
@@ -52,10 +119,9 @@ export async function isDirtyWorktree(repoRoot: string): Promise<boolean> {
 
 export async function createGitWorktreeSnapshot(
   repoRoot: string,
-  stateDir: string,
+  _stateDir: string,
 ): Promise<TransactionalSnapshot> {
-  const worktreePath = path.join(stateDir, `tx-${randomUUID().replaceAll('-', '')}`)
-  await mkdir(stateDir, { recursive: true })
+  const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-'))
   await execGit(repoRoot, ['worktree', 'add', '--detach', worktreePath, 'HEAD'])
 
   return {
@@ -189,11 +255,44 @@ async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<v
   }
 }
 
+async function assertRepoFilesUnchanged(
+  repoRoot: string,
+  changes: TransactionalFileChange[],
+  baseHashes: Map<string, string | null>,
+): Promise<void> {
+  for (const change of changes) {
+    const target = path.join(repoRoot, change.relativePath)
+    const expected = baseHashes.get(change.relativePath)
+    const exists = existsSync(target)
+
+    if (expected === null) {
+      if (exists) {
+        throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
+      }
+      continue
+    }
+
+    if (!exists) {
+      throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
+    }
+
+    const current = await hashRepoFile(target)
+    if (current !== expected) {
+      throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
+    }
+  }
+}
+
 export async function applyWorktreeChanges(
   worktreePath: string,
   repoRoot: string,
   changes: TransactionalFileChange[],
+  options?: { baseHashes?: Map<string, string | null> },
 ): Promise<void> {
+  if (options?.baseHashes) {
+    await assertRepoFilesUnchanged(repoRoot, changes, options.baseHashes)
+  }
+
   const backupRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-rollback-'))
   const rollbackActions: ApplyRollbackAction[] = []
 

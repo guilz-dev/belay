@@ -89,6 +89,10 @@ import {
 } from '../../core/judge-fallback-hints.js'
 import { notifyDeny } from '../../core/notify.js'
 import { canonicalPath } from '../../core/path-utils.js'
+import {
+  recoveryFailClosedResult,
+  recoveryFailReasonFromSkip,
+} from '../../core/recovery/fail-closed.js'
 import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
   loadStandingAllow,
@@ -550,12 +554,12 @@ export async function evaluateGatedAction(
   let predictedAssessment: Assessment | undefined
   let observedAssessment: Assessment | undefined
   let transactionalLayer: Record<string, unknown> | undefined
-
-  if (
+  const recoveryCandidate =
     isTransactionalEligible(ctx.config, params.kind, predicted) &&
     params.kind === 'shell' &&
-    params.command
-  ) {
+    Boolean(params.command)
+
+  if (recoveryCandidate && params.command) {
     const transactional = ctx.config.policy.transactional
     const boundaryDriverId =
       ctx.config.capability?.boundaryDriver ??
@@ -580,6 +584,11 @@ export async function evaluateGatedAction(
         maxDeletionCount: transactional.maxDeletionCount,
       },
       boundaryContext,
+      dirtyIgnoreRoots: protectedArtifactRoots(
+        ctx.layout,
+        ctx.repoRoot,
+        ctx.config.controlPlane.enabled ? configuredControlPlaneDir(ctx.config) : null,
+      ),
     })
 
     if (!txResult.skipped && txResult.observed) {
@@ -593,10 +602,15 @@ export async function evaluateGatedAction(
         transactionalChangeCount: txResult.observed.changes.length,
         transactionalTimedOut: txResult.timedOut === true,
       }
-    } else if (txResult.skipReason) {
+    } else {
+      const skipReason = txResult.skipReason ?? 'recovery_observation_failed'
+      result = recoveryFailClosedResult(predicted, recoveryFailReasonFromSkip(skipReason), [
+        skipReason,
+      ])
       transactionalLayer = {
         transactional: false,
-        transactionalSkipReason: txResult.skipReason,
+        transactionalSkipReason: skipReason,
+        recoveryFailClosed: true,
       }
     }
   }

@@ -14,6 +14,7 @@ import { createApprovalRecord } from '../core/approval.js'
 import { isDockerAvailable } from '../core/capability/boundary-driver-container.js'
 import * as boundarySession from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { RECOVERY_DIRTY_WORKTREE } from '../core/recovery/fail-closed.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -21,14 +22,19 @@ const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
 const dockerAvailable = await isDockerAvailable()
 
-async function createGitRepo(): Promise<string> {
+async function createGitRepo(options?: { gitignoreCursor?: boolean }): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-'))
   tempDirs.push(dir)
   await execFileAsync('git', ['init'], { cwd: dir })
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
   await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: dir })
   await writeFile(path.join(dir, 'README.md'), '# test\n')
-  await execFileAsync('git', ['add', 'README.md'], { cwd: dir })
+  if (options?.gitignoreCursor !== false) {
+    await writeFile(path.join(dir, '.gitignore'), '.cursor/\n')
+    await execFileAsync('git', ['add', 'README.md', '.gitignore'], { cwd: dir })
+  } else {
+    await execFileAsync('git', ['add', 'README.md'], { cwd: dir })
+  }
   await execFileAsync('git', ['commit', '-m', 'init'], { cwd: dir })
   return dir
 }
@@ -80,6 +86,53 @@ describe('transactional gate runtime', () => {
   it('denies re-execution after applying observed-safe effects', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
+  })
+
+  it('fail-closes dirty worktree instead of falling back to host execution', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(RECOVERY_DIRTY_WORKTREE)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('runs transactional recovery when only belay init artifacts are untracked', async () => {
+    const repoRoot = await createGitRepo({ gitignoreCursor: false })
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
     const ctx = {
       layout: cursorAdapter.layout,
       repoRoot,

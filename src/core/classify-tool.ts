@@ -13,6 +13,7 @@ import { pathWithinRoot, resolveWorkspaceRootMatch } from './path-utils.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell, resolveClassifierTrustedCwd } from './verdict/adapter.js'
+import { isGitPath } from './verdict/containment.js'
 import { mutationPrescanRequiresAsk } from './verdict/prescan.js'
 
 const DEFAULT_SENSITIVE_PATHS = ['.env', '.env.*', '**/credentials/**']
@@ -437,6 +438,22 @@ export async function classifyToolUse(
     }
 
     if (FILE_DELETE_TOOL_NAMES.has(toolKind)) {
+      if (isGitPath(resolvedPath, repoRoot)) {
+        signals.push('protected_artifact')
+        return classifyFileMutationWithPolicy({
+          toolName,
+          toolKind,
+          filePath,
+          resolvedPath,
+          repoRoot,
+          cwd,
+          config,
+          options,
+          signals,
+          isDelete: true,
+          locationLabel: 'sensitive_path',
+        })
+      }
       signals.push('file_delete')
       return classifyFileMutationWithPolicy({
         toolName,

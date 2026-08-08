@@ -9,12 +9,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - `docs/grant-consumption-paths.md` — grant 消費経路（`approved_once` vs `capability_grant`）の設計メモ。
+- Recovery execution fail-closed helpers (`recoveryFailClosedResult`, `recoveryFailReasonFromSkip`) and `RecoveryProofV1` type scaffolding (phase 1; proof mint/verify not yet wired).
 
 ### Changed
 
 - `TransactionalRunnerParams` は `boundaryContext` を受け取る（`boundaryDriverId` / `egressProxyEnv` を削除）。gate-runtime からの内部利用のみ。
 - transactional runner は `resolveBoundaryDriverContext` と同じ proxy 判定で `BoundaryDriver` を実行する。
 - `hostIntegrationBoundaryContext` を `boundary-session` に集約（テスト向け transactional フォールバック）。
+- **Transactional recovery (opt-in):** substrate skip or observation failure now maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or `recovery_execution_failed` and **denies** instead of falling back to unproven host execution.
+- Transactional diff evaluator denies observed `repo_outside`, `sensitive_path`, and `control_plane` mutations (not only `large_deletion`).
+- Transactional dirty-worktree check includes untracked files, excluding Belay-managed adapter state paths.
+- Transactional git worktrees are created under the system temp directory (not inside the repo).
+- Transactional apply verifies repo file hashes before copying observed-safe changes (TOCTOU guard).
+
+### Fixed
+
+- Delete tool targeting `.git` paths now requires approval (`protected_artifact`), matching shell parity.
+- Transactional recovery no longer treats Belay init state (`.cursor/belay/`, config, hooks) as a dirty worktree when those paths are untracked.
 
 ## 0.5.0 — 2026-08-07
 

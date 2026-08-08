@@ -7,11 +7,13 @@ import type { ClassifyResult } from '../types.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import {
   applyWorktreeChanges,
+  captureRepoFileHashes,
   collectWorktreeChanges,
   createGitWorktreeSnapshot,
   isDirtyWorktree,
   isGitWorktreeAvailable,
   resolveWorktreeCwd,
+  TRANSACTIONAL_APPLY_TOCTOU,
 } from './git-worktree.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -35,7 +37,7 @@ export async function runTransactionalExecution(
     }
   }
 
-  if (await isDirtyWorktree(repoRoot)) {
+  if (await isDirtyWorktree(repoRoot, { ignoreRoots: params.dirtyIgnoreRoots })) {
     return {
       ok: false,
       skipped: true,
@@ -90,9 +92,11 @@ export async function runTransactionalExecution(
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
     if (observed.verdict === 'allow') {
+      const baseHashes = await captureRepoFileHashes(repoRoot, changes)
       try {
-        await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes)
-      } catch {
+        await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes, { baseHashes })
+      } catch (error) {
+        const toctou = error instanceof Error && error.message === TRANSACTIONAL_APPLY_TOCTOU
         const result: ClassifyResult = {
           ...predicted,
           verdict: 'deny_pending_approval',
@@ -101,7 +105,10 @@ export async function runTransactionalExecution(
             ...observed.assessment,
             reversibility: 'irreversible',
             confidence: 1,
-            signals: [...observed.assessment.signals, 'transactional_apply_failed'],
+            signals: [
+              ...observed.assessment.signals,
+              toctou ? 'transactional_apply_toctou' : 'transactional_apply_failed',
+            ],
           },
         }
         return {
