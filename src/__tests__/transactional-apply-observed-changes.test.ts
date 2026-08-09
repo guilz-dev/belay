@@ -181,7 +181,11 @@ describe('apply observed changes', () => {
     const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
       { relativePath: 'a.txt', kind: 'modified' },
     ])
-    observed[0]!.after = { kind: 'file', mode: 0o644, size: 999, hash: 'mismatch' }
+    const first = observed[0]
+    expect(first).toBeDefined()
+    if (first) {
+      first.after = { kind: 'file', mode: 0o644, size: 999, hash: 'mismatch' }
+    }
 
     await expect(
       applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
