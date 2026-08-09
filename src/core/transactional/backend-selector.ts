@@ -3,12 +3,13 @@ import type {
   TransactionalBackendProbe,
   TransactionalBackendSelection,
 } from './backend.js'
-import { isGitWorktreeAvailable } from './git-worktree.js'
+import { isDirtyWorktree, isGitWorktreeAvailable } from './git-worktree.js'
 import { gitWorktreeBackend } from './git-worktree-backend.js'
 
 export const FILE_CHECKPOINT_DISABLED = 'file_checkpoint_disabled'
 export const FILE_CHECKPOINT_NON_GIT_DISABLED = 'file_checkpoint_non_git_disabled'
 export const FILE_CHECKPOINT_DURABLE_REQUIRED = 'file_checkpoint_durable_checkpoint_required'
+export const FILE_CHECKPOINT_NOT_IMPLEMENTED = 'file_checkpoint_not_implemented'
 
 function fileCheckpointProbe(reason: string, signals: string[]): TransactionalBackendProbe {
   return {
@@ -33,16 +34,25 @@ export async function probeTransactionalBackends(
   return probes
 }
 
+async function gitWorkspaceSignals(context: TransactionalBackendContext): Promise<string[]> {
+  const signals = ['git_repository']
+  if (await isDirtyWorktree(context.repoRoot, { ignoreRoots: context.dirtyIgnoreRoots })) {
+    signals.push('dirty_git_worktree')
+  }
+  return signals
+}
+
 async function probeFileCheckpointForGit(
   context: TransactionalBackendContext,
 ): Promise<TransactionalBackendProbe> {
+  const signals = await gitWorkspaceSignals(context)
   if (!context.fileCheckpoint.enabled) {
-    return fileCheckpointProbe(FILE_CHECKPOINT_DISABLED, ['dirty_git_worktree'])
+    return fileCheckpointProbe(FILE_CHECKPOINT_DISABLED, signals)
   }
   if (!context.durableCheckpointEnabled) {
-    return fileCheckpointProbe(FILE_CHECKPOINT_DURABLE_REQUIRED, ['dirty_git_worktree'])
+    return fileCheckpointProbe(FILE_CHECKPOINT_DURABLE_REQUIRED, signals)
   }
-  return fileCheckpointProbe(FILE_CHECKPOINT_DISABLED, ['dirty_git_worktree', 'not_implemented'])
+  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, [...signals, 'not_implemented'])
 }
 
 async function probeFileCheckpointForNonGit(
@@ -57,7 +67,7 @@ async function probeFileCheckpointForNonGit(
   if (!context.durableCheckpointEnabled) {
     return fileCheckpointProbe(FILE_CHECKPOINT_DURABLE_REQUIRED, ['non_git_workspace'])
   }
-  return fileCheckpointProbe(FILE_CHECKPOINT_DISABLED, ['non_git_workspace', 'not_implemented'])
+  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, ['non_git_workspace', 'not_implemented'])
 }
 
 export async function selectTransactionalBackend(

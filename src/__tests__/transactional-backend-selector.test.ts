@@ -12,6 +12,7 @@ import {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
+  FILE_CHECKPOINT_NOT_IMPLEMENTED,
   probeTransactionalBackends,
   selectTransactionalBackend,
 } from '../core/transactional/backend-selector.js'
@@ -94,6 +95,23 @@ describe('transactional backend selector', () => {
     expect(selection.probe.reason).toBe(FILE_CHECKPOINT_DURABLE_REQUIRED)
   })
 
+  it('reports not implemented when file checkpoint prerequisites are met on dirty Git', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true },
+        durableCheckpointEnabled: true,
+      }),
+    )
+
+    expect(selection.backend).toBeNull()
+    expect(selection.skipReason).toBe('dirty_worktree')
+    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_NOT_IMPLEMENTED)
+    expect(selection.probe.signals).toContain('not_implemented')
+  })
+
   it('fail-closes non-Git workspaces when file checkpoint is disabled', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-nogit-'))
     tempDirs.push(repoRoot)
@@ -150,5 +168,14 @@ describe('transactional backend selector', () => {
     expect(probes[0]?.eligible).toBe(false)
     expect(probes[1]?.backend).toBe('file_checkpoint')
     expect(probes[1]?.reason).toBe(FILE_CHECKPOINT_DISABLED)
+  })
+
+  it('does not label clean Git workspaces as dirty in file checkpoint probes', async () => {
+    const repoRoot = await createGitRepo()
+
+    const probes = await probeTransactionalBackends(backendContext(repoRoot))
+
+    expect(probes[1]?.signals).toEqual(['git_repository'])
+    expect(probes[1]?.signals).not.toContain('dirty_git_worktree')
   })
 })

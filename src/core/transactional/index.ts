@@ -10,6 +10,7 @@ export {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
+  FILE_CHECKPOINT_NOT_IMPLEMENTED,
   probeTransactionalBackends,
   selectTransactionalBackend,
 } from './backend-selector.js'
