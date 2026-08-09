@@ -67,7 +67,10 @@ async function probeFileCheckpointForNonGit(
   if (!context.durableCheckpointEnabled) {
     return fileCheckpointProbe(FILE_CHECKPOINT_DURABLE_REQUIRED, ['non_git_workspace'])
   }
-  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, ['non_git_workspace', 'not_implemented'])
+  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, [
+    'non_git_workspace',
+    'not_implemented',
+  ])
 }
 
 export async function selectTransactionalBackend(
