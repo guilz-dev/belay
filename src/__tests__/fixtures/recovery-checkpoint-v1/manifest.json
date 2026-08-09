@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "checkpointId": "cp_111111111111111111111111",
+  "backend": "git_worktree",
+  "repoRoot": "$REPO_ROOT",
+  "repoIdentity": "$REPO_IDENTITY",
+  "commandFingerprint": "v1-fixture-command",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "expiresAt": "2999-01-01T00:00:00.000Z",
+  "proof": {
+    "version": 1,
+    "backend": "git_worktree",
+    "inputFingerprint": "v1-fixture-command",
+    "resourceScope": "$REPO_ROOT",
+    "baseStateHash": "v1-fixture-base-state",
+    "effectClosure": "repo_local_fs_observed",
+    "issuedAt": "2026-01-01T00:00:00.000Z",
+    "expiresAt": "2999-01-01T00:00:00.000Z",
+    "probeSignals": ["clean_git_worktree", "observed_repo_local_diff"]
+  },
+  "entries": [
+    {
+      "path": "modified.txt",
+      "before": {
+        "kind": "file",
+        "mode": 420,
+        "hash": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+        "blob": "blobs/9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+      },
+      "after": {
+        "kind": "file",
+        "mode": 420,
+        "hash": "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
+      }
+    }
+  ]
+}

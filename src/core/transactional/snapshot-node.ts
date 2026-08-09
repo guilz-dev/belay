@@ -66,7 +66,7 @@ export async function readSnapshotNode(absolutePath: string): Promise<SnapshotNo
   try {
     info = await lstat(absolutePath)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
       return { kind: 'absent' }
     }
     throw error

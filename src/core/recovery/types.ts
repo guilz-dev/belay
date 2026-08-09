@@ -55,6 +55,34 @@ export interface RecoveryCheckpointManifestV1 {
   entries: RecoveryCheckpointEntryV1[]
 }
 
+export type RecoveryFileSnapshotV2 =
+  | RecoveryFileSnapshotV1
+  | { kind: 'directory'; mode: number; hash: string }
+
+export interface RecoveryCheckpointEntryV2 {
+  path: string
+  before: RecoveryFileSnapshotV2
+  after: RecoveryFileSnapshotV2
+}
+
+export type RecoveryCheckpointEntry = RecoveryCheckpointEntryV1 | RecoveryCheckpointEntryV2
+
+export interface RecoveryCheckpointManifestV2 {
+  version: 2
+  checkpointId: string
+  backend: RecoveryBackend
+  repoRoot: string
+  resourceKind: 'git_repository' | 'directory'
+  repoIdentity: string
+  commandFingerprint: string
+  createdAt: string
+  expiresAt: string
+  proof: RecoveryProofV1
+  entries: RecoveryCheckpointEntryV2[]
+}
+
+export type RecoveryCheckpointManifest = RecoveryCheckpointManifestV1 | RecoveryCheckpointManifestV2
+
 export interface RecoveryCheckpointStateV1 {
   version: 1
   state: RecoveryCheckpointState
