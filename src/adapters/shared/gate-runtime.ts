@@ -1285,17 +1285,26 @@ export async function processApprovalPrompt(
       }
     }
     if (replayResult.exitCode === 0) {
-      await deps.appendAudit(ctx, {
-        event: 'approval',
-        kind: 'approval',
-        verdict: 'allow',
-        approvalId,
-        reason: 'approval_replay_succeeded',
-        summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
-      })
+      let auditFailure: string | undefined
+      try {
+        await deps.appendAudit(ctx, {
+          event: 'approval',
+          kind: 'approval',
+          verdict: 'allow',
+          approvalId,
+          reason: 'approval_replay_succeeded',
+          summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+        })
+      } catch (error) {
+        auditFailure = error instanceof Error ? error.message : String(error)
+      }
       return {
-        continue: hasFollowupInstruction,
-        user_message: `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.`,
+        continue: true,
+        user_message:
+          `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.` +
+          (auditFailure
+            ? ` Audit recording failed (${auditFailure}); inspect audit storage before the next approval.`
+            : ''),
       }
     }
     await deps.appendAudit(ctx, {
@@ -1316,7 +1325,7 @@ export async function processApprovalPrompt(
   }
 
   return {
-    continue: hasFollowupInstruction,
+    continue: replay !== null || hasFollowupInstruction,
     user_message: recorded.message,
     ...(replay ? { replay } : {}),
   }
@@ -1352,15 +1361,18 @@ export function gateVerdictToClaudeUserPromptResponse(
   verdict: ApprovalPromptResult,
 ): Record<string, unknown> {
   if (verdict.continue) {
-    return {}
+    return verdict.user_message
+      ? {
+          hookSpecificOutput: {
+            hookEventName: 'UserPromptSubmit',
+            additionalContext: verdict.user_message,
+          },
+        }
+      : {}
   }
   return {
-    hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      continue: false,
-      user_message: verdict.user_message,
-      ...(verdict.replay ? { replay: verdict.replay } : {}),
-    },
+    decision: 'block',
+    reason: verdict.user_message,
   }
 }
 
@@ -1377,7 +1389,14 @@ export function gateVerdictToCodexUserPromptResponse(
   verdict: ApprovalPromptResult,
 ): Record<string, unknown> {
   if (verdict.continue) {
-    return {}
+    return verdict.user_message
+      ? {
+          hookSpecificOutput: {
+            hookEventName: 'UserPromptSubmit',
+            additionalContext: verdict.user_message,
+          },
+        }
+      : {}
   }
   return {
     decision: 'block',

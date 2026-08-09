@@ -15,6 +15,7 @@ import { initProject } from '../installer.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
+const tempFiles: string[] = []
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-runtime-'))
@@ -96,10 +97,42 @@ describe('generated hook runtime', () => {
 
   afterEach(async () => {
     delete process.env.BELAY_DETERMINISTIC_JUDGE
+    delete process.env.BELAY_TEST_APPROVAL_REPLAY
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+    await Promise.all(tempFiles.splice(0).map((file) => rm(file, { force: true })))
   })
 
-  it('approves exactly one matching denied shell action after /belay-approve', async () => {
+  it('replays the exact denied shell action from an approval-only prompt', async () => {
+    process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
+    const repoRoot = await initIsolatedRepo()
+    const markerPath = path.join(os.tmpdir(), `${path.basename(repoRoot)}-replayed.txt`)
+    tempFiles.push(markerPath)
+    const command = `printf replayed > ${JSON.stringify(markerPath)}`
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command,
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+
+    const config = await loadConfigFile(repoRoot)
+    const pending = await readJson(pendingApprovalsPath(repoRoot, config))
+    expect(pending.approvals).toHaveLength(1)
+    const approvalId = pending.approvals[0].approvalId
+
+    const approvedPrompt = await runRunner(repoRoot, 'belay-before-submit', {
+      prompt: `/belay-approve ${approvalId}`,
+    })
+    const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
+    expect(approvedPromptJson.continue).toBe(true)
+    expect(approvedPromptJson.user_message).toContain('replay succeeded')
+    expect(await readFile(markerPath, 'utf8')).toBe('replayed')
+
+    const approved = await readJson(approvedApprovalsPath(repoRoot, config))
+    expect(approved.approvals).toHaveLength(0)
+  })
+
+  it('resumes the host turn after an approval-only prompt', async () => {
     const repoRoot = await initIsolatedRepo()
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -116,7 +149,7 @@ describe('generated hook runtime', () => {
     const approvalId = pending.approvals[0].approvalId
 
     const approvedPrompt = await runRunner(repoRoot, 'belay-before-submit', {
-      prompt: `/belay-approve ${approvalId}\nplease continue`,
+      prompt: `/belay-approve ${approvalId}`,
     })
     const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
     expect(approvedPromptJson.continue).toBe(true)
