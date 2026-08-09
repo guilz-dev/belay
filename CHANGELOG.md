@@ -6,9 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.7.0 — 2026-08-09
+
+### Added
+
+- **File checkpoint tree core (PR2)** — `snapshot-node`, `file-tree`, `file-clone`, and `file-checkpoint-staging` modules for UTF-8 bytewise path ordering, streaming hashes, exclusions, quotas, and owner markers. Defaults remain off until the file-checkpoint backend selector lands (PR5).
+- **Shared apply engine (PR3)** — `apply-observed-changes` with full parent-chain preflight, ordered apply, staged rollback restore, and post-verify. Git worktree transactional runner refactored to use `buildObservedChangesFromTransactional`.
+- **Effect IR** — intermediate representation for `pnpm` / `npm` / `npx` package-exec launcher evaluation, effect-plan policy combination, and audit hashing (`src/core/effect-ir/`).
+- **Grant bundle consumption** — `grants[]` on approval records consumed consistently at editor replay, CLI replay, and gate-runtime boundaries; fail-closed when capability requests are missing for grant leases.
+- **`AGENTS.md.example`** — committed agent guidelines template; local `AGENTS.md` is gitignored for per-developer customization.
+
+### Changed
+
+- Transactional git-worktree apply/rollback uses the shared apply engine; rollback failures surface via `TRANSACTIONAL_APPLY_ROLLBACK_FAILED` in runner signals.
+- Grant lease helpers refactored for multi-grant bundles (`grantsFromApproval`, `consumeApprovalGrantBundle`, `consumeApprovedRecordGrantBundle`).
+- Gate runtime replays approved shell actions through `BoundaryDriver` instead of host subprocess only.
+- Expanded shell corpus and tests for one-step replay, grant consumption, effect-plan worlds, and file-tree / apply acceptance coverage.
+
 ### Fixed
 
-- **One-step editor approval** — `/belay-approve <id>` now atomically claims and replays the exact denied shell action through the configured boundary driver on Cursor, Claude Code, and Codex without requiring a follow-up prompt. Instructions on following lines continue after successful replay; failed or timed-out replay requires fresh approval.
+- **Apply rollback** — recursive directory removal, staged restore (avoid delete-before-copy data loss), deepest-first directory deletion.
+- **One-step editor approval** — `/belay-approve <id>` now atomically claims and replays the exact denied shell action through the configured boundary driver on Cursor, Claude Code, and Codex without requiring a follow-up prompt. After successful replay, the approval-only prompt continues the host turn; Claude Code and Codex receive the replay result as model context. Claude Code prompt rejection now uses its native block decision. Failed or timed-out replay requires fresh approval.
 
 ## 0.6.0 — 2026-08-08
 

@@ -185,8 +185,9 @@ Controls post-approval UX. Existing configs migrate to `one_step` on load.
 `one_step` immediately replays the stored exact shell command from editor approval hooks when shell
 auto-replay is enabled; no follow-up prompt is required. The one-shot grant is atomically claimed
 before replay, and the command runs through the configured `BoundaryDriver`. A failed, timed-out,
-or ambiguous replay is not re-armed and requires a fresh approval. A prompt may include follow-up
-instructions after the approval line; they continue only after replay succeeds. Tool and subagent
+or ambiguous replay is not re-armed and requires a fresh approval. Successful replay continues the
+current host turn even when the prompt contains only the approval command. A prompt may include
+follow-up instructions after the approval line; they continue only after replay succeeds. Tool and subagent
 paths fall back to `two_step` instructions. CLI approval remains non-executing by default:
 `belay approve <id> --replay` runs a shell command only when `--replay` is passed explicitly.
 

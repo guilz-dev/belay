@@ -145,13 +145,12 @@ export async function runBeforeSubmitPromptHook() {
     const result = await processApprovalPrompt(ctx, deps, prompt)
     jsonResponse(gateVerdictToClaudeUserPromptResponse(result))
   } catch {
-    jsonResponse({
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
+    jsonResponse(
+      gateVerdictToClaudeUserPromptResponse({
         continue: false,
         user_message: 'belay failed while processing approval state. Run belay doctor, then retry.',
-      },
-    })
+      }),
+    )
   }
 }
 

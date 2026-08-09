@@ -75,7 +75,7 @@ describe('approval prompt shell replay', () => {
       deps,
       `${config.tokenPrefix} ${denied.approvalId}`,
     )
-    expect(approval.continue).toBe(false)
+    expect(approval.continue).toBe(true)
     expect(approval.user_message).toContain('replay succeeded')
 
     const recheck = await evaluateGatedAction(ctx, deps, {
@@ -116,7 +116,7 @@ describe('approval prompt shell replay', () => {
         deps,
         `${config.tokenPrefix} ${denied.approvalId}`,
       )
-      expect(approval.continue).toBe(false)
+      expect(approval.continue).toBe(true)
       expect(approval.user_message).toContain('replay succeeded')
 
       const recheck = await evaluateGatedAction(ctx, deps, {
@@ -243,7 +243,7 @@ describe('approval prompt shell replay', () => {
       deps,
       `${config.tokenPrefix} ${denied.approvalId}`,
     )
-    expect(approval.continue).toBe(false)
+    expect(approval.continue).toBe(true)
     expect(approval.user_message).toContain('replay succeeded')
     expect(approvedCountDuringReplay).toBe(0)
 
@@ -254,6 +254,55 @@ describe('approval prompt shell replay', () => {
     })
     expect(recheck.reason).not.toBe('approved_once')
     expect(recheck.permission).toBe('deny')
+  })
+
+  it('reports replay success even when the post-replay audit write fails', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
+    process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
+    const repoRoot = await createTempRepo()
+    const config = await loadConfigFile(repoRoot, 'cursor')
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const baseDeps = createDefaultGateRuntimeDeps()
+    const deps: GateRuntimeDeps = {
+      ...baseDeps,
+      async appendAudit(auditCtx, entry) {
+        if (entry.reason === 'approval_replay_succeeded') {
+          throw new Error('audit disk unavailable')
+        }
+        await baseDeps.appendAudit(auditCtx, entry)
+      },
+      async replayApprovedShell() {
+        return { exitCode: 0, signal: null, timedOut: false }
+      },
+    }
+
+    const denied = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'true',
+    })
+
+    const approval = await processApprovalPrompt(
+      ctx,
+      deps,
+      `${config.tokenPrefix} ${denied.approvalId}`,
+    )
+
+    expect(approval.continue).toBe(true)
+    expect(approval.user_message).toContain('replay succeeded')
+    expect(approval.user_message).toContain('Audit recording failed')
+
+    const recheck = await evaluateGatedAction(ctx, baseDeps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'true',
+    })
+    expect(recheck.reason).not.toBe('approved_once')
   })
 
   it('continues a trailing instruction after replaying the approved shell action', async () => {

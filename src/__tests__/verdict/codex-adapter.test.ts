@@ -117,6 +117,20 @@ describe('codex adapter (experimental)', () => {
       expect(gateVerdictToCodexUserPromptResponse({ continue: true })).toEqual({})
     })
 
+    it('UserPromptSubmit: continued approval reports completed replay as model context', () => {
+      expect(
+        gateVerdictToCodexUserPromptResponse({
+          continue: true,
+          user_message: 'One-step shell replay succeeded; no manual retry required.',
+        }),
+      ).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          additionalContext: 'One-step shell replay succeeded; no manual retry required.',
+        },
+      })
+    })
+
     it('unmapped Codex tool asks with pending approval (R39 TD)', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-unmapped-'))
       await mkdir(path.join(repoRoot, '.git'))

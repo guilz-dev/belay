@@ -130,7 +130,7 @@ describe('adapter conformance suite', () => {
             deps,
             `${config.tokenPrefix} ${denied.approvalId}`,
           )
-          expect(approval.continue).toBe(false)
+          expect(approval.continue).toBe(true)
 
           const retried = await evaluateGatedAction(ctx, deps, {
             kind: 'shell',

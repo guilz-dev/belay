@@ -113,6 +113,8 @@ With the default `approval.flow: one_step`, an editor approval immediately repla
 shell action; no follow-up prompt is required. Tool and subagent approvals still require retrying
 the original action unchanged. The one-shot grant is claimed before shell replay, so a failed or
 timed-out replay requires a fresh approval. Replay runs through the configured `BoundaryDriver`.
+After replay succeeds, the approval prompt continues the current host turn so the agent can report
+the result and resume its workflow without another user message.
 You may put a follow-up instruction on the lines after `/belay-approve <id>`; Belay replays the
 approved shell action first, then lets the remaining prompt continue. CLI replay remains explicit:
 `belay approve <approval-id> --replay`.
