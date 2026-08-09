@@ -59,6 +59,7 @@ async function runCheckpointed(
     stateDir: options?.stateDir ?? path.join(repoRoot, '.recovery-state'),
     timeoutMs: 10_000,
     predicted,
+    fileCheckpoint: DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
     checkpoint: {
       ...DEFAULT_RECOVERY_CHECKPOINT,
       enabled: true,
@@ -169,6 +170,7 @@ describe('recovery checkpoints', () => {
       stateDir,
       timeoutMs: 10_000,
       predicted,
+      fileCheckpoint: config.policy.transactional.fileCheckpoint,
       checkpoint: config.policy.transactional.checkpoint,
       dirtyIgnoreRoots: [path.join(repoRoot, '.cursor')],
       diffContext: {
@@ -243,6 +245,7 @@ describe('recovery checkpoints', () => {
       stateDir: path.join(repoRoot, '.recovery-state'),
       timeoutMs: 10_000,
       predicted,
+      fileCheckpoint: DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
       checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true, maxBytes: 1 },
       diffContext: {
         repoRoot,

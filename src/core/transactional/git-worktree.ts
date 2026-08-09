@@ -15,7 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { canonicalPath, isPathOutsideRoot, pathWithinRoot } from '../path-utils.js'
-import type { TransactionalFileChange, TransactionalSnapshot } from './types.js'
+import type { GitWorktreeSnapshot, TransactionalFileChange } from './types.js'
 
 export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
 
@@ -144,7 +144,7 @@ export async function isDirtyWorktree(
 export async function createGitWorktreeSnapshot(
   repoRoot: string,
   _stateDir: string,
-): Promise<TransactionalSnapshot> {
+): Promise<GitWorktreeSnapshot> {
   const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-'))
   await execGit(repoRoot, ['worktree', 'add', '--detach', worktreePath, 'HEAD'])
 

@@ -12,14 +12,11 @@ import {
   reconcileRecoveryCheckpoint,
 } from '../recovery/checkpoint.js'
 import type { ClassifyResult } from '../types.js'
+import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import {
   applyWorktreeChanges,
   captureRepoFileHashes,
-  collectWorktreeChanges,
-  createGitWorktreeSnapshot,
-  isDirtyWorktree,
-  isGitWorktreeAvailable,
   resolveWorktreeCwd,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from './git-worktree.js'
@@ -34,12 +31,22 @@ export async function runTransactionalExecution(
   params: TransactionalRunnerParams,
 ): Promise<TransactionalExecutionResult> {
   const { predicted, repoRoot, stateDir, command, cwd, timeoutMs, diffContext } = params
+  const backendContext = {
+    repoRoot,
+    stateDir,
+    cwd,
+    dirtyIgnoreRoots: params.dirtyIgnoreRoots,
+    fileCheckpoint: params.fileCheckpoint,
+    durableCheckpointEnabled: params.checkpoint?.enabled === true,
+  }
 
-  if (!(await isGitWorktreeAvailable(repoRoot))) {
+  const selection = await selectTransactionalBackend(backendContext)
+  if (!selection.backend) {
     return {
       ok: false,
       skipped: true,
-      skipReason: 'git_worktree_unavailable',
+      skipReason:
+        selection.skipReason ?? selection.probe.reason ?? 'transactional_execution_failed',
       predicted,
       result: predicted,
     }
@@ -59,20 +66,10 @@ export async function runTransactionalExecution(
     }
   }
 
-  if (await isDirtyWorktree(repoRoot, { ignoreRoots: params.dirtyIgnoreRoots })) {
-    return {
-      ok: false,
-      skipped: true,
-      skipReason: 'dirty_worktree',
-      predicted,
-      result: predicted,
-    }
-  }
-
-  let snapshot: Awaited<ReturnType<typeof createGitWorktreeSnapshot>> | null = null
+  let snapshot: Awaited<ReturnType<typeof selection.backend.prepare>> | null = null
   try {
-    snapshot = await createGitWorktreeSnapshot(repoRoot, stateDir)
-    const execCwd = resolveWorktreeCwd(repoRoot, snapshot.worktreePath, cwd)
+    snapshot = await selection.backend.prepare(backendContext)
+    const execCwd = resolveWorktreeCwd(repoRoot, snapshot.executionRoot, cwd)
     const boundaryContext =
       params.boundaryContext ?? hostIntegrationBoundaryContext(params.repoRoot)
     const shellResult = await runWithBoundaryRunnable(boundaryContext.driver, {
@@ -110,7 +107,7 @@ export async function runTransactionalExecution(
       }
     }
 
-    const changes = await collectWorktreeChanges(snapshot.worktreePath)
+    const changes = await snapshot.collectChanges()
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
     if (observed.verdict === 'allow') {
@@ -120,7 +117,7 @@ export async function runTransactionalExecution(
           ? await prepareRecoveryCheckpoint({
               stateDir,
               repoRoot,
-              worktreePath: snapshot.worktreePath,
+              worktreePath: snapshot.executionRoot,
               commandFingerprint: predicted.fingerprint,
               changes,
               protectedRoots: diffContext.protectedRoots,
@@ -132,7 +129,7 @@ export async function runTransactionalExecution(
           await markRecoveryCheckpointApplying(stateDir, checkpoint)
         }
         let receipt: Awaited<ReturnType<typeof markRecoveryCheckpointApplied>> | undefined
-        await applyWorktreeChanges(snapshot.worktreePath, repoRoot, changes, {
+        await applyWorktreeChanges(snapshot.executionRoot, repoRoot, changes, {
           baseHashes,
           afterApply: checkpoint
             ? async () => {
@@ -152,7 +149,7 @@ export async function runTransactionalExecution(
           predicted,
           observed,
           result,
-          worktreePath: snapshot.worktreePath,
+          worktreePath: snapshot.executionRoot,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
@@ -192,7 +189,7 @@ export async function runTransactionalExecution(
           predicted,
           observed,
           result,
-          worktreePath: snapshot.worktreePath,
+          worktreePath: snapshot.executionRoot,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
@@ -212,7 +209,7 @@ export async function runTransactionalExecution(
       predicted,
       observed,
       result,
-      worktreePath: snapshot.worktreePath,
+      worktreePath: snapshot.executionRoot,
       commandExitCode: shellResult.exitCode,
       commandSignal: shellResult.signal,
       timedOut: shellResult.timedOut,

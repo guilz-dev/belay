@@ -589,6 +589,7 @@ export async function evaluateGatedAction(
         ctx.repoRoot,
         ctx.config.controlPlane.enabled ? configuredControlPlaneDir(ctx.config) : null,
       ),
+      fileCheckpoint: transactional.fileCheckpoint,
       checkpoint: transactional.checkpoint,
     })
 
