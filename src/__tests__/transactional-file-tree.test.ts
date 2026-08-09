@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -77,6 +77,22 @@ describe('transactional file tree', () => {
       }),
     ).rejects.toThrow(FILE_CHECKPOINT_QUOTA_EXCEEDED)
   })
+
+  it('indexes directory symlinks without following them', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-dirlink-'))
+    tempDirs.push(root)
+    await mkdir(path.join(root, 'real'), { recursive: true })
+    await writeFile(path.join(root, 'real', 'inside.txt'), 'hidden\n')
+    await symlink('real', path.join(root, 'link'))
+
+    const index = await buildFileTreeIndex({ resourceRoot: root })
+    const paths = index.entries.map((entry) => entry.relativePath)
+
+    expect(paths).toContain('link')
+    expect(paths).not.toContain('link/inside.txt')
+    expect(paths).toContain('real/inside.txt')
+    expect((await lstat(path.join(root, 'link'))).isSymbolicLink()).toBe(true)
+  })
 })
 
 describe('transactional file clone', () => {
@@ -100,5 +116,20 @@ describe('transactional file clone', () => {
     await expect(readSnapshotNode(path.join(destination, 'alias'))).resolves.toMatchObject({
       kind: 'symlink',
     })
+  })
+
+  it('round-trips empty directories through cloneDirectoryTree', async () => {
+    const source = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-empty-src-'))
+    const destination = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-empty-dst-'))
+    tempDirs.push(source, destination)
+    await mkdir(path.join(source, 'empty'), { recursive: true })
+
+    await cloneDirectoryTree(source, destination)
+    const baseline = await buildFileTreeIndex({ resourceRoot: source })
+    const cloned = await buildFileTreeIndex({ resourceRoot: destination })
+
+    expect(diffFileTreeIndices(baseline, cloned)).toEqual([])
+    const emptyInfo = await lstat(path.join(destination, 'empty'))
+    expect(emptyInfo.isDirectory()).toBe(true)
   })
 })

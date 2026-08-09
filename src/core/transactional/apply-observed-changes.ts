@@ -2,8 +2,12 @@ import { copyFile, lstat, mkdir, mkdtemp, readlink, rm, rmdir, symlink } from 'n
 import os from 'node:os'
 import path from 'node:path'
 import type { ObservedFileChange } from './file-tree.js'
-import { joinRelativePath, validateRelativePath } from './file-tree-path.js'
-import { readSnapshotNode, type SnapshotNode, snapshotNodesEqual } from './snapshot-node.js'
+import {
+  compareRelativePathsBytewise,
+  joinRelativePath,
+  validateRelativePath,
+} from './file-tree-path.js'
+import { readSnapshotNode, snapshotNodesEqual } from './snapshot-node.js'
 import type { TransactionalFileChange } from './types.js'
 
 export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
@@ -48,22 +52,27 @@ async function copyPathPreservingType(source: string, target: string): Promise<v
   await chmodSafe(target, info.mode)
 }
 
-async function assertParentDirectory(target: string): Promise<void> {
-  const parent = path.dirname(target)
-  if (parent === target) {
+async function assertParentChainSafe(targetRoot: string, relativePath: string): Promise<void> {
+  const segments = relativePath.split(path.sep).filter(Boolean)
+  if (segments.length <= 1) {
     return
   }
-  let info: Awaited<ReturnType<typeof lstat>>
-  try {
-    info = await lstat(parent)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+
+  for (let index = 1; index < segments.length; index++) {
+    const prefix = segments.slice(0, index).join(path.sep)
+    const absolute = joinRelativePath(targetRoot, prefix)
+    let info: Awaited<ReturnType<typeof lstat>>
+    try {
+      info = await lstat(absolute)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue
+      }
+      throw error
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error(TRANSACTIONAL_APPLY_CONFLICT)
     }
-    throw error
-  }
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error(TRANSACTIONAL_APPLY_CONFLICT)
   }
 }
 
@@ -116,13 +125,7 @@ function sortedChanges(changes: ObservedFileChange[]): ObservedFileChange[] {
     if (rankDiff !== 0) {
       return rankDiff
     }
-    if (left.relativePath < right.relativePath) {
-      return -1
-    }
-    if (left.relativePath > right.relativePath) {
-      return 1
-    }
-    return 0
+    return compareRelativePathsBytewise(left.relativePath, right.relativePath)
   })
 }
 
@@ -141,9 +144,10 @@ async function applySingleChange(
     return
   }
 
-  await assertParentDirectory(target)
+  await assertParentChainSafe(targetRoot, change.relativePath)
   if (change.after.kind === 'directory') {
     await mkdir(target, { recursive: true, mode: change.after.mode & 0o777 })
+    await chmodSafe(target, change.after.mode)
     return
   }
 
@@ -158,6 +162,9 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
   }
 
   for (const change of changes) {
+    if (change.after.kind !== 'absent') {
+      await assertParentChainSafe(targetRoot, change.relativePath)
+    }
     await assertTargetMatches(targetRoot, change)
   }
 
@@ -224,18 +231,4 @@ export async function buildObservedChangesFromTransactional(
     })
   }
   return observed
-}
-
-export async function snapshotNodeHashMap(
-  root: string,
-  changes: TransactionalFileChange[],
-): Promise<Map<string, SnapshotNode>> {
-  const nodes = new Map<string, SnapshotNode>()
-  for (const change of changes) {
-    nodes.set(
-      change.relativePath,
-      await readSnapshotNode(joinRelativePath(root, change.relativePath)),
-    )
-  }
-  return nodes
 }

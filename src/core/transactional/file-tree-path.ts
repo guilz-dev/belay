@@ -61,11 +61,5 @@ export function isExcludedTreePath(
 }
 
 export function compareRelativePathsBytewise(left: string, right: string): number {
-  if (left < right) {
-    return -1
-  }
-  if (left > right) {
-    return 1
-  }
-  return 0
+  return Buffer.from(left, 'utf8').compare(Buffer.from(right, 'utf8'))
 }
