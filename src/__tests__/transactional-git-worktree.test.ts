@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import {
+  applyObservedChanges,
+  buildObservedChangesFromTransactional,
+  TRANSACTIONAL_APPLY_TOCTOU,
+} from '../core/transactional/apply-observed-changes.js'
+import {
   applyWorktreeChanges,
-  captureRepoFileHashes,
   isDirtyWorktree,
   resolveWorktreeCwd,
-  TRANSACTIONAL_APPLY_TOCTOU,
 } from '../core/transactional/git-worktree.js'
 
 const execFileAsync = promisify(execFile)
@@ -59,13 +62,18 @@ describe('transactional git worktree helpers', () => {
     await writeFile(path.join(repoRoot, 'a.txt'), 'original\n')
     await writeFile(path.join(worktreePath, 'a.txt'), 'changed\n')
     await writeFile(path.join(worktreePath, 'b.txt'), 'new\n')
-    await mkdir(path.join(repoRoot, 'b.txt'))
+    await writeFile(path.join(worktreePath, 'c.txt'), 'blocked\n')
+
+    const changes = [
+      { relativePath: 'a.txt', kind: 'modified' as const },
+      { relativePath: 'b.txt', kind: 'added' as const },
+      { relativePath: 'c.txt', kind: 'added' as const },
+    ]
+    const observed = await buildObservedChangesFromTransactional(repoRoot, worktreePath, changes)
+    await rm(path.join(worktreePath, 'c.txt'), { force: true })
 
     await expect(
-      applyWorktreeChanges(worktreePath, repoRoot, [
-        { relativePath: 'a.txt', kind: 'modified' },
-        { relativePath: 'b.txt', kind: 'added' },
-      ]),
+      applyWorktreeChanges(worktreePath, repoRoot, changes, { observedChanges: observed }),
     ).rejects.toThrow()
 
     await expect(readFile(path.join(repoRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
@@ -94,12 +102,16 @@ describe('transactional git worktree helpers', () => {
     await writeFile(path.join(repoRoot, 'a.txt'), 'original\n')
     await writeFile(path.join(worktreePath, 'a.txt'), 'changed\n')
     const changes = [{ relativePath: 'a.txt', kind: 'modified' as const }]
-    const baseHashes = await captureRepoFileHashes(repoRoot, changes)
+    const observed = await buildObservedChangesFromTransactional(repoRoot, worktreePath, changes)
 
     await writeFile(path.join(repoRoot, 'a.txt'), 'raced\n')
 
     await expect(
-      applyWorktreeChanges(worktreePath, repoRoot, changes, { baseHashes }),
+      applyObservedChanges({
+        sourceRoot: worktreePath,
+        targetRoot: repoRoot,
+        changes: observed,
+      }),
     ).rejects.toThrow(TRANSACTIONAL_APPLY_TOCTOU)
     await expect(readFile(path.join(repoRoot, 'a.txt'), 'utf8')).resolves.toBe('raced\n')
   })

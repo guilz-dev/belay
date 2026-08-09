@@ -163,6 +163,31 @@ describe('transactional runner', () => {
     expect(result.result.reason).toBe(TRANSACTIONAL_APPLY_FAILED)
   })
 
+  it('flags rollback failure when apply cannot restore workspace state', async () => {
+    const repoRoot = await createGitRepo()
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(gitWorktree, 'applyWorktreeChanges').mockRejectedValueOnce(
+      new Error('transactional_apply_rollback_failed'),
+    )
+
+    const result = await runTransactionalExecution(
+      runnerParams({
+        command: 'touch safe.txt',
+        cwd: repoRoot,
+        repoRoot,
+        stateDir,
+        predicted,
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.result.verdict).toBe('deny_pending_approval')
+    expect(result.result.assessment.signals).toContain('transactional_apply_rollback_failed')
+  })
+
   it('falls back to prediction when the isolated command exits non-zero', async () => {
     const repoRoot = await createGitRepo()
     const predicted = await classifyShellCore('false', repoRoot, repoRoot, {
