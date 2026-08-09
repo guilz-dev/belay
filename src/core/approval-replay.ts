@@ -172,7 +172,12 @@ export function buildRetryInstructionForConfig(
   config: BelayConfigV4,
   tokenPrefix: string,
   approvalId: string,
+  kind?: ApprovalRecord['kind'],
+  adapter?: ReplayAdapterId,
 ): string {
+  if (kind === 'shell' && canAutoReplay(config, kind, adapter)) {
+    return `To approve and run this exact shell action once, send ${tokenPrefix} ${approvalId}. No follow-up prompt is required.`
+  }
   if (approvalFlow(config) === 'one_step') {
     return `To allow this action once, send ${tokenPrefix} ${approvalId}. After approval, retry the same action unchanged.`
   }

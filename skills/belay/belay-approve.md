@@ -1,21 +1,24 @@
 Run after belay denies a high-risk action and returns an approval ID.
 
-```bash
-belay approve <approval-id>
+```text
+/belay-approve <approval-id>
 ```
 
-Then retry the original action unchanged.
+With default `approval.flow: one_step`, the editor hook atomically claims the one-shot grant and
+immediately replays the exact denied shell action through the configured boundary driver. No
+follow-up prompt is required. Failed or timed-out replay requires fresh approval. Tool and subagent
+approvals still require a manual retry of the original action unchanged.
 
-With default `approval.flow: one_step`, shell approvals return a replay hint from editor
-hooks. Tool and subagent approvals still require a manual retry.
+An instruction may follow the approval line in the same prompt. Belay runs the approved shell action
+first and continues the remaining prompt only after replay succeeds.
 
-To run a denied shell command from the CLI after approval (explicit opt-in; do not also retry via hooks):
+For CLI approval, replay remains explicit:
 
 ```bash
 belay approve <approval-id> --replay
 ```
 
-Successful CLI replay consumes the one-shot grant. On failure, the approval stays active for one hook retry.
+CLI replay claims the one-shot grant before execution. Failure or timeout requires fresh approval.
 
 Restore legacy two-step UX in `belay.config.json`:
 

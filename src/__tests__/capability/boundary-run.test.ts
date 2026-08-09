@@ -86,6 +86,43 @@ describe('boundaryMountReadOnlyFromPrediction', () => {
     ).toBe(true)
   })
 
+  it('uses read-write mount when any bundled capability request writes', () => {
+    expect(
+      boundaryMountReadOnlyFromPrediction(
+        classify({
+          capabilityRequests: [
+            {
+              version: 1,
+              principal: { repoRoot: '/repo', sessionHash: 's' },
+              action: 'fs.read',
+              resource: { kind: 'path', path: '/repo/a.txt' },
+              context: {
+                cwd: '/repo',
+                inputFingerprint: 'fp',
+                hookKind: 'shell',
+                analysisBasis: [],
+              },
+              evidence: { level: 'certain', signals: [] },
+            },
+            {
+              version: 1,
+              principal: { repoRoot: '/repo', sessionHash: 's' },
+              action: 'fs.write',
+              resource: { kind: 'path', path: '/repo/b.txt' },
+              context: {
+                cwd: '/repo',
+                inputFingerprint: 'fp',
+                hookKind: 'shell',
+                analysisBasis: [],
+              },
+              evidence: { level: 'certain', signals: [] },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false)
+  })
+
   it('uses read-write mount for indeterminate action when effect is local_mutation', () => {
     expect(
       boundaryMountReadOnlyFromPrediction(

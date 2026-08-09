@@ -33,7 +33,23 @@ describe('approval-replay', () => {
   it('defaults to one_step with shell auto replay enabled', () => {
     expect(DEFAULT_CONFIG_V4.approval.flow).toBe('one_step')
     expect(DEFAULT_CONFIG_V4.approval.autoReplayScopes.shell).toBe(true)
-    expect(canAutoReplay(DEFAULT_CONFIG_V4, 'shell', 'cursor')).toBe(true)
+    for (const adapter of ['cursor', 'claude', 'codex'] as const) {
+      expect(canAutoReplay(DEFAULT_CONFIG_V4, 'shell', adapter)).toBe(true)
+    }
+  })
+
+  it('tells users that one-step shell approval needs no follow-up prompt', () => {
+    for (const adapter of ['cursor', 'claude', 'codex'] as const) {
+      expect(
+        buildRetryInstructionForConfig(
+          DEFAULT_CONFIG_V4,
+          '/belay-approve',
+          'belay_abc',
+          'shell',
+          adapter,
+        ),
+      ).toContain('No follow-up prompt is required')
+    }
   })
 
   it('falls back to two_step instructions when configured', () => {

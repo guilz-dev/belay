@@ -63,6 +63,9 @@ function grantTargetsResource(grant: CapabilityGrantV1, request: CapabilityReque
   if (grant.resource.kind === 'executable' && request.resource.kind === 'executable') {
     return grant.resource.command === request.resource.command
   }
+  if (grant.resource.kind === 'package-cache' && request.resource.kind === 'package-cache') {
+    return grant.resource.manager === request.resource.manager
+  }
   if (grant.resource.kind === 'git-ref' && request.resource.kind === 'git-ref') {
     return grant.resource.ref === request.resource.ref
   }

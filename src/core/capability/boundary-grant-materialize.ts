@@ -108,3 +108,22 @@ export function materializeContainerBoundaryGrant(
 
   return null
 }
+
+export function materializeContainerBoundaryGrants(
+  requests: readonly CapabilityRequestV1[],
+  params: MaterializeBoundaryGrantParams,
+): CapabilityGrantV1[] {
+  const grants: CapabilityGrantV1[] = []
+  let existing = [...(params.existingGrants ?? [])]
+  for (const request of requests) {
+    const materialized = materializeContainerBoundaryGrant(request, {
+      ...params,
+      existingGrants: existing,
+    })
+    if (materialized) {
+      grants.push(materialized)
+      existing = [...existing, materialized]
+    }
+  }
+  return grants
+}

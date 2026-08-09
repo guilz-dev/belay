@@ -191,6 +191,7 @@ export async function runBoundaryAgentCommand(params: {
   command: string
   cwd?: string
   timeoutMs?: number
+  runOptions?: BoundaryRunOptions
 }): Promise<Awaited<ReturnType<BoundaryDriver['run']>>> {
   const context = await resolveBoundaryDriverContext({
     repoRoot: params.repoRoot,
@@ -201,6 +202,7 @@ export async function runBoundaryAgentCommand(params: {
     command: params.command,
     cwd: params.cwd ?? params.repoRoot,
     timeoutMs: params.timeoutMs ?? 30 * 60_000,
+    runOptions: params.runOptions,
   })
 }
 

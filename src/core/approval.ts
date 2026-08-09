@@ -94,6 +94,7 @@ export function createApprovalRecordWithEnvelope(params: {
   }
   scopeHint?: ApprovalRecord['scopeHint']
   capabilityRequests?: ApprovalRecord['capabilityRequests']
+  effectPlanHash?: string
 }): ApprovalRecord {
   const envelope = buildReplayEnvelopeFields({
     kind: params.kind,
@@ -122,6 +123,7 @@ export function createApprovalRecordWithEnvelope(params: {
     payloadJson: envelope.payloadJson,
     scopeHint: params.scopeHint,
     capabilityRequests: params.capabilityRequests,
+    effectPlanHash: params.effectPlanHash,
   })
 }
 
@@ -141,6 +143,7 @@ export function createApprovalRecord(params: {
   payloadJson?: string
   scopeHint?: ApprovalRecord['scopeHint']
   capabilityRequests?: ApprovalRecord['capabilityRequests']
+  effectPlanHash?: string
 }): ApprovalRecord {
   const createdAt = nowIso()
   const expiresAt = new Date(Date.now() + params.approvalTtlMinutes * 60_000).toISOString()
@@ -173,5 +176,5 @@ export function createApprovalRecord(params: {
   if (params.scopeHint) {
     record.scopeHint = params.scopeHint
   }
-  return attachCapabilityEnvelope(record, params.capabilityRequests)
+  return attachCapabilityEnvelope(record, params.capabilityRequests, params.effectPlanHash)
 }

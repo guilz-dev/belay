@@ -40,9 +40,14 @@ setup (or \`npx @guilz-dev/belay init\` for non-interactive install). Run
 ## When belay blocks an action
 
 1. Read the approval ID in the deny message.
-2. Approve once with \`/belay-approve <approval-id>\` or \`belay approve <approval-id>\`.
-3. Retry the original action unchanged (default \`approval.flow\` is \`one_step\` for shell — the
-   approval response includes a replay hint when auto-replay is enabled).
+2. In the editor, approve once with \`/belay-approve <approval-id>\`.
+3. With default \`approval.flow: one_step\`, editor approval atomically claims the one-shot grant and
+   replays the exact denied shell action through the configured boundary driver. No follow-up prompt
+   is required. Failed or timed-out replay requires fresh approval. Tool and subagent actions still
+   require retrying the original action unchanged.
+
+An instruction may follow the approval line in the same prompt. Belay runs the approved shell action
+first and continues the remaining prompt only after replay succeeds.
 
 For shell-only CLI replay after approval: \`belay approve <approval-id> --replay\`.
 

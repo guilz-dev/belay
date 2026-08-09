@@ -3,6 +3,7 @@ import type { CapabilityGrantV1 } from './capability/grant.js'
 import type { PolicyDecision } from './capability/policy-types.js'
 import type { CapabilityRequestV1 } from './capability/request.js'
 import type { FsScopeAllowlistFile } from './capability/types.js'
+import type { EffectPlan } from './effect-ir/types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -46,6 +47,8 @@ export interface ClassifyResult {
   axes?: VerdictAxes
   capabilityRequests?: CapabilityRequestV1[]
   authorizationDecision?: PolicyDecision
+  effectPlan?: EffectPlan
+  effectPlanPolicyDecisions?: PolicyDecision[]
   boundaryProfile?: string
 }
 
@@ -130,8 +133,12 @@ export interface ApprovalRecord {
   capabilityRequests?: CapabilityRequestV1[]
   /** Approval state v3: hash of capabilityRequests for replay binding. */
   capabilityRequestHash?: string
-  /** Approval state v3: minted grant after human approval. */
+  /** Approval state v3: hash of normalized EffectPlan for composite replay binding. */
+  effectPlanHash?: string
+  /** Approval state v3: minted grant after human approval (legacy single grant; first of bundle). */
   grant?: CapabilityGrantV1
+  /** Approval state v3: all grants for composite capability requests (atomic bundle). */
+  grants?: CapabilityGrantV1[]
 }
 
 export interface ApprovalStateFile {

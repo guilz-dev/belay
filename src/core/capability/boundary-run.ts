@@ -28,16 +28,16 @@ export function boundaryMountReadOnlyFromPrediction(predicted: ClassifyResult): 
     return false
   }
 
-  const action = predicted.capabilityRequests?.[0]?.action
-  if (action === 'fs.write' || action === 'git.ref.write' || action === 'control_plane.write') {
-    return false
+  for (const request of predicted.capabilityRequests ?? []) {
+    if (
+      request.action === 'fs.write' ||
+      request.action === 'git.ref.write' ||
+      request.action === 'control_plane.write'
+    ) {
+      return false
+    }
   }
-  if (action === 'fs.read') {
-    return true
-  }
-  if (action === 'network.connect' || action === 'process.exec' || action === 'indeterminate') {
-    return true
-  }
+
   return true
 }
 

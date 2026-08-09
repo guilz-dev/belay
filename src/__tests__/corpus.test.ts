@@ -1,6 +1,10 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { classifierOptionsFromConfig, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { classifyShell } from '../core/verdict/adapter.js'
 import {
   assessmentsDiverge,
   CorpusSchemaError,
@@ -16,6 +20,13 @@ import {
 } from '../corpus/evaluate.js'
 
 const corpusDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'corpus')
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})),
+  )
+})
 
 describe('corpus evaluation', () => {
   it('detects prediction vs observation assessment divergence', () => {
@@ -41,7 +52,7 @@ describe('corpus evaluation', () => {
 
   it('loads shell corpus with labeled categories and derived runtime keys', async () => {
     const cases = await loadCorpusCases(corpusDir)
-    expect(cases).toHaveLength(53)
+    expect(cases).toHaveLength(59)
     expect(cases.every((entry) => entry.kind === 'shell')).toBe(true)
 
     const counts = {
@@ -50,7 +61,7 @@ describe('corpus evaluation', () => {
       'accepted-benign': cases.filter((entry) => entry.category === 'accepted-benign').length,
     }
     expect(counts).toEqual({
-      'must-ask': 29,
+      'must-ask': 35,
       'provably-benign': 11,
       'accepted-benign': 13,
     })
@@ -258,5 +269,19 @@ describe('corpus evaluation', () => {
     expect(metrics.benignBlockRate).toBe(0)
     expect(metrics.gates.mustAsk.mismatches).toBe(0)
     expect(metrics.gates.provablyBenign.mismatches).toBe(0)
+  })
+
+  it('allows npx local bin resolution outside fixed corpus harness cwd', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-corpus-npx-local-'))
+    tempDirs.push(dir)
+    const binDir = path.join(dir, 'node_modules', '.bin')
+    await mkdir(binDir, { recursive: true })
+    await writeFile(path.join(binDir, 'tsc'), '#!/usr/bin/env node\n')
+
+    const options = classifierOptionsFromConfig(DEFAULT_CONFIG_V3)
+    const result = await classifyShell('npx tsc --version', dir, dir, DEFAULT_CONFIG_V3, options)
+    expect(result.verdict).toBe('allow')
+    expect(result.effectPlan).toBeDefined()
+    expect(result.capabilityRequests?.some((req) => req.action === 'network.connect')).toBe(false)
   })
 })

@@ -24,6 +24,7 @@ export type CapabilityResource =
   | { kind: 'path'; path: string }
   | { kind: 'network'; host: string; port?: number; protocol?: string }
   | { kind: 'executable'; command: string }
+  | { kind: 'package-cache'; manager: 'npm' | 'pnpm' }
   | { kind: 'git-ref'; ref: string }
   | { kind: 'unknown' }
 
