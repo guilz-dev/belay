@@ -12,11 +12,11 @@ import {
   reconcileRecoveryCheckpoint,
 } from '../recovery/checkpoint.js'
 import type { ClassifyResult } from '../types.js'
+import { buildObservedChangesFromTransactional } from './apply-observed-changes.js'
 import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import {
   applyWorktreeChanges,
-  captureRepoFileHashes,
   resolveWorktreeCwd,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from './git-worktree.js'
@@ -111,7 +111,11 @@ export async function runTransactionalExecution(
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
     if (observed.verdict === 'allow') {
-      const baseHashes = await captureRepoFileHashes(repoRoot, changes)
+      const observedChanges = await buildObservedChangesFromTransactional(
+        repoRoot,
+        snapshot.executionRoot,
+        changes,
+      )
       const checkpoint =
         params.checkpoint?.enabled && changes.length > 0
           ? await prepareRecoveryCheckpoint({
@@ -130,7 +134,7 @@ export async function runTransactionalExecution(
         }
         let receipt: Awaited<ReturnType<typeof markRecoveryCheckpointApplied>> | undefined
         await applyWorktreeChanges(snapshot.executionRoot, repoRoot, changes, {
-          baseHashes,
+          observedChanges,
           afterApply: checkpoint
             ? async () => {
                 receipt = await markRecoveryCheckpointApplied(stateDir, checkpoint)

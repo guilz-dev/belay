@@ -1,3 +1,9 @@
+export {
+  applyObservedChanges,
+  buildObservedChangesFromTransactional,
+  TRANSACTIONAL_APPLY_CONFLICT,
+  TRANSACTIONAL_APPLY_TOCTOU,
+} from './apply-observed-changes.js'
 export type {
   TransactionalBackend,
   TransactionalBackendContext,
@@ -16,6 +22,32 @@ export {
 } from './backend-selector.js'
 export { evaluateTransactionalDiff } from './diff-evaluator.js'
 export { isTransactionalEligible } from './eligibility.js'
+export {
+  collectDeadOwnerStaging,
+  type FileCheckpointOwnerMarker,
+  isOwnerProcessAlive,
+  removeDeadOwnerStaging,
+  writeOwnerMarker,
+} from './file-checkpoint-staging.js'
+export {
+  cloneDirectoryTree,
+  type FileCloneResult,
+  type FileCloneStrategy,
+  probeFileCloneStrategy,
+} from './file-clone.js'
+export {
+  buildFileTreeIndex,
+  diffFileTreeIndices,
+  type FileTreeEntry,
+  type FileTreeIndex,
+  type ObservedFileChange,
+  readObservedChanges,
+} from './file-tree.js'
+export {
+  compareRelativePathsBytewise,
+  joinRelativePath,
+  validateRelativePath,
+} from './file-tree-path.js'
 export { gitWorktreeBackend } from './git-worktree-backend.js'
 export {
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -23,6 +55,14 @@ export {
   TRANSACTIONAL_OBSERVED_RISK,
 } from './reasons.js'
 export { runTransactionalExecution } from './runner.js'
+export {
+  hashDirectoryNode,
+  hashFileContent,
+  type PresentSnapshotNode,
+  readSnapshotNode,
+  type SnapshotNode,
+  snapshotNodesEqual,
+} from './snapshot-node.js'
 export type {
   TransactionalDiffEvaluation,
   TransactionalExecutionResult,

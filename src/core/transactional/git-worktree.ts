@@ -1,23 +1,16 @@
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readlink,
-  rm,
-  symlink,
-} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { canonicalPath, isPathOutsideRoot, pathWithinRoot } from '../path-utils.js'
+import {
+  applyObservedChanges,
+  buildObservedChangesFromTransactional,
+  TRANSACTIONAL_APPLY_TOCTOU,
+} from './apply-observed-changes.js'
 import type { GitWorktreeSnapshot, TransactionalFileChange } from './types.js'
 
-export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
+export { TRANSACTIONAL_APPLY_TOCTOU }
 
 function execGit(repoRoot: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -68,42 +61,6 @@ function isIgnoredDirtyPath(
   )
 }
 
-export async function hashRepoFile(filePath: string): Promise<string> {
-  const info = await lstat(filePath)
-  if (info.isSymbolicLink()) {
-    return createHash('sha256')
-      .update(`symlink:${await readlink(filePath)}`)
-      .digest('hex')
-  }
-  if (!info.isFile()) {
-    throw new Error('transactional_unsupported_file_kind')
-  }
-  const content = await readFile(filePath)
-  return createHash('sha256')
-    .update(`file:${info.mode & 0o777}:`)
-    .update(content)
-    .digest('hex')
-}
-
-export async function captureRepoFileHashes(
-  repoRoot: string,
-  changes: TransactionalFileChange[],
-): Promise<Map<string, string | null>> {
-  const hashes = new Map<string, string | null>()
-  for (const change of changes) {
-    const target = path.join(repoRoot, change.relativePath)
-    try {
-      await lstat(target)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      hashes.set(change.relativePath, null)
-      continue
-    }
-    hashes.set(change.relativePath, await hashRepoFile(target))
-  }
-  return hashes
-}
-
 export async function isGitWorktreeAvailable(repoRoot: string): Promise<boolean> {
   try {
     await execGit(repoRoot, ['rev-parse', '--git-dir'])
@@ -145,6 +102,7 @@ export async function createGitWorktreeSnapshot(
   repoRoot: string,
   _stateDir: string,
 ): Promise<GitWorktreeSnapshot> {
+  const { mkdtemp, rm } = await import('node:fs/promises')
   const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-'))
   await execGit(repoRoot, ['worktree', 'add', '--detach', worktreePath, 'HEAD'])
 
@@ -266,122 +224,24 @@ export async function collectWorktreeChanges(
   return changes
 }
 
-type ApplyRollbackAction =
-  | { type: 'restore'; target: string; backupPath: string }
-  | { type: 'remove'; target: string }
-
-async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<void> {
-  for (const action of [...actions].reverse()) {
-    try {
-      if (action.type === 'restore') {
-        await copyPathPreservingType(action.backupPath, action.target)
-      } else {
-        await rm(action.target, { force: true })
-      }
-    } catch {
-      // best effort
-    }
-  }
-}
-
-async function copyPathPreservingType(source: string, target: string): Promise<void> {
-  const info = await lstat(source)
-  await rm(target, { force: true, recursive: false })
-  await mkdir(path.dirname(target), { recursive: true })
-  if (info.isSymbolicLink()) {
-    await symlink(await readlink(source), target)
-    return
-  }
-  if (!info.isFile()) {
-    throw new Error('transactional_unsupported_file_kind')
-  }
-  await copyFile(source, target)
-  await chmod(target, info.mode & 0o777)
-}
-
-async function assertRepoFilesUnchanged(
-  repoRoot: string,
-  changes: TransactionalFileChange[],
-  baseHashes: Map<string, string | null>,
-): Promise<void> {
-  for (const change of changes) {
-    const target = path.join(repoRoot, change.relativePath)
-    const expected = baseHashes.get(change.relativePath)
-    let exists = true
-    try {
-      await lstat(target)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      exists = false
-    }
-
-    if (expected === null) {
-      if (exists) {
-        throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
-      }
-      continue
-    }
-
-    if (!exists) {
-      throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
-    }
-
-    const current = await hashRepoFile(target)
-    if (current !== expected) {
-      throw new Error(TRANSACTIONAL_APPLY_TOCTOU)
-    }
-  }
-}
-
 export async function applyWorktreeChanges(
   worktreePath: string,
   repoRoot: string,
   changes: TransactionalFileChange[],
   options?: {
-    baseHashes?: Map<string, string | null>
     /** Runs while rollback backups are still available. */
     afterApply?: () => Promise<void>
+    observedChanges?: Awaited<ReturnType<typeof buildObservedChangesFromTransactional>>
   },
 ): Promise<void> {
-  if (options?.baseHashes) {
-    await assertRepoFilesUnchanged(repoRoot, changes, options.baseHashes)
-  }
+  const observed =
+    options?.observedChanges ??
+    (await buildObservedChangesFromTransactional(repoRoot, worktreePath, changes))
 
-  const backupRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-rollback-'))
-  const rollbackActions: ApplyRollbackAction[] = []
-
-  try {
-    for (const change of changes) {
-      const target = path.join(repoRoot, change.relativePath)
-      let targetExists = true
-      try {
-        await lstat(target)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        targetExists = false
-      }
-      if (targetExists) {
-        const backupPath = path.join(backupRoot, change.relativePath)
-        await mkdir(path.dirname(backupPath), { recursive: true })
-        await copyPathPreservingType(target, backupPath)
-        rollbackActions.push({ type: 'restore', target, backupPath })
-      } else if (change.kind !== 'deleted') {
-        rollbackActions.push({ type: 'remove', target })
-      }
-
-      if (change.kind === 'deleted') {
-        await rm(target, { force: true })
-        continue
-      }
-
-      const source = path.join(worktreePath, change.relativePath)
-      await copyPathPreservingType(source, target)
-    }
-    await options?.afterApply?.()
-  } catch (error) {
-    await rollbackAppliedChanges(rollbackActions)
-    throw error
-  } finally {
-    await rm(backupRoot, { recursive: true, force: true })
-  }
+  await applyObservedChanges({
+    sourceRoot: worktreePath,
+    targetRoot: repoRoot,
+    changes: observed,
+    afterApply: options?.afterApply,
+  })
 }

@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import {
+  applyObservedChanges,
+  buildObservedChangesFromTransactional,
+  TRANSACTIONAL_APPLY_TOCTOU,
+} from '../core/transactional/apply-observed-changes.js'
+import {
   applyWorktreeChanges,
-  captureRepoFileHashes,
   isDirtyWorktree,
   resolveWorktreeCwd,
-  TRANSACTIONAL_APPLY_TOCTOU,
 } from '../core/transactional/git-worktree.js'
 
 const execFileAsync = promisify(execFile)
@@ -94,12 +97,16 @@ describe('transactional git worktree helpers', () => {
     await writeFile(path.join(repoRoot, 'a.txt'), 'original\n')
     await writeFile(path.join(worktreePath, 'a.txt'), 'changed\n')
     const changes = [{ relativePath: 'a.txt', kind: 'modified' as const }]
-    const baseHashes = await captureRepoFileHashes(repoRoot, changes)
+    const observed = await buildObservedChangesFromTransactional(repoRoot, worktreePath, changes)
 
     await writeFile(path.join(repoRoot, 'a.txt'), 'raced\n')
 
     await expect(
-      applyWorktreeChanges(worktreePath, repoRoot, changes, { baseHashes }),
+      applyObservedChanges({
+        sourceRoot: worktreePath,
+        targetRoot: repoRoot,
+        changes: observed,
+      }),
     ).rejects.toThrow(TRANSACTIONAL_APPLY_TOCTOU)
     await expect(readFile(path.join(repoRoot, 'a.txt'), 'utf8')).resolves.toBe('raced\n')
   })
