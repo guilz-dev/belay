@@ -185,7 +185,11 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
       }
 
       if (targetExists) {
-        const backupPath = path.join(backupRoot, change.relativePath)
+        const backupPath = path.join(
+          backupRoot,
+          String(rollbackActions.length),
+          change.relativePath,
+        )
         await mkdir(path.dirname(backupPath), { recursive: true })
         await copyPathPreservingType(target, backupPath)
         rollbackActions.push({ type: 'restore', target, backupPath })

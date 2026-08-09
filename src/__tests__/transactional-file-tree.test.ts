@@ -1,19 +1,36 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { cloneDirectoryTree } from '../core/transactional/file-clone.js'
+import { cloneDirectoryTree, probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import {
   buildFileTreeIndex,
   diffFileTreeIndices,
+  FILE_CHECKPOINT_HARDLINK_UNSUPPORTED,
   FILE_CHECKPOINT_NESTED_REPOSITORY,
   FILE_CHECKPOINT_QUOTA_EXCEEDED,
+  FILE_CHECKPOINT_UNSUPPORTED_NODE,
+  readObservedChanges,
 } from '../core/transactional/file-tree.js'
 import { validateRelativePath } from '../core/transactional/file-tree-path.js'
 import { readSnapshotNode } from '../core/transactional/snapshot-node.js'
 
 const tempDirs: string[] = []
+const execFileAsync = promisify(execFile)
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -93,6 +110,72 @@ describe('transactional file tree', () => {
     expect(paths).toContain('real/inside.txt')
     expect((await lstat(path.join(root, 'link'))).isSymbolicLink()).toBe(true)
   })
+
+  it('excludes root git metadata and configured excluded roots', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-exclude-'))
+    const excluded = path.join(root, 'managed')
+    tempDirs.push(root)
+    await mkdir(path.join(root, '.git'), { recursive: true })
+    await writeFile(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+    await mkdir(excluded, { recursive: true })
+    await writeFile(path.join(excluded, 'secret.txt'), 'hidden\n')
+    await writeFile(path.join(root, 'visible.txt'), 'ok\n')
+
+    const index = await buildFileTreeIndex({ resourceRoot: root, excludedRoots: [excluded] })
+    const paths = index.entries.map((entry) => entry.relativePath)
+
+    expect(paths).toContain('visible.txt')
+    expect(paths).not.toContain('.git')
+    expect(paths).not.toContain('managed/secret.txt')
+  })
+
+  it('rejects hardlinks, fifos, and unix sockets', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-unsupported-'))
+    tempDirs.push(root)
+
+    await writeFile(path.join(root, 'original.txt'), 'linked\n')
+    await link(path.join(root, 'original.txt'), path.join(root, 'linked.txt'))
+    await expect(buildFileTreeIndex({ resourceRoot: root })).rejects.toThrow(
+      FILE_CHECKPOINT_HARDLINK_UNSUPPORTED,
+    )
+
+    const fifoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-fifo-'))
+    tempDirs.push(fifoRoot)
+    await execFileAsync('mkfifo', [path.join(fifoRoot, 'pipe')])
+    await expect(buildFileTreeIndex({ resourceRoot: fifoRoot })).rejects.toThrow(
+      FILE_CHECKPOINT_UNSUPPORTED_NODE,
+    )
+
+    const socketRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-socket-'))
+    tempDirs.push(socketRoot)
+    const socketPath = path.join(socketRoot, 'service.sock')
+    const server = createServer()
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socketPath, resolve)
+    })
+    try {
+      await expect(buildFileTreeIndex({ resourceRoot: socketRoot })).rejects.toThrow(
+        FILE_CHECKPOINT_UNSUPPORTED_NODE,
+      )
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+      })
+    }
+  })
+
+  it('reads observed changes for an explicit path list', async () => {
+    const baselineRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-base-'))
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-ftree-exec-'))
+    tempDirs.push(baselineRoot, executionRoot)
+    await writeFile(path.join(baselineRoot, 'a.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'a.txt'), 'after\n')
+
+    const changes = await readObservedChanges(baselineRoot, executionRoot, ['a.txt'])
+    expect(changes).toHaveLength(1)
+    expect(changes[0]?.kind).toBe('modified')
+  })
 })
 
 describe('transactional file clone', () => {
@@ -131,5 +214,29 @@ describe('transactional file clone', () => {
     expect(diffFileTreeIndices(baseline, cloned)).toEqual([])
     const emptyInfo = await lstat(path.join(destination, 'empty'))
     expect(emptyInfo.isDirectory()).toBe(true)
+  })
+
+  it('round-trips executable modes and spaced filenames', async () => {
+    const source = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-modes-src-'))
+    const destination = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-modes-dst-'))
+    tempDirs.push(source, destination)
+    await mkdir(path.join(source, 'dir'), { recursive: true })
+    await writeFile(path.join(source, 'dir', ' spaced.txt '), 'hello\n', { mode: 0o644 })
+    await chmod(path.join(source, 'dir', ' spaced.txt '), 0o755)
+    await writeFile(path.join(source, 'exec.sh'), '#!/bin/sh\n', { mode: 0o755 })
+
+    await cloneDirectoryTree(source, destination)
+
+    const spaced = await lstat(path.join(destination, 'dir', ' spaced.txt '))
+    const executable = await lstat(path.join(destination, 'exec.sh'))
+    expect(spaced.mode & 0o777).toBe(0o755)
+    expect(executable.mode & 0o777).toBe(0o755)
+    await expect(readFile(path.join(destination, 'dir', ' spaced.txt '), 'utf8')).resolves.toBe(
+      'hello\n',
+    )
+  })
+
+  it('probes clonefile or copy support', async () => {
+    await expect(probeFileCloneStrategy()).resolves.toMatch(/^(clonefile|copy)$/)
   })
 })

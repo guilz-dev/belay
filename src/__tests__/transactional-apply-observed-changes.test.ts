@@ -170,4 +170,39 @@ describe('apply observed changes', () => {
     const info = await lstat(path.join(targetRoot, 'pkg'))
     expect(info.mode & 0o777).toBe(0o700)
   })
+
+  it('rolls back when post-apply verification fails', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-post-verify-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-post-verify-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await writeFile(path.join(targetRoot, 'a.txt'), 'original\n')
+    await writeFile(path.join(sourceRoot, 'a.txt'), 'changed\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'a.txt', kind: 'modified' },
+    ])
+    observed[0]!.after = { kind: 'file', mode: 0o644, size: 999, hash: 'mismatch' }
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow(TRANSACTIONAL_APPLY_CONFLICT)
+    await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
+  })
+
+  it('deletes nested directories child-first', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await mkdir(path.join(targetRoot, 'pkg'), { recursive: true })
+    await writeFile(path.join(targetRoot, 'pkg', 'file.txt'), 'gone\n')
+
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'pkg/file.txt', kind: 'deleted' },
+      { relativePath: 'pkg', kind: 'deleted' },
+    ])
+
+    await applyObservedChanges({ sourceRoot, targetRoot, changes: observed })
+    await expect(lstat(path.join(targetRoot, 'pkg'))).rejects.toThrow()
+  })
 })

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   collectDeadOwnerStaging,
   isOwnerProcessAlive,
+  readOwnerMarker,
   removeDeadOwnerStaging,
   writeOwnerMarker,
 } from '../core/transactional/file-checkpoint-staging.js'
@@ -23,6 +24,21 @@ describe('file checkpoint staging owners', () => {
 
   it('treats unlikely PIDs as dead', () => {
     expect(isOwnerProcessAlive(2_147_483_647)).toBe(false)
+  })
+
+  it('round-trips owner markers', async () => {
+    const stagingRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-staging-marker-'))
+    tempDirs.push(stagingRoot)
+    const marker = {
+      version: 1 as const,
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+      resourceRoot: '/tmp/example',
+      backend: 'file_checkpoint' as const,
+    }
+
+    await writeOwnerMarker(stagingRoot, marker)
+    await expect(readOwnerMarker(stagingRoot)).resolves.toEqual(marker)
   })
 
   it('collects staging without owner markers and retains live owners', async () => {
