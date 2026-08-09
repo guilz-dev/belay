@@ -7,6 +7,7 @@ import { CAPABILITY_GRANT_VERSION } from './grant.js'
 import type { CapabilityRequestV1 } from './request.js'
 
 export const APPROVAL_STATE_VERSION_V3 = 3 as const
+export const EFFECT_PLAN_HASH_VERSION = 'effect-plan:v1' as const
 
 export function normalizeApprovalStateVersion(state: ApprovalStateFile): ApprovalStateFile {
   const version =
@@ -39,35 +40,55 @@ export function upgradeApprovalStateToV3(state: ApprovalStateFile): ApprovalStat
 export function attachCapabilityEnvelope(
   approval: ApprovalRecord,
   capabilityRequests?: CapabilityRequestV1[],
+  effectPlanHash?: string,
 ): ApprovalRecord {
-  if (!capabilityRequests?.length) {
-    return approval
+  const withRequests = !capabilityRequests?.length
+    ? approval
+    : {
+        ...approval,
+        capabilityRequests,
+        capabilityRequestHash: hashCapabilityRequests(capabilityRequests),
+      }
+  if (!effectPlanHash) {
+    return withRequests
   }
   return {
-    ...approval,
-    capabilityRequests,
-    capabilityRequestHash: hashCapabilityRequests(capabilityRequests),
+    ...withRequests,
+    effectPlanHash,
   }
 }
 
-export function mintCapabilityGrant(params: {
+/** Dual-read: expose legacy single grant as a one-element bundle without mutating storage. */
+export function normalizeApprovalGrants(approval: ApprovalRecord): ApprovalRecord {
+  if (approval.grants?.length) {
+    return approval
+  }
+  if (approval.grant) {
+    return { ...approval, grants: [approval.grant] }
+  }
+  return approval
+}
+
+export function mintCapabilityGrantForRequest(params: {
   approval: ApprovalRecord
-  capabilityRequests: CapabilityRequestV1[]
+  request: CapabilityRequestV1
+  grantSuffix?: string
   issuer?: string
   maxUses?: number
-}): CapabilityGrantV1 | null {
-  const request = params.capabilityRequests[0]
-  if (!request) {
-    return null
-  }
+}): CapabilityGrantV1 {
   const expiresAt = params.approval.expiresAt
+  const suffix = params.grantSuffix ?? ''
+  const grantId =
+    suffix === '' || suffix === '0'
+      ? `grant_${params.approval.approvalId}${suffix === '0' && params.grantSuffix !== undefined ? '_0' : ''}`
+      : `grant_${params.approval.approvalId}_${suffix}`
   return {
     version: CAPABILITY_GRANT_VERSION,
-    grantId: `grant_${params.approval.approvalId}`,
-    principal: request.principal,
-    action: request.action,
-    resource: request.resource,
-    inputFingerprint: request.context.inputFingerprint,
+    grantId,
+    principal: params.request.principal,
+    action: params.request.action,
+    resource: params.request.resource,
+    inputFingerprint: params.request.context.inputFingerprint,
     issuedAt: params.approval.approvedAt ?? new Date().toISOString(),
     expiresAt,
     maxUses: params.maxUses ?? 1,
@@ -76,18 +97,54 @@ export function mintCapabilityGrant(params: {
   }
 }
 
+/** @deprecated Use mintCapabilityGrantBundle; returns first grant only for legacy callers. */
+export function mintCapabilityGrant(params: {
+  approval: ApprovalRecord
+  capabilityRequests: CapabilityRequestV1[]
+  issuer?: string
+  maxUses?: number
+}): CapabilityGrantV1 | null {
+  const bundle = mintCapabilityGrantBundle(params)
+  return bundle[0] ?? null
+}
+
+export function mintCapabilityGrantBundle(params: {
+  approval: ApprovalRecord
+  capabilityRequests: CapabilityRequestV1[]
+  issuer?: string
+  maxUses?: number
+}): CapabilityGrantV1[] {
+  if (!params.capabilityRequests.length) {
+    return []
+  }
+  return params.capabilityRequests.map((request, index) =>
+    mintCapabilityGrantForRequest({
+      approval: params.approval,
+      request,
+      grantSuffix: params.capabilityRequests.length === 1 ? undefined : String(index),
+      issuer: params.issuer,
+      maxUses: params.maxUses,
+    }),
+  )
+}
+
 export function mintGrantForApprovedRecord(approval: ApprovalRecord): ApprovalRecord {
-  if (approval.grant || !approval.capabilityRequests?.length) {
-    return approval
+  const normalized = normalizeApprovalGrants(approval)
+  if ((normalized.grants?.length ?? 0) > 0 || !normalized.capabilityRequests?.length) {
+    return normalized
   }
-  const grant = mintCapabilityGrant({
-    approval,
-    capabilityRequests: approval.capabilityRequests,
+  const grants = mintCapabilityGrantBundle({
+    approval: normalized,
+    capabilityRequests: normalized.capabilityRequests,
   })
-  if (!grant) {
-    return approval
+  if (!grants.length) {
+    return normalized
   }
-  return { ...approval, grant }
+  return {
+    ...normalized,
+    grants,
+    grant: grants[0],
+  }
 }
 
 export function newGrantId(): string {

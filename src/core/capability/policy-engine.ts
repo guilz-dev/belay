@@ -355,6 +355,17 @@ function isRepoLocalShellLocation(request: CapabilityRequestV1): boolean {
   return shellLocationFromRequest(request) === 'repo_local'
 }
 
+function isRepoLocalPackageExec(request: CapabilityRequestV1): boolean {
+  if (request.action !== 'process.exec' || request.resource.kind !== 'executable') {
+    return false
+  }
+  if (!request.evidence.signals.includes('package_exec.local_bin_resolved')) {
+    return false
+  }
+  const commandPath = canonicalPath(request.resource.command)
+  return path.isAbsolute(commandPath) && pathWithinRoot(request.principal.repoRoot, commandPath)
+}
+
 function isRepoLocalRoutineWrite(request: CapabilityRequestV1, sensitivePaths: string[]): boolean {
   if (!isRepoLocalShellLocation(request)) {
     return false
@@ -437,6 +448,15 @@ function builtInRule(
       reason: 'subagent_review',
       signals: [...request.evidence.signals],
       matchedRule: 'builtin.subagent',
+    }
+  }
+
+  if (isRepoLocalPackageExec(request)) {
+    return {
+      outcome: 'allow',
+      reason: 'read_only',
+      signals: [...request.evidence.signals, 'repo_local_exec'],
+      matchedRule: 'builtin.repo_local_exec',
     }
   }
 
@@ -621,6 +641,70 @@ export function getDefaultPolicyEngine(): PolicyEngine {
 
 export function policyDecisionRequiresAsk(decision: PolicyDecision): boolean {
   return decision.outcome === 'require_approval' || decision.outcome === 'deny'
+}
+
+function policyOutcomeRank(outcome: PolicyDecision['outcome']): number {
+  switch (outcome) {
+    case 'deny':
+      return 3
+    case 'require_approval':
+      return 2
+    case 'allow':
+      return 1
+    default:
+      return 0
+  }
+}
+
+export function combinePolicyDecisions(decisions: readonly PolicyDecision[]): PolicyDecision {
+  if (!decisions.length) {
+    return {
+      outcome: 'allow',
+      reason: 'read_only',
+      signals: [],
+      matchedRule: 'plan.conjunction',
+    }
+  }
+  const sorted = [...decisions].sort(
+    (left, right) => policyOutcomeRank(right.outcome) - policyOutcomeRank(left.outcome),
+  )
+  const worst = sorted[0]
+  if (!worst) {
+    return {
+      outcome: 'allow',
+      reason: 'read_only',
+      signals: [],
+      matchedRule: 'plan.conjunction',
+    }
+  }
+  return worst
+}
+
+export function evaluateCapabilityRequestsPolicy(
+  requests: readonly CapabilityRequestV1[],
+  config: BelayConfigV4,
+  auth?: PolicyAuthExtras,
+  trustedWorkspaceRoots?: string[],
+): { decisions: PolicyDecision[]; decision: PolicyDecision } {
+  let workingAuth = auth
+  const decisions: PolicyDecision[] = []
+  for (const request of requests) {
+    const enriched = enrichAuthWithMaterializedGrants(request, config, workingAuth)
+    const decision = getDefaultPolicyEngine().evaluate(
+      request,
+      buildAuthorizationContext(config, trustedWorkspaceRoots, enriched),
+    )
+    decisions.push(decision)
+    const previousCount = workingAuth?.grants?.length ?? 0
+    const nextCount = enriched?.grants?.length ?? 0
+    if (nextCount > previousCount) {
+      workingAuth = enriched
+    }
+  }
+  return {
+    decisions,
+    decision: combinePolicyDecisions(decisions),
+  }
 }
 
 export function evaluateShellPolicy(

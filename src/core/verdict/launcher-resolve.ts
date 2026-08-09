@@ -35,17 +35,6 @@ const PNPM_BUILTIN_COMMANDS = new Set([
   'up',
   'why',
 ])
-const PNPM_EXEC_LIKE_HEADS = new Set([
-  'vitest',
-  'vite',
-  'biome',
-  'eslint',
-  'jest',
-  'mocha',
-  'tsc',
-  'tsx',
-  'node',
-])
 
 export interface LauncherResolution {
   recipes: string[]
@@ -271,13 +260,13 @@ export function resolveLauncherRecipe(params: {
     if (
       tokens[0] === 'pnpm' &&
       tokens[1] &&
-      PNPM_EXEC_LIKE_HEADS.has(tokens[1]) &&
+      !PNPM_BUILTIN_COMMANDS.has(tokens[1]) &&
       resolution.reason === 'npm_script_undefined'
     ) {
       return {
         recipes: [tokens.slice(1).join(' ')],
         opaque: false,
-        reason: 'pnpm_exec_like',
+        reason: 'pnpm_exec_shorthand',
       }
     }
     return resolution
@@ -292,14 +281,6 @@ export function resolveLauncherRecipe(params: {
       recipes: [tokens.slice(2).join(' ')],
       opaque: false,
       reason: 'pnpm_exec',
-    }
-  }
-
-  if (tokens[0] === 'pnpm' && tokens[1] && PNPM_EXEC_LIKE_HEADS.has(tokens[1])) {
-    return {
-      recipes: [tokens.slice(1).join(' ')],
-      opaque: false,
-      reason: 'pnpm_exec_like',
     }
   }
 

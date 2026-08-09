@@ -1,7 +1,7 @@
 import path from 'node:path'
-
 import type { BelayConfigV4 } from '../config.js'
 import { belayStateDir } from '../config.js'
+import { effectPlanAuditFields } from '../effect-ir/audit.js'
 import type { ClassifyResult } from '../types.js'
 import { buildTier1Prompt } from '../verdict/judge.js'
 import type { JudgeProviderId } from '../verdict/judge-catalog.js'
@@ -14,12 +14,19 @@ import {
 } from '../verdict/judge-shadow.js'
 import { evaluateWithJudgeTransport } from '../verdict/judge-transport.js'
 import type { Tier1Verdict } from '../verdict/types.js'
+import { BOUNDARY_PROFILE_L1_ATTESTED } from './boundary-profile.js'
 import { recordPolicyJudgeComparison } from './gate-shadow-ratchet.js'
 
 export { recordGateApprovalAsk } from './gate-shadow-ratchet.js'
 
 export function capabilityDecisionAuditFields(result: ClassifyResult): Record<string, unknown> {
-  const fields: Record<string, unknown> = {}
+  const fields: Record<string, unknown> = {
+    ...effectPlanAuditFields(result.effectPlan, {
+      capabilityRequests: result.capabilityRequests,
+      decisions: result.effectPlanPolicyDecisions,
+      authorizationDecision: result.authorizationDecision,
+    }),
+  }
   if (result.capabilityRequests?.length) {
     fields.capabilityRequestCount = result.capabilityRequests.length
     fields.capabilityActions = result.capabilityRequests.map((request) => request.action)
@@ -33,6 +40,15 @@ export function capabilityDecisionAuditFields(result: ClassifyResult): Record<st
   }
   if (result.boundaryProfile) {
     fields.boundaryProfile = result.boundaryProfile
+    const everyEffectBoundaryVerified =
+      Boolean(result.effectPlanPolicyDecisions?.length) &&
+      result.effectPlanPolicyDecisions?.every(
+        (decision) => decision.matchedRule === 'boundary.verified',
+      )
+    fields.boundaryEnforcement =
+      result.boundaryProfile === BOUNDARY_PROFILE_L1_ATTESTED && everyEffectBoundaryVerified
+        ? 'runtime_attested'
+        : 'prediction_only'
   }
   if (result.authorizationDecision?.signals.includes('boundary_materialized_grant')) {
     fields.boundaryGrantMaterialized = true

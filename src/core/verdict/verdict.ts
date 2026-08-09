@@ -1,6 +1,9 @@
 import path from 'node:path'
 import { policyDecisionToLegacyReason } from '../capability/policy-bridge.js'
-import { policyDecisionRequiresAsk } from '../capability/policy-engine.js'
+import { combinePolicyDecisions, policyDecisionRequiresAsk } from '../capability/policy-engine.js'
+import { mergeEffectPlans } from '../effect-ir/normalize.js'
+import { isPackageExecLauncher } from '../effect-ir/package-exec.js'
+import { evaluatePackageExecSegment } from '../effect-ir/package-exec-eval.js'
 import { canonicalPath, resolveMutationTarget } from '../path-utils.js'
 import {
   extractRedirectTargets,
@@ -170,6 +173,12 @@ function combineInternal(
   left: InternalSegmentVerdict,
   right: InternalSegmentVerdict,
 ): InternalSegmentVerdict {
+  const policyDecisions = [
+    ...(left.effectPlanPolicyDecisions ??
+      (left.authorizationDecision ? [left.authorizationDecision] : [])),
+    ...(right.effectPlanPolicyDecisions ??
+      (right.authorizationDecision ? [right.authorizationDecision] : [])),
+  ]
   return {
     permission: worsePermission(left.permission, right.permission),
     location: mergeLocation(left.location, right.location),
@@ -203,11 +212,9 @@ function combineInternal(
     judgeTrace: right.judgeTrace ?? left.judgeTrace,
     capabilityRequests: [...(left.capabilityRequests ?? []), ...(right.capabilityRequests ?? [])],
     authorizationDecision:
-      worsePermission(left.permission, right.permission) === 'ask'
-        ? right.permission === 'ask'
-          ? (right.authorizationDecision ?? left.authorizationDecision)
-          : left.authorizationDecision
-        : (right.authorizationDecision ?? left.authorizationDecision),
+      policyDecisions.length > 0 ? combinePolicyDecisions(policyDecisions) : undefined,
+    effectPlan: mergeEffectPlans(left.effectPlan, right.effectPlan),
+    effectPlanPolicyDecisions: policyDecisions,
   }
 }
 
@@ -619,6 +626,15 @@ async function evaluateSegment(
       reason: wrapReason,
       signals: [...innerVerdict.signals, 'recursive_wrapper'],
     }
+  }
+
+  if (isPackageExecLauncher(peeled)) {
+    return evaluatePackageExecSegment({
+      command,
+      peeled,
+      context,
+      evaluateInner: (innerRecipe) => evaluateSegment(innerRecipe, context, depth + 1),
+    })
   }
 
   if (isRoutineLauncher(peeled)) {
@@ -1151,6 +1167,8 @@ function toVerdictResult(
     judgeTrace: internal.judgeTrace,
     capabilityRequests: internal.capabilityRequests,
     authorizationDecision: internal.authorizationDecision,
+    effectPlan: internal.effectPlan,
+    effectPlanPolicyDecisions: internal.effectPlanPolicyDecisions,
   }
 }
 

@@ -369,5 +369,47 @@
     "command": "mystery-opaque-cli deploy --prod",
     "verdict": "deny_pending_approval",
     "reason": "unknown_local_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npx -y prettier --version",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npx -c \"console.log(1)\"",
+    "verdict": "deny_pending_approval",
+    "reason": "unknown_local_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npm exec vitest --version",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "pnpm dlx cowsay hi",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npx vitest --version",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npx --yes node -e \"require('fs').writeFileSync('/tmp/npx-evil','x')\"",
+    "verdict": "deny_pending_approval",
+    "reason": "external_effect"
   }
 ]

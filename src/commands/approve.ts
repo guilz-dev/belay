@@ -1,12 +1,13 @@
 import path from 'node:path'
 
 import { loadApprovalState, loadConfigFile } from '../config-io.js'
-import { canAutoReplay, getExecutionLeaseMs, replayShellCommand } from '../core/approval-replay.js'
+import { canAutoReplay, getExecutionLeaseMs } from '../core/approval-replay.js'
 import {
-  consumeApprovedAfterCliReplay,
+  claimApprovedForReplay,
   createGateApprovalStore,
   recordApproval,
 } from '../core/approval-service.js'
+import { runBoundaryAgentCommand } from '../core/capability/boundary-session.js'
 import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
 import type { CapabilityApprovalScope } from '../core/capability/types.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
@@ -118,26 +119,31 @@ export async function approvePending(
           'CLI replay is only supported for shell approvals. Retry the original tool or subagent action manually.',
       }
     }
-    const replayResult = await replayShellCommand(
-      approval.input,
-      approval.cwd ?? repoRoot,
-      getExecutionLeaseMs(config),
-    )
-    const output = [replayResult.stdout, replayResult.stderr].filter(Boolean).join('\n').trim()
+    const claimed = await claimApprovedForReplay({
+      approvalId: options.approvalId,
+      store: approvalStore,
+    })
+    if (!claimed) {
+      return { ok: false, message: 'Approval could not be claimed for replay.' }
+    }
+    const replayResult = await runBoundaryAgentCommand({
+      repoRoot,
+      config,
+      command: claimed.input ?? approval.input,
+      cwd: claimed.cwd ?? repoRoot,
+      timeoutMs: getExecutionLeaseMs(config),
+      runOptions: { mountReadOnly: false },
+    })
     if (replayResult.exitCode === 0) {
-      await consumeApprovedAfterCliReplay({
-        approvalId: options.approvalId,
-        store: approvalStore,
-      })
       return {
         ok: true,
-        message: `Belay replay succeeded for ${options.approvalId}. Do not retry via hooks; the one-shot grant was consumed.${output ? `\n${output}` : ''}`,
+        message: `Belay replay succeeded for ${options.approvalId}. Do not retry via hooks; the one-shot grant was consumed.`,
       }
     }
     const timeoutNote = replayResult.timedOut ? ' Replay timed out.' : ''
     return {
       ok: false,
-      message: `Belay replay failed for ${options.approvalId} (exit ${replayResult.exitCode}).${timeoutNote} Approval remains active for one hook retry.${output ? `\n${output}` : ''}`,
+      message: `Belay replay failed for ${options.approvalId} (exit ${replayResult.exitCode}).${timeoutNote} The one-shot approval was consumed before replay and was not re-armed.`,
     }
   }
 

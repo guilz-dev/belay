@@ -3,6 +3,7 @@ import {
   resolveBoundaryProfile,
 } from '../capability/boundary-profile.js'
 import type { BelayConfigV4 } from '../config.js'
+import { effectPlanAuditFields } from '../effect-ir/audit.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
 import { judgeTraceAuditFields } from './judge-audit.js'
 import { recordJudgeLatency } from './judge-baseline.js'
@@ -165,6 +166,8 @@ export function verdictToClassifyResult(
     },
     capabilityRequests: result.capabilityRequests,
     authorizationDecision: result.authorizationDecision,
+    effectPlan: result.effectPlan,
+    effectPlanPolicyDecisions: result.effectPlanPolicyDecisions,
     boundaryProfile:
       options.boundaryProfile ??
       (config
@@ -185,6 +188,11 @@ export function verdictAuditFields(result: VerdictResult): Record<string, unknow
     would: result.permission,
     by: 'verdict',
     signals: result.signals,
+    ...effectPlanAuditFields(result.effectPlan, {
+      capabilityRequests: result.capabilityRequests,
+      decisions: result.effectPlanPolicyDecisions,
+      authorizationDecision: result.authorizationDecision,
+    }),
     ...judgeTraceAuditFields(result.judgeTrace),
   }
 }

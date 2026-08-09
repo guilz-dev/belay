@@ -29,6 +29,7 @@ export {
 } from './approval-replay.js'
 export type { ApprovalStore } from './approval-service.js'
 export {
+  claimApprovedForReplay,
   consumeApprovedAfterCliReplay,
   createGateApprovalStore,
   gateApprovalStoreFromDeps,

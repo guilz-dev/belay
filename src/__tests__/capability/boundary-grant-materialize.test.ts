@@ -4,6 +4,7 @@ import { mintCapabilityGrant } from '../../core/capability/approval-v3.js'
 import {
   BOUNDARY_GRANT_ISSUER_CONTAINER,
   materializeContainerBoundaryGrant,
+  materializeContainerBoundaryGrants,
 } from '../../core/capability/boundary-grant-materialize.js'
 import { buildShellCapabilityRequest } from '../../core/capability/policy-engine.js'
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
@@ -137,5 +138,30 @@ describe('materializeContainerBoundaryGrant', () => {
     })
     expect(withApproval?.issuer).toBe(BOUNDARY_GRANT_ISSUER_CONTAINER)
     expect(withApproval?.action).toBe('network.connect')
+  })
+
+  it('materializes one grant per eligible request in a bundle', () => {
+    const fsRequest = buildShellCapabilityRequest({
+      command: 'touch notes.txt',
+      hookKind: 'shell',
+      segmentHead: 'touch',
+      effect: 'local_mutation',
+      location: 'repo_local',
+      opacity: 'transparent',
+      pathArgs: [`${repoRoot}/notes.txt`],
+      resolvedPathTargets: [`${repoRoot}/notes.txt`],
+      signals: ['repo_local_write'],
+      cwd: repoRoot,
+      repoRoot,
+      inputFingerprint: 'fp-touch-bundle',
+    })
+    const grants = materializeContainerBoundaryGrants([fsRequest], {
+      attestation: freshAttestation,
+      mountRoot: repoRoot,
+      egressProxyActive: false,
+      sensitivePaths: DEFAULT_CONFIG_V4.classifier.sensitivePaths,
+    })
+    expect(grants).toHaveLength(1)
+    expect(grants[0]?.action).toBe('fs.write')
   })
 })

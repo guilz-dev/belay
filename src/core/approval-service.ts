@@ -7,6 +7,7 @@ import {
 import { compactApprovals } from './approval.js'
 import { buildApprovalRecordedMessage, type ReplayAdapterId } from './approval-replay.js'
 import { verifyApprovalToken } from './approval-token.js'
+import { mutateApprovalStateWithRetry } from './capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3, mintGrantForApprovedRecord } from './capability/approval-v3.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
@@ -75,21 +76,34 @@ export async function recordApproval(params: {
   }
 }
 
-/** CLI `--replay` already executed the shell command; drop the one-shot grant. */
+/** @deprecated Replay callers must claim before execution with `claimApprovedForReplay`. */
 export async function consumeApprovedAfterCliReplay(params: {
   approvalId: string
   store: ApprovalStore
 }): Promise<void> {
-  const approved = await params.store.loadApproved()
-  approved.state = compactApprovals(approved.state)
-  const remaining = approved.state.approvals.filter(
-    (approval) => approval.approvalId !== params.approvalId,
-  )
-  if (remaining.length === approved.state.approvals.length) {
-    return
-  }
-  approved.state.approvals = remaining
-  await params.store.writeApproved(approved.filePath, approved.state)
+  await claimApprovedForReplay(params)
+}
+
+/** Atomically spend and return a one-shot approval before executing its replay. */
+export async function claimApprovedForReplay(params: {
+  approvalId: string
+  store: ApprovalStore
+}): Promise<ApprovalStateFile['approvals'][number] | null> {
+  return mutateApprovalStateWithRetry({
+    load: params.store.loadApproved,
+    write: params.store.writeApproved,
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const index = compacted.approvals.findIndex(
+        (approval) => approval.approvalId === params.approvalId,
+      )
+      if (index === -1) {
+        return null
+      }
+      const [claimed] = compacted.approvals.splice(index, 1)
+      return { state: compacted, result: claimed ?? null }
+    },
+  })
 }
 
 export function createGateApprovalStore(repoRoot: string, config: BelayConfigV3): ApprovalStore {

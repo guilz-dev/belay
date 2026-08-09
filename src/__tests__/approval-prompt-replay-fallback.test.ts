@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { claudeAdapter } from '../adapters/claude/adapter.js'
+import { codexAdapter } from '../adapters/codex/adapter.js'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
   createDefaultGateRuntimeDeps,
@@ -11,18 +13,19 @@ import {
   type GateRuntimeDeps,
   processApprovalPrompt,
 } from '../adapters/shared/gate-runtime.js'
+import type { BelayAdapter } from '../adapters/types.js'
 import { loadConfigFile } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 
 const tempDirs: string[] = []
 
-async function createTempRepo() {
+async function createTempRepo(adapter: BelayAdapter = cursorAdapter) {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-replay-'))
   tempDirs.push(repoRoot)
   await mkdir(path.join(repoRoot, '.git'))
-  await cursorAdapter.install(repoRoot, {})
+  await adapter.install(repoRoot, {})
 
-  const existing = await loadConfigFile(repoRoot, 'cursor')
+  const existing = await loadConfigFile(repoRoot, adapter.name)
   const configured = mergeConfig({
     ...existing,
     mode: 'enforce',
@@ -32,14 +35,14 @@ async function createTempRepo() {
     },
   })
   await writeFile(
-    cursorAdapter.layout.configPath(repoRoot),
+    adapter.layout.configPath(repoRoot),
     `${JSON.stringify(configured, null, 2)}\n`,
     'utf8',
   )
   return repoRoot
 }
 
-describe('approval prompt replay fallback (cursor)', () => {
+describe('approval prompt shell replay', () => {
   afterEach(async () => {
     delete process.env.BELAY_DETERMINISTIC_JUDGE
     delete process.env.BELAY_TEST_APPROVAL_REPLAY
@@ -84,7 +87,49 @@ describe('approval prompt replay fallback (cursor)', () => {
     expect(recheck.permission).toBe('deny')
   })
 
-  it('keeps approved grant when fallback replay fails', async () => {
+  for (const adapter of [claudeAdapter, codexAdapter]) {
+    it(`replays an approved shell action without a follow-up prompt on ${adapter.name}`, async () => {
+      process.env.BELAY_DETERMINISTIC_JUDGE = '1'
+      process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
+      const repoRoot = await createTempRepo(adapter)
+      const config = await loadConfigFile(repoRoot, adapter.name)
+      const ctx = {
+        layout: adapter.layout,
+        repoRoot,
+        config,
+        configPath: adapter.layout.configPath(repoRoot),
+      }
+      const deps = createDefaultGateRuntimeDeps()
+
+      const denied = await evaluateGatedAction(ctx, deps, {
+        kind: 'shell',
+        cwd: repoRoot,
+        command: 'true',
+      })
+      expect(denied.permission).toBe('deny')
+      expect(denied.approvalId).toBeTruthy()
+      expect(denied.user_message).toContain('No follow-up prompt is required')
+      expect(denied.agent_message).toContain('replay the exact shell action automatically')
+
+      const approval = await processApprovalPrompt(
+        ctx,
+        deps,
+        `${config.tokenPrefix} ${denied.approvalId}`,
+      )
+      expect(approval.continue).toBe(false)
+      expect(approval.user_message).toContain('replay succeeded')
+
+      const recheck = await evaluateGatedAction(ctx, deps, {
+        kind: 'shell',
+        cwd: repoRoot,
+        command: 'true',
+      })
+      expect(recheck.reason).not.toBe('approved_once')
+      expect(recheck.permission).toBe('deny')
+    })
+  }
+
+  it('spends the approved grant before replay and does not re-arm it after failure', async () => {
     process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
@@ -118,11 +163,11 @@ describe('approval prompt replay fallback (cursor)', () => {
       cwd: repoRoot,
       command: 'false',
     })
-    expect(recheck.reason).toBe('approved_once')
-    expect(recheck.permission).toBe('allow')
+    expect(recheck.reason).not.toBe('approved_once')
+    expect(recheck.permission).toBe('deny')
   })
 
-  it('keeps approved grant when fallback replay throws', async () => {
+  it('does not re-arm the approved grant when replay cannot start', async () => {
     process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
@@ -152,18 +197,18 @@ describe('approval prompt replay fallback (cursor)', () => {
       `${config.tokenPrefix} ${denied.approvalId}`,
     )
     expect(approval.continue).toBe(false)
-    expect(approval.user_message).toContain('could not start')
+    expect(approval.user_message).toContain('replay failed')
 
     const recheck = await evaluateGatedAction(ctx, deps, {
       kind: 'shell',
       cwd: missingCwd,
       command: 'true',
     })
-    expect(recheck.reason).toBe('approved_once')
-    expect(recheck.permission).toBe('allow')
+    expect(recheck.reason).not.toBe('approved_once')
+    expect(recheck.permission).toBe('deny')
   })
 
-  it('keeps approved grant when replay consumption fails after success', async () => {
+  it('claims the approved grant before invoking the boundary replay dependency', async () => {
     process.env.BELAY_DETERMINISTIC_JUDGE = '1'
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await createTempRepo()
@@ -175,19 +220,13 @@ describe('approval prompt replay fallback (cursor)', () => {
       configPath: cursorAdapter.layout.configPath(repoRoot),
     }
     const baseDeps = createDefaultGateRuntimeDeps()
-    let throwOnConsumeWrite = false
+    let approvedCountDuringReplay: number | undefined
     const deps: GateRuntimeDeps = {
       ...baseDeps,
-      async writeApprovals(filePath, state) {
-        if (
-          throwOnConsumeWrite &&
-          filePath.endsWith('approved-approvals.json') &&
-          state.approvals.length === 0
-        ) {
-          throwOnConsumeWrite = false
-          throw new Error('simulated approved write failure')
-        }
-        await baseDeps.writeApprovals(filePath, state)
+      async replayApprovedShell(replayCtx) {
+        const approved = await baseDeps.loadApprovals(replayCtx, 'approved-approvals.json')
+        approvedCountDuringReplay = approved.state.approvals.length
+        return { exitCode: 0, signal: null, timedOut: false }
       },
     }
 
@@ -199,22 +238,51 @@ describe('approval prompt replay fallback (cursor)', () => {
     expect(denied.permission).toBe('deny')
     expect(denied.approvalId).toBeTruthy()
 
-    throwOnConsumeWrite = true
     const approval = await processApprovalPrompt(
       ctx,
       deps,
       `${config.tokenPrefix} ${denied.approvalId}`,
     )
     expect(approval.continue).toBe(false)
-    expect(approval.user_message).toContain('approval finalization failed')
+    expect(approval.user_message).toContain('replay succeeded')
+    expect(approvedCountDuringReplay).toBe(0)
 
     const recheck = await evaluateGatedAction(ctx, deps, {
       kind: 'shell',
       cwd: repoRoot,
       command: 'true',
     })
-    expect(recheck.reason).toBe('approved_once')
-    expect(recheck.permission).toBe('allow')
+    expect(recheck.reason).not.toBe('approved_once')
+    expect(recheck.permission).toBe('deny')
+  })
+
+  it('continues a trailing instruction after replaying the approved shell action', async () => {
+    process.env.BELAY_DETERMINISTIC_JUDGE = '1'
+    process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
+    const repoRoot = await createTempRepo()
+    const config = await loadConfigFile(repoRoot, 'cursor')
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const denied = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'true',
+    })
+
+    const approval = await processApprovalPrompt(
+      ctx,
+      deps,
+      `${config.tokenPrefix} ${denied.approvalId}\nprを作成して`,
+    )
+
+    expect(approval.continue).toBe(true)
+    expect(approval.user_message).toContain('replay succeeded')
   })
 
   it('does not auto-replay by default in test runtime', async () => {

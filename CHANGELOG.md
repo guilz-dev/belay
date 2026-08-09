@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **One-step editor approval** — `/belay-approve <id>` now atomically claims and replays the exact denied shell action through the configured boundary driver on Cursor, Claude Code, and Codex without requiring a follow-up prompt. Instructions on following lines continue after successful replay; failed or timed-out replay requires fresh approval.
+
 ## 0.6.0 — 2026-08-08
 
 ### Added

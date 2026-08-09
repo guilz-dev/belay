@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { innerRecipeFromPeel, peelPackageExecArgv } from '../../core/effect-ir/package-exec.js'
 import { resolveLauncherRecipe } from '../../core/verdict/launcher-resolve.js'
 import { verdict } from '../../core/verdict/verdict.js'
 import { verdictTestContext } from './helpers.js'
@@ -139,6 +140,23 @@ describe('launcher-resolve', () => {
   it('resolves npm --version as read-only builtin', async () => {
     const result = await verdict('npm --version', ctx)
     expect(result.permission).toBe('allow')
+  })
+
+  it('resolves npx inner recipe via package-exec peel', () => {
+    const peel = peelPackageExecArgv(['npx', 'tsc', '--version'])
+    const resolution = peel
+      ? { recipes: [innerRecipeFromPeel(peel) ?? ''], opaque: peel.opaque, reason: peel.reason }
+      : null
+    expect(resolution?.recipes).toEqual(['tsc --version'])
+    expect(resolution?.opaque).toBe(false)
+  })
+
+  it('resolves npm exec inner recipe via package-exec peel', () => {
+    const peel = peelPackageExecArgv(['npm', 'exec', 'vitest', '--version'])
+    const resolution = peel
+      ? { recipes: [innerRecipeFromPeel(peel) ?? ''], opaque: peel.opaque, reason: peel.reason }
+      : null
+    expect(resolution?.recipes).toEqual(['vitest --version'])
   })
 })
 

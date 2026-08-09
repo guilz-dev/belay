@@ -2,7 +2,8 @@
 
 Status: **Proposed**  
 Scope: dirty Git worktrees first, non-Git workspace roots second  
-Depends on: Recovery v1 checkpoint/receipt/restore path, transactional diff evaluator  
+Depends on: Recovery v1 checkpoint/receipt/restore path, transactional diff evaluator,
+attested isolated workspace-mount boundary
 Roadmap: Horizon 1 — CoW and dirty/non-Git file-checkpoint backends
 
 ## 1. Outcome
@@ -31,8 +32,8 @@ been prepared.
 | Workspace state | Selected backend | Initial default |
 |---|---|---|
 | Clean Git worktree | `git_worktree` | Existing behavior |
-| Dirty Git worktree | `file_checkpoint` | Opt-in; durable checkpointing required |
-| Non-Git workspace | `file_checkpoint` | Separate opt-in; durable checkpointing required |
+| Dirty Git worktree | `file_checkpoint` | Opt-in; durable checkpointing and isolated workspace mount required |
+| Non-Git workspace | `file_checkpoint` | Separate opt-in; durable checkpointing and isolated workspace mount required |
 | Unsupported file type, quota overflow, or inconsistent snapshot | None; fail closed | Always |
 
 Selection is deterministic. `auto` does not fall back from a failed backend after a
@@ -44,6 +45,14 @@ Unlike the clean-Git backend, `file_checkpoint` is eligible only when both
 `policy.transactional.checkpoint.enabled` are true. A dirty/non-Git baseline cannot rely
 on `HEAD` as a recovery source, so applying without a durable checkpoint would violate
 the product's reversibility claim.
+
+It is also eligible only when the selected boundary driver attests that it can mount the
+execution mirror at the original workspace path without exposing the original host
+workspace. Changing `cwd` alone is not isolation: an absolute path, `../`, shell
+expansion, or an inherited environment variable could otherwise mutate the real
+workspace before observation. The initial implementation supports the container driver;
+host integration remains ineligible until a seatbelt/landlock-equivalent driver provides
+the same property.
 
 ### 2.2 User-visible examples
 
@@ -112,6 +121,9 @@ These are implementation and test invariants, not advisory goals.
     not as a failed apply.
 13. **Durable recovery is mandatory for this backend.** `file_checkpoint` must not apply
     to a real workspace when durable checkpointing is disabled.
+14. **The original workspace is not reachable during candidate execution.** The backend
+    must require an attested isolated workspace mount. `cwd` remapping, token inspection,
+    or command rewriting is not an acceptable substitute.
 
 ## 5. Architecture
 
@@ -132,6 +144,9 @@ git_worktree backend       file_checkpoint backend
     |                     baseline mirror (immutable)
     |                           |
     |                     execution mirror (writable)
+    |                           |
+    |                     isolated workspace mount
+    |                  mirror -> original guest path
     |                           |
     +------------- execute candidate command
                                 |
@@ -173,6 +188,8 @@ export interface TransactionalSnapshot {
   backend: TransactionalBackendId
   resourceRoot: string
   executionRoot: string
+  executionCwdRelative: string
+  guestResourceRoot: string
   baselineRoot?: string
   resourceIdentity: string
   baselineTreeHash: string
@@ -192,6 +209,11 @@ export interface TransactionalBackend {
 `runner.ts` must depend on this contract rather than directly calling Git helpers.
 The existing Git implementation moves behind `git-worktree-backend.ts` without a
 behavior change in the first refactoring PR.
+
+`executionRoot` is a host path used only as the boundary mount source.
+`guestResourceRoot` is the original canonical workspace path as seen inside the isolated
+runtime. Commands therefore retain absolute workspace-path semantics without gaining
+access to the original host directory.
 
 ### 5.3 Observed filesystem model
 
@@ -317,27 +339,104 @@ silently remap an outside `cwd` to the root.
 
 Add `src/core/transactional/file-clone.ts`:
 
-1. Try `copyFile(..., COPYFILE_FICLONE)` for each regular file.
-2. Fall back to normal `copyFile` when clone/reflink is unsupported.
+1. Try `copyFile(..., COPYFILE_FICLONE_FORCE)` for each regular file so success or
+   fallback is observable.
+2. Fall back to normal `copyFile` when clonefile/reflink is unsupported.
 3. Preserve mode and atime/mtime; do not preserve ownership.
 4. Recreate symlinks from `readlink` without dereferencing.
 5. Create directories parent-first with their recorded mode.
 6. Limit concurrency to a small fixed/configured value.
-7. Enforce file-count, source-byte, and preparation-time budgets during traversal.
+7. Enforce file-count, source-byte, total workspace, and preparation-time budgets during
+   traversal. Total workspace accounting includes standalone Git metadata and both
+   mirrors even though Git metadata is excluded from the observed application diff.
 8. Detect copy-destination path collisions (including case-folding collisions) and fail
    closed.
 
 The selected strategy is recorded as a probe signal and audit field. It does not change
 the semantic guarantee.
 
-### 5.5 Shared transactional runner
+### 5.5 Isolated workspace execution
+
+Extend the boundary contract before enabling `file_checkpoint`:
+
+```ts
+export interface BoundaryWorkspaceMount {
+  hostSourceRoot: string
+  guestTargetRoot: string
+  cwdRelative: string
+  writable: boolean
+  hideHostSourcePath: boolean
+}
+
+export interface BoundaryRunOptions {
+  mountReadOnly?: boolean
+  workspaceMount?: BoundaryWorkspaceMount
+}
+
+export interface BoundaryAttestation {
+  // existing fields omitted
+  isolatesWorkspaceMounts?: boolean
+}
+```
+
+Required semantics:
+
+- The execution mirror is mounted at `guestTargetRoot`, which equals the canonical
+  original workspace path.
+- The process working directory is `guestTargetRoot/cwdRelative`.
+- The original host workspace is not mounted and is not reachable through
+  `hostSourceRoot`, the original absolute path, parent traversal, or inherited bind
+  mounts.
+- The driver sanitizes `PWD`, `OLDPWD`, and Belay-internal host-path variables before
+  execution. Environment variables intentionally supplied by the user remain subject to
+  the boundary; they must not grant host filesystem reachability.
+- The execution mirror is writable. Other host filesystem paths are absent or
+  read-only according to the driver's attested policy.
+- Network behavior remains governed by the existing egress boundary and is not made
+  recoverable by this backend.
+
+Container implementation:
+
+```text
+docker run
+  --mount type=bind,src=<executionRoot>,dst=<originalResourceRoot>,rw
+  --workdir <originalResourceRoot>/<cwdRelative>
+  ...
+```
+
+Do not additionally mount the original workspace. Validate both mount paths before
+constructing Docker arguments. The container image must contain the command's runtime
+dependencies; a missing runtime produces a normal non-zero execution result and no
+apply.
+
+`host-integration` reports `isolatesWorkspaceMounts: false`. Backend selection returns
+`file_checkpoint_isolation_unavailable` rather than executing on the host. Future
+seatbelt/landlock/Cursor-sandbox drivers may opt in only after conformance tests prove
+the same mount and reachability semantics.
+
+Eligibility uses a fresh, signature-verified boundary attestation, not only the configured
+driver name. Extend `ResolvedBoundaryDriverContext` with the verified attestation and its
+freshness result. A missing, stale, tampered, or `isolatesWorkspaceMounts !== true`
+attestation fails before snapshot preparation and instructs the operator to run
+`belay session start`. Tests may inject a signed fixture; production code must not infer
+isolation from `sandbox.runtime` alone.
+
+### 5.6 Shared transactional runner
 
 Refactor `runTransactionalExecution` into backend-independent orchestration:
 
 ```ts
 const backend = await selectTransactionalBackend(context)
 const snapshot = await backend.prepare(context)
-const shellResult = await executeInSnapshot(snapshot.executionRoot)
+const shellResult = await boundary.run(command, snapshot.executionRoot, timeout, {
+  workspaceMount: {
+    hostSourceRoot: snapshot.executionRoot,
+    guestTargetRoot: snapshot.guestResourceRoot,
+    cwdRelative: snapshot.executionCwdRelative,
+    writable: true,
+    hideHostSourcePath: true,
+  },
+})
 const changes = await snapshot.collectChanges()
 const observed = evaluateTransactionalDiff(changes, diffContext)
 
@@ -360,7 +459,7 @@ The orchestration preserves these current behaviors:
 
 Backend cleanup runs in `finally` and is best effort after a completed outcome.
 
-### 5.6 Apply engine
+### 5.7 Apply engine
 
 Extract the filesystem portions of `git-worktree.ts` into
 `src/core/transactional/apply-observed-changes.ts`.
@@ -386,7 +485,7 @@ Apply algorithm:
 This engine must also replace the current Git-specific apply path so both backends share
 identical TOCTOU, symlink, mode, ordering, rollback, and verification behavior.
 
-### 5.7 Recovery manifest v2
+### 5.8 Recovery manifest v2
 
 Recovery v1 cannot represent directories. Add a backward-compatible manifest union:
 
@@ -439,7 +538,7 @@ src/core/recovery/checkpoint.ts        compatibility exports/orchestration
 
 Do not combine the split with unrelated public API changes.
 
-### 5.8 Resource identity
+### 5.9 Resource identity
 
 Move identity logic into `src/core/recovery/resource-identity.ts`:
 
@@ -450,7 +549,7 @@ Move identity logic into `src/core/recovery/resource-identity.ts`:
 Restore verifies identity before reading approval state or writing repository files.
 A directory/repository recreated at the same path must not accept an old checkpoint.
 
-### 5.9 Configuration
+### 5.10 Configuration
 
 Extend `policy.transactional` without changing current defaults:
 
@@ -493,7 +592,7 @@ separate.
 Config normalization must supply defaults for old files. `config-schema.md`, config
 tests, wizard/status output, and `doctor` must expose the new fields.
 
-### 5.10 Status, audit, and diagnostics
+### 5.11 Status, audit, and diagnostics
 
 `belay recover status` should report:
 
@@ -503,6 +602,7 @@ tests, wizard/status output, and `doctor` must expose the new fields.
   "fileCheckpoint": {
     "enabled": true,
     "allowNonGit": false,
+    "isolation": "container",
     "copyStrategy": "clonefile",
     "probe": "available"
   }
@@ -529,6 +629,7 @@ Add stable failure reasons:
 file_checkpoint_disabled
 file_checkpoint_non_git_disabled
 file_checkpoint_durable_checkpoint_required
+file_checkpoint_isolation_unavailable
 file_checkpoint_cwd_outside_root
 file_checkpoint_nested_repository
 file_checkpoint_unsupported_node
@@ -566,7 +667,29 @@ Acceptance:
 - Clean Git behavior, audit reasons, and timing fields remain compatible.
 - Backend selection unit tests cover clean Git, dirty Git, and non-Git probes.
 
-### PR 2 — Canonical file-tree and clone primitives
+### PR 2 — Isolated workspace boundary contract
+
+Files:
+
+- Extend `BoundaryRunOptions` and `BoundaryAttestation` with isolated workspace-mount
+  semantics.
+- Implement mirror-to-original-path mounting in `boundary-driver-container.ts`.
+- Make `host-integration` explicitly report that it cannot isolate workspace mounts.
+- Load and signature-verify a fresh boundary attestation in the resolved driver context.
+- Add selector failure reason `file_checkpoint_isolation_unavailable`.
+
+Acceptance:
+
+- An absolute path equal to the original workspace root resolves to the mirror inside
+  the container.
+- The original host workspace is unchanged when commands use absolute paths, `../`,
+  `OLDPWD`, or known host-path environment variables.
+- The mirror remains writable and its diff is observable after execution.
+- No original-workspace bind mount appears in the generated container arguments.
+- Host integration cannot select `file_checkpoint`.
+- Missing, stale, or tampered boundary attestations cannot select `file_checkpoint`.
+
+### PR 3 — Canonical file-tree and clone primitives
 
 Files:
 
@@ -583,7 +706,7 @@ Acceptance:
 - Detect changes even when size and timestamp are preserved.
 - Dead-owner staging is collected; live-owner staging is retained.
 
-### PR 3 — Shared apply engine and TOCTOU repair
+### PR 4 — Shared apply engine and TOCTOU repair
 
 Files:
 
@@ -601,7 +724,7 @@ Acceptance:
 This PR closes the current Git path's weaker “capture hashes after isolated execution”
 window before the new backend depends on the shared engine.
 
-### PR 4 — Recovery manifest v2
+### PR 5 — Recovery manifest v2
 
 Files:
 
@@ -618,7 +741,7 @@ Acceptance:
 - Crash states reconcile to `prepared`, `applied`, `restored`, `conflict`, or
   `needs_manual_repair` without guessing.
 
-### PR 5 — Dirty Git file-checkpoint backend
+### PR 6 — Dirty Git file-checkpoint backend
 
 Files:
 
@@ -634,9 +757,11 @@ Acceptance scenarios:
 - Observed risky diff is discarded with no real mutation.
 - Git metadata change in the execution mirror is rejected and not applied.
 - Concurrent source change during prepare or apply fails closed.
+- Absolute workspace paths mutate only the execution mirror.
+- An unavailable/unattested isolation driver fails before command execution.
 - Restore uses signed exact one-shot approval and cannot be replayed concurrently.
 
-### PR 6 — Non-Git workspace support
+### PR 7 — Non-Git workspace support
 
 Files:
 
@@ -652,7 +777,7 @@ Acceptance scenarios:
 - Directory replacement at the same path invalidates old checkpoints.
 - Nested repositories and unsupported filesystem nodes fail closed.
 
-### PR 7 — Dogfood, performance, and documentation
+### PR 8 — Dogfood, performance, and documentation
 
 Work:
 
@@ -684,6 +809,7 @@ Promotion criteria:
 | Manifest | v1 compatibility, v2 canonical hash, directory validation, receipt validation |
 | Apply | global preflight, ordered writes, rollback, rollback verification, cleanup failure |
 | Selector | clean Git, dirty Git enabled/disabled, non-Git enabled/disabled, blocked capability |
+| Boundary | guest path mapping, original-root hiding, cwd mapping, environment sanitization, unattested rejection |
 
 ### 7.2 Integration tests
 
@@ -700,11 +826,16 @@ Use real temporary repositories/directories and real shell execution:
 9. two restore attempts with one approval yield exactly one restore;
 10. shared control plane keeps per-resource quotas independent;
 11. non-Git directory apply and restore;
-12. repository/directory recreated at the same path rejects restore.
+12. repository/directory recreated at the same path rejects restore;
+13. absolute original-workspace paths resolve to the mirror and leave the host root
+    untouched;
+14. host integration/unattested drivers fail before candidate execution.
 
 ### 7.3 Conformance and regression
 
 - Add L2 scenarios for dirty Git and non-Git to the layer conformance matrix.
+- Add a boundary conformance scenario proving that the original host workspace is not
+  reachable while the writable mirror is mounted at the guest workspace path.
 - Keep MUST-ASK and MUST-ALLOW corpus gates at zero regressions.
 - Assert that recovery-blocking capability requests never select `file_checkpoint`.
 - Run build, typecheck, lint, complete Vitest suite, and packaging smoke tests.
@@ -713,7 +844,8 @@ Use real temporary repositories/directories and real shell execution:
 
 1. Land readers for manifest v2 before any writer emits v2.
 2. Keep both new flags false by default.
-3. Enable dirty Git in maintainer dogfood repositories.
+3. Enable dirty Git in maintainer dogfood repositories with an attested container
+   workspace boundary.
 4. Observe prepare latency, quota failures, unsupported-node failures, apply conflicts,
    and cleanup leaks.
 5. Enable non-Git dogfood separately.
@@ -732,6 +864,8 @@ Recovery v2 is complete when all of the following are true:
   overwriting pre-existing changes.
 - Non-Git workspaces can opt into the same behavior.
 - The candidate command never mutates the real workspace before observed-diff approval.
+- Absolute paths and parent traversal cannot escape the isolated execution mirror; an
+  unattested driver cannot run this backend.
 - Durable restore returns every affected path to its exact pre-command filesystem node,
   including directory and mode state covered by the manifest.
 - Concurrent edits fail before the first apply write.

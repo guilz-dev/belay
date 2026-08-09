@@ -1,6 +1,7 @@
 import type { PolicyDecision } from '../capability/policy-types.js'
 import type { CapabilityRequestV1 } from '../capability/request.js'
 import type { BelayConfigV4 } from '../config.js'
+import type { EffectPlan } from '../effect-ir/types.js'
 
 export type VerdictPermission = 'allow' | 'ask'
 
@@ -29,6 +30,8 @@ export interface VerdictResult {
   judgeTrace?: JudgeTrace
   capabilityRequests?: CapabilityRequestV1[]
   authorizationDecision?: PolicyDecision
+  effectPlan?: EffectPlan
+  effectPlanPolicyDecisions?: PolicyDecision[]
 }
 
 export interface Tier1Verdict {
@@ -117,4 +120,6 @@ export interface InternalSegmentVerdict {
   judgeTrace?: JudgeTrace
   capabilityRequests?: CapabilityRequestV1[]
   authorizationDecision?: PolicyDecision
+  effectPlan?: EffectPlan
+  effectPlanPolicyDecisions?: PolicyDecision[]
 }

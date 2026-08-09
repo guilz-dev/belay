@@ -7,14 +7,14 @@ import {
   type ApprovalReplayHint,
   buildReplayHint,
   buildRetryInstructionForConfig,
+  canAutoReplay,
   getExecutionLeaseMs,
   type ReplayActionContext,
   type ReplayAdapterId,
-  replayShellCommand,
   validateReplayEnvelope,
 } from '../../core/approval-replay.js'
 import {
-  consumeApprovedAfterCliReplay,
+  claimApprovedForReplay,
   gateApprovalStoreFromDeps,
   recordApproval,
 } from '../../core/approval-service.js'
@@ -26,16 +26,22 @@ import {
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
 import { isEgressProxyActive } from '../../core/capability/boundary-egress.js'
-import { resolveBoundaryDriverContext } from '../../core/capability/boundary-session.js'
+import {
+  resolveBoundaryDriverContext,
+  runBoundaryAgentCommand,
+} from '../../core/capability/boundary-session.js'
 import { hashCapabilityRequests } from '../../core/capability/capability-request-hash.js'
 import {
   recordGateApprovalAsk,
   scheduleGateShadowAudit,
 } from '../../core/capability/gate-shadow-audit.js'
+import { canConsumeCapabilityGrantLease } from '../../core/capability/grant-consumption.js'
 import {
-  consumeGrantLease,
-  findMatchingGrant,
-  grantsFromApprovedState,
+  approvalGrantBundleExhausted,
+  consumeApprovedRecordGrantBundle,
+  consumeGrantLeasesForRequests,
+  decrementApprovalLegacyGrant,
+  grantsFromApproval,
 } from '../../core/capability/grant-lease.js'
 import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
@@ -51,6 +57,7 @@ import {
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
+import { hashEffectPlan } from '../../core/effect-ir/audit.js'
 import {
   classifyResultToGateVerdict,
   type GatedAction,
@@ -156,6 +163,16 @@ export interface GateRuntimeDeps {
     fileName: 'pending-approvals.json' | 'approved-approvals.json',
   ) => Promise<{ filePath: string; state: ApprovalStateFile }>
   writeApprovals: (filePath: string, state: ApprovalStateFile) => Promise<void>
+  replayApprovedShell: (
+    ctx: GateRuntimeContext,
+    command: string,
+    cwd: string,
+    timeoutMs: number,
+  ) => Promise<{
+    exitCode: number | null
+    timedOut: boolean
+    signal: string | null
+  }>
 }
 
 async function loadJsonFile<T>(filePath: string, fallback: T): Promise<T> {
@@ -208,6 +225,16 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
     async writeApprovals(filePath, state) {
       await mkdir(path.dirname(filePath), { recursive: true })
       await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
+    },
+    async replayApprovedShell(ctx, command, cwd, timeoutMs) {
+      return runBoundaryAgentCommand({
+        repoRoot: ctx.repoRoot,
+        config: ctx.config,
+        command,
+        cwd,
+        timeoutMs,
+        runOptions: { mountReadOnly: false },
+      })
     },
   }
 }
@@ -312,6 +339,7 @@ async function ensurePendingApproval(
     approvalInput,
     scopeHint,
     capabilityRequests: result.capabilityRequests,
+    effectPlanHash: result.effectPlan ? hashEffectPlan(result.effectPlan) : undefined,
   })
   pending.state.version = APPROVAL_STATE_VERSION_V3
   pending.state.revision = (pending.state.revision ?? 0) + 1
@@ -442,24 +470,35 @@ async function consumeApprovedApproval(
       }
 
       const approval = compacted.approvals[matchIndex]
-      if (approval.grant && approval.grant.usesRemaining <= 0) {
+      if (approvalGrantBundleExhausted(approval) && !approval.executionLeaseExpiresAt) {
         compacted.approvals.splice(matchIndex, 1)
         return { state: compacted, result: null }
       }
 
+      let updatedApproval = approval
+      const bundle = grantsFromApproval(approval)
+      if (bundle.length > 0) {
+        const consumed = consumeApprovedRecordGrantBundle(approval)
+        if (!consumed.consumed) {
+          return { state: compacted, result: null }
+        }
+        updatedApproval = consumed.approval
+      } else if (approval.grant) {
+        updatedApproval = decrementApprovalLegacyGrant(approval)
+      }
+
+      if (bundle.length > 1 && approvalGrantBundleExhausted(updatedApproval)) {
+        compacted.approvals.splice(matchIndex, 1)
+        return { state: compacted, result: updatedApproval }
+      }
+
       compacted.approvals[matchIndex] = {
-        ...approval,
+        ...updatedApproval,
         executionLeaseExpiresAt: new Date(
           Date.now() + getExecutionLeaseMs(ctx.config),
         ).toISOString(),
-        grant: approval.grant
-          ? {
-              ...approval.grant,
-              usesRemaining: Math.max(0, approval.grant.usesRemaining - 1),
-            }
-          : undefined,
       }
-      return { state: compacted, result: approval }
+      return { state: compacted, result: updatedApproval }
     },
   })
   if (!consumed) {
@@ -716,20 +755,19 @@ async function consumeCapabilityGrantIfUsed(
   ) {
     return true
   }
-  const request = result.capabilityRequests?.[0]
-  if (!request) {
+  if (!canConsumeCapabilityGrantLease(result)) {
     return false
+  }
+  const requests = result.capabilityRequests ?? []
+  if (!requests.length) {
+    return true
   }
   const consumed = await mutateApprovalStateWithRetry({
     load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
     write: (filePath, state) => deps.writeApprovals(filePath, state),
     mutate: (state) => {
       const compacted = compactApprovals(state)
-      const grant = findMatchingGrant(grantsFromApprovedState(compacted, ctx.repoRoot), request)
-      if (!grant) {
-        return null
-      }
-      const lease = consumeGrantLease(compacted, grant.grantId)
+      const lease = consumeGrantLeasesForRequests(compacted, requests)
       if (!lease.consumed) {
         return null
       }
@@ -866,10 +904,10 @@ async function gateDecisionToVerdict(
     )
     if (!shouldSkipBrokerApprovedRecord(brokerActive, matchedApproval?.reason)) {
       if (
-        matchedApproval &&
-        matchedApproval.capabilityRequestHash &&
-        result.capabilityRequests?.length &&
-        matchedApproval.capabilityRequestHash !== hashCapabilityRequests(result.capabilityRequests)
+        matchedApproval?.capabilityRequestHash &&
+        (!result.capabilityRequests?.length ||
+          matchedApproval.capabilityRequestHash !==
+            hashCapabilityRequests(result.capabilityRequests))
       ) {
         await deps.appendAudit(ctx, {
           ...gateBase,
@@ -893,6 +931,33 @@ async function gateDecisionToVerdict(
             'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
           agent_message:
             'Belay denied this action because capability requests changed after approval.',
+        })
+      }
+      if (
+        matchedApproval?.effectPlanHash &&
+        (!result.effectPlan || matchedApproval.effectPlanHash !== hashEffectPlan(result.effectPlan))
+      ) {
+        await deps.appendAudit(ctx, {
+          ...gateBase,
+          verdict: 'deny_pending_approval',
+          reason: 'approval_replay_mismatch',
+          approvalId: matchedApproval.approvalId,
+          wouldBlock: true,
+          permission: 'deny',
+        })
+        return classifyResultToGateVerdict({
+          result: {
+            ...result,
+            verdict: 'deny_pending_approval',
+            reason: 'approval_replay_mismatch',
+          },
+          mode: ctx.config.mode,
+          permission: 'deny',
+          wouldBlock: true,
+          approvalId: matchedApproval.approvalId,
+          user_message:
+            'Belay denied this action because the effect plan changed after approval. Re-approve the exact action or run belay explain.',
+          agent_message: 'Belay denied this action because the effect plan changed after approval.',
         })
       }
       if (
@@ -1089,14 +1154,18 @@ async function gateDecisionToVerdict(
     permission: 'deny',
   })
 
+  const adapter = adapterIdFromContext(ctx)
+  const autoReplayShell = kind === 'shell' && canAutoReplay(ctx.config, kind, adapter)
   return classifyResultToGateVerdict({
     result,
     mode: ctx.config.mode,
     permission: 'deny',
     wouldBlock: true,
     approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstructionForConfig(ctx.config, ctx.config.tokenPrefix, approval.approvalId)} For details, run belay explain or /belay why.`,
-    agent_message: `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
+    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstructionForConfig(ctx.config, ctx.config.tokenPrefix, approval.approvalId, kind, adapter)} For details, run belay explain or /belay why.`,
+    agent_message: autoReplayShell
+      ? `Belay denied this action as ${result.reason}. Wait for approval; Belay will replay the exact shell action automatically. Do not retry unless replay fails.`
+      : `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
   })
 }
 
@@ -1109,6 +1178,8 @@ export async function processApprovalPrompt(
   if (!approvalId) {
     return { continue: true }
   }
+  const hasFollowupInstruction =
+    prompt.split(/\r?\n/).filter((line) => line.trim().length > 0).length > 1
 
   const adapter = adapterIdFromContext(ctx)
 
@@ -1159,23 +1230,41 @@ export async function processApprovalPrompt(
 
   const replay = recorded.approval ? buildReplayHint(ctx.config, recorded.approval, adapter) : null
 
-  const shouldFallbackReplay =
-    adapter === 'cursor' &&
+  const shouldReplayApprovedShell =
     replay?.kind === 'shell' &&
     replay.autoReplay === true &&
     Boolean(recorded.approval?.input) &&
     (!process.env.VITEST || process.env.BELAY_TEST_APPROVAL_REPLAY === '1')
 
-  if (shouldFallbackReplay && recorded.approval) {
+  if (shouldReplayApprovedShell && recorded.approval) {
     const approvalStore = gateApprovalStoreFromDeps({
       loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
       writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
     })
-    let replayResult: Awaited<ReturnType<typeof replayShellCommand>>
+    let claimed: ApprovalRecord | null
     try {
-      replayResult = await replayShellCommand(
-        recorded.approval.input ?? '',
-        recorded.approval.cwd ?? ctx.repoRoot,
+      claimed = await claimApprovedForReplay({ approvalId, store: approvalStore })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return {
+        continue: false,
+        user_message:
+          `Belay approval ${approvalId} could not be claimed for one-step replay (${detail}). ` +
+          'The shell action was not started.',
+      }
+    }
+    if (!claimed) {
+      return {
+        continue: false,
+        user_message: `Belay approval ${approvalId} could not be claimed for one-step replay.`,
+      }
+    }
+    let replayResult: Awaited<ReturnType<GateRuntimeDeps['replayApprovedShell']>>
+    try {
+      replayResult = await deps.replayApprovedShell(
+        ctx,
+        claimed.input ?? '',
+        claimed.cwd ?? ctx.repoRoot,
         getExecutionLeaseMs(ctx.config),
       )
     } catch (error) {
@@ -1192,34 +1281,10 @@ export async function processApprovalPrompt(
         continue: false,
         user_message:
           `Belay approval recorded for ${approvalId}, but one-step shell replay could not start (${detail}). ` +
-          'Approval remains active for one hook retry.',
+          'The one-shot approval was consumed before replay and was not re-armed.',
       }
     }
-    const output = [replayResult.stdout, replayResult.stderr].filter(Boolean).join('\n').trim()
     if (replayResult.exitCode === 0) {
-      try {
-        await consumeApprovedAfterCliReplay({
-          approvalId: approvalId,
-          store: approvalStore,
-        })
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        await deps.appendAudit(ctx, {
-          event: 'approval',
-          kind: 'approval',
-          verdict: 'allow',
-          approvalId,
-          reason: 'approval_replay_consume_error',
-          summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
-        })
-        return {
-          continue: false,
-          user_message:
-            `Belay approval recorded for ${approvalId}, and one-step shell replay succeeded, but approval finalization failed (${detail}). ` +
-            'Approval remains active for one hook retry.' +
-            (output ? `\n${output}` : ''),
-        }
-      }
       await deps.appendAudit(ctx, {
         event: 'approval',
         kind: 'approval',
@@ -1229,10 +1294,8 @@ export async function processApprovalPrompt(
         summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
       })
       return {
-        continue: false,
-        user_message:
-          `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.` +
-          (output ? `\n${output}` : ''),
+        continue: hasFollowupInstruction,
+        user_message: `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.`,
       }
     }
     await deps.appendAudit(ctx, {
@@ -1248,13 +1311,12 @@ export async function processApprovalPrompt(
       continue: false,
       user_message:
         `Belay approval recorded for ${approvalId}, but one-step shell replay failed (exit ${replayResult.exitCode}).${timeoutNote} ` +
-        `Approval remains active for one hook retry.` +
-        (output ? `\n${output}` : ''),
+        `The one-shot approval was consumed before replay and was not re-armed.`,
     }
   }
 
   return {
-    continue: false,
+    continue: hasFollowupInstruction,
     user_message: recorded.message,
     ...(replay ? { replay } : {}),
   }

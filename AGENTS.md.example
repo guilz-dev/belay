@@ -1,6 +1,53 @@
 # AGENTS ガイドライン（Belay）
 
+このファイルはテンプレートです。初回セットアップ時にリポジトリルートへコピーしてください。
+
+```bash
+cp AGENTS.md.example AGENTS.md
+```
+
+`AGENTS.md` は gitignore 対象（ローカル運用・個人カスタム用）。リポジトリには `AGENTS.md.example` だけをコミットする。
+
 このリポジトリで作業するエージェントは、以下を厳守すること。
+
+## Superpowers（積極活用）
+
+Cursor の Superpowers プラグインが有効な環境では、**スキル本文を読んでから作業する**（フック注入だけでは不十分）。
+
+### いつ何を使うか
+
+| 段階 | スキル |
+|------|--------|
+| 機能追加・設計変更の前 | `brainstorming` |
+| 実装プラン作成 | `writing-plans` |
+| プラン実装（このセッション） | `subagent-driven-development` |
+| プラン実装（別セッション） | `executing-plans` |
+| **各タスクの実装** | **`test-driven-development`（必須）** |
+| 完了宣言の前 | `verification-before-completion` |
+| ブランチ仕上げ | `finishing-a-development-branch` |
+
+### TDD（必須）
+
+実装タスクでは `test-driven-development` を **REQUIRED** とする。
+
+1. 失敗するテストを先に書く
+2. `vitest` で **失敗を確認**（RED）してから本番コードを書く
+3. 最小実装後に **成功を確認**（GREEN）
+4. タスク報告に TDD Evidence を含める（RED/GREEN のコマンドと出力）
+
+「後からテストを足す」「実装を先に書く」は禁止。プランに TDD ステップがなくても適用する。
+
+### Belay 検証
+
+完了・PR 前の検証は `verify-parallel` スキル（`make verify-parallel`）を使う。検証コマンドを実行する前に「完了」と言わない。
+
+### 実装依頼の例
+
+```
+subagent-driven-development で <plan> を実装。
+全タスクで test-driven-development を REQUIRED。
+検証は verify-parallel。完了後は finishing-a-development-branch。
+```
 
 ## プロジェクト境界
 

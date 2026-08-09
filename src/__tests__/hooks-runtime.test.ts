@@ -119,7 +119,7 @@ describe('generated hook runtime', () => {
       prompt: `/belay-approve ${approvalId}\nplease continue`,
     })
     const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
-    expect(approvedPromptJson.continue).toBe(false)
+    expect(approvedPromptJson.continue).toBe(true)
     expect(approvedPromptJson.user_message).toContain(approvalId)
 
     const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
