@@ -58,15 +58,22 @@ Requires external OS sandbox runtime + running egress proxy. See
 | Control plane (`~/.config/belay/` or `%APPDATA%/belay`) | User-level; must not be writable via gated shell/file tools |
 | Agent shell / tools | Untrusted; classified heuristically |
 
-### Audit and recovery advisory (v2.3)
+### Audit advice and Recovery v1
 
 - **`belay report`** — read-only aggregation of hook audit logs (ask/flag/allow counts,
   silent-pass rate). Does not introduce new stops or allows.
-- **`belay recover`** — advisory recovery hints only; **never auto-executes** undo commands.
+- **`belay recover` / `belay recover advice`** — advisory recovery hints only; **never
+  auto-executes** undo commands and does not prove that an audit candidate executed.
   Input is primarily stored audit axes (`effect`, `location`, `assessment`). `--command` may
   re-invoke Tier1 classification (not recovery execution).
 - Advice is limited to redacted hook observations; manual operator actions outside the hook
   path are not visible to recover.
+- **`belay recover status/list/show`** inspect durable Recovery v1 checkpoints. They do
+  not mutate repository files, but may reconcile checkpoint metadata after a crash.
+- **`belay recover apply <checkpoint-id>`** restores only after an exact, expiring,
+  signed out-of-band one-shot human approval. Approval binds repository root, checkpoint
+  and manifest hashes, current post-state hash, and the exact path set. Standing allows,
+  auto replay, unsigned CLI approval, and force restore cannot authorize this operation.
 
 ### Mitigations in v0.4
 
@@ -116,6 +123,13 @@ When those conditions hold:
 - **Observed effects** — the command runs in a detached worktree; file changes are
   categorized from the real diff; safe changes are applied to the working tree,
   dangerous changes are discarded and escalated to human approval.
+- **Durable checkpoint (separate opt-in)** — when
+  `policy.transactional.checkpoint.enabled` is true, content-addressed pre-images and an
+  immutable manifest are fsynced before the real working tree changes. Apply/restore state
+  transitions are durable; incomplete mixed states are retained as
+  `needs_manual_repair` rather than guessed.
+- **Restore conflicts** — every target must still match the recorded post-state before any
+  restore write occurs. A mismatch leaves all targets untouched and records `conflict`.
 - **No double execution** — when observed-safe effects are applied, the shell hook
   returns `permission: deny` with reason `transactional_already_applied` so the
   agent runtime does not run the same command a second time.
@@ -125,9 +139,10 @@ When those conditions hold:
   fall back to the L3 prediction.
 - **L3 passthrough** — high-confidence `allow` and predicted `deny_pending_approval`
   bypass transactional execution (L3 remains the fast path / L4 escalation).
-- **Not covered** — effects outside the snapshot (processes, IPC, clocks), non-git
+- **Not covered** — effects outside the observed repository-local filesystem diff
+  (network, remote Git, databases, processes, IPC, environment, services), non-git
   repositories, and external network I/O (L1 egress remains separate). Overlayfs /
-  APFS clone backends are future optimizations.
+  APFS clone and dirty-repository file-checkpoint backends remain future work.
 
 ### Sandbox capability broker & control-plane isolation (v0.9, opt-in) — L1-full path
 

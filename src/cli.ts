@@ -11,6 +11,11 @@ import { formatHarvestReport, harvestApplyProject, harvestListProject } from './
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
 import { formatQualityReport, qualityCheck } from './commands/quality.js'
 import { formatRecoverReport, recoverProject } from './commands/recover.js'
+import {
+  formatRecoveryCheckpointResult,
+  type RecoveryCheckpointSubcommand,
+  recoveryCheckpointCommand,
+} from './commands/recovery-checkpoints.js'
 import { formatReport, reportProject } from './commands/report.js'
 import { revokeApproval } from './commands/revoke.js'
 import {
@@ -44,6 +49,8 @@ function parseArgs(argv: string[]) {
     approvalId?: string
     explainCommand?: string
     recoverCommand?: string
+    recoverSubcommand?: 'advice' | RecoveryCheckpointSubcommand
+    recoverCheckpointId?: string
     explainCwd?: string
     explainKind?: 'shell' | 'tool' | 'subagent'
     explainToolName?: string
@@ -509,6 +516,27 @@ function parseArgs(argv: string[]) {
       }
       throw new Error('harvest requires subcommand: list or apply')
     }
+    if (command === 'recover' && !options.recoverSubcommand) {
+      if (
+        token === 'advice' ||
+        token === 'status' ||
+        token === 'list' ||
+        token === 'show' ||
+        token === 'apply'
+      ) {
+        options.recoverSubcommand = token
+        continue
+      }
+      throw new Error('recover requires subcommand: advice, status, list, show, or apply')
+    }
+    if (
+      command === 'recover' &&
+      (options.recoverSubcommand === 'show' || options.recoverSubcommand === 'apply') &&
+      !options.recoverCheckpointId
+    ) {
+      options.recoverCheckpointId = token
+      continue
+    }
     if (command === 'judge' && !options.judgeSubcommand) {
       if (
         token === 'status' ||
@@ -619,8 +647,10 @@ Usage:
   ${c} metrics [--target <dir>] [--json]
   ${c} quality [--target <dir>] [--corpus <path>] [--json]
   ${c} report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
-  ${c} recover [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
+  ${c} recover [advice] [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
     (--limit picks the Nth recover candidate after priority ranking: local_mutation first, then recency; 1 = highest priority, default 1)
+  ${c} recover <status|list> [--target <dir>] [--json]
+  ${c} recover <show|apply> <checkpoint-id> [--target <dir>] [--json]
   ${c} audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
   ${c} simulate --config <path> [--target <dir>] [--json]
   ${c} status [--target <dir>] [--json]
@@ -929,6 +959,20 @@ async function main() {
     }
 
     if (command === 'recover') {
+      if (options.recoverSubcommand && options.recoverSubcommand !== 'advice') {
+        const result = await recoveryCheckpointCommand({
+          targetDir: options.targetDir,
+          subcommand: options.recoverSubcommand,
+          checkpointId: options.recoverCheckpointId,
+        })
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(formatRecoveryCheckpointResult(result))
+        }
+        if (!result.ok) process.exitCode = 2
+        return
+      }
       const report = await recoverProject({
         targetDir: options.targetDir,
         since: options.since,

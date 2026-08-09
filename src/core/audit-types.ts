@@ -28,6 +28,10 @@ export interface AuditRecord {
   transactionalCategories?: string[]
   transactionalChangeCount?: number
   transactionalSkipReason?: string
+  recoveryCheckpointId?: string
+  recoveryBackend?: string
+  recoveryProofHash?: string
+  recoveryState?: string
   replayContext?: AuditReplayContext
   actionSnapshot?: AuditActionSnapshot
   [key: string]: unknown

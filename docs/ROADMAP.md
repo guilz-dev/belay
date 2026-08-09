@@ -113,13 +113,13 @@ widening anything.*
 *Exit:* adversarial FN=0 and benign FP=0 both enforced in CI; a dogfood stretch
 with no regretted miss and few enough asks to keep enforce mode on.
 
-### Horizon 1 — Precision you can feel (next)
+### Horizon 1 — Precision you can feel (in progress)
 
 *Turn Dial 1: convert "assumed reversible" into "proven reversible," and stop
 re-asking what a human already blessed.*
 
-- **L2 substrate (git-worktree / CoW snapshots)** so "restorable" is literally
-  true, not assumed — the foundation that lets more actions be allowed safely.
+- **L2 substrate — git-worktree observation delivered; durable repo-local checkpoint
+  recovery delivered as opt-in.** CoW and dirty/non-Git file-checkpoint backends remain.
 - **Approval cache** so a first ask on a recurring describe-class action becomes a
   standing allow (first ask → register → pass through).
 - **Tier1 judge improvements** — prompt/model calibration to erase residual
@@ -185,10 +185,11 @@ turning the floor back into a fence:
 |-------|------|--------------|
 | **L4** Human approval | final backstop for residual uncertainty | Done (reused); refined in H3 (OOB signed) |
 | **L3** Prediction | noise reduction, not a boundary | Rebuilt as Tier0+Tier1 in H0; sharpened in H1 |
-| **L2** Observation | judge on measured snapshots | H1 (substrate) → H3 (transactional everywhere) |
+| **L2** Observation | judge on measured snapshots + durable repo-local checkpoint | H1 phase 1 delivered → H3 (transactional everywhere) |
 | **L1** Containment | deny-all egress/sandbox boundary | H3 |
 
-Belay today is "L3+L4 done right." The roadmap is the disciplined walk from a
+Belay today combines the default L3+L4 guardrail with an opt-in partial L2
+git-worktree/checkpoint path. The roadmap is the disciplined walk from a
 trustworthy *guardrail* (H0) to a measurably precise one (H1), spread across the
 products people use (H2), and finally to a *boundary* the user can lean on (H3) —
 without ever, at any horizon, letting an irreversible catastrophe through to buy

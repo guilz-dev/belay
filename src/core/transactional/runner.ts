@@ -3,6 +3,14 @@ import {
   runWithBoundaryRunnable,
 } from '../capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../capability/boundary-session.js'
+import {
+  discardPreparedRecoveryCheckpoint,
+  listRecoveryCheckpoints,
+  markRecoveryCheckpointApplied,
+  markRecoveryCheckpointApplying,
+  prepareRecoveryCheckpoint,
+  reconcileRecoveryCheckpoint,
+} from '../recovery/checkpoint.js'
 import type { ClassifyResult } from '../types.js'
 import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
@@ -22,14 +30,14 @@ import type { TransactionalExecutionResult, TransactionalRunnerParams } from './
 export async function runTransactionalExecution(
   params: TransactionalRunnerParams,
 ): Promise<TransactionalExecutionResult> {
-  const { predicted, repoRoot, command, cwd, timeoutMs, diffContext } = params
+  const { predicted, repoRoot, stateDir, command, cwd, timeoutMs, diffContext } = params
   const backendContext = {
     repoRoot,
-    stateDir: params.stateDir,
+    stateDir,
     cwd,
     dirtyIgnoreRoots: params.dirtyIgnoreRoots,
     fileCheckpoint: params.fileCheckpoint,
-    durableCheckpointEnabled: params.durableCheckpointEnabled,
+    durableCheckpointEnabled: params.checkpoint?.enabled === true,
   }
 
   const selection = await selectTransactionalBackend(backendContext)
@@ -41,6 +49,20 @@ export async function runTransactionalExecution(
         selection.skipReason ?? selection.probe.reason ?? 'transactional_execution_failed',
       predicted,
       result: predicted,
+    }
+  }
+
+  if (params.checkpoint?.enabled) {
+    try {
+      await listRecoveryCheckpoints(stateDir, repoRoot)
+    } catch (error) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: error instanceof Error ? error.message : 'recovery_checkpoint_reconcile_failed',
+        predicted,
+        result: predicted,
+      }
     }
   }
 
@@ -90,9 +112,63 @@ export async function runTransactionalExecution(
 
     if (observed.verdict === 'allow') {
       const baseHashes = await captureRepoFileHashes(repoRoot, changes)
+      const checkpoint =
+        params.checkpoint?.enabled && changes.length > 0
+          ? await prepareRecoveryCheckpoint({
+              stateDir,
+              repoRoot,
+              worktreePath: snapshot.executionRoot,
+              commandFingerprint: predicted.fingerprint,
+              changes,
+              protectedRoots: diffContext.protectedRoots,
+              config: params.checkpoint,
+            })
+          : null
       try {
-        await applyWorktreeChanges(snapshot.executionRoot, repoRoot, changes, { baseHashes })
+        if (checkpoint) {
+          await markRecoveryCheckpointApplying(stateDir, checkpoint)
+        }
+        let receipt: Awaited<ReturnType<typeof markRecoveryCheckpointApplied>> | undefined
+        await applyWorktreeChanges(snapshot.executionRoot, repoRoot, changes, {
+          baseHashes,
+          afterApply: checkpoint
+            ? async () => {
+                receipt = await markRecoveryCheckpointApplied(stateDir, checkpoint)
+              }
+            : undefined,
+        })
+
+        const result: ClassifyResult = {
+          ...predicted,
+          verdict: 'allow',
+          reason: TRANSACTIONAL_ALREADY_APPLIED,
+          assessment: observed.assessment,
+        }
+        return {
+          ok: true,
+          predicted,
+          observed,
+          result,
+          worktreePath: snapshot.executionRoot,
+          commandExitCode: shellResult.exitCode,
+          commandSignal: shellResult.signal,
+          timedOut: shellResult.timedOut,
+          ...(checkpoint && receipt
+            ? {
+                recoveryCheckpointId: checkpoint.checkpointId,
+                recoveryBackend: 'git_worktree' as const,
+                recoveryProofHash: receipt.proofHash,
+                recoveryState: 'applied' as const,
+              }
+            : {}),
+        }
       } catch (error) {
+        if (checkpoint) {
+          const recoveryState = await reconcileRecoveryCheckpoint(stateDir, checkpoint.checkpointId)
+          if (recoveryState === 'prepared') {
+            await discardPreparedRecoveryCheckpoint(stateDir, checkpoint.checkpointId)
+          }
+        }
         const toctou = error instanceof Error && error.message === TRANSACTIONAL_APPLY_TOCTOU
         const result: ClassifyResult = {
           ...predicted,
@@ -123,9 +199,8 @@ export async function runTransactionalExecution(
 
     const result: ClassifyResult = {
       ...predicted,
-      verdict: observed.verdict === 'allow' ? 'allow' : 'deny_pending_approval',
-      reason:
-        observed.verdict === 'allow' ? TRANSACTIONAL_ALREADY_APPLIED : TRANSACTIONAL_OBSERVED_RISK,
+      verdict: 'deny_pending_approval',
+      reason: TRANSACTIONAL_OBSERVED_RISK,
       assessment: observed.assessment,
     }
 

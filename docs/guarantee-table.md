@@ -52,17 +52,24 @@ boundary grants.
 - Agent compliance when hooks are disabled or bypassed outside the IDE
 - Protection when config promises L1-full but the sandbox runtime is not actually engaged
 
-## Skill intelligence layer (v2.3, advisory only)
+## Recovery surfaces
 
-`belay report` and `belay recover` are **read-only advisory** commands. They do
-not change hook verdicts, auto-execute shell, or bypass the enforcement floor (ADR-002).
+`belay report` and `belay recover advice` (also available as the backward-compatible
+`belay recover` alias) are **read-only advisory** commands. A checkpoint receipt, not an
+audit candidate, is the only executable recovery point.
 
 | Surface | Behavior | Security note |
 |---------|----------|---------------|
 | `report` | Aggregates redacted `audit.ndjson` | No new classification; cannot widen allow |
-| `recover` | Suggests undo steps; does not run them | Advice is partial — based on hook-visible audit only |
+| `recover` / `recover advice` | Suggests undo steps; does not run them | Advice is partial and does not prove the target action executed |
 | `recover --command` | Re-runs shell classification for the given text | May invoke Tier1 judge (egress to Ollama/cloud); classification only |
+| `recover status/list/show` | Inspects durable checkpoint artifacts | Does not mutate repository files; may durably reconcile checkpoint metadata after a crash |
+| `recover apply <id>` | Restores an exact repo-local pre-image | Requires a signed out-of-band, expiring exact one-shot approval; refuses any post-state conflict |
 
 Recovery suggestions are intentionally conservative: irreversible undo patterns (e.g.
 `git reset --hard`) are never recommended. Operators must verify steps manually; recovery
 commands themselves are subject to the same hooks if executed.
+
+Recovery v1 covers only the observed repository-local filesystem diff. It does not undo
+network, remote Git, database, process, IPC, environment, service, or repository-external
+effects. Dirty and non-Git repositories do not receive checkpoints.

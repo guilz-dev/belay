@@ -1,7 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -38,7 +47,7 @@ function porcelainRelativePath(line: string): string | null {
   if (line.length < 4) {
     return null
   }
-  const relativePath = line.slice(3).trim()
+  const relativePath = line.slice(3)
   return relativePath || null
 }
 
@@ -60,8 +69,20 @@ function isIgnoredDirtyPath(
 }
 
 export async function hashRepoFile(filePath: string): Promise<string> {
+  const info = await lstat(filePath)
+  if (info.isSymbolicLink()) {
+    return createHash('sha256')
+      .update(`symlink:${await readlink(filePath)}`)
+      .digest('hex')
+  }
+  if (!info.isFile()) {
+    throw new Error('transactional_unsupported_file_kind')
+  }
   const content = await readFile(filePath)
-  return createHash('sha256').update(content).digest('hex')
+  return createHash('sha256')
+    .update(`file:${info.mode & 0o777}:`)
+    .update(content)
+    .digest('hex')
 }
 
 export async function captureRepoFileHashes(
@@ -71,7 +92,10 @@ export async function captureRepoFileHashes(
   const hashes = new Map<string, string | null>()
   for (const change of changes) {
     const target = path.join(repoRoot, change.relativePath)
-    if (!existsSync(target)) {
+    try {
+      await lstat(target)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       hashes.set(change.relativePath, null)
       continue
     }
@@ -197,7 +221,7 @@ function parseStatusLine(line: string): TransactionalFileChange | null {
     return null
   }
   const status = line.slice(0, 2)
-  const relativePath = line.slice(3).trim()
+  const relativePath = line.slice(3)
   if (!relativePath) {
     return null
   }
@@ -217,12 +241,18 @@ function parseStatusLine(line: string): TransactionalFileChange | null {
 export async function collectWorktreeChanges(
   worktreePath: string,
 ): Promise<TransactionalFileChange[]> {
-  const status = await execGit(worktreePath, ['status', '--porcelain'])
+  const status = await execGit(worktreePath, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '-uall',
+    '--no-renames',
+  ])
   const changes: TransactionalFileChange[] = []
   const seen = new Set<string>()
 
-  for (const line of status.split('\n')) {
-    if (!line.trim()) {
+  for (const line of status.split('\0')) {
+    if (!line) {
       continue
     }
     const change = parseStatusLine(line)
@@ -244,8 +274,7 @@ async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<v
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === 'restore') {
-        await mkdir(path.dirname(action.target), { recursive: true })
-        await copyFile(action.backupPath, action.target)
+        await copyPathPreservingType(action.backupPath, action.target)
       } else {
         await rm(action.target, { force: true })
       }
@@ -253,6 +282,21 @@ async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<v
       // best effort
     }
   }
+}
+
+async function copyPathPreservingType(source: string, target: string): Promise<void> {
+  const info = await lstat(source)
+  await rm(target, { force: true, recursive: false })
+  await mkdir(path.dirname(target), { recursive: true })
+  if (info.isSymbolicLink()) {
+    await symlink(await readlink(source), target)
+    return
+  }
+  if (!info.isFile()) {
+    throw new Error('transactional_unsupported_file_kind')
+  }
+  await copyFile(source, target)
+  await chmod(target, info.mode & 0o777)
 }
 
 async function assertRepoFilesUnchanged(
@@ -263,7 +307,13 @@ async function assertRepoFilesUnchanged(
   for (const change of changes) {
     const target = path.join(repoRoot, change.relativePath)
     const expected = baseHashes.get(change.relativePath)
-    const exists = existsSync(target)
+    let exists = true
+    try {
+      await lstat(target)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      exists = false
+    }
 
     if (expected === null) {
       if (exists) {
@@ -287,7 +337,11 @@ export async function applyWorktreeChanges(
   worktreePath: string,
   repoRoot: string,
   changes: TransactionalFileChange[],
-  options?: { baseHashes?: Map<string, string | null> },
+  options?: {
+    baseHashes?: Map<string, string | null>
+    /** Runs while rollback backups are still available. */
+    afterApply?: () => Promise<void>
+  },
 ): Promise<void> {
   if (options?.baseHashes) {
     await assertRepoFilesUnchanged(repoRoot, changes, options.baseHashes)
@@ -299,10 +353,17 @@ export async function applyWorktreeChanges(
   try {
     for (const change of changes) {
       const target = path.join(repoRoot, change.relativePath)
-      if (existsSync(target)) {
+      let targetExists = true
+      try {
+        await lstat(target)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        targetExists = false
+      }
+      if (targetExists) {
         const backupPath = path.join(backupRoot, change.relativePath)
         await mkdir(path.dirname(backupPath), { recursive: true })
-        await copyFile(target, backupPath)
+        await copyPathPreservingType(target, backupPath)
         rollbackActions.push({ type: 'restore', target, backupPath })
       } else if (change.kind !== 'deleted') {
         rollbackActions.push({ type: 'remove', target })
@@ -314,9 +375,9 @@ export async function applyWorktreeChanges(
       }
 
       const source = path.join(worktreePath, change.relativePath)
-      await mkdir(path.dirname(target), { recursive: true })
-      await copyFile(source, target)
+      await copyPathPreservingType(source, target)
     }
+    await options?.afterApply?.()
   } catch (error) {
     await rollbackAppliedChanges(rollbackActions)
     throw error

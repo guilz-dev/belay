@@ -574,7 +574,7 @@ export async function evaluateGatedAction(
       command: params.command,
       cwd: params.cwd,
       repoRoot: ctx.repoRoot,
-      stateDir: path.join(ctx.layout.repoLocalStateDir(ctx.repoRoot), 'transactional'),
+      stateDir: belayStateDir(ctx.config, ctx.layout.repoLocalStateDir(ctx.repoRoot)),
       timeoutMs: transactional.timeoutMs,
       predicted,
       diffContext: {
@@ -590,7 +590,7 @@ export async function evaluateGatedAction(
         ctx.config.controlPlane.enabled ? configuredControlPlaneDir(ctx.config) : null,
       ),
       fileCheckpoint: transactional.fileCheckpoint,
-      durableCheckpointEnabled: false,
+      checkpoint: transactional.checkpoint,
     })
 
     if (!txResult.skipped && txResult.observed) {
@@ -603,6 +603,14 @@ export async function evaluateGatedAction(
         transactionalCategories: txResult.observed.categories,
         transactionalChangeCount: txResult.observed.changes.length,
         transactionalTimedOut: txResult.timedOut === true,
+        ...(txResult.recoveryCheckpointId
+          ? {
+              recoveryCheckpointId: txResult.recoveryCheckpointId,
+              recoveryBackend: txResult.recoveryBackend,
+              recoveryProofHash: txResult.recoveryProofHash,
+              recoveryState: txResult.recoveryState,
+            }
+          : {}),
       }
     } else {
       const skipReason = txResult.skipReason ?? 'recovery_observation_failed'

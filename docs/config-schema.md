@@ -119,6 +119,26 @@ belay config judge                        # same summary as belay judge status
 | `modelAssist` | `{ enabled, timeoutMs }` | off |
 | `transactional` | object | off — L2 observed diff |
 
+### `policy.transactional.checkpoint` (Recovery v1)
+
+Checkpointing is separately opt-in. It applies only to observed-safe repository-local
+filesystem changes produced by the git-worktree transactional runner.
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `enabled` | `false` | Persist pre-images before applying an observed-safe diff |
+| `appliedRetentionHours` | `168` | Retention for applied, not-yet-restored checkpoints |
+| `restoredRetentionHours` | `24` | Retention after restore |
+| `maxCheckpoints` | `20` | Per-repository limit; fails closed when safe GC cannot reserve a slot |
+| `maxBytes` | `1073741824` | 1 GiB per-repository hard quota; fails closed before repo mutation |
+
+Restore uses `belay recover apply <checkpoint-id>`. The first invocation creates an
+exact, expiring one-shot approval bound to the repository, manifest hash, post-state
+hash, and path set. Recovery approval always requires the signed token delivered through
+a configured out-of-band notification channel, even when general approval signing is
+optional. After `belay approve <approval-id> --token <signed-token>`, invoke the same restore
+command again. There is no standing allow, auto-replay, `--yes`, or force-restore path.
+
 ## `controlPlane`
 
 | Field | Notes |

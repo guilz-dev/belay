@@ -52,7 +52,7 @@ function runnerParams(input: {
     timeoutMs: 10_000,
     predicted: input.predicted,
     fileCheckpoint: DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
-    durableCheckpointEnabled: false,
+    checkpoint: DEFAULT_CONFIG_V3.policy.transactional.checkpoint,
     diffContext: {
       repoRoot: input.repoRoot,
       sensitivePaths: DEFAULT_CONFIG_V3.classifier.sensitivePaths,

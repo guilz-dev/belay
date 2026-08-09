@@ -1,5 +1,5 @@
 import type { ResolvedBoundaryDriverContext } from '../capability/boundary-session.js'
-import type { BelayFileCheckpointConfig } from '../config.js'
+import type { BelayFileCheckpointConfig, BelayTransactionalConfig } from '../config.js'
 import type { Assessment, ClassifyResult, HookVerdict } from '../types.js'
 
 export type TransactionalFileChangeKind = 'added' | 'modified' | 'deleted'
@@ -36,6 +36,10 @@ export interface TransactionalExecutionResult {
   commandExitCode?: number | null
   commandSignal?: string | null
   timedOut?: boolean
+  recoveryCheckpointId?: string
+  recoveryBackend?: 'git_worktree'
+  recoveryProofHash?: string
+  recoveryState?: 'applied'
 }
 
 export interface GitWorktreeSnapshot {
@@ -62,5 +66,5 @@ export interface TransactionalRunnerParams {
   /** Repo-local Belay paths excluded from dirty-worktree gating (init artifacts). */
   dirtyIgnoreRoots?: string[]
   fileCheckpoint: BelayFileCheckpointConfig
-  durableCheckpointEnabled: boolean
+  checkpoint?: NonNullable<BelayTransactionalConfig['checkpoint']>
 }

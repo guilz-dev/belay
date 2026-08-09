@@ -29,7 +29,8 @@ export interface RecoverAdviceResult {
 }
 
 export const RECOVER_DISCLAIMER = [
-  'Advisory only — belay does not run recovery commands.',
+  'Advisory only — this report is not proof that the selected action executed. Only a checkpoint receipt shown by `belay recover list` is an executable recovery point.',
+  '`belay recover advice` does not run recovery commands; checkpoint restore requires a separate one-shot human approval.',
   'Advice is based on what belay observed through hooks; actions outside hook scope may not be visible.',
   'Recovery commands themselves pass through belay hooks — destructive undo steps may be blocked again.',
 ]

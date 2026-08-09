@@ -123,6 +123,7 @@ describe('config migration', () => {
     expect(defaults.policy.transactional.gates.shell).toBe(true)
     expect(defaults.policy.transactional.fileCheckpoint.enabled).toBe(false)
     expect(defaults.policy.transactional.fileCheckpoint.allowNonGit).toBe(false)
+    expect(defaults.policy.transactional.checkpoint?.enabled).toBe(false)
 
     const enabled = normalizeConfig({
       ...DEFAULT_CONFIG_V3,
@@ -136,6 +137,13 @@ describe('config migration', () => {
           timeoutMs: 5000,
           maxDeletionCount: 3,
           gates: { shell: false },
+          checkpoint: {
+            enabled: true,
+            appliedRetentionHours: 48,
+            restoredRetentionHours: 12,
+            maxCheckpoints: 5,
+            maxBytes: 1024,
+          },
         },
       },
     })
@@ -143,6 +151,12 @@ describe('config migration', () => {
     expect(enabled.policy.transactional.minConfidence).toBe(0.6)
     expect(enabled.policy.transactional.maxDeletionCount).toBe(3)
     expect(enabled.policy.transactional.gates.shell).toBe(false)
+    expect(enabled.policy.transactional.checkpoint).toMatchObject({
+      enabled: true,
+      appliedRetentionHours: 48,
+      maxCheckpoints: 5,
+      maxBytes: 1024,
+    })
   })
 
   it('normalizes sandbox and control-plane isolation defaults', () => {
