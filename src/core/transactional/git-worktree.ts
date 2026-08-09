@@ -6,11 +6,12 @@ import { canonicalPath, isPathOutsideRoot, pathWithinRoot } from '../path-utils.
 import {
   applyObservedChanges,
   buildObservedChangesFromTransactional,
+  TRANSACTIONAL_APPLY_ROLLBACK_FAILED,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from './apply-observed-changes.js'
 import type { GitWorktreeSnapshot, TransactionalFileChange } from './types.js'
 
-export { TRANSACTIONAL_APPLY_TOCTOU }
+export { TRANSACTIONAL_APPLY_ROLLBACK_FAILED, TRANSACTIONAL_APPLY_TOCTOU }
 
 function execGit(repoRoot: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {

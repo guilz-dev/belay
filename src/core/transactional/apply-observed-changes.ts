@@ -12,6 +12,7 @@ import type { TransactionalFileChange } from './types.js'
 
 export const TRANSACTIONAL_APPLY_TOCTOU = 'transactional_apply_toctou'
 export const TRANSACTIONAL_APPLY_CONFLICT = 'transactional_apply_conflict'
+export const TRANSACTIONAL_APPLY_ROLLBACK_FAILED = 'transactional_apply_rollback_failed'
 
 type ApplyRollbackAction =
   | { type: 'restore'; target: string; backupPath: string }
@@ -33,9 +34,26 @@ async function chmodSafe(target: string, mode: number): Promise<void> {
   }
 }
 
+async function removePathIfExists(target: string): Promise<void> {
+  let info: Awaited<ReturnType<typeof lstat>>
+  try {
+    info = await lstat(target)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return
+    }
+    throw error
+  }
+  if (info.isDirectory() && !info.isSymbolicLink()) {
+    await rm(target, { recursive: true, force: true })
+    return
+  }
+  await rm(target, { force: true })
+}
+
 async function copyPathPreservingType(source: string, target: string): Promise<void> {
   const info = await lstat(source)
-  await rm(target, { force: true, recursive: false })
+  await removePathIfExists(target)
   await mkdir(path.dirname(target), { recursive: true })
   if (info.isSymbolicLink()) {
     await symlink(await readlink(source), target)
@@ -76,18 +94,33 @@ async function assertParentChainSafe(targetRoot: string, relativePath: string): 
   }
 }
 
-async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<void> {
+async function restorePathFromBackup(backupPath: string, target: string): Promise<void> {
+  const staged = `${target}.belay-restore.tmp`
+  try {
+    await copyPathPreservingType(backupPath, staged)
+    await removePathIfExists(target)
+    const { rename } = await import('node:fs/promises')
+    await rename(staged, target)
+  } catch (error) {
+    await removePathIfExists(staged)
+    throw error
+  }
+}
+
+async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<boolean> {
+  let hadFailure = false
   for (const action of [...actions].reverse()) {
     try {
       if (action.type === 'restore') {
-        await copyPathPreservingType(action.backupPath, action.target)
+        await restorePathFromBackup(action.backupPath, action.target)
       } else {
-        await rm(action.target, { force: true })
+        await removePathIfExists(action.target)
       }
     } catch {
-      // best effort
+      hadFailure = true
     }
   }
+  return !hadFailure
 }
 
 async function assertTargetMatches(targetRoot: string, change: ObservedFileChange): Promise<void> {
@@ -119,14 +152,21 @@ function applyRank(change: ObservedFileChange): number {
   return 2
 }
 
+function compareApplyOrder(left: ObservedFileChange, right: ObservedFileChange): number {
+  const leftRank = applyRank(left)
+  const rightRank = applyRank(right)
+  const rankDiff = leftRank - rightRank
+  if (rankDiff !== 0) {
+    return rankDiff
+  }
+  if (leftRank === 4) {
+    return compareRelativePathsBytewise(right.relativePath, left.relativePath)
+  }
+  return compareRelativePathsBytewise(left.relativePath, right.relativePath)
+}
+
 function sortedChanges(changes: ObservedFileChange[]): ObservedFileChange[] {
-  return [...changes].sort((left, right) => {
-    const rankDiff = applyRank(left) - applyRank(right)
-    if (rankDiff !== 0) {
-      return rankDiff
-    }
-    return compareRelativePathsBytewise(left.relativePath, right.relativePath)
-  })
+  return [...changes].sort(compareApplyOrder)
 }
 
 async function applySingleChange(
@@ -210,7 +250,10 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
       // Cleanup/audit failure after a verified apply must not roll back or reject success.
     }
   } catch (error) {
-    await rollbackAppliedChanges(rollbackActions)
+    const rollbackOk = await rollbackAppliedChanges(rollbackActions)
+    if (!rollbackOk) {
+      throw new Error(TRANSACTIONAL_APPLY_ROLLBACK_FAILED)
+    }
     throw error
   } finally {
     await rm(backupRoot, { recursive: true, force: true })

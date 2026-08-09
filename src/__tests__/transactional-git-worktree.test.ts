@@ -62,13 +62,18 @@ describe('transactional git worktree helpers', () => {
     await writeFile(path.join(repoRoot, 'a.txt'), 'original\n')
     await writeFile(path.join(worktreePath, 'a.txt'), 'changed\n')
     await writeFile(path.join(worktreePath, 'b.txt'), 'new\n')
-    await mkdir(path.join(repoRoot, 'b.txt'))
+    await writeFile(path.join(worktreePath, 'c.txt'), 'blocked\n')
+
+    const changes = [
+      { relativePath: 'a.txt', kind: 'modified' as const },
+      { relativePath: 'b.txt', kind: 'added' as const },
+      { relativePath: 'c.txt', kind: 'added' as const },
+    ]
+    const observed = await buildObservedChangesFromTransactional(repoRoot, worktreePath, changes)
+    await rm(path.join(worktreePath, 'c.txt'), { force: true })
 
     await expect(
-      applyWorktreeChanges(worktreePath, repoRoot, [
-        { relativePath: 'a.txt', kind: 'modified' },
-        { relativePath: 'b.txt', kind: 'added' },
-      ]),
+      applyWorktreeChanges(worktreePath, repoRoot, changes, { observedChanges: observed }),
     ).rejects.toThrow()
 
     await expect(readFile(path.join(repoRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')

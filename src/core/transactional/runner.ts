@@ -18,6 +18,7 @@ import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import {
   applyWorktreeChanges,
   resolveWorktreeCwd,
+  TRANSACTIONAL_APPLY_ROLLBACK_FAILED,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from './git-worktree.js'
 import {
@@ -174,6 +175,8 @@ export async function runTransactionalExecution(
           }
         }
         const toctou = error instanceof Error && error.message === TRANSACTIONAL_APPLY_TOCTOU
+        const rollbackFailed =
+          error instanceof Error && error.message === TRANSACTIONAL_APPLY_ROLLBACK_FAILED
         const result: ClassifyResult = {
           ...predicted,
           verdict: 'deny_pending_approval',
@@ -184,7 +187,11 @@ export async function runTransactionalExecution(
             confidence: 1,
             signals: [
               ...observed.assessment.signals,
-              toctou ? 'transactional_apply_toctou' : 'transactional_apply_failed',
+              rollbackFailed
+                ? 'transactional_apply_rollback_failed'
+                : toctou
+                  ? 'transactional_apply_toctou'
+                  : 'transactional_apply_failed',
             ],
           },
         }

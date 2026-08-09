@@ -2,6 +2,7 @@ export {
   applyObservedChanges,
   buildObservedChangesFromTransactional,
   TRANSACTIONAL_APPLY_CONFLICT,
+  TRANSACTIONAL_APPLY_ROLLBACK_FAILED,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from './apply-observed-changes.js'
 export type {

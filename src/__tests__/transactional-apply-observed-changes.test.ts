@@ -44,20 +44,23 @@ describe('apply observed changes', () => {
     tempDirs.push(targetRoot, sourceRoot)
 
     await writeFile(path.join(targetRoot, 'keep.txt'), 'stay\n')
+    await writeFile(path.join(targetRoot, 'a.txt'), 'original\n')
     await writeFile(path.join(sourceRoot, 'a.txt'), 'changed\n')
     await writeFile(path.join(sourceRoot, 'b.txt'), 'new\n')
-    await mkdir(path.join(targetRoot, 'b.txt'))
+    await writeFile(path.join(sourceRoot, 'c.txt'), 'blocked\n')
 
     const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
       { relativePath: 'a.txt', kind: 'modified' },
       { relativePath: 'b.txt', kind: 'added' },
+      { relativePath: 'c.txt', kind: 'added' },
     ])
+    await rm(path.join(sourceRoot, 'c.txt'), { force: true })
 
     await expect(
       applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
     ).rejects.toThrow()
     await expect(readFile(path.join(targetRoot, 'keep.txt'), 'utf8')).resolves.toBe('stay\n')
-    await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).rejects.toThrow()
+    await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
   })
 
   it('fails closed on concurrent target edits before the first write', async () => {
@@ -193,6 +196,30 @@ describe('apply observed changes', () => {
     await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
   })
 
+  it('rolls back added directories when a later apply step fails', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-rollback-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-rollback-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await mkdir(path.join(sourceRoot, 'pkg'), { recursive: true })
+    await writeFile(path.join(sourceRoot, 'pkg', 'file.txt'), 'new\n')
+    await writeFile(path.join(sourceRoot, 'b.txt'), 'blocked\n')
+    await mkdir(path.join(targetRoot, 'b.txt'))
+
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'pkg', kind: 'added' },
+      { relativePath: 'pkg/file.txt', kind: 'added' },
+      { relativePath: 'b.txt', kind: 'added' },
+    ])
+    await rm(path.join(sourceRoot, 'b.txt'), { force: true })
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow()
+    await expect(lstat(path.join(targetRoot, 'pkg'))).rejects.toThrow()
+    await expect(readFile(path.join(targetRoot, 'pkg', 'file.txt'), 'utf8')).rejects.toThrow()
+  })
+
   it('deletes nested directories child-first', async () => {
     const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-'))
     const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-src-'))
@@ -208,5 +235,41 @@ describe('apply observed changes', () => {
 
     await applyObservedChanges({ sourceRoot, targetRoot, changes: observed })
     await expect(lstat(path.join(targetRoot, 'pkg'))).rejects.toThrow()
+  })
+
+  it('deletes nested empty directories deepest-first regardless of input order', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-nested-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-nested-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await mkdir(path.join(targetRoot, 'pkg', 'sub'), { recursive: true })
+
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'pkg', kind: 'deleted' },
+      { relativePath: 'pkg/sub', kind: 'deleted' },
+    ])
+
+    await applyObservedChanges({ sourceRoot, targetRoot, changes: observed })
+    await expect(lstat(path.join(targetRoot, 'pkg'))).rejects.toThrow()
+  })
+
+  it('restores prior files when rollback succeeds after a mid-apply failure', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-rollback-fail-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-rollback-fail-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await writeFile(path.join(targetRoot, 'a.txt'), 'original\n')
+    await writeFile(path.join(sourceRoot, 'a.txt'), 'changed\n')
+    await writeFile(path.join(sourceRoot, 'b.txt'), 'blocked\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'a.txt', kind: 'modified' },
+      { relativePath: 'b.txt', kind: 'added' },
+    ])
+    await rm(path.join(sourceRoot, 'b.txt'), { force: true })
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow()
+    await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
   })
 })
