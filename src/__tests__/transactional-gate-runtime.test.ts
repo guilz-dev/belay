@@ -13,8 +13,9 @@ import {
 import { createApprovalRecord } from '../core/approval.js'
 import { isDockerAvailable } from '../core/capability/boundary-driver-container.js'
 import * as boundarySession from '../core/capability/boundary-session.js'
-import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { DEFAULT_CONFIG_V3, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
 import { RECOVERY_DIRTY_WORKTREE } from '../core/recovery/fail-closed.js'
+import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -78,6 +79,27 @@ function transactionalContainerConfig() {
   }
 }
 
+function transactionalFileCheckpointConfig() {
+  const base = transactionalContainerConfig()
+  return {
+    ...base,
+    policy: {
+      ...base.policy,
+      transactional: {
+        ...base.policy.transactional,
+        fileCheckpoint: {
+          ...base.policy.transactional.fileCheckpoint,
+          enabled: true,
+        },
+        checkpoint: {
+          ...DEFAULT_RECOVERY_CHECKPOINT,
+          enabled: true,
+        },
+      },
+    },
+  }
+}
+
 describe('transactional gate runtime', () => {
   afterEach(async () => {
     vi.restoreAllMocks()
@@ -126,6 +148,31 @@ describe('transactional gate runtime', () => {
 
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe(RECOVERY_DIRTY_WORKTREE)
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('instructs the operator to start a boundary session when isolation is unavailable', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalFileCheckpointConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
+    expect(verdict.user_message).toContain('belay session start')
+    expect(verdict.user_message).not.toContain('Approval ID')
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
   })
 

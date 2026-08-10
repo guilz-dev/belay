@@ -15,6 +15,8 @@ export interface BoundaryAttestation {
   deniesUngrantedEffects: boolean
   materializesGrants: boolean
   probeSignals: string[]
+  /** When true, the driver can mount an execution mirror at the original workspace path. */
+  isolatesWorkspaceMounts?: boolean
 }
 
 const KNOWN_DRIVERS = new Set<BoundaryDriverId>([
@@ -51,6 +53,12 @@ export function validateBoundaryAttestation(value: unknown): value is BoundaryAt
   ) {
     return false
   }
+  if (
+    record.isolatesWorkspaceMounts !== undefined &&
+    typeof record.isolatesWorkspaceMounts !== 'boolean'
+  ) {
+    return false
+  }
   if (record.driver === 'host-integration' && record.materializesGrants) {
     return false
   }
@@ -76,4 +84,10 @@ export function isAttestationFresh(attestation: BoundaryAttestation, now = Date.
     return true
   }
   return attestation.deniesUngrantedEffects
+}
+
+export function attestsWorkspaceMountIsolation(
+  attestation: BoundaryAttestation | null | undefined,
+): boolean {
+  return attestation?.isolatesWorkspaceMounts === true
 }

@@ -32,6 +32,9 @@ export interface ResolvedBoundaryDriverContext {
   proxyActive: boolean
   proxyEnv: Record<string, string>
   prepareContext: BoundaryPrepareContext
+  attestationPath: string
+  attestation: BoundaryAttestation | null
+  attestationFresh: boolean
 }
 
 export function boundaryAttestationPath(repoRoot: string, config: BelayConfigV4): string {
@@ -89,6 +92,9 @@ export function hostIntegrationBoundaryContext(repoRoot: string): ResolvedBounda
       egressProxyActive: false,
       proxyEnv: {},
     },
+    attestationPath: '',
+    attestation: null,
+    attestationFresh: false,
   }
 }
 
@@ -118,6 +124,12 @@ export async function resolveBoundaryDriverContext(params: {
     egressProxyEnv: proxyEnv,
     repoRoot: params.repoRoot,
   })
+  const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
+  const attestation = await loadBoundaryAttestation(
+    attestationPath,
+    params.repoRoot,
+    configuredControlPlaneDir(params.config),
+  )
   return {
     driver,
     driverId,
@@ -128,6 +140,9 @@ export async function resolveBoundaryDriverContext(params: {
       egressProxyActive: proxyActive,
       proxyEnv,
     },
+    attestationPath,
+    attestation,
+    attestationFresh: attestation ? isAttestationFresh(attestation) : false,
   }
 }
 

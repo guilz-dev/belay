@@ -7,10 +7,12 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
+import type { BoundaryAttestation, BoundaryDriverId } from '../core/capability/attestation.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
+  FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
   FILE_CHECKPOINT_NOT_IMPLEMENTED,
   probeTransactionalBackends,
@@ -38,6 +40,9 @@ function backendContext(
     fileCheckpoint?: Partial<typeof DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint>
     durableCheckpointEnabled?: boolean
     dirtyIgnoreRoots?: string[]
+    boundaryAttestation?: BoundaryAttestation | null
+    boundaryAttestationFresh?: boolean
+    boundaryDriverId?: BoundaryDriverId
   },
 ) {
   return {
@@ -50,6 +55,25 @@ function backendContext(
       ...overrides?.fileCheckpoint,
     },
     durableCheckpointEnabled: overrides?.durableCheckpointEnabled ?? false,
+    boundaryAttestation: overrides?.boundaryAttestation ?? null,
+    boundaryAttestationFresh: overrides?.boundaryAttestationFresh ?? false,
+    boundaryDriverId: overrides?.boundaryDriverId,
+  }
+}
+
+function containerIsolationAttestation(
+  overrides?: Partial<BoundaryAttestation>,
+): BoundaryAttestation {
+  return {
+    version: 1,
+    driver: 'container',
+    probedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    deniesUngrantedEffects: true,
+    materializesGrants: true,
+    isolatesWorkspaceMounts: true,
+    probeSignals: ['docker', 'workspace-mount-isolation'],
+    ...overrides,
   }
 }
 
@@ -103,6 +127,9 @@ describe('transactional backend selector', () => {
       backendContext(repoRoot, {
         fileCheckpoint: { enabled: true },
         durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'container',
       }),
     )
 
@@ -110,6 +137,66 @@ describe('transactional backend selector', () => {
     expect(selection.skipReason).toBe('dirty_worktree')
     expect(selection.probe.reason).toBe(FILE_CHECKPOINT_NOT_IMPLEMENTED)
     expect(selection.probe.signals).toContain('not_implemented')
+  })
+
+  it('requires attested workspace isolation before file checkpoint on dirty Git', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: {
+          version: 1,
+          driver: 'host-integration',
+          probedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          deniesUngrantedEffects: false,
+          materializesGrants: false,
+          isolatesWorkspaceMounts: false,
+          probeSignals: ['host-integration'],
+        },
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'host-integration',
+      }),
+    )
+
+    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
+    expect(selection.probe.signals).toContain('isolation_unavailable')
+  })
+
+  it('rejects attestation when driver id does not match resolved boundary driver', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'host-integration',
+      }),
+    )
+
+    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
+  })
+
+  it('rejects stale boundary attestations for file checkpoint', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: false,
+      }),
+    )
+
+    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
   })
 
   it('fail-closes non-Git workspaces when file checkpoint is disabled', async () => {

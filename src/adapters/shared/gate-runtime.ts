@@ -107,6 +107,7 @@ import {
   standingAllowFile,
 } from '../../core/standing-allow.js'
 import {
+  FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   isTransactionalEligible,
   runTransactionalExecution,
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -653,9 +654,11 @@ export async function evaluateGatedAction(
       }
     } else {
       const skipReason = txResult.skipReason ?? 'recovery_observation_failed'
-      result = recoveryFailClosedResult(predicted, recoveryFailReasonFromSkip(skipReason), [
-        skipReason,
-      ])
+      const failReason =
+        skipReason === FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
+          ? FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
+          : recoveryFailReasonFromSkip(skipReason)
+      result = recoveryFailClosedResult(predicted, failReason, [skipReason])
       transactionalLayer = {
         transactional: false,
         transactionalSkipReason: skipReason,
@@ -1099,6 +1102,28 @@ async function gateDecisionToVerdict(
       wouldBlock: true,
       user_message: denyMessages.user_message,
       agent_message: denyMessages.agent_message,
+    })
+  }
+
+  if (result.reason === FILE_CHECKPOINT_ISOLATION_UNAVAILABLE) {
+    const userMessage =
+      'Belay cannot run file_checkpoint because attested workspace isolation is unavailable. Run `belay session start`, then retry.'
+    const agentMessage =
+      'Belay denied this action because file_checkpoint lacks a fresh matching workspace-isolation attestation. Ask the operator to run `belay session start`, then retry the exact action.'
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: true,
+      permission: 'deny',
+    })
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      user_message: userMessage,
+      agent_message: agentMessage,
     })
   }
 

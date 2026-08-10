@@ -39,15 +39,20 @@ export async function runTransactionalExecution(
     dirtyIgnoreRoots: params.dirtyIgnoreRoots,
     fileCheckpoint: params.fileCheckpoint,
     durableCheckpointEnabled: params.checkpoint?.enabled === true,
+    boundaryAttestation: params.boundaryContext?.attestation ?? null,
+    boundaryAttestationFresh: params.boundaryContext?.attestationFresh ?? false,
+    boundaryDriverId: params.boundaryContext?.driverId,
   }
 
   const selection = await selectTransactionalBackend(backendContext)
   if (!selection.backend) {
+    const skipReason = params.fileCheckpoint.enabled
+      ? (selection.probe.reason ?? selection.skipReason)
+      : (selection.skipReason ?? selection.probe.reason)
     return {
       ok: false,
       skipped: true,
-      skipReason:
-        selection.skipReason ?? selection.probe.reason ?? 'transactional_execution_failed',
+      skipReason: skipReason ?? 'transactional_execution_failed',
       predicted,
       result: predicted,
     }

@@ -7,7 +7,10 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
-import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import type { BoundaryAttestation, BoundaryDriverId } from '../core/capability/attestation.js'
+import { hostIntegrationBoundaryContext } from '../core/capability/boundary-session.js'
+import { DEFAULT_CONFIG_V3, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
+import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
 import * as gitWorktree from '../core/transactional/git-worktree.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -33,6 +36,19 @@ async function createGitRepo(): Promise<string> {
 
 function cursorDirtyIgnoreRoots(repoRoot: string): string[] {
   return protectedArtifactRoots(cursorAdapter.layout, repoRoot, null)
+}
+
+function containerIsolationAttestation(): BoundaryAttestation {
+  return {
+    version: 1,
+    driver: 'container',
+    probedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    deniesUngrantedEffects: true,
+    materializesGrants: true,
+    isolatesWorkspaceMounts: true,
+    probeSignals: ['docker', 'workspace-mount-isolation'],
+  }
 }
 
 function runnerParams(input: {
@@ -137,6 +153,46 @@ describe('transactional runner', () => {
 
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe('dirty_worktree')
+    await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it.each([
+    ['missing or tampered', null, false, 'container' as const],
+    ['stale', containerIsolationAttestation(), false, 'container' as const],
+    ['driver-mismatched', containerIsolationAttestation(), true, 'host-integration' as const],
+  ])('surfaces unavailable isolation for %s boundary attestation', async (_case, attestation, attestationFresh, driverId: BoundaryDriverId) => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    const params = runnerParams({
+      command: 'touch safe.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+    })
+    const boundaryContext = {
+      ...hostIntegrationBoundaryContext(repoRoot),
+      driverId,
+      attestation,
+      attestationFresh,
+    }
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: {
+        ...DEFAULT_RECOVERY_CHECKPOINT,
+        enabled: true,
+      },
+      boundaryContext,
+    })
+
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
   })
 
