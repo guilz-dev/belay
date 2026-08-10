@@ -33,6 +33,9 @@ export interface TransactionalExecutionResult {
   observed?: TransactionalDiffEvaluation
   result: ClassifyResult
   worktreePath?: string
+  transactionalBackend?: 'git_worktree' | 'file_checkpoint'
+  transactionalBaselineTreeHash?: string
+  transactionalCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
   commandExitCode?: number | null
   commandSignal?: string | null
   timedOut?: boolean

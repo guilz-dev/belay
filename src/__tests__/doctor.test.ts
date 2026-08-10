@@ -143,4 +143,42 @@ describe('doctorProject', () => {
     ).toBe(true)
     expect(report.notes.some((note) => note.includes('Recovery restore flow'))).toBe(true)
   })
+
+  it('diagnoses incomplete file-checkpoint prerequisites and clone support', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-file-checkpoint-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        policy: {
+          ...config.policy,
+          transactional: {
+            ...config.policy?.transactional,
+            enabled: true,
+            fileCheckpoint: {
+              ...config.policy?.transactional?.fileCheckpoint,
+              enabled: true,
+            },
+            checkpoint: { enabled: false },
+          },
+        },
+      })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(report.notes.some((note) => note.includes('File checkpoint: enabled'))).toBe(true)
+    expect(report.notes.some((note) => note.includes('copyStrategy='))).toBe(true)
+    expect(
+      report.warnings.some((warning) =>
+        warning.includes('durable Recovery checkpointing is disabled'),
+      ),
+    ).toBe(true)
+    expect(
+      report.warnings.some((warning) => warning.includes('workspace-isolating boundary driver')),
+    ).toBe(true)
+  })
 })

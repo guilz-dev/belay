@@ -22,6 +22,8 @@ export interface TransactionalSnapshot {
   copyStrategy?: 'clonefile' | 'reflink' | 'copy'
   /** Relative cwd inside resourceRoot for isolated workspace mounts. */
   executionCwdRelative?: string
+  /** Revalidates the source tree and metadata immediately before apply. */
+  validateSourceState?(): Promise<void>
   collectChanges(): Promise<TransactionalFileChange[]>
   cleanup(): Promise<void>
 }

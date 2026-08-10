@@ -91,10 +91,11 @@ export async function copyGitIndexState(
     return
   }
   const sourceShared = await resolveGitPath(sourceRoot, sharedIndex)
-  const destinationShared = await resolveGitPath(destinationRoot, sharedIndex)
-  if (canonicalPath(sourceShared) === canonicalPath(sourceIndex)) {
-    return
-  }
+  const destinationGitDir = await resolveGitPath(
+    destinationRoot,
+    await execGit(destinationRoot, ['rev-parse', '--git-dir']),
+  )
+  const destinationShared = path.join(destinationGitDir, path.basename(sourceShared))
   try {
     await copyFile(sourceShared, destinationShared)
   } catch (error) {
@@ -102,9 +103,9 @@ export async function copyGitIndexState(
   }
 }
 
-async function readGitFile(gitDir: string, relativePath: string): Promise<string | null> {
+async function readGitFile(gitDir: string, relativePath: string): Promise<Buffer | null> {
   try {
-    return await readFile(path.join(gitDir, relativePath), 'utf8')
+    return await readFile(path.join(gitDir, relativePath))
   } catch {
     return null
   }

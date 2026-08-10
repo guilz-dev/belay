@@ -24,6 +24,9 @@ export interface AuditRecord {
   predictedAssessment?: Assessment
   observedAssessment?: Assessment
   transactional?: boolean
+  transactionalBackend?: 'git_worktree' | 'file_checkpoint'
+  transactionalBaselineTreeHash?: string
+  transactionalCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
   transactionalReason?: string
   transactionalCategories?: string[]
   transactionalChangeCount?: number

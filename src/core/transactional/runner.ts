@@ -76,6 +76,11 @@ export async function runTransactionalExecution(
   let snapshot: Awaited<ReturnType<typeof selection.backend.prepare>> | null = null
   try {
     snapshot = await selection.backend.prepare(backendContext)
+    const snapshotAudit = {
+      transactionalBackend: snapshot.backend,
+      transactionalBaselineTreeHash: snapshot.baselineTreeHash,
+      ...(snapshot.copyStrategy ? { transactionalCopyStrategy: snapshot.copyStrategy } : {}),
+    }
     const runOptions =
       snapshot.backend === 'file_checkpoint' && snapshot.executionCwdRelative !== undefined
         ? {
@@ -112,6 +117,7 @@ export async function runTransactionalExecution(
         skipReason: 'transactional_timed_out',
         predicted,
         result: predicted,
+        ...snapshotAudit,
         commandExitCode: shellResult.exitCode,
         commandSignal: shellResult.signal,
         timedOut: true,
@@ -125,6 +131,7 @@ export async function runTransactionalExecution(
         skipReason: 'transactional_command_failed',
         predicted,
         result: predicted,
+        ...snapshotAudit,
         commandExitCode: shellResult.exitCode,
         commandSignal: shellResult.signal,
       }
@@ -134,8 +141,9 @@ export async function runTransactionalExecution(
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
     if (observed.verdict === 'allow') {
+      await snapshot.validateSourceState?.()
       const observedChanges = await buildObservedChangesFromTransactional(
-        repoRoot,
+        snapshot.baselineRoot ?? repoRoot,
         snapshot.executionRoot,
         changes,
       )
@@ -178,6 +186,7 @@ export async function runTransactionalExecution(
           observed,
           result,
           worktreePath: snapshot.executionRoot,
+          ...snapshotAudit,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
@@ -224,6 +233,7 @@ export async function runTransactionalExecution(
           observed,
           result,
           worktreePath: snapshot.executionRoot,
+          ...snapshotAudit,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
@@ -244,6 +254,7 @@ export async function runTransactionalExecution(
       observed,
       result,
       worktreePath: snapshot.executionRoot,
+      ...snapshotAudit,
       commandExitCode: shellResult.exitCode,
       commandSignal: shellResult.signal,
       timedOut: shellResult.timedOut,
@@ -255,10 +266,21 @@ export async function runTransactionalExecution(
       skipReason: error instanceof Error ? error.message : 'transactional_execution_failed',
       predicted,
       result: predicted,
+      ...(snapshot
+        ? {
+            transactionalBackend: snapshot.backend,
+            transactionalBaselineTreeHash: snapshot.baselineTreeHash,
+            ...(snapshot.copyStrategy ? { transactionalCopyStrategy: snapshot.copyStrategy } : {}),
+          }
+        : {}),
     }
   } finally {
     if (snapshot) {
-      await snapshot.cleanup()
+      try {
+        await snapshot.cleanup()
+      } catch {
+        // Cleanup is best effort and must not overturn a verified apply or observed-risk result.
+      }
     }
   }
 }

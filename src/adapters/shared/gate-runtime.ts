@@ -639,6 +639,9 @@ export async function evaluateGatedAction(
       observedAssessment = txResult.observed.assessment
       transactionalLayer = {
         transactional: true,
+        transactionalBackend: txResult.transactionalBackend,
+        transactionalBaselineTreeHash: txResult.transactionalBaselineTreeHash,
+        transactionalCopyStrategy: txResult.transactionalCopyStrategy,
         transactionalReason: txResult.observed.reason,
         transactionalCategories: txResult.observed.categories,
         transactionalChangeCount: txResult.observed.changes.length,
@@ -661,6 +664,9 @@ export async function evaluateGatedAction(
       result = recoveryFailClosedResult(predicted, failReason, [skipReason])
       transactionalLayer = {
         transactional: false,
+        transactionalBackend: txResult.transactionalBackend,
+        transactionalBaselineTreeHash: txResult.transactionalBaselineTreeHash,
+        transactionalCopyStrategy: txResult.transactionalCopyStrategy,
         transactionalSkipReason: skipReason,
         recoveryFailClosed: true,
       }

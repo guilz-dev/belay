@@ -11,6 +11,7 @@ import type { BoundaryAttestation, BoundaryDriverId } from '../core/capability/a
 import * as boundaryRun from '../core/capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
+import { restoreRecoveryCheckpoint } from '../core/recovery/checkpoint.js'
 import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
 import * as gitWorktree from '../core/transactional/git-worktree.js'
 import { runShellCommand } from '../core/transactional/git-worktree.js'
@@ -314,8 +315,141 @@ describe('transactional runner', () => {
     expect(result.ok).toBe(true)
     expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     expect(result.recoveryBackend).toBe('file_checkpoint')
+    expect(result.transactionalBackend).toBe('file_checkpoint')
+    expect(result.transactionalBaselineTreeHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(['clonefile', 'reflink', 'copy']).toContain(result.transactionalCopyStrategy)
     await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).resolves.toBeDefined()
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('# dirty\n')
+  })
+
+  it('restores an already-dirty file to its pre-command bytes', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
+    const predicted = await classifyShellCore('printf changed > README.md', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      const hostCwd = mount ? path.join(mount.hostSourceRoot, mount.cwdRelative) : params.cwd
+      return runShellCommand(params.command, hostCwd, params.timeoutMs)
+    })
+    const params = runnerParams({
+      command: 'printf changed > README.md',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+    })
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(repoRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.recoveryBackend).toBe('file_checkpoint')
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('changed')
+    await restoreRecoveryCheckpoint(stateDir, result.recoveryCheckpointId ?? '')
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
+      '# dirty baseline\n',
+    )
+  })
+
+  it('discards risky dirty-git diffs without mutating the real workspace', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
+    const predicted = await classifyShellCore('rm README.md', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      return runShellCommand(
+        params.command,
+        mount ? mount.hostSourceRoot : params.cwd,
+        params.timeoutMs,
+      )
+    })
+    const params = runnerParams({
+      command: 'rm README.md',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      maxDeletionCount: 0,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+    })
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(repoRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.result.reason).toBe('transactional_observed_risk')
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
+      '# dirty baseline\n',
+    )
+  })
+
+  it('fails closed when the dirty source changes between execution and apply', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
+    const predicted = await classifyShellCore('touch safe-dirty.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      const result = await runShellCommand(
+        params.command,
+        mount ? mount.hostSourceRoot : params.cwd,
+        params.timeoutMs,
+      )
+      await writeFile(path.join(repoRoot, 'README.md'), '# concurrent source edit\n')
+      return result
+    })
+    const params = runnerParams({
+      command: 'touch safe-dirty.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+    })
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(repoRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe('file_checkpoint_baseline_mismatch')
+    await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).rejects.toThrow()
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
+      '# concurrent source edit\n',
+    )
   })
 
   it('ignores untracked belay init artifacts when dirtyIgnoreRoots is provided', async () => {

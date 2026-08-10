@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -44,7 +44,10 @@ function containerIsolationAttestation(): BoundaryAttestation {
   }
 }
 
-function backendContext(repoRoot: string) {
+function backendContext(
+  repoRoot: string,
+  fileCheckpointOverrides?: Partial<typeof DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint>,
+) {
   return {
     repoRoot,
     stateDir: path.join(repoRoot, '.cursor', 'belay', 'transactional'),
@@ -53,6 +56,7 @@ function backendContext(repoRoot: string) {
     fileCheckpoint: {
       ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
       enabled: true,
+      ...fileCheckpointOverrides,
     },
     durableCheckpointEnabled: true,
     boundaryAttestation: containerIsolationAttestation(),
@@ -66,11 +70,24 @@ afterEach(async () => {
 })
 
 describe('file checkpoint backend', () => {
-  it('prepares dirty Git mirrors with staged and unstaged baseline state', async () => {
+  it('preserves all supported dirty Git baseline node states', async () => {
     const repoRoot = await createGitRepo()
-    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
-    await writeFile(path.join(repoRoot, 'untracked.txt'), 'new\n')
+    await writeFile(path.join(repoRoot, '.gitignore'), '*.ignored\n')
+    await writeFile(path.join(repoRoot, 'deleted.txt'), 'delete me\n')
+    await writeFile(path.join(repoRoot, 'executable.sh'), '#!/bin/sh\n', { mode: 0o644 })
+    await symlink('README.md', path.join(repoRoot, 'current-link'))
+    await execFileAsync('git', ['add', '.'], { cwd: repoRoot })
+    await execFileAsync('git', ['commit', '-m', 'baseline nodes'], { cwd: repoRoot })
+
+    await writeFile(path.join(repoRoot, 'README.md'), '# staged\n')
     await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# unstaged after staged\n')
+    await rm(path.join(repoRoot, 'deleted.txt'))
+    await writeFile(path.join(repoRoot, 'untracked.txt'), 'new\n')
+    await writeFile(path.join(repoRoot, 'cache.ignored'), 'ignored but required\n')
+    await chmod(path.join(repoRoot, 'executable.sh'), 0o755)
+    await rm(path.join(repoRoot, 'current-link'))
+    await symlink('untracked.txt', path.join(repoRoot, 'current-link'))
 
     const snapshot = await fileCheckpointBackend.prepare(backendContext(repoRoot))
 
@@ -78,8 +95,25 @@ describe('file checkpoint backend', () => {
     expect(snapshot.resourceRoot).toBe(repoRoot)
     expect(snapshot.baselineTreeHash).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.executionCwdRelative).toBe('')
-    expect(await readFile(path.join(snapshot.executionRoot, 'README.md'), 'utf8')).toBe('# dirty\n')
+    expect(await readFile(path.join(snapshot.executionRoot, 'README.md'), 'utf8')).toBe(
+      '# unstaged after staged\n',
+    )
     expect(await readFile(path.join(snapshot.executionRoot, 'untracked.txt'), 'utf8')).toBe('new\n')
+    expect(await readFile(path.join(snapshot.executionRoot, 'cache.ignored'), 'utf8')).toBe(
+      'ignored but required\n',
+    )
+    await expect(lstat(path.join(snapshot.executionRoot, 'deleted.txt'))).rejects.toThrow()
+    expect((await lstat(path.join(snapshot.executionRoot, 'executable.sh'))).mode & 0o777).toBe(
+      0o755,
+    )
+    expect(await readlink(path.join(snapshot.executionRoot, 'current-link'))).toBe('untracked.txt')
+    const sourceStatus = (
+      await execFileAsync('git', ['status', '--porcelain=v1'], { cwd: repoRoot })
+    ).stdout
+    const mirrorStatus = (
+      await execFileAsync('git', ['status', '--porcelain=v1'], { cwd: snapshot.executionRoot })
+    ).stdout
+    expect(mirrorStatus).toBe(sourceStatus)
 
     await snapshot.cleanup()
   })
@@ -136,6 +170,37 @@ describe('file checkpoint backend', () => {
 
     await expect(snapshot.collectChanges()).rejects.toThrow(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
     await snapshot.cleanup()
+  })
+
+  it('rejects source worktree or Git metadata drift before apply', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const snapshot = await fileCheckpointBackend.prepare(backendContext(repoRoot))
+    await writeFile(path.join(repoRoot, 'concurrent.txt'), 'raced\n')
+    await expect(snapshot.validateSourceState?.()).rejects.toThrow(
+      FILE_CHECKPOINT_BASELINE_MISMATCH,
+    )
+    await rm(path.join(repoRoot, 'concurrent.txt'))
+    await execFileAsync('git', ['update-ref', 'refs/heads/concurrent', 'HEAD'], { cwd: repoRoot })
+    await expect(snapshot.validateSourceState?.()).rejects.toThrow(
+      FILE_CHECKPOINT_BASELINE_MISMATCH,
+    )
+
+    await snapshot.cleanup()
+  })
+
+  it('counts Git metadata and both mirrors against the workspace quota', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    await expect(
+      fileCheckpointBackend.prepare(
+        backendContext(repoRoot, {
+          maxWorkspaceBytes: 1_024,
+        }),
+      ),
+    ).rejects.toThrow('file_checkpoint_quota_exceeded')
   })
 
   it('preserves unrelated dirty files when one path changes in the mirror', async () => {

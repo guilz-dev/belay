@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -29,7 +29,13 @@ import {
 } from './file-checkpoint-git.js'
 import { removeDeadOwnerStaging, writeOwnerMarker } from './file-checkpoint-staging.js'
 import { cloneDirectoryTree, probeFileCloneStrategy } from './file-clone.js'
-import { buildFileTreeIndex, diffFileTreeIndices, type FileTreeIndex } from './file-tree.js'
+import {
+  buildFileTreeIndex,
+  diffFileTreeIndices,
+  FILE_CHECKPOINT_PREPARE_TIMEOUT,
+  FILE_CHECKPOINT_QUOTA_EXCEEDED,
+  type FileTreeIndex,
+} from './file-tree.js'
 import { isDirtyWorktree, isGitWorktreeAvailable } from './git-worktree.js'
 import type { TransactionalFileChange } from './types.js'
 
@@ -108,8 +114,24 @@ interface PreparedFileCheckpointState {
   baselineRoot: string
   executionRoot: string
   baselineIndex: FileTreeIndex
+  sourceGitMetadataFingerprint: string
   gitMetadataFingerprint: string
   copyStrategy: 'clonefile' | 'reflink' | 'copy'
+}
+
+async function directoryByteSize(root: string, deadlineMs: number): Promise<number> {
+  if (Date.now() > deadlineMs) {
+    throw new Error(FILE_CHECKPOINT_PREPARE_TIMEOUT)
+  }
+  const info = await lstat(root)
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    return info.size
+  }
+  let total = 0
+  for (const name of await readdir(root)) {
+    total += await directoryByteSize(path.join(root, name), deadlineMs)
+  }
+  return total
 }
 
 async function copyGitMetadataDirectory(
@@ -148,6 +170,7 @@ async function prepareDirtyGitSnapshot(
 
   try {
     resolveExecutionCwdRelative(context.repoRoot, context.cwd)
+    const sourceGitMetadataFingerprint = await computeGitMetadataFingerprint(context.repoRoot)
     await cloneBareWorktreeCopy(context.repoRoot, baselineRoot)
     await removeAllGitRemotes(baselineRoot)
     const baselineCopy = await cloneDirectoryTree(context.repoRoot, baselineRoot, {
@@ -172,6 +195,9 @@ async function prepareDirtyGitSnapshot(
     if (sourceIndex.treeHash !== baselineIndex.treeHash) {
       throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
     }
+    if ((await computeGitMetadataFingerprint(context.repoRoot)) !== sourceGitMetadataFingerprint) {
+      throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
+    }
 
     await writeFile(
       path.join(stagingRoot, 'baseline-index.json'),
@@ -186,12 +212,16 @@ async function prepareDirtyGitSnapshot(
     })
     await copyGitMetadataDirectory(baselineRoot, executionRoot)
     const gitMetadataFingerprint = await computeGitMetadataFingerprint(executionRoot)
+    if ((await directoryByteSize(stagingRoot, deadlineMs)) > quotas.maxWorkspaceBytes) {
+      throw new Error(FILE_CHECKPOINT_QUOTA_EXCEEDED)
+    }
 
     return {
       stagingRoot,
       baselineRoot,
       executionRoot,
       baselineIndex,
+      sourceGitMetadataFingerprint,
       gitMetadataFingerprint,
       copyStrategy:
         executionCopy.strategy === baselineCopy.strategy ? executionCopy.strategy : 'copy',
@@ -238,6 +268,20 @@ export const fileCheckpointBackend: TransactionalBackend = {
       excludedRoots: context.dirtyIgnoreRoots ?? [],
       copyStrategy: prepared.copyStrategy,
       executionCwdRelative,
+      async validateSourceState() {
+        const sourceIndex = await buildFileTreeIndex({
+          resourceRoot: context.repoRoot,
+          excludedRoots: context.dirtyIgnoreRoots ?? [],
+          quotas: context.fileCheckpoint,
+        })
+        if (
+          sourceIndex.treeHash !== prepared.baselineIndex.treeHash ||
+          (await computeGitMetadataFingerprint(context.repoRoot)) !==
+            prepared.sourceGitMetadataFingerprint
+        ) {
+          throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
+        }
+      },
       async collectChanges() {
         const afterFingerprint = await computeGitMetadataFingerprint(prepared.executionRoot)
         if (afterFingerprint !== prepared.gitMetadataFingerprint) {

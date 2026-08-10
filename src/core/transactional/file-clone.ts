@@ -1,5 +1,15 @@
 import { constants as fsConstants } from 'node:fs'
-import { copyFile, lstat, mkdir, readlink, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -122,8 +132,7 @@ export async function cloneDirectoryTree(
 }
 
 export async function probeFileCloneStrategy(): Promise<FileCloneStrategy> {
-  const tempDir = path.join(os.tmpdir(), `belay-clone-probe-${process.pid}`)
-  await mkdir(tempDir, { recursive: true })
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'belay-clone-probe-'))
   const source = path.join(tempDir, 'source.txt')
   const destination = path.join(tempDir, 'dest.txt')
   try {
