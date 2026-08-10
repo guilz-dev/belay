@@ -19,6 +19,9 @@ export function validateWorkspaceMount(mount: BoundaryWorkspaceMount): void {
   if (hostSourceRoot.includes(',') || guestTargetRoot.includes(',')) {
     throw new Error('boundary_workspace_mount_invalid_root')
   }
+  if (hostSourceRoot === guestTargetRoot) {
+    throw new Error('boundary_workspace_mount_source_equals_target')
+  }
   if (mount.cwdRelative.includes('\0')) {
     throw new Error('boundary_workspace_mount_invalid_cwd')
   }
@@ -39,7 +42,7 @@ export function resolveGuestWorkdir(mount: BoundaryWorkspaceMount): string {
     return guestTargetRoot
   }
   const segments = normalizedRelative.split('/').filter(Boolean)
-  return path.join(guestTargetRoot, ...segments)
+  return path.posix.join(guestTargetRoot, ...segments)
 }
 
 export function buildWorkspaceMountSpec(mount: BoundaryWorkspaceMount): string {

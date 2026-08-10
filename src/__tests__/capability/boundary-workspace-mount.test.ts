@@ -51,6 +51,17 @@ describe('boundary workspace mount helpers', () => {
     )
   })
 
+  it('rejects mount when host source and guest target are the same path', () => {
+    expect(() =>
+      validateWorkspaceMount(
+        mount({
+          hostSourceRoot: '/workspace/project',
+          guestTargetRoot: '/workspace/project',
+        }),
+      ),
+    ).toThrow('boundary_workspace_mount_source_equals_target')
+  })
+
   it('sanitizes host-path environment variables when hideHostSourcePath is true', () => {
     const env = finalDockerEnv(workspaceMountEnvArgs(mount()))
     expect(env.PWD).toBe('/workspace/project')
