@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
-import type { BoundaryAttestation } from '../core/capability/attestation.js'
+import type { BoundaryAttestation, BoundaryDriverId } from '../core/capability/attestation.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import {
   FILE_CHECKPOINT_DISABLED,
@@ -42,6 +42,7 @@ function backendContext(
     dirtyIgnoreRoots?: string[]
     boundaryAttestation?: BoundaryAttestation | null
     boundaryAttestationFresh?: boolean
+    boundaryDriverId?: BoundaryDriverId
   },
 ) {
   return {
@@ -56,6 +57,7 @@ function backendContext(
     durableCheckpointEnabled: overrides?.durableCheckpointEnabled ?? false,
     boundaryAttestation: overrides?.boundaryAttestation ?? null,
     boundaryAttestationFresh: overrides?.boundaryAttestationFresh ?? false,
+    boundaryDriverId: overrides?.boundaryDriverId,
   }
 }
 
@@ -127,6 +129,7 @@ describe('transactional backend selector', () => {
         durableCheckpointEnabled: true,
         boundaryAttestation: containerIsolationAttestation(),
         boundaryAttestationFresh: true,
+        boundaryDriverId: 'container',
       }),
     )
 
@@ -155,11 +158,29 @@ describe('transactional backend selector', () => {
           probeSignals: ['host-integration'],
         },
         boundaryAttestationFresh: true,
+        boundaryDriverId: 'host-integration',
       }),
     )
 
     expect(selection.probe.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
     expect(selection.probe.signals).toContain('isolation_unavailable')
+  })
+
+  it('rejects attestation when driver id does not match resolved boundary driver', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'host-integration',
+      }),
+    )
+
+    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_ISOLATION_UNAVAILABLE)
   })
 
   it('rejects stale boundary attestations for file checkpoint', async () => {

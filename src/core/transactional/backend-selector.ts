@@ -25,7 +25,11 @@ function fileCheckpointProbe(reason: string, signals: string[]): TransactionalBa
 function fileCheckpointIsolationReason(context: TransactionalBackendContext): string | null {
   const attestation = context.boundaryAttestation
   const fresh = context.boundaryAttestationFresh === true
-  if (!attestation || !fresh) {
+  const driverId = context.boundaryDriverId
+  if (!attestation || !fresh || !driverId) {
+    return FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
+  }
+  if (attestation.driver !== driverId) {
     return FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
   }
   if (!attestsWorkspaceMountIsolation(attestation)) {

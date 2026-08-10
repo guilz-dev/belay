@@ -1,4 +1,4 @@
-import type { BoundaryAttestation } from '../capability/attestation.js'
+import type { BoundaryAttestation, BoundaryDriverId } from '../capability/attestation.js'
 import type { BelayFileCheckpointConfig } from '../config.js'
 import type { TransactionalFileChange } from './types.js'
 
@@ -35,6 +35,8 @@ export interface TransactionalBackendContext {
   /** Verified boundary attestation for file_checkpoint isolation checks. */
   boundaryAttestation?: BoundaryAttestation | null
   boundaryAttestationFresh?: boolean
+  /** Resolved boundary driver; attestation must match this id for file_checkpoint. */
+  boundaryDriverId?: BoundaryDriverId
 }
 
 export interface TransactionalBackend {

@@ -4,8 +4,6 @@ import { canonicalPath } from '../path-utils.js'
 import type { BoundaryWorkspaceMount } from './boundary-run.js'
 
 const HOST_PATH_ENV_VARS = [
-  'PWD',
-  'OLDPWD',
   'BELAY_EGRESS_REPO_ROOT',
   'BELAY_JUDGE_BROKER_REPO_ROOT',
   'BELAY_JUDGE_BROKER_STATE_DIR',
@@ -54,18 +52,26 @@ export function buildWorkspaceMountSpec(mount: BoundaryWorkspaceMount): string {
 
 export function workspaceMountEnvArgs(mount: BoundaryWorkspaceMount): string[] {
   const workdir = resolveGuestWorkdir(mount)
-  const args = ['-e', `PWD=${workdir}`]
   if (!mount.hideHostSourcePath) {
-    return args
+    return ['-e', `PWD=${workdir}`]
   }
+
+  const guestTargetRoot = canonicalPath(mount.guestTargetRoot)
   const hostSourceRoot = canonicalPath(mount.hostSourceRoot)
+  const args: string[] = []
   for (const key of HOST_PATH_ENV_VARS) {
     args.push('-e', `${key}=`)
   }
-  args.push('-e', `OLDPWD=${workdir}`)
-  args.push('-e', `BELAY_REPO_ROOT=${canonicalPath(mount.guestTargetRoot)}`)
-  if (hostSourceRoot !== canonicalPath(mount.guestTargetRoot)) {
-    args.push('-e', `BELAY_EGRESS_REPO_ROOT=${canonicalPath(mount.guestTargetRoot)}`)
+  args.push(
+    '-e',
+    `PWD=${workdir}`,
+    '-e',
+    `OLDPWD=${workdir}`,
+    '-e',
+    `BELAY_REPO_ROOT=${guestTargetRoot}`,
+  )
+  if (hostSourceRoot !== guestTargetRoot) {
+    args.push('-e', `BELAY_EGRESS_REPO_ROOT=${guestTargetRoot}`)
   }
   return args
 }

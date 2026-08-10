@@ -41,6 +41,7 @@ export async function runTransactionalExecution(
     durableCheckpointEnabled: params.checkpoint?.enabled === true,
     boundaryAttestation: params.boundaryContext?.attestation ?? null,
     boundaryAttestationFresh: params.boundaryContext?.attestationFresh ?? false,
+    boundaryDriverId: params.boundaryContext?.driverId,
   }
 
   const selection = await selectTransactionalBackend(backendContext)

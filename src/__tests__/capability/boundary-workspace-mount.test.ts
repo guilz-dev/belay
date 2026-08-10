@@ -18,6 +18,19 @@ function mount(overrides?: Partial<BoundaryWorkspaceMount>): BoundaryWorkspaceMo
   }
 }
 
+function finalDockerEnv(args: string[]): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '-e' && args[index + 1]) {
+      const [key, ...rest] = args[index + 1].split('=')
+      if (key) {
+        env[key] = rest.join('=')
+      }
+    }
+  }
+  return env
+}
+
 describe('boundary workspace mount helpers', () => {
   it('builds a bind mount spec for the execution mirror', () => {
     expect(buildWorkspaceMountSpec(mount())).toBe(
@@ -39,12 +52,11 @@ describe('boundary workspace mount helpers', () => {
   })
 
   it('sanitizes host-path environment variables when hideHostSourcePath is true', () => {
-    const args = workspaceMountEnvArgs(mount())
-    expect(args).toContain('-e')
-    expect(args).toContain('PWD=/workspace/project')
-    expect(args).toContain('OLDPWD=/workspace/project')
-    expect(args).toContain('BELAY_EGRESS_REPO_ROOT=/workspace/project')
-    expect(args).toContain('BELAY_REPO_ROOT=/workspace/project')
-    expect(args).toContain('BELAY_JUDGE_BROKER_REPO_ROOT=')
+    const env = finalDockerEnv(workspaceMountEnvArgs(mount()))
+    expect(env.PWD).toBe('/workspace/project')
+    expect(env.OLDPWD).toBe('/workspace/project')
+    expect(env.BELAY_EGRESS_REPO_ROOT).toBe('/workspace/project')
+    expect(env.BELAY_REPO_ROOT).toBe('/workspace/project')
+    expect(env.BELAY_JUDGE_BROKER_REPO_ROOT).toBe('')
   })
 })
