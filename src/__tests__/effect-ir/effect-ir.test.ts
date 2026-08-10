@@ -6,6 +6,7 @@ import { combinePolicyDecisions } from '../../core/capability/policy-engine.js'
 import {
   buildEffectPlan,
   collectRequirements,
+  effectPlanAuditFields,
   hashEffectPlan,
   mergeRequirements,
   peelPackageExecArgv,
@@ -37,7 +38,7 @@ describe('effect-ir', () => {
           action: 'process.exec',
           resource: { kind: 'executable', command: 'tsc' },
           evidence: { level: 'possible', signals: ['a'], basis: [] },
-          provenance: {},
+          provenance: { segment: 'first' },
         },
       ],
       [
@@ -46,12 +47,13 @@ describe('effect-ir', () => {
           action: 'process.exec',
           resource: { kind: 'executable', command: 'tsc' },
           evidence: { level: 'certain', signals: ['b'], basis: [] },
-          provenance: {},
+          provenance: { segment: 'second' },
         },
       ],
     )
     expect(merged).toHaveLength(1)
     expect(merged[0]?.evidence.level).toBe('certain')
+    expect(merged[0]?.provenances).toHaveLength(2)
   })
 
   it('resolves local bin without network acquire requirement', async () => {
@@ -141,6 +143,36 @@ describe('effect-ir', () => {
     expect(policy.authorizationDecision.reason).toBe('external_effect')
   })
 
+  it('targets the actual host for an explicit package URL and preserves inner argv', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npx', 'https://packages.example/tool.tgz', '--label=a b'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npx-url',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+
+    const requirements = collectRequirements(plan.root)
+    expect(requirements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'network.connect',
+          resource: expect.objectContaining({ kind: 'network', host: 'packages.example' }),
+        }),
+      ]),
+    )
+    const processExec = requirements.find((entry) => entry.action === 'process.exec')
+    expect(processExec?.provenance.innerArgv).toEqual([
+      'https://packages.example/tool.tgz',
+      '--label=a b',
+    ])
+    expect(JSON.stringify(effectPlanAuditFields(plan))).not.toContain('--label=a b')
+  })
+
   it('combines policy decisions with deny over allow', () => {
     const combined = combinePolicyDecisions([
       { outcome: 'allow', reason: 'read_only', signals: [], matchedRule: 'a' },
@@ -177,5 +209,6 @@ describe('effect-ir', () => {
       root: { ...plan.root, children: [...plan.root.children].reverse() },
     }
     expect(hashEffectPlan(reordered)).toBe(hashEffectPlan(plan))
+    expect(hashEffectPlan({ ...plan, completeness: 'partial' })).not.toBe(hashEffectPlan(plan))
   })
 })

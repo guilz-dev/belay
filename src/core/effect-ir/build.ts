@@ -24,6 +24,14 @@ export interface BuildEffectPlanParams {
   innerRequirements?: readonly EffectRequirement[]
 }
 
+export interface BuildCapabilityEffectPlanParams {
+  actionKind: 'shell' | 'tool' | 'subagent'
+  summary: string
+  inputFingerprint: string
+  requests: readonly CapabilityRequestV1[]
+  effectFree: boolean
+}
+
 export function buildPackageExecEffectNode(params: BuildEffectPlanParams): EffectNode | null {
   const peel = peelPackageExecArgv(params.tokens)
   if (!peel) {
@@ -118,6 +126,7 @@ function delegateExecNode(
               launcher: peel.launcher,
               phase: 'delegate',
               innerCommand: innerRecipe,
+              innerArgv: [...peel.innerTokens],
             },
           },
         ],
@@ -144,6 +153,7 @@ function acquireRequirement(
   peel: PackageExecPeelResult,
   level: 'possible' | 'indeterminate',
 ): LauncherEffectNode {
+  const explicitSource = explicitPackageSource(peel.innerTokens[0] ?? '')
   return {
     kind: 'launcher',
     launcher: peel.launcher,
@@ -162,7 +172,11 @@ function acquireRequirement(
             resource:
               level === 'indeterminate'
                 ? { kind: 'unknown' }
-                : { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' },
+                : explicitSource ?? {
+                    kind: 'network',
+                    host: 'registry.npmjs.org',
+                    protocol: 'registry',
+                  },
             evidence: {
               level,
               signals: [...peel.signals, 'package_acquire_possible'],
@@ -174,6 +188,32 @@ function acquireRequirement(
         ],
       },
     ],
+  }
+}
+
+function explicitPackageSource(
+  spec: string,
+): Extract<EffectRequirement['resource'], { kind: 'network' }> | null {
+  const normalized = spec.startsWith('git+') ? spec.slice(4) : spec
+  if (normalized.startsWith('github:')) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if (normalized.startsWith('gitlab:')) {
+    return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
+  }
+  try {
+    const url = new URL(normalized)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null
+    }
+    return {
+      kind: 'network',
+      host: url.hostname,
+      ...(url.port ? { port: Number(url.port) } : {}),
+      protocol: url.protocol.slice(0, -1),
+    }
+  } catch {
+    return null
   }
 }
 
@@ -211,7 +251,61 @@ export function buildEffectPlan(params: BuildEffectPlanParams): EffectPlan | nul
     root,
     inputFingerprint: params.inputFingerprint,
     opacity,
+    disposition: requirements.length > 0 ? 'effects' : 'effect_free',
+    completeness: opacity === 'recursive' ? 'complete' : 'partial',
     signals,
+  }
+}
+
+function effectTagForAction(action: CapabilityRequestV1['action']): EffectRequirement['tag'] {
+  return action === 'indeterminate' ? 'indeterminate' : action
+}
+
+/** Build the canonical plan envelope for non-package-exec gated actions. */
+export function buildCapabilityEffectPlan(params: BuildCapabilityEffectPlanParams): EffectPlan {
+  const provenance = { segment: params.actionKind }
+  const requirements: EffectRequirement[] = params.requests.map((request) => ({
+    tag: effectTagForAction(request.action),
+    action: request.action,
+    resource: request.resource,
+    evidence: {
+      level: request.evidence.level,
+      signals: [...request.evidence.signals],
+      basis: [...request.context.analysisBasis],
+    },
+    provenance,
+    provenances: [provenance],
+  }))
+
+  if (!params.effectFree && requirements.length === 0) {
+    requirements.push({
+      tag: 'indeterminate',
+      action: 'indeterminate',
+      resource: { kind: 'unknown' },
+      evidence: {
+        level: 'indeterminate',
+        signals: ['effect_plan.incomplete'],
+        basis: [`gated_action:${params.actionKind}`],
+      },
+      provenance,
+      provenances: [provenance],
+    })
+  }
+
+  const partial = requirements.some((requirement) => requirement.evidence.level === 'indeterminate')
+  return {
+    version: 1,
+    root: {
+      kind: 'exec',
+      commandRedacted: params.summary,
+      segmentHead: params.actionKind,
+      requirements,
+    },
+    inputFingerprint: params.inputFingerprint,
+    opacity: partial ? 'opaque' : 'transparent',
+    disposition: params.effectFree ? 'effect_free' : 'effects',
+    completeness: partial ? 'partial' : 'complete',
+    signals: [...new Set(requirements.flatMap((requirement) => requirement.evidence.signals))],
   }
 }
 

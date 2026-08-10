@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { BelayConfigV4 } from '../config.js'
 import { matchesSensitivePath } from '../glob.js'
 import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
+import { tokenizeShell } from '../shell-tokenizer.js'
 import type { VerdictEffect, VerdictLocation, VerdictOpacity } from '../verdict/types.js'
 import {
   BOUNDARY_GRANT_ISSUER_CONTAINER,
@@ -233,13 +234,43 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
     analysis.egressClass === 'destructive' ||
     analysis.location === 'external'
   ) {
-    return { kind: 'network', host: '*', protocol: 'unknown' }
+    return exactNetworkResource(analysis.command) ?? {
+      kind: 'network',
+      host: '*',
+      protocol: 'unknown',
+    }
   }
   const resourcePath = resourcePathForShellAnalysis(analysis)
   if (resourcePath) {
     return { kind: 'path', path: resourcePath }
   }
   return { kind: 'executable', command: analysis.segmentHead }
+}
+
+function exactNetworkResource(
+  command: string,
+): Extract<CapabilityResource, { kind: 'network' }> | null {
+  const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
+  for (const rawToken of tokenizeShell(command)) {
+    const token = rawToken.startsWith('--url=') ? rawToken.slice('--url='.length) : rawToken
+    const normalized = token.startsWith('git+') ? token.slice(4) : token
+    try {
+      const url = new URL(normalized)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        continue
+      }
+      const resource = {
+        kind: 'network' as const,
+        host: url.hostname,
+        ...(url.port ? { port: Number(url.port) } : {}),
+        protocol: url.protocol.slice(0, -1),
+      }
+      resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
+    } catch {
+      continue
+    }
+  }
+  return resources.size === 1 ? [...resources.values()][0]! : null
 }
 
 export function buildShellCapabilityRequest(

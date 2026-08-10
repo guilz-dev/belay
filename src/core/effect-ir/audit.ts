@@ -2,7 +2,15 @@ import type { PolicyDecision } from '../capability/policy-types.js'
 import type { CapabilityRequestV1 } from '../capability/request.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
 import { collectRequirements } from './build.js'
-import type { EffectPlan } from './types.js'
+import type { EffectPlan, EffectProvenance } from './types.js'
+
+function auditableProvenance(provenance: EffectProvenance): EffectProvenance {
+  return {
+    ...(provenance.segment ? { segment: provenance.segment } : {}),
+    ...(provenance.launcher ? { launcher: provenance.launcher } : {}),
+    ...(provenance.phase ? { phase: provenance.phase } : {}),
+  }
+}
 
 export function hashEffectPlan(plan: EffectPlan): string {
   const requirements = collectRequirements(plan.root)
@@ -16,6 +24,9 @@ export function hashEffectPlan(plan: EffectPlan): string {
         basis: [...requirement.evidence.basis].sort(),
       },
       provenance: requirement.provenance,
+      provenances: [...(requirement.provenances ?? [requirement.provenance])].sort((left, right) =>
+        canonicalStringify(left).localeCompare(canonicalStringify(right)),
+      ),
     }))
     .sort((left, right) => canonicalStringify(left).localeCompare(canonicalStringify(right)))
   return hashValue(
@@ -23,6 +34,8 @@ export function hashEffectPlan(plan: EffectPlan): string {
       version: plan.version,
       inputFingerprint: plan.inputFingerprint,
       opacity: plan.opacity,
+      disposition: plan.disposition,
+      completeness: plan.completeness,
       signals: [...plan.signals].sort(),
       requirements,
     })}`,
@@ -45,12 +58,17 @@ export function effectPlanAuditFields(
     effectIRHash: hashEffectPlan(plan),
     effectPlanSignals: [...plan.signals],
     effectPlanOpacity: plan.opacity,
+    effectPlanDisposition: plan.disposition,
+    effectPlanCompleteness: plan.completeness,
     effectPlanRequirements: collectRequirements(plan.root).map((requirement) => ({
       tag: requirement.tag,
       action: requirement.action,
       resource: requirement.resource,
       evidence: requirement.evidence,
-      provenance: requirement.provenance,
+      provenance: auditableProvenance(requirement.provenance),
+      provenances: (requirement.provenances ?? [requirement.provenance]).map((provenance) =>
+        auditableProvenance(provenance),
+      ),
     })),
   }
   if (policy?.authorizationDecision) {

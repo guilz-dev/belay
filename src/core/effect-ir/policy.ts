@@ -59,6 +59,11 @@ export function capabilityRequestsToEffectRequirements(
     provenance: {
       innerCommand: request.resource.kind === 'executable' ? request.resource.command : undefined,
     },
+    provenances: [
+      {
+        innerCommand: request.resource.kind === 'executable' ? request.resource.command : undefined,
+      },
+    ],
   }))
 }
 

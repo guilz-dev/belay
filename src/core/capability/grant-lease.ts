@@ -1,8 +1,21 @@
 import type { ApprovalRecord, ApprovalStateFile } from '../types.js'
+import { canonicalStringify } from '../fingerprint.js'
 import type { CapabilityGrantV1 } from './grant.js'
 import { isGrantScopeTooBroad } from './grant.js'
 import { grantMatchesRequest } from './grant-match.js'
 import type { CapabilityRequestV1 } from './request.js'
+
+export type GrantBundleValidationFailureReason =
+  | 'legacy_record'
+  | 'empty_requests'
+  | 'cardinality_mismatch'
+  | 'grant_scope_too_broad'
+  | 'grant_inactive'
+  | 'grant_mismatch'
+
+export type GrantBundleValidationResult =
+  | { ok: true; approval: ApprovalRecord }
+  | { ok: false; reason: GrantBundleValidationFailureReason }
 
 function isActiveGrant(grant: CapabilityGrantV1, now: number): boolean {
   if (isGrantScopeTooBroad(grant)) {
@@ -66,6 +79,87 @@ export function consumeApprovalGrantBundle(
       grant: grants[0],
     },
     consumed: true,
+  }
+}
+
+function exactGrantMatchesRequest(
+  grant: CapabilityGrantV1,
+  request: CapabilityRequestV1,
+): boolean {
+  if (!grantMatchesRequest(grant, request)) {
+    return false
+  }
+  return (
+    persistedCanonicalStringify(grant.principal) ===
+      persistedCanonicalStringify(request.principal) &&
+    grant.action === request.action &&
+    persistedCanonicalStringify(grant.resource) ===
+      persistedCanonicalStringify(request.resource) &&
+    grant.inputFingerprint === request.context.inputFingerprint
+  )
+}
+
+function persistedCanonicalStringify(value: unknown): string {
+  return canonicalStringify(omitUndefined(value))
+}
+
+function omitUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => omitUndefined(entry))
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, omitUndefined(entry)]),
+  )
+}
+
+/** Validate and consume a marked exact bundle without mutating on any failure. */
+export function validateAndConsumeGrantBundle(
+  approval: ApprovalRecord,
+  requests: readonly CapabilityRequestV1[],
+  now = Date.now(),
+): GrantBundleValidationResult {
+  if (approval.grantBundleVersion !== 1) {
+    return { ok: false, reason: 'legacy_record' }
+  }
+  if (!requests.length) {
+    return { ok: false, reason: 'empty_requests' }
+  }
+  const bundle = grantsFromApproval(approval)
+  if (bundle.length !== requests.length) {
+    return { ok: false, reason: 'cardinality_mismatch' }
+  }
+  if (bundle.some((grant) => isGrantScopeTooBroad(grant))) {
+    return { ok: false, reason: 'grant_scope_too_broad' }
+  }
+  if (!bundle.every((grant) => isActiveGrant(grant, now))) {
+    return { ok: false, reason: 'grant_inactive' }
+  }
+
+  const unmatched = [...bundle]
+  for (const request of requests) {
+    const index = unmatched.findIndex((grant) => exactGrantMatchesRequest(grant, request))
+    if (index === -1) {
+      return { ok: false, reason: 'grant_mismatch' }
+    }
+    unmatched.splice(index, 1)
+  }
+  if (unmatched.length > 0) {
+    return { ok: false, reason: 'grant_mismatch' }
+  }
+
+  const grants = bundle.map((grant) => decrementGrant(grant))
+  return {
+    ok: true,
+    approval: {
+      ...approval,
+      grants,
+      grant: grants[0],
+    },
   }
 }
 

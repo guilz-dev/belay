@@ -54,7 +54,7 @@ describe('TypeScript PolicyEngine', () => {
   })
 
   it('requires approval for network connect on external shell commands', () => {
-    const { decision } = evaluateShellPolicy(
+    const { request, decision } = evaluateShellPolicy(
       {
         command: 'curl https://example.com',
         hookKind: 'shell',
@@ -71,6 +71,11 @@ describe('TypeScript PolicyEngine', () => {
       },
       config,
     )
+    expect(request.resource).toEqual({
+      kind: 'network',
+      host: 'example.com',
+      protocol: 'https',
+    })
     expect(decision.outcome).toBe('require_approval')
     expect(decision.matchedRule).toBe('builtin.network')
   })

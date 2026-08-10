@@ -10,6 +10,7 @@ import type { BelayConfigV3 } from './config.js'
 import { classifierOptionsFromConfig } from './config.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
+import { buildCapabilityEffectPlan } from './effect-ir/build.js'
 import { mergeAgentAssessment } from './judgment.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell } from './verdict/adapter.js'
@@ -289,7 +290,7 @@ export async function classifyGatedAction(
 ): Promise<ClassifyResult> {
   const limitResult = checkGatedActionLimits(action)
   if (limitResult) {
-    return limitResult
+    return attachEffectPlan(action, limitResult)
   }
 
   const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
@@ -303,22 +304,25 @@ export async function classifyGatedAction(
     result = applySandboxOutsideBoundary(command, action, result, options)
     result = applyShellPeripheralPolicy(command, action, result, options)
     if (!action.agentAssessment) {
-      return result
+      return attachEffectPlan(action, result)
     }
     const merged = mergeAgentAssessment(result.assessment, action.agentAssessment)
     if (!merged.mismatch) {
-      return { ...result, assessment: merged.assessment }
+      return attachEffectPlan(action, { ...result, assessment: merged.assessment })
     }
-    return {
+    return attachEffectPlan(action, {
       ...result,
       verdict: 'deny_pending_approval',
       reason: 'agent_assessment_mismatch',
       assessment: merged.assessment,
-    }
+    })
   }
 
   if (action.kind === 'subagent') {
-    return classifySubagent(action.payload ?? {}, action.repoRoot, options, config)
+    return attachEffectPlan(
+      action,
+      classifySubagent(action.payload ?? {}, action.repoRoot, options, config),
+    )
   }
 
   let result = await classifyToolUse(
@@ -330,17 +334,34 @@ export async function classifyGatedAction(
   )
   result = applyToolSandboxPolicies(action, result, options)
   if (!action.agentAssessment) {
-    return result
+    return attachEffectPlan(action, result)
   }
   const merged = mergeAgentAssessment(result.assessment, action.agentAssessment)
   if (!merged.mismatch) {
-    return { ...result, assessment: merged.assessment }
+    return attachEffectPlan(action, { ...result, assessment: merged.assessment })
   }
-  return {
+  return attachEffectPlan(action, {
     ...result,
     verdict: 'deny_pending_approval',
     reason: 'agent_assessment_mismatch',
     assessment: merged.assessment,
+  })
+}
+
+function attachEffectPlan(action: GatedAction, result: ClassifyResult): ClassifyResult {
+  if (result.effectPlan) {
+    return result
+  }
+  const summary = result.normalizedCommand ?? result.summary ?? action.command ?? action.kind
+  return {
+    ...result,
+    effectPlan: buildCapabilityEffectPlan({
+      actionKind: action.kind,
+      summary,
+      inputFingerprint: result.fingerprint,
+      requests: result.capabilityRequests ?? [],
+      effectFree: result.reason === 'read_only',
+    }),
   }
 }
 

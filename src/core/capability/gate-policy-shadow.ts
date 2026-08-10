@@ -14,7 +14,6 @@ import {
 } from '../verdict/judge-shadow.js'
 import { evaluateWithJudgeTransport } from '../verdict/judge-transport.js'
 import type { Tier1Verdict } from '../verdict/types.js'
-import { BOUNDARY_PROFILE_L1_ATTESTED } from './boundary-profile.js'
 import { recordPolicyJudgeComparison } from './gate-shadow-ratchet.js'
 
 export { recordGateApprovalAsk } from './gate-shadow-ratchet.js'
@@ -26,6 +25,9 @@ export function capabilityDecisionAuditFields(result: ClassifyResult): Record<st
       decisions: result.effectPlanPolicyDecisions,
       authorizationDecision: result.authorizationDecision,
     }),
+    executionRoute: 'downstream_host',
+    enforcementStatus: 'prediction_only',
+    boundaryEnforcement: 'prediction_only',
   }
   if (result.capabilityRequests?.length) {
     fields.capabilityRequestCount = result.capabilityRequests.length
@@ -38,17 +40,22 @@ export function capabilityDecisionAuditFields(result: ClassifyResult): Record<st
       fields.policyMatchedRule = result.authorizationDecision.matchedRule
     }
   }
+  const decisions = result.effectPlanPolicyDecisions ?? []
+  if (
+    decisions.length > 0 &&
+    decisions.every((decision) => decision.matchedRule === 'boundary.verified')
+  ) {
+    fields.authorizationMode = 'boundary_policy'
+  } else if (
+    decisions.length > 0 &&
+    decisions.every((decision) => decision.matchedRule === 'grant.exact')
+  ) {
+    fields.authorizationMode = 'exact_grant'
+  } else {
+    fields.authorizationMode = result.authorizationDecision ? 'policy_decision' : 'none'
+  }
   if (result.boundaryProfile) {
     fields.boundaryProfile = result.boundaryProfile
-    const everyEffectBoundaryVerified =
-      Boolean(result.effectPlanPolicyDecisions?.length) &&
-      result.effectPlanPolicyDecisions?.every(
-        (decision) => decision.matchedRule === 'boundary.verified',
-      )
-    fields.boundaryEnforcement =
-      result.boundaryProfile === BOUNDARY_PROFILE_L1_ATTESTED && everyEffectBoundaryVerified
-        ? 'runtime_attested'
-        : 'prediction_only'
   }
   if (result.authorizationDecision?.signals.includes('boundary_materialized_grant')) {
     fields.boundaryGrantMaterialized = true

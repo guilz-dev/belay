@@ -98,6 +98,8 @@ export async function evaluatePackageExecSegment(
         root: { kind: 'merge', children: [] },
         inputFingerprint,
         opacity: 'opaque',
+        disposition: 'effects',
+        completeness: 'partial',
         signals: [peel.reason],
       } as EffectPlan)
     return askFromEffectPlan({
