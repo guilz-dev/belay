@@ -477,7 +477,7 @@ function verdictFromOpacityPolicy(params: {
   signals: string[]
   context: import('./types.js').VerdictContext
 }): InternalSegmentVerdict {
-  const { request, decision } = evaluateSegmentShellPolicy({
+  const { requests, decision } = evaluateSegmentShellPolicy({
     command: params.command,
     segmentHead: params.segmentHead,
     effect: params.effect,
@@ -493,7 +493,7 @@ function verdictFromOpacityPolicy(params: {
     effect: params.effect,
     confidence: 'deterministic' as const,
     signals: [...params.signals, ...decision.signals],
-    capabilityRequests: [request],
+    capabilityRequests: requests,
     authorizationDecision: decision,
   }
   if (policyDecisionRequiresAsk(decision)) {
@@ -589,7 +589,7 @@ async function evaluateSegment(
   if (recursiveScript) {
     const prescan = prescanInterpreterCode(recursiveScript)
     if (prescan && tier1RequiresAsk(prescan)) {
-      const { request, decision } = evaluateSegmentShellPolicy({
+      const { requests, decision } = evaluateSegmentShellPolicy({
         command: recursiveScript,
         segmentHead: segment.head,
         effect: 'unknown',
@@ -609,7 +609,7 @@ async function evaluateSegment(
         confidence: 'deterministic',
         reason: legacyReason,
         signals: ['interpreter_secret_prescan', prescan.reason, ...decision.signals],
-        capabilityRequests: [request],
+        capabilityRequests: requests,
         authorizationDecision: decision,
       })
     }
@@ -692,7 +692,7 @@ async function evaluateSegment(
   const pathContext = pathContextFromSemantics(context, semantics)
 
   if (semantics.requiresAsk) {
-    const { request, decision } = evaluateSegmentShellPolicy({
+    const { requests, decision } = evaluateSegmentShellPolicy({
       command,
       segmentHead: segment.head,
       effect: 'local_mutation',
@@ -709,14 +709,14 @@ async function evaluateSegment(
       confidence: 'deterministic',
       reason: semantics.requiresAsk.reason,
       signals: semantics.requiresAsk.signals,
-      capabilityRequests: [request],
+      capabilityRequests: requests,
       authorizationDecision: decision,
     })
   }
 
   const egressClass = semantics.egressClass ?? classifyEgressTool(segment.head, peeled)
   if (egressClass === 'destructive') {
-    const { request, decision } = evaluateSegmentShellPolicy({
+    const { requests, decision } = evaluateSegmentShellPolicy({
       command,
       segmentHead: segment.head,
       effect: 'remote_mutation',
@@ -734,7 +734,7 @@ async function evaluateSegment(
       confidence: 'deterministic',
       reason: 'tier0_external',
       signals: ['tier0_external', segment.head, ...decision.signals],
-      capabilityRequests: [request],
+      capabilityRequests: requests,
       authorizationDecision: decision,
     })
   }
@@ -747,7 +747,7 @@ async function evaluateSegment(
     )
   ) {
     const tier0Key = semantics.normalizedKey ?? segment.key
-    const { request, decision } = evaluateSegmentShellPolicy({
+    const { requests, decision } = evaluateSegmentShellPolicy({
       command,
       segmentHead: segment.head,
       effect: 'remote_mutation',
@@ -764,7 +764,7 @@ async function evaluateSegment(
       confidence: 'deterministic',
       reason: 'tier0_external',
       signals: ['tier0_external', tier0Key, ...decision.signals],
-      capabilityRequests: [request],
+      capabilityRequests: requests,
       authorizationDecision: decision,
     })
   }
@@ -962,7 +962,7 @@ async function evaluateSegment(
         })
       : null
   if (mutationPrescan) {
-    const { request, decision } = evaluateSegmentShellPolicy(
+    const { requests, decision } = evaluateSegmentShellPolicy(
       buildPolicyInput({
         effect: 'local_mutation',
         location:
@@ -989,7 +989,7 @@ async function evaluateSegment(
       confidence: 'deterministic',
       reason: legacyReason,
       signals: ['tier1_catastrophic', mutationPrescan.reason, ...decision.signals],
-      capabilityRequests: [request],
+      capabilityRequests: requests,
       authorizationDecision: decision,
     })
   }
@@ -1003,14 +1003,14 @@ async function evaluateSegment(
   let policyMetadata: Pick<InternalSegmentVerdict, 'capabilityRequests' | 'authorizationDecision'> =
     {}
   if (needsPolicy) {
-    const { request, decision } = evaluateSegmentShellPolicy(
+    const { requests, decision } = evaluateSegmentShellPolicy(
       buildPolicyInput({
         effect,
         location: pathAnalysis.location,
       }),
     )
     policyMetadata = {
-      capabilityRequests: [request],
+      capabilityRequests: requests,
       authorizationDecision: decision,
     }
     if (policyDecisionRequiresAsk(decision)) {

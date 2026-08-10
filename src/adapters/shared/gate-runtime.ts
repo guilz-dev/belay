@@ -41,7 +41,10 @@ import {
   consumeApprovedRecordGrantBundle,
   consumeGrantLeasesForRequests,
   decrementApprovalLegacyGrant,
+  type GrantBundleValidationFailureReason,
   grantsFromApproval,
+  validateAndConsumeGrantBundle,
+  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
@@ -58,6 +61,7 @@ import {
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import { hashEffectPlan } from '../../core/effect-ir/audit.js'
+import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
 import {
   classifyResultToGateVerdict,
   type GatedAction,
@@ -430,12 +434,30 @@ function deriveWorkspaceRootScopeHint(params: {
   return { scope: 'workspace-root', path: validation.normalizedPath }
 }
 
+type ApprovalConsumeMutationResult =
+  | { status: 'consumed'; approval: ApprovalRecord }
+  | {
+      status: 'invalid_bundle'
+      approval: ApprovalRecord
+      reason: GrantBundleValidationFailureReason
+    }
+  | null
+
 async function consumeApprovedApproval(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
   kind: GatedActionKind,
   fingerprint: string,
-): Promise<{ approval: ApprovalRecord; firstExecution: boolean } | null> {
+  requests: NonNullable<ClassifyResult['capabilityRequests']>,
+): Promise<
+  | { status: 'consumed'; approval: ApprovalRecord; firstExecution: boolean }
+  | {
+      status: 'invalid_bundle'
+      approval: ApprovalRecord
+      reason: GrantBundleValidationFailureReason
+    }
+  | null
+> {
   const loaded = await deps.loadApprovals(ctx, 'approved-approvals.json')
   loaded.state = compactApprovals(loaded.state)
   const index = loaded.state.approvals.findIndex(
@@ -452,10 +474,16 @@ async function consumeApprovedApproval(
   const approval = loaded.state.approvals[index]
   if (approval.executionLeaseExpiresAt) {
     await deps.writeApprovals(loaded.filePath, loaded.state)
-    return { approval, firstExecution: false }
+    if (approval.grantBundleVersion === 1) {
+      const validated = validateGrantBundleForLeaseReuse(approval, requests)
+      if (!validated.ok) {
+        return { status: 'invalid_bundle', approval, reason: validated.reason }
+      }
+    }
+    return { status: 'consumed', approval, firstExecution: false }
   }
 
-  const consumed = await mutateApprovalStateWithRetry({
+  const consumed = await mutateApprovalStateWithRetry<ApprovalConsumeMutationResult>({
     load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
     write: (filePath, state) => deps.writeApprovals(filePath, state),
     mutate: (state) => {
@@ -478,7 +506,16 @@ async function consumeApprovedApproval(
 
       let updatedApproval = approval
       const bundle = grantsFromApproval(approval)
-      if (bundle.length > 0) {
+      if (approval.grantBundleVersion === 1) {
+        const validated = validateAndConsumeGrantBundle(approval, requests)
+        if (!validated.ok) {
+          return {
+            state: compacted,
+            result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
+          }
+        }
+        updatedApproval = validated.approval
+      } else if (bundle.length > 0) {
         const consumed = consumeApprovedRecordGrantBundle(approval)
         if (!consumed.consumed) {
           return { state: compacted, result: null }
@@ -490,7 +527,10 @@ async function consumeApprovedApproval(
 
       if (bundle.length > 1 && approvalGrantBundleExhausted(updatedApproval)) {
         compacted.approvals.splice(matchIndex, 1)
-        return { state: compacted, result: updatedApproval }
+        return {
+          state: compacted,
+          result: { status: 'consumed' as const, approval: updatedApproval },
+        }
       }
 
       compacted.approvals[matchIndex] = {
@@ -499,13 +539,19 @@ async function consumeApprovedApproval(
           Date.now() + getExecutionLeaseMs(ctx.config),
         ).toISOString(),
       }
-      return { state: compacted, result: updatedApproval }
+      return {
+        state: compacted,
+        result: { status: 'consumed' as const, approval: updatedApproval },
+      }
     },
   })
   if (!consumed) {
     return null
   }
-  return { approval: consumed, firstExecution: true }
+  if (consumed.status === 'invalid_bundle') {
+    return consumed
+  }
+  return { ...consumed, firstExecution: true }
 }
 
 export async function evaluateGatedAction(
@@ -531,12 +577,21 @@ export async function evaluateGatedAction(
       agentAssessment: extractAgentAssessment(params.payload),
     })
   } catch {
-    const verdict = unnormalizedGateVerdict({
-      reason: 'normalization_failed',
-      mode: ctx.config.mode,
-      user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
-      agent_message: 'Belay denied this action because the hook payload could not be normalized.',
-    })
+    const verdict: GateVerdict = {
+      ...unnormalizedGateVerdict({
+        reason: 'normalization_failed',
+        mode: ctx.config.mode,
+        user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
+        agent_message: 'Belay denied this action because the hook payload could not be normalized.',
+      }),
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: params.kind,
+        summary: params.command ?? params.toolName ?? params.kind,
+        inputFingerprint: 'unnormalized',
+        requests: [],
+        effectFree: false,
+      }),
+    }
     await deps.appendAudit(ctx, {
       event: gateAuditEventName(params.kind),
       kind: params.kind,
@@ -550,19 +605,27 @@ export async function evaluateGatedAction(
   }
 
   if (!gateEnabledForAction(ctx.config, action)) {
-    return classifyResultToGateVerdict({
-      result: {
-        verdict: 'allow',
-        reason: 'gate_disabled',
-        fingerprint: 'gate_disabled',
-        assessment: {
-          reversibility: 'reversible',
-          external: false,
-          blastRadius: 'none',
-          confidence: 1,
-          signals: ['gate_disabled'],
-        },
+    const result: ClassifyResult = {
+      verdict: 'allow',
+      reason: 'gate_disabled',
+      fingerprint: 'gate_disabled',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: ['gate_disabled'],
       },
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: action.kind,
+        summary: action.command ?? action.toolName ?? action.kind,
+        inputFingerprint: 'gate_disabled',
+        requests: [],
+        effectFree: false,
+      }),
+    }
+    return classifyResultToGateVerdict({
+      result,
       mode: ctx.config.mode,
       permission: 'allow',
       wouldBlock: false,
@@ -639,6 +702,8 @@ export async function evaluateGatedAction(
       observedAssessment = txResult.observed.assessment
       transactionalLayer = {
         transactional: true,
+        executionRoute: `boundary:${boundaryContext.driverId}`,
+        enforcementStatus: 'mediated_unattested',
         transactionalReason: txResult.observed.reason,
         transactionalCategories: txResult.observed.categories,
         transactionalChangeCount: txResult.observed.changes.length,
@@ -801,6 +866,18 @@ async function gateDecisionToVerdict(
     scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
+  if (!result.effectPlan) {
+    result = {
+      ...result,
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: kind,
+        summary: result.normalizedCommand ?? result.summary ?? kind,
+        inputFingerprint: result.fingerprint,
+        requests: result.capabilityRequests ?? [],
+        effectFree: result.reason === 'read_only',
+      }),
+    }
+  }
   const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
   const actionSnapshot = buildAuditActionSnapshot(kind, result, auditExtras.replayAction)
   const providerId = String(ctx.config.judge?.providerId ?? 'cursor')
@@ -826,8 +903,8 @@ async function gateDecisionToVerdict(
     mode: ctx.config.mode,
     schemaVersion: result.axes ? 2 : 1,
     ...(result.axes ?? {}),
-    ...auditExtras.transactionalLayer,
     ...capabilityAudit,
+    ...auditExtras.transactionalLayer,
     ...(replayContext ? { replayContext } : {}),
     ...(actionSnapshot ? { actionSnapshot } : {}),
   }
@@ -992,10 +1069,41 @@ async function gateDecisionToVerdict(
             'Belay denied this action because cwd, tool, or payload changed after approval.',
         })
       }
-      approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
+      approved = await consumeApprovedApproval(
+        ctx,
+        deps,
+        kind,
+        result.fingerprint,
+        result.capabilityRequests ?? [],
+      )
     }
   }
-  if (approved) {
+  if (approved?.status === 'invalid_bundle') {
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: 'deny_pending_approval',
+      reason: 'capability_grant_unavailable',
+      approvalId: approved.approval.approvalId,
+      grantBundleFailureReason: approved.reason,
+      wouldBlock: true,
+      permission: 'deny',
+    })
+    return classifyResultToGateVerdict({
+      result: {
+        ...result,
+        verdict: 'deny_pending_approval',
+        reason: 'capability_grant_unavailable',
+      },
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      approvalId: approved.approval.approvalId,
+      user_message:
+        'Belay denied this action because its approved capability bundle did not exactly match the current request. Re-approve the exact action or run belay explain.',
+      agent_message: `Belay denied this action because the approved capability bundle failed exact validation (${approved.reason}).`,
+    })
+  }
+  if (approved?.status === 'consumed') {
     if (approved.firstExecution) {
       await recordGateApprovalAsk(stateDir, result.reason, true)
     }
@@ -1004,6 +1112,8 @@ async function gateDecisionToVerdict(
       verdict: 'allow',
       reason: 'approved_once',
       approvalId: approved.approval.approvalId,
+      authorizationMode:
+        approved.approval.grantBundleVersion === 1 ? 'exact_bundle' : 'legacy_approval',
       wouldBlock: false,
       permission: 'allow',
     })

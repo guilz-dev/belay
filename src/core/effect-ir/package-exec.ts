@@ -7,11 +7,17 @@ import type { PackageExecLauncher } from './types.js'
 export interface PackageExecPeelResult {
   launcher: PackageExecLauncher
   innerTokens: string[]
+  acquisitionSpecs: string[]
   opaque: boolean
   reason: string
   forceAcquire: boolean
   signals: string[]
 }
+
+export type PackageAcquisitionSource =
+  | { kind: 'local' }
+  | { kind: 'registry' }
+  | { kind: 'network'; host: string; port?: number; protocol: string }
 
 const READ_ONLY_SUFFIXES = new Set(['--version', '-v', '--help', '-h'])
 
@@ -49,6 +55,7 @@ export function peelPackageExecArgv(tokens: string[]): PackageExecPeelResult | n
 
 function peelNpx(tokens: string[]): PackageExecPeelResult {
   const signals: string[] = ['package_exec:npx']
+  const acquisitionSpecs: string[] = []
   let index = 1
   let forceAcquire = false
   while (index < tokens.length) {
@@ -57,6 +64,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       return {
         launcher: 'npx',
         innerTokens: [token],
+        acquisitionSpecs,
         opaque: false,
         reason: 'npx_wrapper_readonly',
         forceAcquire: false,
@@ -74,15 +82,18 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       continue
     }
     if (token === '-p' || token === '--package') {
-      if (!tokens[index + 1]) {
-        return opaquePackageExec('npx', 'npx_package_missing', signals)
+      const packageSpec = tokens[index + 1]
+      if (!packageSpec) {
+        return opaquePackageExec('npx', 'npx_package_missing', signals, acquisitionSpecs)
       }
+      acquisitionSpecs.push(packageSpec)
       forceAcquire = true
       signals.push('npx.package_flag')
       index += 2
       continue
     }
     if (token.startsWith('--package=')) {
+      acquisitionSpecs.push(token.slice('--package='.length))
       forceAcquire = true
       signals.push('npx.package_flag')
       index += 1
@@ -92,6 +103,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       return {
         launcher: 'npx',
         innerTokens: [],
+        acquisitionSpecs,
         opaque: true,
         reason: 'npx_call_script',
         forceAcquire: true,
@@ -99,7 +111,12 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       }
     }
     if (token.startsWith('-')) {
-      return opaquePackageExec('npx', 'npx_unknown_option', [...signals, 'npx_unknown_option'])
+      return opaquePackageExec(
+        'npx',
+        'npx_unknown_option',
+        [...signals, 'npx_unknown_option'],
+        acquisitionSpecs,
+      )
     }
     break
   }
@@ -108,6 +125,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     return {
       launcher: 'npx',
       innerTokens: [],
+      acquisitionSpecs,
       opaque: true,
       reason: 'npx_target_missing',
       forceAcquire,
@@ -115,18 +133,27 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     }
   }
   if (/^@[^/]+\/[^/]+/.test(innerTokens[0] ?? '')) {
-    return opaquePackageExec('npx', 'npx_scoped_package_bin_indeterminate', [
-      ...signals,
+    if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+      acquisitionSpecs.push(innerTokens[0])
+    }
+    return opaquePackageExec(
+      'npx',
       'npx_scoped_package_bin_indeterminate',
-    ])
+      [...signals, 'npx_scoped_package_bin_indeterminate'],
+      acquisitionSpecs,
+    )
   }
-  if (looksLikeRemotePackageSpec(innerTokens[0] ?? '')) {
+  if (requiresExplicitPackageAcquisition(innerTokens[0] ?? '')) {
     forceAcquire = true
     signals.push('npx.remote_spec')
+  }
+  if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+    acquisitionSpecs.push(innerTokens[0])
   }
   return {
     launcher: 'npx',
     innerTokens,
+    acquisitionSpecs,
     opaque: false,
     reason: 'npx_exec',
     forceAcquire,
@@ -149,6 +176,7 @@ function peelForcedPackageExec(
   reason: 'npm_exec' | 'pnpm_dlx',
 ): PackageExecPeelResult {
   const signals = [`package_exec:${reason}`, `${reason}_acquire`]
+  const acquisitionSpecs: string[] = []
   let index = startIndex
   while (index < tokens.length) {
     const token = tokens[index] ?? ''
@@ -161,31 +189,40 @@ function peelForcedPackageExec(
       continue
     }
     if (launcher === 'npm' && (token === '-p' || token === '--package')) {
-      if (!tokens[index + 1]) {
-        return opaquePackageExec(launcher, `${reason}_package_missing`, signals)
+      const packageSpec = tokens[index + 1]
+      if (!packageSpec) {
+        return opaquePackageExec(launcher, `${reason}_package_missing`, signals, acquisitionSpecs)
       }
+      acquisitionSpecs.push(packageSpec)
       index += 2
       continue
     }
     if (launcher === 'npm' && token.startsWith('--package=')) {
+      acquisitionSpecs.push(token.slice('--package='.length))
       index += 1
       continue
     }
     if (launcher === 'npm' && (token === '-c' || token === '--call')) {
-      return opaquePackageExec(launcher, `${reason}_call_script`, signals)
+      return opaquePackageExec(launcher, `${reason}_call_script`, signals, acquisitionSpecs)
     }
     if (token.startsWith('-')) {
-      return opaquePackageExec(launcher, `${reason}_unknown_option`, [
-        ...signals,
+      return opaquePackageExec(
+        launcher,
         `${reason}_unknown_option`,
-      ])
+        [...signals, `${reason}_unknown_option`],
+        acquisitionSpecs,
+      )
     }
     break
   }
   const innerTokens = tokens.slice(index)
+  if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+    acquisitionSpecs.push(innerTokens[0])
+  }
   return {
     launcher,
     innerTokens,
+    acquisitionSpecs,
     opaque: innerTokens.length === 0,
     reason: innerTokens.length === 0 ? `${reason}_missing` : reason,
     forceAcquire: true,
@@ -197,10 +234,12 @@ function opaquePackageExec(
   launcher: PackageExecLauncher,
   reason: string,
   signals: string[],
+  acquisitionSpecs: string[] = [],
 ): PackageExecPeelResult {
   return {
     launcher,
     innerTokens: [],
+    acquisitionSpecs,
     opaque: true,
     reason,
     forceAcquire: true,
@@ -208,9 +247,12 @@ function opaquePackageExec(
   }
 }
 
-function looksLikeRemotePackageSpec(token: string): boolean {
+function requiresExplicitPackageAcquisition(token: string): boolean {
   if (!token || token.startsWith('-')) {
     return false
+  }
+  if (classifyPackageAcquisitionSpec(token).kind !== 'registry') {
+    return true
   }
   if (token.includes('@') && !token.startsWith('@')) {
     return true
@@ -218,10 +260,64 @@ function looksLikeRemotePackageSpec(token: string): boolean {
   if (/^@[^/]+\/[^/]+@/.test(token)) {
     return true
   }
-  if (/^(https?:|git\+|github:|gitlab:)/.test(token)) {
+  if (token.startsWith('npm:')) {
     return true
   }
   return false
+}
+
+export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisitionSource {
+  const normalized = spec.trim()
+  if (
+    normalized.startsWith('file:') ||
+    normalized.startsWith('git+file:') ||
+    normalized.startsWith('link:') ||
+    normalized.startsWith('workspace:') ||
+    normalized.startsWith('./') ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('~/') ||
+    /^[A-Za-z]:[\\/]/.test(normalized)
+  ) {
+    return { kind: 'local' }
+  }
+
+  const transportSpec = normalized.startsWith('git+') ? normalized.slice(4) : normalized
+  if (transportSpec.startsWith('github:')) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if (transportSpec.startsWith('gitlab:')) {
+    return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
+  }
+  if (transportSpec.startsWith('bitbucket:')) {
+    return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
+  }
+  const scpStyle = transportSpec.match(/^(?:[^@/]+@)?([^:/]+):[^/].+$/)
+  if (scpStyle?.[1]?.includes('.')) {
+    return { kind: 'network', host: scpStyle[1], protocol: 'ssh' }
+  }
+  try {
+    const url = new URL(transportSpec)
+    if (['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) {
+      return {
+        kind: 'network',
+        host: url.hostname,
+        ...(url.port ? { port: Number(url.port) } : {}),
+        protocol: url.protocol.slice(0, -1),
+      }
+    }
+  } catch {}
+
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if (/(?:\.tgz|\.tar|\.tar\.gz)$/i.test(normalized)) {
+    return { kind: 'local' }
+  }
+  if ((normalized.match(/\//g)?.length ?? 0) > 1) {
+    return { kind: 'local' }
+  }
+  return { kind: 'registry' }
 }
 
 export function resolveLocalBin(

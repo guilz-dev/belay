@@ -139,6 +139,8 @@ export interface ApprovalRecord {
   grant?: CapabilityGrantV1
   /** Approval state v3: all grants for composite capability requests (atomic bundle). */
   grants?: CapabilityGrantV1[]
+  /** Exact one-to-one grant bundle contract. Missing means legacy fingerprint authorization. */
+  grantBundleVersion?: 1
 }
 
 export interface ApprovalStateFile {

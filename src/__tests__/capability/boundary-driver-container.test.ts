@@ -19,8 +19,9 @@ describe('container boundary driver', () => {
       const driver = createContainerBoundaryDriver()
       const attestation = await driver.probe()
       expect(attestation.driver).toBe('container')
-      expect(attestation.materializesGrants).toBe(true)
-      expect(attestation.deniesUngrantedEffects).toBe(true)
+      expect(attestation.materializesGrants).toBe(false)
+      expect(attestation.deniesUngrantedEffects).toBe(false)
+      expect(attestation.isolatesWorkspaceMounts).toBe(true)
     },
     DOCKER_TEST_TIMEOUT_MS,
   )

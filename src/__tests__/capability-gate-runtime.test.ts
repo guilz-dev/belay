@@ -555,6 +555,68 @@ describe('capability gate runtime', () => {
     expect(second.permission).toBe('deny')
   })
 
+  it('denies a marked approved_once replay when one exact grant is missing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-incomplete-bundle-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const command = 'npx -y prettier --version'
+    const config = brokerInactiveConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    const denied = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    const pendingPath = path.join(stateDir, 'pending-approvals.json')
+    const pending = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<Parameters<typeof mintGrantForApprovedRecord>[0]>
+    }
+    const pendingApproval = pending.approvals.find(
+      (entry) => entry.approvalId === denied.approvalId,
+    )
+    if (!pendingApproval) {
+      throw new Error('expected pending approval')
+    }
+    const approvedRecord = mintGrantForApprovedRecord({
+      ...pendingApproval,
+      approvedAt: new Date().toISOString(),
+    })
+    expect(approvedRecord.grantBundleVersion).toBe(1)
+    expect(approvedRecord.grants?.length ?? 0).toBeGreaterThan(1)
+    approvedRecord.grants = approvedRecord.grants?.slice(0, -1)
+    approvedRecord.grant = approvedRecord.grants?.[0]
+    approvedRecord.executionLeaseExpiresAt = new Date(Date.now() + 60_000).toISOString()
+
+    await writeFile(
+      path.join(stateDir, 'approved-approvals.json'),
+      `${JSON.stringify({ version: 3, approvals: [approvedRecord] }, null, 2)}\n`,
+    )
+    await writeFile(pendingPath, `${JSON.stringify({ version: 3, approvals: [] }, null, 2)}\n`)
+
+    const replay = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+
+    expect(replay.permission).toBe('deny')
+    expect(replay.reason).toBe('capability_grant_unavailable')
+    const approvedAfter = JSON.parse(
+      await readFile(path.join(stateDir, 'approved-approvals.json'), 'utf8'),
+    ) as { approvals: Array<{ grants?: Array<{ usesRemaining: number }> }> }
+    expect(approvedAfter.approvals[0]?.grants?.every((grant) => grant.usesRemaining === 1)).toBe(
+      true,
+    )
+  })
+
   it('denies replay when effect plan hash mismatches approved record', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-effect-plan-hash-'))
     tempDirs.push(repoRoot)

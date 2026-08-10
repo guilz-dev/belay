@@ -1,6 +1,9 @@
 import process from 'node:process'
 
-import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
+import { effectPlanAuditFields } from '../../core/effect-ir/audit.js'
+import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
+import { hashValue, toolFingerprint } from '../../core/fingerprint.js'
+import { type GateVerdict, unnormalizedGateVerdict } from '../../core/gate-contract.js'
 import { claudeLayout } from '../layouts/claude.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
 import {
@@ -32,6 +35,38 @@ async function readStdinJson(): Promise<Record<string, unknown>> {
 
 function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+function claudeFallbackToolVerdict(params: {
+  toolName: string
+  payload: Record<string, unknown>
+  repoRoot: string
+  reason: string
+  mode: 'enforce' | 'audit'
+  userMessage: string
+  agentMessage: string
+}): GateVerdict {
+  return {
+    ...unnormalizedGateVerdict({
+      reason: params.reason,
+      mode: params.mode,
+      user_message: params.userMessage,
+      agent_message: params.agentMessage,
+    }),
+    effectPlan: buildCapabilityEffectPlan({
+      actionKind: 'tool',
+      summary: params.toolName,
+      inputFingerprint: hashValue(
+        `claude-fallback:${params.reason}:${toolFingerprint(
+          params.toolName,
+          params.payload,
+          params.repoRoot,
+        )}`,
+      ),
+      requests: [],
+      effectFree: false,
+    }),
+  }
 }
 
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
@@ -194,6 +229,16 @@ export async function runToolGateHook(_eventName: string) {
     const toolName = String(payload.tool_name ?? '')
     const mappedKind = mapClaudeToolName(toolName)
     if (mappedKind === 'mcp') {
+      const verdict = claudeFallbackToolVerdict({
+        toolName,
+        payload,
+        repoRoot: ctx.repoRoot,
+        reason: 'unsupported_mcp_tool',
+        mode: ctx.config.mode,
+        userMessage:
+          'belay blocked this MCP tool because Claude MCP payloads are not normalized safely yet.',
+        agentMessage: 'Belay denied this MCP tool because its payload shape is unsupported.',
+      })
       await deps.appendAudit(ctx, {
         event: 'preToolUse',
         kind: 'tool',
@@ -203,18 +248,21 @@ export async function runToolGateHook(_eventName: string) {
         wouldBlock: true,
         permission: 'deny',
         summary: toolName,
-      })
-      const verdict = unnormalizedGateVerdict({
-        reason: 'unsupported_mcp_tool',
-        mode: ctx.config.mode,
-        user_message:
-          'belay blocked this MCP tool because Claude MCP payloads are not normalized safely yet.',
-        agent_message: 'Belay denied this MCP tool because its payload shape is unsupported.',
+        ...effectPlanAuditFields(verdict.effectPlan),
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
       return
     }
     if (!mappedKind) {
+      const verdict = claudeFallbackToolVerdict({
+        toolName,
+        payload,
+        repoRoot: ctx.repoRoot,
+        reason: 'unmapped_tool',
+        mode: ctx.config.mode,
+        userMessage: 'belay does not recognize this tool action. Run belay doctor, then retry.',
+        agentMessage: 'Belay denied this action because the tool could not be normalized.',
+      })
       await deps.appendAudit(ctx, {
         event: 'preToolUse',
         kind: 'tool',
@@ -224,18 +272,24 @@ export async function runToolGateHook(_eventName: string) {
         wouldBlock: true,
         permission: 'deny',
         summary: toolName,
-      })
-      const verdict = unnormalizedGateVerdict({
-        reason: 'unmapped_tool',
-        mode: ctx.config.mode,
-        user_message: 'belay does not recognize this tool action. Run belay doctor, then retry.',
-        agent_message: 'Belay denied this action because the tool could not be normalized.',
+        ...effectPlanAuditFields(verdict.effectPlan),
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
       return
     }
     const normalizedPayload = normalizeClaudeToolPayload(toolName, payload)
     if (!normalizedPayload) {
+      const verdict = claudeFallbackToolVerdict({
+        toolName,
+        payload,
+        repoRoot: ctx.repoRoot,
+        reason: 'normalization_failed',
+        mode: ctx.config.mode,
+        userMessage:
+          'belay could not normalize this Claude tool payload. Run belay doctor, then retry.',
+        agentMessage:
+          'Belay denied this action because the Claude tool payload could not be normalized.',
+      })
       await deps.appendAudit(ctx, {
         event: 'preToolUse',
         kind: 'tool',
@@ -245,14 +299,7 @@ export async function runToolGateHook(_eventName: string) {
         wouldBlock: true,
         permission: 'deny',
         summary: toolName,
-      })
-      const verdict = unnormalizedGateVerdict({
-        reason: 'normalization_failed',
-        mode: ctx.config.mode,
-        user_message:
-          'belay could not normalize this Claude tool payload. Run belay doctor, then retry.',
-        agent_message:
-          'Belay denied this action because the Claude tool payload could not be normalized.',
+        ...effectPlanAuditFields(verdict.effectPlan),
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
       return

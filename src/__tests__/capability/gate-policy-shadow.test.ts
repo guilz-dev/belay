@@ -125,6 +125,8 @@ describe('scheduleGateShadowAudit', () => {
     }
     const fields = capabilityDecisionAuditFields(result)
     expect(fields.boundaryEnforcement).toBe('prediction_only')
+    expect(fields.executionRoute).toBe('downstream_host')
+    expect(fields.enforcementStatus).toBe('prediction_only')
     expect(fields.effectIRHash).toBe(hashEffectPlan(plan))
     expect(fields.effectPlanRequestDecisions).toEqual([
       {
@@ -180,7 +182,7 @@ describe('scheduleGateShadowAudit', () => {
     expect(fields.boundaryEnforcement).toBe('prediction_only')
   })
 
-  it('reports runtime enforcement when every effect was boundary-verified', () => {
+  it('does not report runtime enforcement without an execution receipt', () => {
     const fields = capabilityDecisionAuditFields({
       ...result,
       boundaryProfile: BOUNDARY_PROFILE_L1_ATTESTED,
@@ -194,6 +196,9 @@ describe('scheduleGateShadowAudit', () => {
       ],
     })
 
-    expect(fields.boundaryEnforcement).toBe('runtime_attested')
+    expect(fields.boundaryEnforcement).toBe('prediction_only')
+    expect(fields.authorizationMode).toBe('boundary_policy')
+    expect(fields.executionRoute).toBe('downstream_host')
+    expect(fields.enforcementStatus).toBe('prediction_only')
   })
 })

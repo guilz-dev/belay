@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { BelayConfigV4 } from '../config.js'
 import { matchesSensitivePath } from '../glob.js'
 import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
+import { tokenizeShell } from '../shell-tokenizer.js'
 import type { VerdictEffect, VerdictLocation, VerdictOpacity } from '../verdict/types.js'
 import {
   BOUNDARY_GRANT_ISSUER_CONTAINER,
@@ -216,24 +217,30 @@ function resourcePathForShellAnalysis(analysis: ShellCapabilityAnalysis): string
       ? canonicalPath(target)
       : resolveCapabilityPath(target, analysis.cwd),
   )
+  const [first] = resolved
+  if (!first) {
+    return null
+  }
   if (analysis.effect === 'local_mutation') {
     const outside = resolved.find((candidate) => !pathWithinRoot(repoRoot, candidate))
-    return outside ?? resolved[resolved.length - 1]!
+    return outside ?? resolved.at(-1) ?? first
   }
-  return resolved[0]!
+  return first
 }
 
 function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): CapabilityResource {
   if (isGitRefWrite(analysis)) {
     return { kind: 'git-ref', ref: 'push' }
   }
-  if (
-    analysis.egressClass === 'ambiguous' ||
-    analysis.egressClass === 'read' ||
-    analysis.egressClass === 'destructive' ||
-    analysis.location === 'external'
-  ) {
-    return { kind: 'network', host: '*', protocol: 'unknown' }
+  if (isNetworkShellAnalysis(analysis)) {
+    const exact = exactNetworkResources(analysis.command)
+    return (
+      (exact.length === 1 ? exact[0] : undefined) ?? {
+        kind: 'network',
+        host: '*',
+        protocol: 'unknown',
+      }
+    )
   }
   const resourcePath = resourcePathForShellAnalysis(analysis)
   if (resourcePath) {
@@ -242,10 +249,55 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
   return { kind: 'executable', command: analysis.segmentHead }
 }
 
+function isNetworkShellAnalysis(analysis: ShellCapabilityAnalysis): boolean {
+  return (
+    analysis.egressClass === 'ambiguous' ||
+    analysis.egressClass === 'read' ||
+    analysis.egressClass === 'destructive' ||
+    analysis.location === 'external'
+  )
+}
+
+function exactNetworkResources(
+  command: string,
+): Array<Extract<CapabilityResource, { kind: 'network' }>> {
+  const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
+  for (const rawToken of tokenizeShell(command)) {
+    const token = rawToken.startsWith('--url=') ? rawToken.slice('--url='.length) : rawToken
+    const normalized = token.startsWith('git+') ? token.slice(4) : token
+    try {
+      const url = new URL(normalized)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        continue
+      }
+      const resource = {
+        kind: 'network' as const,
+        host: url.hostname,
+        ...(url.port ? { port: Number(url.port) } : {}),
+        protocol: url.protocol.slice(0, -1),
+      }
+      resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
+    } catch {}
+  }
+  return [...resources.values()]
+}
+
 export function buildShellCapabilityRequest(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1 {
-  return {
+  const [request] = buildShellCapabilityRequests(analysis)
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return request
+}
+
+export function buildShellCapabilityRequests(
+  analysis: ShellCapabilityAnalysis,
+): CapabilityRequestV1[] {
+  const resources = isNetworkShellAnalysis(analysis) ? exactNetworkResources(analysis.command) : []
+  const selectedResources = resources.length > 0 ? resources : [resourceForShellAnalysis(analysis)]
+  return selectedResources.map((resource) => ({
     version: CAPABILITY_REQUEST_VERSION,
     principal: {
       adapter: analysis.adapter,
@@ -253,7 +305,7 @@ export function buildShellCapabilityRequest(
       sessionHash: hashSession(`${analysis.repoRoot}:${analysis.cwd}`),
     },
     action: actionForShellAnalysis(analysis),
-    resource: resourceForShellAnalysis(analysis),
+    resource,
     context: {
       cwd: analysis.cwd,
       inputFingerprint: analysis.inputFingerprint,
@@ -269,7 +321,7 @@ export function buildShellCapabilityRequest(
       level: evidenceLevelForOpacity(analysis.opacity),
       signals: [...analysis.signals],
     },
-  }
+  }))
 }
 
 function actionForFileMutation(analysis: FileMutationCapabilityAnalysis): CapabilityAction {
@@ -711,17 +763,23 @@ export function evaluateShellPolicy(
   analysis: ShellCapabilityAnalysis,
   config: BelayConfigV4,
   auth?: PolicyAuthExtras,
-): { request: CapabilityRequestV1; decision: PolicyDecision } {
-  const request = buildShellCapabilityRequest(analysis)
-  const enriched = enrichAuthWithMaterializedGrants(request, config, {
+): { request: CapabilityRequestV1; requests: CapabilityRequestV1[]; decision: PolicyDecision } {
+  const requests = buildShellCapabilityRequests(analysis)
+  const enrichedAuth = {
     ...auth,
     sensitivePaths: auth?.sensitivePaths ?? analysis.sensitivePaths,
-  })
-  const decision = getDefaultPolicyEngine().evaluate(
-    request,
-    buildAuthorizationContext(config, analysis.trustedWorkspaceRoots, enriched),
+  }
+  const { decision } = evaluateCapabilityRequestsPolicy(
+    requests,
+    config,
+    enrichedAuth,
+    analysis.trustedWorkspaceRoots,
   )
-  return { request, decision }
+  const [request] = requests
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return { request, requests, decision }
 }
 
 export function evaluateFileMutationPolicy(
