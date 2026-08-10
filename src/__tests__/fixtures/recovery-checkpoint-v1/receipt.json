@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "checkpointId": "cp_111111111111111111111111",
+  "manifestHash": "$MANIFEST_HASH",
+  "proofHash": "$PROOF_HASH",
+  "postStateHash": "$POST_STATE_HASH",
+  "appliedAt": "2026-01-01T00:00:01.000Z",
+  "changeCount": 1
+}

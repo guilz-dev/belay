@@ -15,8 +15,8 @@ export const TRANSACTIONAL_APPLY_CONFLICT = 'transactional_apply_conflict'
 export const TRANSACTIONAL_APPLY_ROLLBACK_FAILED = 'transactional_apply_rollback_failed'
 
 type ApplyRollbackAction =
-  | { type: 'restore'; target: string; backupPath: string }
-  | { type: 'remove'; target: string }
+  | { type: 'restore'; target: string; backupPath: string; relativePath: string }
+  | { type: 'remove'; target: string; relativePath: string }
 
 export interface ApplyObservedChangesParams {
   sourceRoot: string
@@ -45,7 +45,7 @@ async function removePathIfExists(target: string): Promise<void> {
     throw error
   }
   if (info.isDirectory() && !info.isSymbolicLink()) {
-    await rm(target, { recursive: true, force: true })
+    await rmdir(target)
     return
   }
   await rm(target, { force: true })
@@ -53,6 +53,17 @@ async function removePathIfExists(target: string): Promise<void> {
 
 async function copyPathPreservingType(source: string, target: string): Promise<void> {
   const info = await lstat(source)
+  if (info.isDirectory() && !info.isSymbolicLink()) {
+    try {
+      const targetInfo = await lstat(target)
+      if (targetInfo.isDirectory() && !targetInfo.isSymbolicLink()) {
+        await chmodSafe(target, info.mode)
+        return
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
   await removePathIfExists(target)
   await mkdir(path.dirname(target), { recursive: true })
   if (info.isSymbolicLink()) {
@@ -70,7 +81,11 @@ async function copyPathPreservingType(source: string, target: string): Promise<v
   await chmodSafe(target, info.mode)
 }
 
-async function assertParentChainSafe(targetRoot: string, relativePath: string): Promise<void> {
+async function assertParentChainSafe(
+  targetRoot: string,
+  relativePath: string,
+  plannedDirectories: ReadonlySet<string> = new Set(),
+): Promise<void> {
   const segments = relativePath.split(path.sep).filter(Boolean)
   if (segments.length <= 1) {
     return
@@ -88,34 +103,52 @@ async function assertParentChainSafe(targetRoot: string, relativePath: string): 
       }
       throw error
     }
-    if (!info.isDirectory() || info.isSymbolicLink()) {
+    if (info.isSymbolicLink()) {
+      throw new Error(TRANSACTIONAL_APPLY_CONFLICT)
+    }
+    if (!info.isDirectory() && !plannedDirectories.has(prefix)) {
       throw new Error(TRANSACTIONAL_APPLY_CONFLICT)
     }
   }
 }
 
-async function restorePathFromBackup(backupPath: string, target: string): Promise<void> {
-  const staged = `${target}.belay-restore.tmp`
+async function restorePathFromBackup(
+  backupPath: string,
+  target: string,
+  rollbackRoot: string,
+): Promise<void> {
+  const stagingRoot = await mkdtemp(path.join(rollbackRoot, 'restore-'))
+  const staged = path.join(stagingRoot, 'node')
   try {
     await copyPathPreservingType(backupPath, staged)
-    await removePathIfExists(target)
-    const { rename } = await import('node:fs/promises')
-    await rename(staged, target)
-  } catch (error) {
-    await removePathIfExists(staged)
-    throw error
+    await copyPathPreservingType(staged, target)
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true })
   }
 }
 
-async function rollbackAppliedChanges(actions: ApplyRollbackAction[]): Promise<boolean> {
+async function rollbackAppliedChanges(
+  actions: ApplyRollbackAction[],
+  changes: ObservedFileChange[],
+  targetRoot: string,
+  rollbackRoot: string,
+): Promise<boolean> {
   let hadFailure = false
   for (const action of [...actions].reverse()) {
     try {
+      await assertParentChainSafe(targetRoot, action.relativePath)
       if (action.type === 'restore') {
-        await restorePathFromBackup(action.backupPath, action.target)
+        await restorePathFromBackup(action.backupPath, action.target, rollbackRoot)
       } else {
         await removePathIfExists(action.target)
       }
+    } catch {
+      hadFailure = true
+    }
+  }
+  for (const change of changes) {
+    try {
+      await assertTargetMatches(targetRoot, change)
     } catch {
       hadFailure = true
     }
@@ -143,11 +176,11 @@ async function assertTargetMatchesAfter(
 }
 
 function applyRank(change: ObservedFileChange): number {
+  if (change.after.kind === 'absent') {
+    return 0
+  }
   if (change.after.kind === 'directory') {
     return 1
-  }
-  if (change.after.kind === 'absent') {
-    return change.before.kind === 'directory' ? 4 : 3
   }
   return 2
 }
@@ -159,7 +192,7 @@ function compareApplyOrder(left: ObservedFileChange, right: ObservedFileChange):
   if (rankDiff !== 0) {
     return rankDiff
   }
-  if (leftRank === 4) {
+  if (leftRank === 0) {
     return compareRelativePathsBytewise(right.relativePath, left.relativePath)
   }
   return compareRelativePathsBytewise(left.relativePath, right.relativePath)
@@ -175,6 +208,7 @@ async function applySingleChange(
   change: ObservedFileChange,
 ): Promise<void> {
   const target = joinRelativePath(targetRoot, change.relativePath)
+  await assertParentChainSafe(targetRoot, change.relativePath)
   if (change.after.kind === 'absent') {
     if (change.before.kind === 'directory') {
       await rmdir(target)
@@ -184,8 +218,10 @@ async function applySingleChange(
     return
   }
 
-  await assertParentChainSafe(targetRoot, change.relativePath)
   if (change.after.kind === 'directory') {
+    if (change.before.kind !== 'directory') {
+      await removePathIfExists(target)
+    }
     await mkdir(target, { recursive: true, mode: change.after.mode & 0o777 })
     await chmodSafe(target, change.after.mode)
     return
@@ -197,23 +233,29 @@ async function applySingleChange(
 
 export async function applyObservedChanges(params: ApplyObservedChangesParams): Promise<void> {
   const { sourceRoot, targetRoot, changes } = params
+  const plannedDirectories = new Set(
+    changes
+      .filter((change) => change.after.kind === 'directory')
+      .map((change) => change.relativePath),
+  )
   for (const change of changes) {
     validateRelativePath(change.relativePath)
   }
 
   for (const change of changes) {
-    if (change.after.kind !== 'absent') {
-      await assertParentChainSafe(targetRoot, change.relativePath)
-    }
+    await assertParentChainSafe(targetRoot, change.relativePath, plannedDirectories)
     await assertTargetMatches(targetRoot, change)
   }
 
   const backupRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-rollback-'))
   const rollbackActions: ApplyRollbackAction[] = []
+  let mutationAttempted = false
 
   try {
     for (const change of sortedChanges(changes)) {
       const target = joinRelativePath(targetRoot, change.relativePath)
+      await assertParentChainSafe(targetRoot, change.relativePath)
+      await assertTargetMatches(targetRoot, change)
       let targetExists = true
       try {
         await lstat(target)
@@ -232,11 +274,19 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
         )
         await mkdir(path.dirname(backupPath), { recursive: true })
         await copyPathPreservingType(target, backupPath)
-        rollbackActions.push({ type: 'restore', target, backupPath })
+        await assertParentChainSafe(targetRoot, change.relativePath)
+        rollbackActions.push({
+          type: 'restore',
+          target,
+          backupPath,
+          relativePath: change.relativePath,
+        })
       } else if (change.after.kind !== 'absent') {
-        rollbackActions.push({ type: 'remove', target })
+        await assertParentChainSafe(targetRoot, change.relativePath)
+        rollbackActions.push({ type: 'remove', target, relativePath: change.relativePath })
       }
 
+      mutationAttempted = true
       await applySingleChange(sourceRoot, targetRoot, change)
     }
 
@@ -250,7 +300,13 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
       // Cleanup/audit failure after a verified apply must not roll back or reject success.
     }
   } catch (error) {
-    const rollbackOk = await rollbackAppliedChanges(rollbackActions)
+    if (!mutationAttempted) throw error
+    const rollbackOk = await rollbackAppliedChanges(
+      rollbackActions,
+      changes,
+      targetRoot,
+      backupRoot,
+    )
     if (!rollbackOk) {
       throw new Error(TRANSACTIONAL_APPLY_ROLLBACK_FAILED)
     }

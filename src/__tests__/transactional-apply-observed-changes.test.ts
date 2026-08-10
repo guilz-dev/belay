@@ -1,3 +1,4 @@
+import { renameSync, symlinkSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -128,6 +129,57 @@ describe('apply observed changes', () => {
     ).rejects.toThrow(TRANSACTIONAL_APPLY_CONFLICT)
   })
 
+  it('rejects deletion through a symlink parent without touching the external target', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-link-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-link-src-'))
+    const externalRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-link-outside-'))
+    tempDirs.push(targetRoot, sourceRoot, externalRoot)
+
+    await writeFile(path.join(externalRoot, 'victim.txt'), 'outside\n')
+    await symlink(externalRoot, path.join(targetRoot, 'alias'))
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'alias/victim.txt', kind: 'deleted' },
+    ])
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow(TRANSACTIONAL_APPLY_CONFLICT)
+    await expect(readFile(path.join(externalRoot, 'victim.txt'), 'utf8')).resolves.toBe('outside\n')
+  })
+
+  it('does not back up or roll back through a parent raced to a symlink after preflight', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-race-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-race-src-'))
+    const externalRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-delete-race-outside-'))
+    tempDirs.push(targetRoot, sourceRoot, externalRoot)
+
+    await mkdir(path.join(targetRoot, 'parent'))
+    await writeFile(path.join(targetRoot, 'parent', 'victim.txt'), 'inside\n')
+    await writeFile(path.join(externalRoot, 'victim.txt'), 'outside\n')
+    const externalBefore = await lstat(path.join(externalRoot, 'victim.txt'))
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'parent/victim.txt', kind: 'deleted' },
+    ])
+    let iteration = 0
+    Object.defineProperty(observed, Symbol.iterator, {
+      value: () => {
+        iteration += 1
+        if (iteration === 3) {
+          renameSync(path.join(targetRoot, 'parent'), path.join(targetRoot, 'parent-before-race'))
+          symlinkSync(externalRoot, path.join(targetRoot, 'parent'))
+        }
+        return Array.prototype[Symbol.iterator].call(observed)
+      },
+    })
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow(TRANSACTIONAL_APPLY_CONFLICT)
+    const externalAfter = await lstat(path.join(externalRoot, 'victim.txt'))
+    expect(externalAfter.ino).toBe(externalBefore.ino)
+    await expect(readFile(path.join(externalRoot, 'victim.txt'), 'utf8')).resolves.toBe('outside\n')
+  })
+
   it('applies file to symlink type changes and empty directory lifecycle', async () => {
     const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-types-'))
     const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-types-src-'))
@@ -155,6 +207,67 @@ describe('apply observed changes', () => {
     ])
     await applyObservedChanges({ sourceRoot, targetRoot, changes: removeEmpty })
     await expect(lstat(path.join(targetRoot, 'empty'))).rejects.toThrow()
+  })
+
+  it('applies file-to-directory changes with nested additions', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-file-dir-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-file-dir-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+    await writeFile(path.join(targetRoot, 'node'), 'plain\n')
+    await mkdir(path.join(sourceRoot, 'node'))
+    await writeFile(path.join(sourceRoot, 'node', 'child.txt'), 'nested\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'node', kind: 'modified' },
+      { relativePath: 'node/child.txt', kind: 'added' },
+    ])
+
+    await applyObservedChanges({ sourceRoot, targetRoot, changes: observed })
+
+    await expect(readFile(path.join(targetRoot, 'node', 'child.txt'), 'utf8')).resolves.toBe(
+      'nested\n',
+    )
+  })
+
+  it('applies directory-to-file changes after deleting nested children', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-file-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-file-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+    await mkdir(path.join(targetRoot, 'node'))
+    await writeFile(path.join(targetRoot, 'node', 'child.txt'), 'nested\n')
+    await writeFile(path.join(sourceRoot, 'node'), 'flat\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'node/child.txt', kind: 'deleted' },
+      { relativePath: 'node', kind: 'modified' },
+    ])
+
+    await applyObservedChanges({ sourceRoot, targetRoot, changes: observed })
+
+    await expect(readFile(path.join(targetRoot, 'node'), 'utf8')).resolves.toBe('flat\n')
+  })
+
+  it('never recursively removes unobserved children during directory-to-file apply', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-file-safe-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-dir-file-safe-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+    await mkdir(path.join(targetRoot, 'node'))
+    await writeFile(path.join(targetRoot, 'node', 'tracked.txt'), 'tracked\n')
+    await writeFile(path.join(targetRoot, 'node', 'unobserved.txt'), 'keep\n')
+    await writeFile(path.join(sourceRoot, 'node'), 'flat\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'node/tracked.txt', kind: 'deleted' },
+      { relativePath: 'node', kind: 'modified' },
+    ])
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow()
+
+    await expect(readFile(path.join(targetRoot, 'node', 'tracked.txt'), 'utf8')).resolves.toBe(
+      'tracked\n',
+    )
+    await expect(readFile(path.join(targetRoot, 'node', 'unobserved.txt'), 'utf8')).resolves.toBe(
+      'keep\n',
+    )
   })
 
   it('updates directory mode when only permissions change', async () => {
@@ -271,5 +384,42 @@ describe('apply observed changes', () => {
       applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
     ).rejects.toThrow()
     await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
+  })
+
+  it('does not consume a workspace path that resembles rollback staging', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-private-rollback-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-private-rollback-src-'))
+    tempDirs.push(targetRoot, sourceRoot)
+
+    await mkdir(path.join(targetRoot, 'node'), { mode: 0o755 })
+    const originalMode = (await lstat(path.join(targetRoot, 'node'))).mode & 0o777
+    await writeFile(path.join(targetRoot, 'node', 'unobserved.txt'), 'preserve\n')
+    await mkdir(path.join(sourceRoot, 'node'), { mode: 0o700 })
+    await writeFile(path.join(sourceRoot, 'z.txt'), 'later failure\n')
+    const workspaceStaging = path.join(targetRoot, 'node.belay-restore.tmp')
+    await mkdir(workspaceStaging)
+    await writeFile(path.join(workspaceStaging, 'owned-by-user.txt'), 'keep\n')
+
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'node', kind: 'modified' },
+      { relativePath: 'z.txt', kind: 'added' },
+    ])
+    await rm(path.join(sourceRoot, 'z.txt'))
+
+    await expect(
+      applyObservedChanges({ sourceRoot, targetRoot, changes: observed }),
+    ).rejects.toThrow()
+
+    await expect(readFile(path.join(workspaceStaging, 'owned-by-user.txt'), 'utf8')).resolves.toBe(
+      'keep\n',
+    )
+    expect((await lstat(path.join(targetRoot, 'node'))).isDirectory()).toBe(true)
+    expect((await lstat(path.join(targetRoot, 'node'))).mode & 0o777).toBe(originalMode)
+    await expect(readFile(path.join(targetRoot, 'node', 'unobserved.txt'), 'utf8')).resolves.toBe(
+      'preserve\n',
+    )
+    await expect(
+      readFile(path.join(targetRoot, 'node', 'owned-by-user.txt'), 'utf8'),
+    ).rejects.toThrow()
   })
 })
