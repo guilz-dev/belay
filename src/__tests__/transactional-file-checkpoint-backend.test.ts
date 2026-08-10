@@ -178,14 +178,10 @@ describe('file checkpoint backend', () => {
 
     const snapshot = await fileCheckpointBackend.prepare(backendContext(repoRoot))
     await writeFile(path.join(repoRoot, 'concurrent.txt'), 'raced\n')
-    await expect(snapshot.validateSourceState?.()).rejects.toThrow(
-      FILE_CHECKPOINT_SOURCE_CHANGED,
-    )
+    await expect(snapshot.validateSourceState?.()).rejects.toThrow(FILE_CHECKPOINT_SOURCE_CHANGED)
     await rm(path.join(repoRoot, 'concurrent.txt'))
     await execFileAsync('git', ['update-ref', 'refs/heads/concurrent', 'HEAD'], { cwd: repoRoot })
-    await expect(snapshot.validateSourceState?.()).rejects.toThrow(
-      FILE_CHECKPOINT_SOURCE_CHANGED,
-    )
+    await expect(snapshot.validateSourceState?.()).rejects.toThrow(FILE_CHECKPOINT_SOURCE_CHANGED)
 
     await snapshot.cleanup()
   })
