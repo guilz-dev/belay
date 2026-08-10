@@ -191,7 +191,7 @@ export async function recoveryCheckpointCommand(options: {
         isolation = null
       }
     }
-    const copyStrategy = await probeFileCloneStrategy()
+    const copyStrategy = fileCheckpointConfig.enabled ? await probeFileCloneStrategy() : null
     const fileCheckpointAvailable =
       fileCheckpointConfig.enabled &&
       config.policy.transactional.enabled &&
@@ -213,7 +213,7 @@ export async function recoveryCheckpointCommand(options: {
         enabled: fileCheckpointConfig.enabled,
         allowNonGit: fileCheckpointConfig.allowNonGit,
         isolation,
-        copyStrategy,
+        copyStrategy: copyStrategy ?? undefined,
         probe: fileCheckpointAvailable ? 'available' : 'unavailable',
       },
       enabled: checkpointConfig.enabled,

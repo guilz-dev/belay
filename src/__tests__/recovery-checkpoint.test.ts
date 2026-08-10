@@ -249,6 +249,18 @@ describe('recovery checkpoints', () => {
     expect(['clonefile', 'reflink', 'copy']).toContain(status.fileCheckpoint.copyStrategy)
   })
 
+  it('skips clone probe when file checkpoint is disabled in recover status', async () => {
+    const repoRoot = await createGitRepo()
+    await writeConfigFile(repoRoot, DEFAULT_CONFIG_V3)
+
+    const status = await recoveryCheckpointCommand({
+      targetDir: repoRoot,
+      subcommand: 'status',
+    })
+    expect(status.fileCheckpoint?.enabled).toBe(false)
+    expect(status.fileCheckpoint?.copyStrategy).toBeUndefined()
+  })
+
   it('restores an existing durable manifest v1 fixture', async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'modified.txt'), 'after\n')

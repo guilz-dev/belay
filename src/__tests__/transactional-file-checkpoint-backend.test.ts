@@ -237,4 +237,20 @@ describe('file checkpoint backend', () => {
 
     await snapshot.cleanup()
   })
+
+  it('changes git metadata fingerprint when split-index state changes', async () => {
+    const repoRoot = await createGitRepo()
+    const { computeGitMetadataFingerprint } = await import(
+      '../core/transactional/file-checkpoint-git.js'
+    )
+    await execFileAsync('git', ['config', 'core.splitIndex', 'true'], { cwd: repoRoot })
+    await execFileAsync('git', ['update-index', '--split-index'], { cwd: repoRoot })
+    const before = await computeGitMetadataFingerprint(repoRoot)
+
+    await writeFile(path.join(repoRoot, 'README.md'), '# split index change\n')
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    const after = await computeGitMetadataFingerprint(repoRoot)
+
+    expect(before).not.toBe(after)
+  })
 })

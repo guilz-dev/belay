@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, readdir, readFile } from 'node:fs/promises'
+import { copyFile, lstat, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { canonicalPath } from '../path-utils.js'
@@ -111,6 +111,51 @@ async function readGitFile(gitDir: string, relativePath: string): Promise<Buffer
   }
 }
 
+async function readAbsoluteGitFile(absolutePath: string): Promise<Buffer | null> {
+  try {
+    return await readFile(absolutePath)
+  } catch {
+    return null
+  }
+}
+
+function hashGitFileContent(
+  hash: ReturnType<typeof createHash>,
+  label: string,
+  content: Buffer,
+): void {
+  hash.update(label.replace(/\\/g, '/'))
+  hash.update('\0')
+  hash.update(content)
+  hash.update('\0')
+}
+
+async function hashResolvedGitPath(
+  repoRoot: string,
+  gitDir: string,
+  gitPath: string,
+  hash: ReturnType<typeof createHash>,
+): Promise<void> {
+  try {
+    const resolved = await resolveGitPath(
+      repoRoot,
+      await execGit(repoRoot, ['rev-parse', '--git-path', gitPath]),
+    )
+    const relative = path.resolve(resolved).startsWith(path.resolve(gitDir))
+      ? path.relative(gitDir, resolved)
+      : resolved
+    const content =
+      typeof relative === 'string' && !relative.startsWith('..') && !path.isAbsolute(relative)
+        ? await readGitFile(gitDir, relative)
+        : await readAbsoluteGitFile(resolved)
+    if (content !== null) {
+      hashGitFileContent(hash, gitPath, content)
+    }
+  } catch {
+    // optional git-path
+  }
+}
+
 async function hashGitTree(
   gitDir: string,
   relativeDir: string,
@@ -158,14 +203,48 @@ export async function computeGitMetadataFingerprint(repoRoot: string): Promise<s
     'COMMIT_EDITMSG',
     'MERGE_HEAD',
     'CHERRY_PICK_HEAD',
+    'ORIG_HEAD',
+    'FETCH_HEAD',
+    'REBASE_HEAD',
   ]) {
     const content = await readGitFile(gitDir, file)
     if (content !== null) {
-      hash.update(file)
-      hash.update('\0')
-      hash.update(content)
-      hash.update('\0')
+      hashGitFileContent(hash, file, content)
     }
+  }
+
+  try {
+    const sharedIndex = (await execGit(repoRoot, ['rev-parse', '--shared-index-path'])).trim()
+    if (sharedIndex) {
+      const resolved = await resolveGitPath(repoRoot, sharedIndex)
+      const relative = path.relative(gitDir, resolved)
+      const content =
+        relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+          ? await readGitFile(gitDir, relative)
+          : await readAbsoluteGitFile(resolved)
+      if (content !== null) {
+        hashGitFileContent(hash, 'shared-index', content)
+      }
+    }
+  } catch {
+    // no split index
+  }
+
+  for (const gitPath of ['commondir', 'gitdir']) {
+    await hashResolvedGitPath(repoRoot, gitDir, gitPath, hash)
+  }
+
+  try {
+    const rootGitPath = path.join(repoRoot, '.git')
+    const rootGitInfo = await lstat(rootGitPath)
+    if (rootGitInfo.isFile()) {
+      const content = await readAbsoluteGitFile(rootGitPath)
+      if (content !== null) {
+        hashGitFileContent(hash, '.git', content)
+      }
+    }
+  } catch {
+    // not a linked worktree
   }
 
   await hashGitTree(gitDir, 'refs', hash)
