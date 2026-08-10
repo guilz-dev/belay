@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { boundaryMountReadOnlyFromPrediction } from '../../core/capability/boundary-run.js'
+import {
+  boundaryMountReadOnlyFromPrediction,
+  isBoundaryCleanupError,
+  safeBoundaryCleanupResourceId,
+} from '../../core/capability/boundary-run.js'
 import type { ClassifyResult } from '../../core/types.js'
 
 function classify(overrides: Partial<ClassifyResult> = {}): ClassifyResult {
@@ -154,5 +158,33 @@ describe('boundaryMountReadOnlyFromPrediction', () => {
         }),
       ),
     ).toBe(false)
+  })
+})
+
+describe('boundary cleanup error contract', () => {
+  it('recognizes cleanup state structurally and displays only generated container ids', () => {
+    const cleanup = {
+      code: 'BOUNDARY_CLEANUP_UNCONFIRMED',
+      resourceKind: 'container',
+      resourceId: 'belay-run-123e4567-e89b-42d3-a456-426614174000',
+      executionStarted: true,
+      cleanupConfirmed: false,
+    }
+
+    expect(isBoundaryCleanupError(cleanup)).toBe(true)
+    expect(safeBoundaryCleanupResourceId(cleanup)).toBe(cleanup.resourceId)
+  })
+
+  it('keeps cleanup classification while omitting an untrusted resource id', () => {
+    const cleanup = {
+      code: 'BOUNDARY_CLEANUP_UNCONFIRMED',
+      resourceKind: 'container',
+      resourceId: 'attacker-controlled\ntext',
+      executionStarted: true,
+      cleanupConfirmed: false,
+    }
+
+    expect(isBoundaryCleanupError(cleanup)).toBe(true)
+    expect(safeBoundaryCleanupResourceId(cleanup)).toBeUndefined()
   })
 })

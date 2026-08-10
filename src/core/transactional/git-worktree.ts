@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { canonicalPath, isPathOutsideRoot, pathWithinRoot } from '../path-utils.js'
+import { runProcessWithBoundedOutput, type ShellRunResult } from '../process-runner.js'
 import {
   applyObservedChanges,
   buildObservedChangesFromTransactional,
@@ -136,43 +137,14 @@ export function resolveWorktreeCwd(repoRoot: string, worktreePath: string, cwd: 
   return path.join(worktreePath, relative)
 }
 
-export interface ShellRunResult {
-  exitCode: number | null
-  signal: string | null
-  timedOut: boolean
-}
+export type { ShellRunResult } from '../process-runner.js'
 
 export function runShellCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
 ): Promise<ShellRunResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      stdio: 'ignore',
-      env: process.env,
-    })
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGTERM')
-    }, timeoutMs)
-
-    child.on('error', () => {
-      clearTimeout(timer)
-      resolve({ exitCode: 1, signal: null, timedOut })
-    })
-    child.on('close', (exitCode, signal) => {
-      clearTimeout(timer)
-      resolve({
-        exitCode,
-        signal: signal ? String(signal) : null,
-        timedOut,
-      })
-    })
-  })
+  return runProcessWithBoundedOutput(command, [], { cwd, shell: true, env: process.env }, timeoutMs)
 }
 
 function parseStatusLine(line: string): TransactionalFileChange | null {

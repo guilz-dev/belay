@@ -27,6 +27,10 @@ import { mutateApprovalStateWithRetry } from '../../core/capability/approval-sta
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
 import { isEgressProxyActive } from '../../core/capability/boundary-egress.js'
 import {
+  isBoundaryCleanupError,
+  safeBoundaryCleanupResourceId,
+} from '../../core/capability/boundary-run.js'
+import {
   resolveBoundaryDriverContext,
   runBoundaryAgentCommand,
 } from '../../core/capability/boundary-session.js'
@@ -172,7 +176,25 @@ export interface GateRuntimeDeps {
     exitCode: number | null
     timedOut: boolean
     signal: string | null
+    stdout?: string
+    stderr?: string
   }>
+}
+
+const REPLAY_AUDIT_FAILURE_NOTE =
+  ' Audit recording failed; inspect audit storage before the next approval.'
+
+async function appendReplayAuditSafely(
+  ctx: GateRuntimeContext,
+  deps: GateRuntimeDeps,
+  event: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    await deps.appendAudit(ctx, event)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function loadJsonFile<T>(filePath: string, fallback: T): Promise<T> {
@@ -1244,12 +1266,11 @@ export async function processApprovalPrompt(
     let claimed: ApprovalRecord | null
     try {
       claimed = await claimApprovedForReplay({ approvalId, store: approvalStore })
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
+    } catch {
       return {
         continue: false,
         user_message:
-          `Belay approval ${approvalId} could not be claimed for one-step replay (${detail}). ` +
+          `Belay approval ${approvalId} could not be claimed for one-step replay. ` +
           'The shell action was not started.',
       }
     }
@@ -1268,46 +1289,54 @@ export async function processApprovalPrompt(
         getExecutionLeaseMs(ctx.config),
       )
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      await deps.appendAudit(ctx, {
+      const cleanupUnconfirmed = isBoundaryCleanupError(error)
+      const auditRecorded = await appendReplayAuditSafely(ctx, deps, {
         event: 'approval',
         kind: 'approval',
         verdict: 'allow',
         approvalId,
-        reason: 'approval_replay_error',
+        reason: cleanupUnconfirmed
+          ? 'approval_replay_cleanup_unconfirmed'
+          : 'approval_replay_error',
         summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
       })
+      if (cleanupUnconfirmed) {
+        const resourceId = safeBoundaryCleanupResourceId(error)
+        return {
+          continue: false,
+          user_message:
+            `Belay approval recorded for ${approvalId}. The one-step shell replay started, but cleanup could not be confirmed; the container may still be running.` +
+            (resourceId ? ` Container: ${resourceId}.` : '') +
+            ' Inspect Docker and remove the container manually if it is still present. ' +
+            'The one-shot approval was consumed and was not re-armed.' +
+            (auditRecorded ? '' : REPLAY_AUDIT_FAILURE_NOTE),
+        }
+      }
       return {
         continue: false,
         user_message:
-          `Belay approval recorded for ${approvalId}, but one-step shell replay could not start (${detail}). ` +
-          'The one-shot approval was consumed before replay and was not re-armed.',
+          `Belay approval recorded for ${approvalId}, but one-step shell replay could not start. ` +
+          'The one-shot approval was consumed before replay and was not re-armed.' +
+          (auditRecorded ? '' : REPLAY_AUDIT_FAILURE_NOTE),
       }
     }
-    if (replayResult.exitCode === 0) {
-      let auditFailure: string | undefined
-      try {
-        await deps.appendAudit(ctx, {
-          event: 'approval',
-          kind: 'approval',
-          verdict: 'allow',
-          approvalId,
-          reason: 'approval_replay_succeeded',
-          summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
-        })
-      } catch (error) {
-        auditFailure = error instanceof Error ? error.message : String(error)
-      }
+    if (replayResult.exitCode === 0 && !replayResult.timedOut) {
+      const auditRecorded = await appendReplayAuditSafely(ctx, deps, {
+        event: 'approval',
+        kind: 'approval',
+        verdict: 'allow',
+        approvalId,
+        reason: 'approval_replay_succeeded',
+        summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
+      })
       return {
         continue: true,
         user_message:
           `Belay approval recorded for ${approvalId}. One-step shell replay succeeded; no manual retry required.` +
-          (auditFailure
-            ? ` Audit recording failed (${auditFailure}); inspect audit storage before the next approval.`
-            : ''),
+          (auditRecorded ? '' : REPLAY_AUDIT_FAILURE_NOTE),
       }
     }
-    await deps.appendAudit(ctx, {
+    const auditRecorded = await appendReplayAuditSafely(ctx, deps, {
       event: 'approval',
       kind: 'approval',
       verdict: 'allow',
@@ -1315,12 +1344,15 @@ export async function processApprovalPrompt(
       reason: 'approval_replay_failed',
       summary: recorded.approval.input ?? recorded.approval.summary ?? prompt,
     })
-    const timeoutNote = replayResult.timedOut ? ' Replay timed out.' : ''
+    const failureSummary = replayResult.timedOut
+      ? ' One-step shell replay timed out.'
+      : ` One-step shell replay failed (exit ${replayResult.exitCode}).`
     return {
       continue: false,
       user_message:
-        `Belay approval recorded for ${approvalId}, but one-step shell replay failed (exit ${replayResult.exitCode}).${timeoutNote} ` +
-        `The one-shot approval was consumed before replay and was not re-armed.`,
+        `Belay approval recorded for ${approvalId}.${failureSummary} ` +
+        'The one-shot approval was consumed before replay and was not re-armed.' +
+        (auditRecorded ? '' : REPLAY_AUDIT_FAILURE_NOTE),
     }
   }
 

@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
+import * as processRunner from '../core/process-runner.js'
 import {
   applyObservedChanges,
   buildObservedChangesFromTransactional,
@@ -15,6 +16,7 @@ import {
   applyWorktreeChanges,
   isDirtyWorktree,
   resolveWorktreeCwd,
+  runShellCommand,
 } from '../core/transactional/git-worktree.js'
 
 const execFileAsync = promisify(execFile)
@@ -37,6 +39,61 @@ async function createGitRepo(): Promise<string> {
 }
 
 describe('transactional git worktree helpers', () => {
+  it('uses forced recursive taskkill arguments for Windows process trees', () => {
+    const candidate = processRunner as unknown as {
+      windowsProcessTreeKillArgs?: (pid: number) => string[]
+    }
+
+    expect(candidate.windowsProcessTreeKillArgs?.(4321)).toEqual(['/pid', '4321', '/t', '/f'])
+  })
+
+  it('captures shell output for callers that need failure diagnostics', async () => {
+    const result = await runShellCommand(
+      "printf 'visible stdout'; printf 'visible stderr' >&2; exit 7",
+      process.cwd(),
+      5_000,
+    )
+
+    expect(result).toMatchObject({
+      exitCode: 7,
+      stdout: 'visible stdout',
+      stderr: 'visible stderr',
+    })
+  })
+
+  it('settles after the shell exits even when a background descendant holds its pipes', async () => {
+    const startedAt = Date.now()
+    const result = await runShellCommand(
+      "printf 'failure detail' >&2; sleep 2 & exit 7",
+      process.cwd(),
+      20,
+    )
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500)
+    expect(result).toMatchObject({
+      exitCode: 7,
+      timedOut: false,
+      stderr: 'failure detail',
+    })
+  })
+
+  it('kills descendants that ignore SIGTERM after the command times out', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-process-timeout-'))
+    tempDirs.push(dir)
+    const ready = path.join(dir, 'ready.txt')
+    const marker = path.join(dir, 'survived.txt')
+    const result = await runShellCommand(
+      `printf ready > '${ready}'; trap 'exit 0' TERM; (trap '' TERM; sleep 1; printf survived > '${marker}') & wait`,
+      process.cwd(),
+      500,
+    )
+
+    expect(result.timedOut).toBe(true)
+    await expect(readFile(ready, 'utf8')).resolves.toBe('ready')
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    await expect(readFile(marker, 'utf8')).rejects.toThrow()
+  })
+
   it('maps cwd through symlinked repo roots into the worktree', async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-cwd-'))
     tempDirs.push(base)
