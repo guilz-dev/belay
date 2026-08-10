@@ -149,6 +149,7 @@ export async function runTransactionalExecution(
               changes,
               protectedRoots: diffContext.protectedRoots,
               config: params.checkpoint,
+              backend: snapshot.backend,
             })
           : null
       try {

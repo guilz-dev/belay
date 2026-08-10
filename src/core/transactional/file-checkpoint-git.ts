@@ -9,6 +9,7 @@ export const FILE_CHECKPOINT_GIT_METADATA_CHANGED = 'file_checkpoint_git_metadat
 export const FILE_CHECKPOINT_BASELINE_MISMATCH = 'file_checkpoint_baseline_mismatch'
 export const FILE_CHECKPOINT_CWD_OUTSIDE_ROOT = 'file_checkpoint_cwd_outside_root'
 export const FILE_CHECKPOINT_PREPARE_FAILED = 'file_checkpoint_prepare_failed'
+export const FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED = 'file_checkpoint_split_index_unsupported'
 
 export function execGit(repoRoot: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -80,19 +81,24 @@ export async function copyGitIndexState(
   )
   await copyFile(sourceIndex, destinationIndex)
 
+  let sharedIndex: string
   try {
-    const sharedIndex = (await execGit(sourceRoot, ['rev-parse', '--shared-index-path'])).trim()
-    if (!sharedIndex) {
-      return
-    }
-    const sourceShared = await resolveGitPath(sourceRoot, sharedIndex)
-    const destinationShared = await resolveGitPath(destinationRoot, sharedIndex)
-    if (canonicalPath(sourceShared) === canonicalPath(sourceIndex)) {
-      return
-    }
-    await copyFile(sourceShared, destinationShared)
+    sharedIndex = (await execGit(sourceRoot, ['rev-parse', '--shared-index-path'])).trim()
   } catch {
-    // Split index unsupported or unavailable — index copy alone is sufficient.
+    return
+  }
+  if (!sharedIndex) {
+    return
+  }
+  const sourceShared = await resolveGitPath(sourceRoot, sharedIndex)
+  const destinationShared = await resolveGitPath(destinationRoot, sharedIndex)
+  if (canonicalPath(sourceShared) === canonicalPath(sourceIndex)) {
+    return
+  }
+  try {
+    await copyFile(sourceShared, destinationShared)
+  } catch (error) {
+    throw new Error(FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED, { cause: error })
   }
 }
 

@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -262,15 +262,4 @@ export const fileCheckpointBackend: TransactionalBackend = {
       },
     }
   },
-}
-
-export async function loadPersistedBaselineIndex(
-  stagingRoot: string,
-): Promise<FileTreeIndex | null> {
-  try {
-    const raw = await readFile(path.join(stagingRoot, 'baseline-index.json'), 'utf8')
-    return JSON.parse(raw.trim()) as FileTreeIndex
-  } catch {
-    return null
-  }
 }

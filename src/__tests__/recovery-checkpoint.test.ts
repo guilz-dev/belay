@@ -179,6 +179,38 @@ describe('recovery checkpoints', () => {
       backend: 'git_worktree',
       resourceKind: 'git_repository',
     })
+    expect(loaded.manifest.proof).toMatchObject({
+      backend: 'git_worktree',
+      probeSignals: ['clean_git_worktree', 'observed_repo_local_diff'],
+    })
+  })
+
+  it('records file_checkpoint backend metadata when requested', async () => {
+    const repoRoot = await createGitRepo()
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-fcp-'))
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(repoRoot, '.recovery-state')
+    await writeFile(path.join(repoRoot, 'dirty.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'dirty.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'dirty-file-checkpoint',
+      changes: [{ relativePath: 'dirty.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+
+    expect(checkpoint.manifest).toMatchObject({
+      version: 2,
+      backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
+    })
+    expect(checkpoint.manifest.proof).toMatchObject({
+      backend: 'file_checkpoint',
+      probeSignals: ['dirty_git_worktree', 'file_checkpoint', 'observed_repo_local_diff'],
+    })
   })
 
   it('restores an existing durable manifest v1 fixture', async () => {

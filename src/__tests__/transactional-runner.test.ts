@@ -8,10 +8,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import type { BoundaryAttestation, BoundaryDriverId } from '../core/capability/attestation.js'
+import * as boundaryRun from '../core/capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
 import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
 import * as gitWorktree from '../core/transactional/git-worktree.js'
+import { runShellCommand } from '../core/transactional/git-worktree.js'
 import {
   TRANSACTIONAL_ALREADY_APPLIED,
   TRANSACTIONAL_APPLY_FAILED,
@@ -264,6 +266,56 @@ describe('transactional runner', () => {
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe('transactional_command_failed')
     expect(result.result).toEqual(predicted)
+  })
+
+  it('applies safe dirty-git mutations through file_checkpoint mirrors', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    const predicted = await classifyShellCore('touch safe-dirty.txt', repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      if (mount) {
+        const hostCwd = mount.cwdRelative
+          ? path.join(mount.hostSourceRoot, mount.cwdRelative)
+          : mount.hostSourceRoot
+        return runShellCommand(params.command, hostCwd, params.timeoutMs)
+      }
+      return runShellCommand(params.command, params.cwd, params.timeoutMs)
+    })
+
+    const params = runnerParams({
+      command: 'touch safe-dirty.txt',
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+    })
+    const boundaryContext = {
+      ...hostIntegrationBoundaryContext(repoRoot),
+      driverId: 'container' as const,
+      attestation: containerIsolationAttestation(),
+      attestationFresh: true,
+    }
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: {
+        ...DEFAULT_RECOVERY_CHECKPOINT,
+        enabled: true,
+      },
+      boundaryContext,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    expect(result.recoveryBackend).toBe('file_checkpoint')
+    await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).resolves.toBeDefined()
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('# dirty\n')
   })
 
   it('ignores untracked belay init artifacts when dirtyIgnoreRoots is provided', async () => {
