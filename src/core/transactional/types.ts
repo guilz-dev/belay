@@ -37,7 +37,7 @@ export interface TransactionalExecutionResult {
   commandSignal?: string | null
   timedOut?: boolean
   recoveryCheckpointId?: string
-  recoveryBackend?: 'git_worktree'
+  recoveryBackend?: 'git_worktree' | 'file_checkpoint'
   recoveryProofHash?: string
   recoveryState?: 'applied'
 }

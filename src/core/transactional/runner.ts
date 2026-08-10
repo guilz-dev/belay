@@ -3,6 +3,7 @@ import {
   runWithBoundaryRunnable,
 } from '../capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../capability/boundary-session.js'
+import { resolveGuestWorkdir } from '../capability/boundary-workspace-mount.js'
 import {
   discardPreparedRecoveryCheckpoint,
   listRecoveryCheckpoints,
@@ -75,7 +76,25 @@ export async function runTransactionalExecution(
   let snapshot: Awaited<ReturnType<typeof selection.backend.prepare>> | null = null
   try {
     snapshot = await selection.backend.prepare(backendContext)
-    const execCwd = resolveWorktreeCwd(repoRoot, snapshot.executionRoot, cwd)
+    const runOptions =
+      snapshot.backend === 'file_checkpoint' && snapshot.executionCwdRelative !== undefined
+        ? {
+            mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
+            workspaceMount: {
+              hostSourceRoot: snapshot.executionRoot,
+              guestTargetRoot: snapshot.resourceRoot,
+              cwdRelative: snapshot.executionCwdRelative,
+              writable: true,
+              hideHostSourcePath: true,
+            },
+          }
+        : {
+            mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
+          }
+    const execCwd =
+      snapshot.backend === 'file_checkpoint' && runOptions.workspaceMount
+        ? resolveGuestWorkdir(runOptions.workspaceMount)
+        : resolveWorktreeCwd(repoRoot, snapshot.executionRoot, cwd)
     const boundaryContext =
       params.boundaryContext ?? hostIntegrationBoundaryContext(params.repoRoot)
     const shellResult = await runWithBoundaryRunnable(boundaryContext.driver, {
@@ -83,9 +102,7 @@ export async function runTransactionalExecution(
       command,
       cwd: execCwd,
       timeoutMs,
-      runOptions: {
-        mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
-      },
+      runOptions,
     })
 
     if (shellResult.timedOut) {
@@ -166,7 +183,7 @@ export async function runTransactionalExecution(
           ...(checkpoint && receipt
             ? {
                 recoveryCheckpointId: checkpoint.checkpointId,
-                recoveryBackend: 'git_worktree' as const,
+                recoveryBackend: snapshot.backend,
                 recoveryProofHash: receipt.proofHash,
                 recoveryState: 'applied' as const,
               }

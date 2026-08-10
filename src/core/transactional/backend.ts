@@ -20,6 +20,8 @@ export interface TransactionalSnapshot {
   baselineTreeHash: string
   excludedRoots: string[]
   copyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  /** Relative cwd inside resourceRoot for isolated workspace mounts. */
+  executionCwdRelative?: string
   collectChanges(): Promise<TransactionalFileChange[]>
   cleanup(): Promise<void>
 }
