@@ -6,6 +6,7 @@ import {
   validateWorkspaceMount,
   workspaceMountEnvArgs,
 } from '../../core/capability/boundary-workspace-mount.js'
+import { canonicalPath } from '../../core/path-utils.js'
 
 function mount(overrides?: Partial<BoundaryWorkspaceMount>): BoundaryWorkspaceMount {
   return {
@@ -34,7 +35,13 @@ function finalDockerEnv(args: string[]): Record<string, string> {
 describe('boundary workspace mount helpers', () => {
   it('builds a bind mount spec for the execution mirror', () => {
     expect(buildWorkspaceMountSpec(mount())).toBe(
-      'type=bind,src=/tmp/belay-mirror,dst=/workspace/project,rw',
+      `type=bind,src=${canonicalPath('/tmp/belay-mirror')},dst=/workspace/project`,
+    )
+  })
+
+  it('uses Docker readonly syntax for a read-only execution mirror', () => {
+    expect(buildWorkspaceMountSpec(mount({ writable: false }))).toBe(
+      `type=bind,src=${canonicalPath('/tmp/belay-mirror')},dst=/workspace/project,readonly`,
     )
   })
 
@@ -60,6 +67,17 @@ describe('boundary workspace mount helpers', () => {
         }),
       ),
     ).toThrow('boundary_workspace_mount_source_equals_target')
+  })
+
+  it('rejects mount when host source contains the original workspace target', () => {
+    expect(() =>
+      validateWorkspaceMount(
+        mount({
+          hostSourceRoot: '/workspace',
+          guestTargetRoot: '/workspace/project',
+        }),
+      ),
+    ).toThrow('boundary_workspace_mount_source_contains_target')
   })
 
   it('sanitizes host-path environment variables when hideHostSourcePath is true', () => {

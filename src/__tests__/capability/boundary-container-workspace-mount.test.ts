@@ -10,6 +10,7 @@ import {
   isDockerAvailable,
 } from '../../core/capability/boundary-driver-container.js'
 import { resolveGuestWorkdir } from '../../core/capability/boundary-workspace-mount.js'
+import { canonicalPath } from '../../core/path-utils.js'
 
 const dockerAvailable = await isDockerAvailable()
 const DOCKER_TEST_TIMEOUT_MS = 60_000
@@ -31,6 +32,7 @@ describe('container workspace mount isolation', () => {
       cwd: '/workspace/project',
       proxyEnv: {},
       mountReadOnly: true,
+      repoRoot: '/workspace/project',
       runOptions: {
         workspaceMount: {
           hostSourceRoot: '/tmp/belay-mirror',
@@ -43,16 +45,34 @@ describe('container workspace mount isolation', () => {
     })
 
     expect(args).toContain('--mount')
-    expect(args).toContain('type=bind,src=/tmp/belay-mirror,dst=/workspace/project,rw')
+    expect(args).toContain(
+      `type=bind,src=${canonicalPath('/tmp/belay-mirror')},dst=/workspace/project`,
+    )
     expect(args).not.toContain('-v')
     expect(args).not.toContain('/tmp/belay-mirror:/tmp/belay-mirror')
+  })
+
+  it('rejects an alternate guest target before a parent source can expose the workspace', async () => {
+    const driver = createContainerBoundaryDriver({ repoRoot: '/safe/repo' })
+
+    await expect(
+      driver.run('true', '/workspace', 1_000, {
+        workspaceMount: {
+          hostSourceRoot: '/safe',
+          guestTargetRoot: '/workspace',
+          cwdRelative: '.',
+          writable: true,
+          hideHostSourcePath: true,
+        },
+      }),
+    ).rejects.toThrow('boundary_workspace_mount_target_mismatch')
   })
 
   it.skipIf(!dockerAvailable)(
     'mutates only the execution mirror when commands use absolute workspace paths',
     async () => {
-      const hostRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-host-root-'))
-      const mirrorRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-mirror-root-'))
+      const hostRoot = canonicalPath(await mkdtemp(path.join(os.tmpdir(), 'belay-host-root-')))
+      const mirrorRoot = canonicalPath(await mkdtemp(path.join(os.tmpdir(), 'belay-mirror-root-')))
       await writeFile(path.join(hostRoot, 'marker.txt'), 'host\n')
       await mkdir(mirrorRoot, { recursive: true })
       await writeFile(path.join(mirrorRoot, 'marker.txt'), 'mirror\n')
@@ -64,7 +84,7 @@ describe('container workspace mount isolation', () => {
         writable: true,
         hideHostSourcePath: true,
       }
-      const driver = createContainerBoundaryDriver()
+      const driver = createContainerBoundaryDriver({ repoRoot: hostRoot })
       const workdir = resolveGuestWorkdir(workspaceMount)
       const markerPath = path.join(hostRoot, 'marker.txt')
       const result = await driver.run(
@@ -84,8 +104,10 @@ describe('container workspace mount isolation', () => {
   it.skipIf(!dockerAvailable)(
     'keeps the host workspace unchanged when parent traversal resolves inside the mirror',
     async () => {
-      const hostRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-host-parent-'))
-      const mirrorRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-mirror-parent-'))
+      const hostRoot = canonicalPath(await mkdtemp(path.join(os.tmpdir(), 'belay-host-parent-')))
+      const mirrorRoot = canonicalPath(
+        await mkdtemp(path.join(os.tmpdir(), 'belay-mirror-parent-')),
+      )
       await mkdir(path.join(hostRoot, 'src'), { recursive: true })
       await mkdir(path.join(mirrorRoot, 'src'), { recursive: true })
       await writeFile(path.join(hostRoot, 'src', 'file.txt'), 'host\n')
@@ -98,7 +120,7 @@ describe('container workspace mount isolation', () => {
         writable: true,
         hideHostSourcePath: true,
       }
-      const driver = createContainerBoundaryDriver()
+      const driver = createContainerBoundaryDriver({ repoRoot: hostRoot })
       const workdir = resolveGuestWorkdir(workspaceMount)
       const result = await driver.run('cd .. && printf parent > marker.txt', workdir, 30_000, {
         workspaceMount,

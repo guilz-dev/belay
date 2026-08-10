@@ -75,6 +75,12 @@ export function buildContainerRunArgs(params: ContainerRunParams): string[] {
   const workspaceMount = params.runOptions?.workspaceMount
 
   if (workspaceMount) {
+    if (!params.repoRoot) {
+      throw new Error('boundary_workspace_mount_missing_resource_root')
+    }
+    if (canonicalPath(workspaceMount.guestTargetRoot) !== canonicalPath(params.repoRoot)) {
+      throw new Error('boundary_workspace_mount_target_mismatch')
+    }
     const workdir = resolveGuestWorkdir(workspaceMount)
     if (canonicalPath(params.cwd) !== workdir) {
       throw new Error('boundary_workspace_mount_cwd_mismatch')

@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { canonicalPath } from '../path-utils.js'
+import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import type { BoundaryWorkspaceMount } from './boundary-run.js'
 
 const HOST_PATH_ENV_VARS = [
@@ -21,6 +21,9 @@ export function validateWorkspaceMount(mount: BoundaryWorkspaceMount): void {
   }
   if (hostSourceRoot === guestTargetRoot) {
     throw new Error('boundary_workspace_mount_source_equals_target')
+  }
+  if (pathWithinRoot(hostSourceRoot, guestTargetRoot)) {
+    throw new Error('boundary_workspace_mount_source_contains_target')
   }
   if (mount.cwdRelative.includes('\0')) {
     throw new Error('boundary_workspace_mount_invalid_cwd')
@@ -49,8 +52,8 @@ export function buildWorkspaceMountSpec(mount: BoundaryWorkspaceMount): string {
   validateWorkspaceMount(mount)
   const hostSourceRoot = canonicalPath(mount.hostSourceRoot)
   const guestTargetRoot = canonicalPath(mount.guestTargetRoot)
-  const mode = mount.writable ? 'rw' : 'ro'
-  return `type=bind,src=${hostSourceRoot},dst=${guestTargetRoot},${mode}`
+  const readonly = mount.writable ? '' : ',readonly'
+  return `type=bind,src=${hostSourceRoot},dst=${guestTargetRoot}${readonly}`
 }
 
 export function workspaceMountEnvArgs(mount: BoundaryWorkspaceMount): string[] {

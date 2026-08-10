@@ -399,15 +399,19 @@ Container implementation:
 
 ```text
 docker run
-  --mount type=bind,src=<executionRoot>,dst=<originalResourceRoot>,rw
+  --mount type=bind,src=<executionRoot>,dst=<originalResourceRoot>
   --workdir <originalResourceRoot>/<cwdRelative>
   ...
 ```
 
+Docker bind mounts are writable by default. For a read-only workspace mount, append the
+valid `readonly` option; do not append the unsupported bare `rw` field.
+
 Do not additionally mount the original workspace. Validate both mount paths before
-constructing Docker arguments. The container image must contain the command's runtime
-dependencies; a missing runtime produces a normal non-zero execution result and no
-apply.
+constructing Docker arguments. The container driver must compare `guestTargetRoot` with
+its trusted canonical resource root, then reject a mount source that equals or contains
+that root. The container image must contain the command's runtime dependencies; a
+missing runtime produces a normal non-zero execution result and no apply.
 
 `host-integration` reports `isolatesWorkspaceMounts: false`. Backend selection returns
 `file_checkpoint_isolation_unavailable` rather than executing on the host. Future
