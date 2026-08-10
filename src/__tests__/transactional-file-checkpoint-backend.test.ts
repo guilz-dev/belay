@@ -203,6 +203,21 @@ describe('file checkpoint backend', () => {
     ).rejects.toThrow('file_checkpoint_quota_exceeded')
   })
 
+  it('preserves a supported split index in both mirrors', async () => {
+    const repoRoot = await createGitRepo()
+    await execFileAsync('git', ['config', 'core.splitIndex', 'true'], { cwd: repoRoot })
+    await execFileAsync('git', ['update-index', '--split-index'], { cwd: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty split index\n')
+
+    const snapshot = await fileCheckpointBackend.prepare(backendContext(repoRoot))
+    const status = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: snapshot.executionRoot,
+    })
+    expect(status.stdout).toContain('README.md')
+
+    await snapshot.cleanup()
+  })
+
   it('preserves unrelated dirty files when one path changes in the mirror', async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
