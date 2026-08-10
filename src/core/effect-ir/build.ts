@@ -2,6 +2,7 @@ import type { CapabilityPrincipal, CapabilityRequestV1 } from '../capability/req
 import type { LauncherResolution } from '../verdict/launcher-resolve.js'
 import { mergeRequirements } from './normalize.js'
 import {
+  classifyPackageAcquisitionSpec,
   innerRecipeFromPeel,
   type PackageExecPeelResult,
   peelPackageExecArgv,
@@ -217,67 +218,22 @@ function packageAcquisitionResources(
 ): Array<Extract<EffectRequirement['resource'], { kind: 'network' }>> {
   const resources = new Map<string, Extract<EffectRequirement['resource'], { kind: 'network' }>>()
   for (const spec of specs) {
-    const resource = explicitPackageSource(spec) ?? registrySourceForPackageSpec(spec)
-    if (resource) {
-      resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`, resource)
+    const source = classifyPackageAcquisitionSpec(spec)
+    if (source.kind === 'local') {
+      continue
     }
+    const resource: Extract<EffectRequirement['resource'], { kind: 'network' }> =
+      source.kind === 'registry'
+        ? { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' }
+        : {
+            kind: 'network',
+            host: source.host,
+            ...(source.port ? { port: source.port } : {}),
+            protocol: source.protocol,
+          }
+    resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`, resource)
   }
   return [...resources.values()]
-}
-
-function explicitPackageSource(
-  spec: string,
-): Extract<EffectRequirement['resource'], { kind: 'network' }> | null {
-  const trimmed = spec.trim()
-  const normalized = trimmed.startsWith('git+') ? trimmed.slice(4) : trimmed
-  if (normalized.startsWith('github:')) {
-    return { kind: 'network', host: 'github.com', protocol: 'git' }
-  }
-  if (normalized.startsWith('gitlab:')) {
-    return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
-  }
-  if (normalized.startsWith('bitbucket:')) {
-    return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
-  }
-  if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
-    return { kind: 'network', host: 'github.com', protocol: 'git' }
-  }
-  const scpStyle = normalized.match(/^(?:[^@/]+@)?([^:/]+):[^/].+$/)
-  if (scpStyle?.[1]?.includes('.')) {
-    return { kind: 'network', host: scpStyle[1], protocol: 'ssh' }
-  }
-  try {
-    const url = new URL(normalized)
-    if (!['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) {
-      return null
-    }
-    return {
-      kind: 'network',
-      host: url.hostname,
-      ...(url.port ? { port: Number(url.port) } : {}),
-      protocol: url.protocol.slice(0, -1),
-    }
-  } catch {
-    return null
-  }
-}
-
-function registrySourceForPackageSpec(
-  spec: string,
-): Extract<EffectRequirement['resource'], { kind: 'network' }> | null {
-  const normalized = spec.trim()
-  if (
-    normalized.startsWith('file:') ||
-    normalized.startsWith('git+file:') ||
-    normalized.startsWith('link:') ||
-    normalized.startsWith('workspace:') ||
-    normalized.startsWith('./') ||
-    normalized.startsWith('../') ||
-    normalized.startsWith('/')
-  ) {
-    return null
-  }
-  return { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' }
 }
 
 export function collectRequirements(node: EffectNode): EffectRequirement[] {

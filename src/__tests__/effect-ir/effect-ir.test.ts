@@ -363,6 +363,45 @@ describe('effect-ir', () => {
     expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
   })
 
+  it('uses one package-spec classification even when a same-name local bin exists', async () => {
+    const repoDir = await mkdtemp(path.join(os.tmpdir(), 'belay-effect-package-spec-'))
+    tempDirs.push(repoDir)
+    const binDir = path.join(repoDir, 'node_modules', '.bin')
+    await mkdir(binDir, { recursive: true })
+    await Promise.all(
+      ['tool', 'archive.tgz', 'nested'].map((name) =>
+        writeFile(path.join(binDir, name), '#!/usr/bin/env node\n'),
+      ),
+    )
+
+    const cases = [
+      { spec: 'owner/tool', expectedHost: 'github.com' },
+      { spec: 'file:../tool', expectedHost: null },
+      { spec: 'archive.tgz', expectedHost: null },
+      { spec: '~/tool', expectedHost: null },
+      { spec: 'foo/bar/nested', expectedHost: null },
+    ] as const
+
+    for (const fixture of cases) {
+      const plan = buildEffectPlan({
+        tokens: ['npx', fixture.spec],
+        cwd: repoDir,
+        repoRoot: repoDir,
+        inputFingerprint: `fp-npx-package-spec-${fixture.spec}`,
+      })
+      expect(plan).not.toBeNull()
+      if (!plan) {
+        throw new Error('expected effect plan')
+      }
+      const requirements = collectRequirements(plan.root)
+      const networkHosts = requirements.flatMap((entry) =>
+        entry.resource.kind === 'network' ? [entry.resource.host] : [],
+      )
+      expect(networkHosts).toEqual(fixture.expectedHost ? [fixture.expectedHost] : [])
+      expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
+    }
+  })
+
   it('retains the cache write for a local package when later syntax is opaque', () => {
     const ctx = verdictTestContext()
     const plan = buildEffectPlan({

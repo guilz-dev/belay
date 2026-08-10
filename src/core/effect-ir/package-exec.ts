@@ -277,8 +277,7 @@ export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisition
     normalized.startsWith('../') ||
     normalized.startsWith('/') ||
     normalized.startsWith('~/') ||
-    /^[A-Za-z]:[\\/]/.test(normalized) ||
-    /(?:\.tgz|\.tar|\.tar\.gz)$/i.test(normalized)
+    /^[A-Za-z]:[\\/]/.test(normalized)
   ) {
     return { kind: 'local' }
   }
@@ -311,6 +310,9 @@ export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisition
 
   if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
     return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if (/(?:\.tgz|\.tar|\.tar\.gz)$/i.test(normalized)) {
+    return { kind: 'local' }
   }
   if ((normalized.match(/\//g)?.length ?? 0) > 1) {
     return { kind: 'local' }
