@@ -678,6 +678,7 @@ export async function evaluateGatedAction(
         snapshotCopyStrategy: txResult.snapshotCopyStrategy,
         snapshotPrepareMs: txResult.snapshotPrepareMs,
         transactionalSkipReason: skipReason,
+        transactionalSkipDetail: txResult.skipDetail,
         recoveryFailClosed: true,
       }
     }

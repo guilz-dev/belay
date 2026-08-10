@@ -29,6 +29,7 @@ export interface TransactionalExecutionResult {
   ok: boolean
   skipped?: boolean
   skipReason?: string
+  skipDetail?: string
   predicted: ClassifyResult
   observed?: TransactionalDiffEvaluation
   result: ClassifyResult

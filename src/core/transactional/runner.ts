@@ -16,6 +16,7 @@ import type { ClassifyResult } from '../types.js'
 import { buildObservedChangesFromTransactional } from './apply-observed-changes.js'
 import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
+import { FileCheckpointDiagnosticError } from './file-tree.js'
 import {
   applyWorktreeChanges,
   resolveWorktreeCwd,
@@ -269,6 +270,7 @@ export async function runTransactionalExecution(
       ok: false,
       skipped: true,
       skipReason: error instanceof Error ? error.message : 'transactional_execution_failed',
+      ...(error instanceof FileCheckpointDiagnosticError ? { skipDetail: error.diagnostic } : {}),
       predicted,
       result: predicted,
       ...(snapshot

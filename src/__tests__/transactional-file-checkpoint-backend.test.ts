@@ -14,6 +14,7 @@ import {
   FILE_CHECKPOINT_GIT_METADATA_CHANGED,
   FILE_CHECKPOINT_SOURCE_CHANGED,
 } from '../core/transactional/file-checkpoint-git.js'
+import { FileCheckpointDiagnosticError } from '../core/transactional/file-tree.js'
 import { runShellCommand } from '../core/transactional/git-worktree.js'
 
 const execFileAsync = promisify(execFile)
@@ -190,13 +191,20 @@ describe('file checkpoint backend', () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
 
-    await expect(
-      fileCheckpointBackend.prepare(
+    try {
+      await fileCheckpointBackend.prepare(
         backendContext(repoRoot, {
           maxWorkspaceBytes: 1_024,
         }),
-      ),
-    ).rejects.toThrow('file_checkpoint_quota_exceeded')
+      )
+      throw new Error('expected quota failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(FileCheckpointDiagnosticError)
+      expect(error).toMatchObject({ message: 'file_checkpoint_quota_exceeded' })
+      expect((error as FileCheckpointDiagnosticError).diagnostic).toMatch(
+        /workspaceBytes=.*maxWorkspaceBytes=1024/,
+      )
+    }
   })
 
   it('preserves a supported split index in both mirrors', async () => {

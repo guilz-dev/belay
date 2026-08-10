@@ -48,6 +48,7 @@ export {
 export {
   buildFileTreeIndex,
   diffFileTreeIndices,
+  FileCheckpointDiagnosticError,
   type FileTreeEntry,
   type FileTreeIndex,
   type ObservedFileChange,

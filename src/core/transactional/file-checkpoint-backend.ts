@@ -34,6 +34,7 @@ import {
   diffFileTreeIndices,
   FILE_CHECKPOINT_PREPARE_TIMEOUT,
   FILE_CHECKPOINT_QUOTA_EXCEEDED,
+  FileCheckpointDiagnosticError,
   type FileTreeIndex,
 } from './file-tree.js'
 import { isDirtyWorktree, isGitWorktreeAvailable } from './git-worktree.js'
@@ -123,7 +124,10 @@ interface PreparedFileCheckpointState {
 
 async function directoryByteSize(root: string, deadlineMs: number): Promise<number> {
   if (Date.now() > deadlineMs) {
-    throw new Error(FILE_CHECKPOINT_PREPARE_TIMEOUT)
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_PREPARE_TIMEOUT,
+      `workspace accounting exceeded deadlineMs=${deadlineMs}`,
+    )
   }
   const info = await lstat(root)
   if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -217,7 +221,10 @@ async function prepareDirtyGitSnapshot(
     const gitMetadataFingerprint = await computeGitMetadataFingerprint(executionRoot)
     const workspaceBytes = await directoryByteSize(stagingRoot, deadlineMs)
     if (workspaceBytes > quotas.maxWorkspaceBytes) {
-      throw new Error(FILE_CHECKPOINT_QUOTA_EXCEEDED)
+      throw new FileCheckpointDiagnosticError(
+        FILE_CHECKPOINT_QUOTA_EXCEEDED,
+        `snapshot workspaceBytes=${workspaceBytes} exceeds maxWorkspaceBytes=${quotas.maxWorkspaceBytes}`,
+      )
     }
 
     return {
@@ -234,6 +241,9 @@ async function prepareDirtyGitSnapshot(
     }
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
+    if (error instanceof FileCheckpointDiagnosticError) {
+      throw error
+    }
     if (error instanceof Error && error.message === FILE_CHECKPOINT_CWD_OUTSIDE_ROOT) {
       throw error
     }

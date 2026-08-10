@@ -14,7 +14,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type { BelayFileCheckpointConfig } from '../config.js'
-import { buildFileTreeIndex } from './file-tree.js'
+import {
+  buildFileTreeIndex,
+  FILE_CHECKPOINT_QUOTA_EXCEEDED,
+  FileCheckpointDiagnosticError,
+} from './file-tree.js'
 import { compareRelativePathsBytewise, joinRelativePath } from './file-tree-path.js'
 
 export const FILE_CHECKPOINT_COPY_FAILED = 'file_checkpoint_copy_failed'
@@ -113,7 +117,10 @@ export async function cloneDirectoryTree(
   })
 
   if (options.quotas && sourceIndex.totalFileBytes * 2 > options.quotas.maxWorkspaceBytes) {
-    throw new Error('file_checkpoint_quota_exceeded')
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_QUOTA_EXCEEDED,
+      `estimated workspaceBytes=${sourceIndex.totalFileBytes * 2} exceeds maxWorkspaceBytes=${options.quotas.maxWorkspaceBytes}`,
+    )
   }
 
   const sortedPaths = [...sourceIndex.entries]
