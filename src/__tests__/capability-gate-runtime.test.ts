@@ -593,6 +593,7 @@ describe('capability gate runtime', () => {
     expect(approvedRecord.grants?.length ?? 0).toBeGreaterThan(1)
     approvedRecord.grants = approvedRecord.grants?.slice(0, -1)
     approvedRecord.grant = approvedRecord.grants?.[0]
+    approvedRecord.executionLeaseExpiresAt = new Date(Date.now() + 60_000).toISOString()
 
     await writeFile(
       path.join(stateDir, 'approved-approvals.json'),

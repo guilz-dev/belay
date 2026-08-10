@@ -153,7 +153,14 @@ function acquireRequirement(
   peel: PackageExecPeelResult,
   level: 'possible' | 'indeterminate',
 ): LauncherEffectNode {
-  const explicitSource = explicitPackageSource(peel.innerTokens[0] ?? '')
+  const explicitSources = explicitPackageSources(peel.acquisitionSpecs)
+  const networkRequirements: EffectRequirement[] =
+    level === 'indeterminate'
+      ? [acquireNetworkRequirement(peel, { kind: 'unknown' }, level)]
+      : (explicitSources.length > 0
+          ? explicitSources
+          : [{ kind: 'network' as const, host: 'registry.npmjs.org', protocol: 'registry' }]
+        ).map((resource) => acquireNetworkRequirement(peel, resource, level))
   return {
     kind: 'launcher',
     launcher: peel.launcher,
@@ -166,29 +173,50 @@ function acquireRequirement(
         commandRedacted: peel.innerTokens.join(' ') || peel.launcher,
         segmentHead: peel.launcher,
         requirements: [
-          {
-            tag: level === 'indeterminate' ? 'indeterminate' : 'network.acquire',
-            action: level === 'indeterminate' ? 'indeterminate' : 'network.connect',
-            resource:
-              level === 'indeterminate'
-                ? { kind: 'unknown' }
-                : explicitSource ?? {
-                    kind: 'network',
-                    host: 'registry.npmjs.org',
-                    protocol: 'registry',
-                  },
-            evidence: {
-              level,
-              signals: [...peel.signals, 'package_acquire_possible'],
-              basis: [`launcher:${peel.launcher}:acquire`],
-            },
-            provenance: { launcher: peel.launcher, phase: 'acquire' },
-          },
+          ...networkRequirements,
           ...(level === 'possible' ? [cacheWriteRequirement(peel)] : []),
         ],
       },
     ],
   }
+}
+
+function acquireNetworkRequirement(
+  peel: PackageExecPeelResult,
+  resource: EffectRequirement['resource'],
+  level: 'possible' | 'indeterminate',
+): EffectRequirement {
+  return {
+    tag: level === 'indeterminate' ? 'indeterminate' : 'network.acquire',
+    action: level === 'indeterminate' ? 'indeterminate' : 'network.connect',
+    resource,
+    evidence: {
+      level,
+      signals: [...peel.signals, 'package_acquire_possible'],
+      basis: [`launcher:${peel.launcher}:acquire`],
+    },
+    provenance: {
+      launcher: peel.launcher,
+      phase: 'acquire',
+      innerArgv: [...peel.acquisitionSpecs],
+    },
+  }
+}
+
+function explicitPackageSources(
+  specs: readonly string[],
+): Array<Extract<EffectRequirement['resource'], { kind: 'network' }>> {
+  const resources = new Map<
+    string,
+    Extract<EffectRequirement['resource'], { kind: 'network' }>
+  >()
+  for (const spec of specs) {
+    const resource = explicitPackageSource(spec)
+    if (resource) {
+      resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`, resource)
+    }
+  }
+  return [...resources.values()]
 }
 
 function explicitPackageSource(

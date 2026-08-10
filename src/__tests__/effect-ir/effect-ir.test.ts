@@ -145,8 +145,9 @@ describe('effect-ir', () => {
 
   it('targets the actual host for an explicit package URL and preserves inner argv', () => {
     const ctx = verdictTestContext()
+    const packageUrl = 'https://user:secret@packages.example/tool.tgz?token=abc'
     const plan = buildEffectPlan({
-      tokens: ['npx', 'https://packages.example/tool.tgz', '--label=a b'],
+      tokens: ['npx', packageUrl, '--label=a b'],
       cwd: ctx.cwd,
       repoRoot: ctx.repoRoot,
       inputFingerprint: 'fp-npx-url',
@@ -167,10 +168,46 @@ describe('effect-ir', () => {
     )
     const processExec = requirements.find((entry) => entry.action === 'process.exec')
     expect(processExec?.provenance.innerArgv).toEqual([
-      'https://packages.example/tool.tgz',
+      packageUrl,
       '--label=a b',
     ])
-    expect(JSON.stringify(effectPlanAuditFields(plan))).not.toContain('--label=a b')
+    const audit = JSON.stringify(effectPlanAuditFields(plan))
+    expect(audit).not.toContain('--label=a b')
+    expect(audit).not.toContain('user:secret')
+    expect(audit).not.toContain('token=abc')
+  })
+
+  it('keeps package flag acquisition separate from delegated argv', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: [
+        'npm',
+        'exec',
+        '--package=https://packages.example/tool.tgz',
+        '--',
+        'tool',
+        '--version',
+      ],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-package-url',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(
+      requirements.some(
+        (entry) =>
+          entry.action === 'network.connect' &&
+          entry.resource.kind === 'network' &&
+          entry.resource.host === 'packages.example',
+      ),
+    ).toBe(true)
+    expect(requirements.find((entry) => entry.action === 'process.exec')?.provenance.innerArgv).toEqual(
+      ['tool', '--version'],
+    )
   })
 
   it('combines policy decisions with deny over allow', () => {

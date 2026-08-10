@@ -228,17 +228,15 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
   if (isGitRefWrite(analysis)) {
     return { kind: 'git-ref', ref: 'push' }
   }
-  if (
-    analysis.egressClass === 'ambiguous' ||
-    analysis.egressClass === 'read' ||
-    analysis.egressClass === 'destructive' ||
-    analysis.location === 'external'
-  ) {
-    return exactNetworkResource(analysis.command) ?? {
-      kind: 'network',
-      host: '*',
-      protocol: 'unknown',
-    }
+  if (isNetworkShellAnalysis(analysis)) {
+    const exact = exactNetworkResources(analysis.command)
+    return exact.length === 1
+      ? exact[0]!
+      : {
+          kind: 'network',
+          host: '*',
+          protocol: 'unknown',
+        }
   }
   const resourcePath = resourcePathForShellAnalysis(analysis)
   if (resourcePath) {
@@ -247,9 +245,18 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
   return { kind: 'executable', command: analysis.segmentHead }
 }
 
-function exactNetworkResource(
+function isNetworkShellAnalysis(analysis: ShellCapabilityAnalysis): boolean {
+  return (
+    analysis.egressClass === 'ambiguous' ||
+    analysis.egressClass === 'read' ||
+    analysis.egressClass === 'destructive' ||
+    analysis.location === 'external'
+  )
+}
+
+function exactNetworkResources(
   command: string,
-): Extract<CapabilityResource, { kind: 'network' }> | null {
+): Array<Extract<CapabilityResource, { kind: 'network' }>> {
   const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
   for (const rawToken of tokenizeShell(command)) {
     const token = rawToken.startsWith('--url=') ? rawToken.slice('--url='.length) : rawToken
@@ -270,13 +277,23 @@ function exactNetworkResource(
       continue
     }
   }
-  return resources.size === 1 ? [...resources.values()][0]! : null
+  return [...resources.values()]
 }
 
 export function buildShellCapabilityRequest(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1 {
-  return {
+  return buildShellCapabilityRequests(analysis)[0]!
+}
+
+export function buildShellCapabilityRequests(
+  analysis: ShellCapabilityAnalysis,
+): CapabilityRequestV1[] {
+  const resources = isNetworkShellAnalysis(analysis)
+    ? exactNetworkResources(analysis.command)
+    : []
+  const selectedResources = resources.length > 0 ? resources : [resourceForShellAnalysis(analysis)]
+  return selectedResources.map((resource) => ({
     version: CAPABILITY_REQUEST_VERSION,
     principal: {
       adapter: analysis.adapter,
@@ -284,7 +301,7 @@ export function buildShellCapabilityRequest(
       sessionHash: hashSession(`${analysis.repoRoot}:${analysis.cwd}`),
     },
     action: actionForShellAnalysis(analysis),
-    resource: resourceForShellAnalysis(analysis),
+    resource,
     context: {
       cwd: analysis.cwd,
       inputFingerprint: analysis.inputFingerprint,
@@ -300,7 +317,7 @@ export function buildShellCapabilityRequest(
       level: evidenceLevelForOpacity(analysis.opacity),
       signals: [...analysis.signals],
     },
-  }
+  }))
 }
 
 function actionForFileMutation(analysis: FileMutationCapabilityAnalysis): CapabilityAction {
@@ -742,17 +759,19 @@ export function evaluateShellPolicy(
   analysis: ShellCapabilityAnalysis,
   config: BelayConfigV4,
   auth?: PolicyAuthExtras,
-): { request: CapabilityRequestV1; decision: PolicyDecision } {
-  const request = buildShellCapabilityRequest(analysis)
-  const enriched = enrichAuthWithMaterializedGrants(request, config, {
+): { request: CapabilityRequestV1; requests: CapabilityRequestV1[]; decision: PolicyDecision } {
+  const requests = buildShellCapabilityRequests(analysis)
+  const enrichedAuth = {
     ...auth,
     sensitivePaths: auth?.sensitivePaths ?? analysis.sensitivePaths,
-  })
-  const decision = getDefaultPolicyEngine().evaluate(
-    request,
-    buildAuthorizationContext(config, analysis.trustedWorkspaceRoots, enriched),
+  }
+  const { decision } = evaluateCapabilityRequestsPolicy(
+    requests,
+    config,
+    enrichedAuth,
+    analysis.trustedWorkspaceRoots,
   )
-  return { request, decision }
+  return { request: requests[0]!, requests, decision }
 }
 
 export function evaluateFileMutationPolicy(

@@ -86,9 +86,6 @@ function exactGrantMatchesRequest(
   grant: CapabilityGrantV1,
   request: CapabilityRequestV1,
 ): boolean {
-  if (!grantMatchesRequest(grant, request)) {
-    return false
-  }
   return (
     persistedCanonicalStringify(grant.principal) ===
       persistedCanonicalStringify(request.principal) &&
@@ -97,6 +94,54 @@ function exactGrantMatchesRequest(
       persistedCanonicalStringify(request.resource) &&
     grant.inputFingerprint === request.context.inputFingerprint
   )
+}
+
+type GrantUsageExpectation = 'available' | 'previously_consumed'
+
+function validateExactGrantBundle(
+  approval: ApprovalRecord,
+  requests: readonly CapabilityRequestV1[],
+  now: number,
+  usage: GrantUsageExpectation,
+): GrantBundleValidationResult {
+  if (approval.grantBundleVersion !== 1) {
+    return { ok: false, reason: 'legacy_record' }
+  }
+  if (!requests.length) {
+    return { ok: false, reason: 'empty_requests' }
+  }
+  const bundle = grantsFromApproval(approval)
+  if (bundle.length !== requests.length) {
+    return { ok: false, reason: 'cardinality_mismatch' }
+  }
+  if (bundle.some((grant) => isGrantScopeTooBroad(grant))) {
+    return { ok: false, reason: 'grant_scope_too_broad' }
+  }
+  const usageIsValid = bundle.every((grant) => {
+    const expires = Date.parse(grant.expiresAt)
+    if (!Number.isFinite(expires) || expires <= now) {
+      return false
+    }
+    return usage === 'available'
+      ? grant.usesRemaining > 0
+      : grant.usesRemaining >= 0 && grant.usesRemaining < grant.maxUses
+  })
+  if (!usageIsValid) {
+    return { ok: false, reason: 'grant_inactive' }
+  }
+
+  const unmatched = [...bundle]
+  for (const request of requests) {
+    const index = unmatched.findIndex((grant) => exactGrantMatchesRequest(grant, request))
+    if (index === -1) {
+      return { ok: false, reason: 'grant_mismatch' }
+    }
+    unmatched.splice(index, 1)
+  }
+  if (unmatched.length > 0) {
+    return { ok: false, reason: 'grant_mismatch' }
+  }
+  return { ok: true, approval }
 }
 
 function persistedCanonicalStringify(value: unknown): string {
@@ -123,36 +168,12 @@ export function validateAndConsumeGrantBundle(
   requests: readonly CapabilityRequestV1[],
   now = Date.now(),
 ): GrantBundleValidationResult {
-  if (approval.grantBundleVersion !== 1) {
-    return { ok: false, reason: 'legacy_record' }
-  }
-  if (!requests.length) {
-    return { ok: false, reason: 'empty_requests' }
-  }
-  const bundle = grantsFromApproval(approval)
-  if (bundle.length !== requests.length) {
-    return { ok: false, reason: 'cardinality_mismatch' }
-  }
-  if (bundle.some((grant) => isGrantScopeTooBroad(grant))) {
-    return { ok: false, reason: 'grant_scope_too_broad' }
-  }
-  if (!bundle.every((grant) => isActiveGrant(grant, now))) {
-    return { ok: false, reason: 'grant_inactive' }
+  const validated = validateExactGrantBundle(approval, requests, now, 'available')
+  if (!validated.ok) {
+    return validated
   }
 
-  const unmatched = [...bundle]
-  for (const request of requests) {
-    const index = unmatched.findIndex((grant) => exactGrantMatchesRequest(grant, request))
-    if (index === -1) {
-      return { ok: false, reason: 'grant_mismatch' }
-    }
-    unmatched.splice(index, 1)
-  }
-  if (unmatched.length > 0) {
-    return { ok: false, reason: 'grant_mismatch' }
-  }
-
-  const grants = bundle.map((grant) => decrementGrant(grant))
+  const grants = grantsFromApproval(approval).map((grant) => decrementGrant(grant))
   return {
     ok: true,
     approval: {
@@ -161,6 +182,15 @@ export function validateAndConsumeGrantBundle(
       grant: grants[0],
     },
   }
+}
+
+/** Revalidate a marked bundle during an active replay lease without consuming it twice. */
+export function validateGrantBundleForLeaseReuse(
+  approval: ApprovalRecord,
+  requests: readonly CapabilityRequestV1[],
+  now = Date.now(),
+): GrantBundleValidationResult {
+  return validateExactGrantBundle(approval, requests, now, 'previously_consumed')
 }
 
 /** Consume every grant in an approved record after fingerprint/hash replay validation. */

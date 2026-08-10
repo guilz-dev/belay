@@ -80,6 +80,32 @@ describe('TypeScript PolicyEngine', () => {
     expect(decision.matchedRule).toBe('builtin.network')
   })
 
+  it('emits one exact capability request for each explicit network host', () => {
+    const { requests, decision } = evaluateShellPolicy(
+      {
+        command: 'curl https://a.example/data https://b.example/data',
+        hookKind: 'shell',
+        segmentHead: 'curl',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-curl-multi',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'a.example', protocol: 'https' },
+      { kind: 'network', host: 'b.example', protocol: 'https' },
+    ])
+    expect(decision.outcome).toBe('require_approval')
+  })
+
   it('denies matching forged broad grants', () => {
     const request = buildShellCapabilityRequest({
       command: 'curl https://example.com',

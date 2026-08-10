@@ -44,6 +44,7 @@ import {
   type GrantBundleValidationFailureReason,
   grantsFromApproval,
   validateAndConsumeGrantBundle,
+  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
@@ -60,6 +61,7 @@ import {
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import { hashEffectPlan } from '../../core/effect-ir/audit.js'
+import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
 import {
   classifyResultToGateVerdict,
   type GatedAction,
@@ -472,6 +474,12 @@ async function consumeApprovedApproval(
   const approval = loaded.state.approvals[index]
   if (approval.executionLeaseExpiresAt) {
     await deps.writeApprovals(loaded.filePath, loaded.state)
+    if (approval.grantBundleVersion === 1) {
+      const validated = validateGrantBundleForLeaseReuse(approval, requests)
+      if (!validated.ok) {
+        return { status: 'invalid_bundle', approval, reason: validated.reason }
+      }
+    }
     return { status: 'consumed', approval, firstExecution: false }
   }
 
@@ -498,23 +506,21 @@ async function consumeApprovedApproval(
 
       let updatedApproval = approval
       const bundle = grantsFromApproval(approval)
-      if (bundle.length > 0) {
-        if (approval.grantBundleVersion === 1) {
-          const validated = validateAndConsumeGrantBundle(approval, requests)
-          if (!validated.ok) {
-            return {
-              state: compacted,
-              result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
-            }
+      if (approval.grantBundleVersion === 1) {
+        const validated = validateAndConsumeGrantBundle(approval, requests)
+        if (!validated.ok) {
+          return {
+            state: compacted,
+            result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
           }
-          updatedApproval = validated.approval
-        } else {
+        }
+        updatedApproval = validated.approval
+      } else if (bundle.length > 0) {
           const consumed = consumeApprovedRecordGrantBundle(approval)
           if (!consumed.consumed) {
             return { state: compacted, result: null }
           }
           updatedApproval = consumed.approval
-        }
       } else if (approval.grant) {
         updatedApproval = decrementApprovalLegacyGrant(approval)
       }
@@ -571,12 +577,21 @@ export async function evaluateGatedAction(
       agentAssessment: extractAgentAssessment(params.payload),
     })
   } catch {
-    const verdict = unnormalizedGateVerdict({
-      reason: 'normalization_failed',
-      mode: ctx.config.mode,
-      user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
-      agent_message: 'Belay denied this action because the hook payload could not be normalized.',
-    })
+    const verdict: GateVerdict = {
+      ...unnormalizedGateVerdict({
+        reason: 'normalization_failed',
+        mode: ctx.config.mode,
+        user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
+        agent_message: 'Belay denied this action because the hook payload could not be normalized.',
+      }),
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: params.kind,
+        summary: params.command ?? params.toolName ?? params.kind,
+        inputFingerprint: 'unnormalized',
+        requests: [],
+        effectFree: false,
+      }),
+    }
     await deps.appendAudit(ctx, {
       event: gateAuditEventName(params.kind),
       kind: params.kind,
@@ -590,19 +605,27 @@ export async function evaluateGatedAction(
   }
 
   if (!gateEnabledForAction(ctx.config, action)) {
-    return classifyResultToGateVerdict({
-      result: {
-        verdict: 'allow',
-        reason: 'gate_disabled',
-        fingerprint: 'gate_disabled',
-        assessment: {
-          reversibility: 'reversible',
-          external: false,
-          blastRadius: 'none',
-          confidence: 1,
-          signals: ['gate_disabled'],
-        },
+    const result: ClassifyResult = {
+      verdict: 'allow',
+      reason: 'gate_disabled',
+      fingerprint: 'gate_disabled',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: ['gate_disabled'],
       },
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: action.kind,
+        summary: action.command ?? action.toolName ?? action.kind,
+        inputFingerprint: 'gate_disabled',
+        requests: [],
+        effectFree: false,
+      }),
+    }
+    return classifyResultToGateVerdict({
+      result,
       mode: ctx.config.mode,
       permission: 'allow',
       wouldBlock: false,
@@ -843,6 +866,18 @@ async function gateDecisionToVerdict(
     scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
+  if (!result.effectPlan) {
+    result = {
+      ...result,
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: kind,
+        summary: result.normalizedCommand ?? result.summary ?? kind,
+        inputFingerprint: result.fingerprint,
+        requests: result.capabilityRequests ?? [],
+        effectFree: result.reason === 'read_only',
+      }),
+    }
+  }
   const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
   const actionSnapshot = buildAuditActionSnapshot(kind, result, auditExtras.replayAction)
   const providerId = String(ctx.config.judge?.providerId ?? 'cursor')

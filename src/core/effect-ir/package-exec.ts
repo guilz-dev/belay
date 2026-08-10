@@ -7,6 +7,7 @@ import type { PackageExecLauncher } from './types.js'
 export interface PackageExecPeelResult {
   launcher: PackageExecLauncher
   innerTokens: string[]
+  acquisitionSpecs: string[]
   opaque: boolean
   reason: string
   forceAcquire: boolean
@@ -49,6 +50,7 @@ export function peelPackageExecArgv(tokens: string[]): PackageExecPeelResult | n
 
 function peelNpx(tokens: string[]): PackageExecPeelResult {
   const signals: string[] = ['package_exec:npx']
+  const acquisitionSpecs: string[] = []
   let index = 1
   let forceAcquire = false
   while (index < tokens.length) {
@@ -57,6 +59,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       return {
         launcher: 'npx',
         innerTokens: [token],
+        acquisitionSpecs,
         opaque: false,
         reason: 'npx_wrapper_readonly',
         forceAcquire: false,
@@ -75,14 +78,16 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     }
     if (token === '-p' || token === '--package') {
       if (!tokens[index + 1]) {
-        return opaquePackageExec('npx', 'npx_package_missing', signals)
+        return opaquePackageExec('npx', 'npx_package_missing', signals, acquisitionSpecs)
       }
+      acquisitionSpecs.push(tokens[index + 1]!)
       forceAcquire = true
       signals.push('npx.package_flag')
       index += 2
       continue
     }
     if (token.startsWith('--package=')) {
+      acquisitionSpecs.push(token.slice('--package='.length))
       forceAcquire = true
       signals.push('npx.package_flag')
       index += 1
@@ -92,6 +97,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       return {
         launcher: 'npx',
         innerTokens: [],
+        acquisitionSpecs,
         opaque: true,
         reason: 'npx_call_script',
         forceAcquire: true,
@@ -99,7 +105,12 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       }
     }
     if (token.startsWith('-')) {
-      return opaquePackageExec('npx', 'npx_unknown_option', [...signals, 'npx_unknown_option'])
+      return opaquePackageExec(
+        'npx',
+        'npx_unknown_option',
+        [...signals, 'npx_unknown_option'],
+        acquisitionSpecs,
+      )
     }
     break
   }
@@ -108,6 +119,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     return {
       launcher: 'npx',
       innerTokens: [],
+      acquisitionSpecs,
       opaque: true,
       reason: 'npx_target_missing',
       forceAcquire,
@@ -115,18 +127,24 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     }
   }
   if (/^@[^/]+\/[^/]+/.test(innerTokens[0] ?? '')) {
-    return opaquePackageExec('npx', 'npx_scoped_package_bin_indeterminate', [
-      ...signals,
+    return opaquePackageExec(
+      'npx',
       'npx_scoped_package_bin_indeterminate',
-    ])
+      [...signals, 'npx_scoped_package_bin_indeterminate'],
+      acquisitionSpecs,
+    )
   }
   if (looksLikeRemotePackageSpec(innerTokens[0] ?? '')) {
     forceAcquire = true
     signals.push('npx.remote_spec')
   }
+  if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+    acquisitionSpecs.push(innerTokens[0])
+  }
   return {
     launcher: 'npx',
     innerTokens,
+    acquisitionSpecs,
     opaque: false,
     reason: 'npx_exec',
     forceAcquire,
@@ -149,6 +167,7 @@ function peelForcedPackageExec(
   reason: 'npm_exec' | 'pnpm_dlx',
 ): PackageExecPeelResult {
   const signals = [`package_exec:${reason}`, `${reason}_acquire`]
+  const acquisitionSpecs: string[] = []
   let index = startIndex
   while (index < tokens.length) {
     const token = tokens[index] ?? ''
@@ -162,30 +181,38 @@ function peelForcedPackageExec(
     }
     if (launcher === 'npm' && (token === '-p' || token === '--package')) {
       if (!tokens[index + 1]) {
-        return opaquePackageExec(launcher, `${reason}_package_missing`, signals)
+        return opaquePackageExec(launcher, `${reason}_package_missing`, signals, acquisitionSpecs)
       }
+      acquisitionSpecs.push(tokens[index + 1]!)
       index += 2
       continue
     }
     if (launcher === 'npm' && token.startsWith('--package=')) {
+      acquisitionSpecs.push(token.slice('--package='.length))
       index += 1
       continue
     }
     if (launcher === 'npm' && (token === '-c' || token === '--call')) {
-      return opaquePackageExec(launcher, `${reason}_call_script`, signals)
+      return opaquePackageExec(launcher, `${reason}_call_script`, signals, acquisitionSpecs)
     }
     if (token.startsWith('-')) {
-      return opaquePackageExec(launcher, `${reason}_unknown_option`, [
-        ...signals,
+      return opaquePackageExec(
+        launcher,
         `${reason}_unknown_option`,
-      ])
+        [...signals, `${reason}_unknown_option`],
+        acquisitionSpecs,
+      )
     }
     break
   }
   const innerTokens = tokens.slice(index)
+  if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+    acquisitionSpecs.push(innerTokens[0])
+  }
   return {
     launcher,
     innerTokens,
+    acquisitionSpecs,
     opaque: innerTokens.length === 0,
     reason: innerTokens.length === 0 ? `${reason}_missing` : reason,
     forceAcquire: true,
@@ -197,10 +224,12 @@ function opaquePackageExec(
   launcher: PackageExecLauncher,
   reason: string,
   signals: string[],
+  acquisitionSpecs: string[] = [],
 ): PackageExecPeelResult {
   return {
     launcher,
     innerTokens: [],
+    acquisitionSpecs,
     opaque: true,
     reason,
     forceAcquire: true,

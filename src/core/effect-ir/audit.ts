@@ -12,12 +12,22 @@ function auditableProvenance(provenance: EffectProvenance): EffectProvenance {
   }
 }
 
+function auditableResource(resource: ReturnType<typeof collectRequirements>[number]['resource']) {
+  if (resource.kind === 'executable') {
+    return {
+      kind: 'executable',
+      commandHash: hashValue(resource.command),
+    }
+  }
+  return resource
+}
+
 export function hashEffectPlan(plan: EffectPlan): string {
   const requirements = collectRequirements(plan.root)
     .map((requirement) => ({
       tag: requirement.tag,
       action: requirement.action,
-      resource: requirement.resource,
+      resource: auditableResource(requirement.resource),
       evidence: {
         level: requirement.evidence.level,
         signals: [...requirement.evidence.signals].sort(),
@@ -63,7 +73,7 @@ export function effectPlanAuditFields(
     effectPlanRequirements: collectRequirements(plan.root).map((requirement) => ({
       tag: requirement.tag,
       action: requirement.action,
-      resource: requirement.resource,
+      resource: auditableResource(requirement.resource),
       evidence: requirement.evidence,
       provenance: auditableProvenance(requirement.provenance),
       provenances: (requirement.provenances ?? [requirement.provenance]).map((provenance) =>

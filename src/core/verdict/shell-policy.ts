@@ -43,6 +43,7 @@ function toShellCapabilityAnalysis(input: SegmentShellPolicyInput): ShellCapabil
 
 export function evaluateSegmentShellPolicy(input: SegmentShellPolicyInput): {
   request: CapabilityRequestV1
+  requests: CapabilityRequestV1[]
   decision: PolicyDecision
 } {
   return evaluateShellPolicy(toShellCapabilityAnalysis(input), input.context.config, {
@@ -59,7 +60,7 @@ export function shellPolicyMetadata(input: SegmentShellPolicyInput): {
 } {
   const result = evaluateSegmentShellPolicy(input)
   return {
-    capabilityRequests: [result.request],
+    capabilityRequests: result.requests,
     authorizationDecision: result.decision,
   }
 }

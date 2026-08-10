@@ -12,6 +12,7 @@ import {
   findMatchingGrant,
   grantsFromApprovedState,
   validateAndConsumeGrantBundle,
+  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import type { CapabilityRequestV1 } from '../../core/capability/request.js'
 import type { ApprovalRecord } from '../../core/types.js'
@@ -334,6 +335,30 @@ describe('grant lease', () => {
     ) as ApprovalRecord
 
     expect(validateAndConsumeGrantBundle(persisted, [currentRequest]).ok).toBe(true)
+  })
+
+  it('revalidates an already-consumed exact bundle during lease reuse', () => {
+    const approval: ApprovalRecord = {
+      approvalId: 'exact-lease',
+      kind: 'shell',
+      fingerprint: 'fp-exact-lease',
+      repoRoot: '/repo',
+      reason: 'external_effect',
+      summary: 'write',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-02T00:00:00.000Z',
+      approvedAt: '2026-01-01T00:01:00.000Z',
+      capabilityRequests: [request],
+      grantBundleVersion: 1,
+    }
+    const grants = mintCapabilityGrantBundle({ approval, capabilityRequests: [request] }).map(
+      (grant) => ({ ...grant, usesRemaining: 0 }),
+    )
+    const record = { ...approval, grants, grant: grants[0] }
+
+    expect(validateGrantBundleForLeaseReuse(record, [request]).ok).toBe(true)
+    expect(validateGrantBundleForLeaseReuse({ ...record, grants: [], grant: undefined }, [request]))
+      .toMatchObject({ ok: false, reason: 'cardinality_mismatch' })
   })
 
   it.each([
