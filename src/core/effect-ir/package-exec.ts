@@ -14,6 +14,11 @@ export interface PackageExecPeelResult {
   signals: string[]
 }
 
+export type PackageAcquisitionSource =
+  | { kind: 'local' }
+  | { kind: 'registry' }
+  | { kind: 'network'; host: string; port?: number; protocol: string }
+
 const READ_ONLY_SUFFIXES = new Set(['--version', '-v', '--help', '-h'])
 
 function isPackageExecHead(head: string): head is PackageExecLauncher {
@@ -77,10 +82,11 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       continue
     }
     if (token === '-p' || token === '--package') {
-      if (!tokens[index + 1]) {
+      const packageSpec = tokens[index + 1]
+      if (!packageSpec) {
         return opaquePackageExec('npx', 'npx_package_missing', signals, acquisitionSpecs)
       }
-      acquisitionSpecs.push(tokens[index + 1]!)
+      acquisitionSpecs.push(packageSpec)
       forceAcquire = true
       signals.push('npx.package_flag')
       index += 2
@@ -127,6 +133,9 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
     }
   }
   if (/^@[^/]+\/[^/]+/.test(innerTokens[0] ?? '')) {
+    if (acquisitionSpecs.length === 0 && innerTokens[0]) {
+      acquisitionSpecs.push(innerTokens[0])
+    }
     return opaquePackageExec(
       'npx',
       'npx_scoped_package_bin_indeterminate',
@@ -134,7 +143,7 @@ function peelNpx(tokens: string[]): PackageExecPeelResult {
       acquisitionSpecs,
     )
   }
-  if (looksLikeRemotePackageSpec(innerTokens[0] ?? '')) {
+  if (requiresExplicitPackageAcquisition(innerTokens[0] ?? '')) {
     forceAcquire = true
     signals.push('npx.remote_spec')
   }
@@ -180,10 +189,11 @@ function peelForcedPackageExec(
       continue
     }
     if (launcher === 'npm' && (token === '-p' || token === '--package')) {
-      if (!tokens[index + 1]) {
+      const packageSpec = tokens[index + 1]
+      if (!packageSpec) {
         return opaquePackageExec(launcher, `${reason}_package_missing`, signals, acquisitionSpecs)
       }
-      acquisitionSpecs.push(tokens[index + 1]!)
+      acquisitionSpecs.push(packageSpec)
       index += 2
       continue
     }
@@ -237,9 +247,12 @@ function opaquePackageExec(
   }
 }
 
-function looksLikeRemotePackageSpec(token: string): boolean {
+function requiresExplicitPackageAcquisition(token: string): boolean {
   if (!token || token.startsWith('-')) {
     return false
+  }
+  if (classifyPackageAcquisitionSpec(token).kind !== 'registry') {
+    return true
   }
   if (token.includes('@') && !token.startsWith('@')) {
     return true
@@ -247,10 +260,62 @@ function looksLikeRemotePackageSpec(token: string): boolean {
   if (/^@[^/]+\/[^/]+@/.test(token)) {
     return true
   }
-  if (/^(https?:|git\+|github:|gitlab:)/.test(token)) {
+  if (token.startsWith('npm:')) {
     return true
   }
   return false
+}
+
+export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisitionSource {
+  const normalized = spec.trim()
+  if (
+    normalized.startsWith('file:') ||
+    normalized.startsWith('git+file:') ||
+    normalized.startsWith('link:') ||
+    normalized.startsWith('workspace:') ||
+    normalized.startsWith('./') ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('~/') ||
+    /^[A-Za-z]:[\\/]/.test(normalized) ||
+    /(?:\.tgz|\.tar|\.tar\.gz)$/i.test(normalized)
+  ) {
+    return { kind: 'local' }
+  }
+
+  const transportSpec = normalized.startsWith('git+') ? normalized.slice(4) : normalized
+  if (transportSpec.startsWith('github:')) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if (transportSpec.startsWith('gitlab:')) {
+    return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
+  }
+  if (transportSpec.startsWith('bitbucket:')) {
+    return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
+  }
+  const scpStyle = transportSpec.match(/^(?:[^@/]+@)?([^:/]+):[^/].+$/)
+  if (scpStyle?.[1]?.includes('.')) {
+    return { kind: 'network', host: scpStyle[1], protocol: 'ssh' }
+  }
+  try {
+    const url = new URL(transportSpec)
+    if (['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) {
+      return {
+        kind: 'network',
+        host: url.hostname,
+        ...(url.port ? { port: Number(url.port) } : {}),
+        protocol: url.protocol.slice(0, -1),
+      }
+    }
+  } catch {}
+
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  if ((normalized.match(/\//g)?.length ?? 0) > 1) {
+    return { kind: 'local' }
+  }
+  return { kind: 'registry' }
 }
 
 export function resolveLocalBin(

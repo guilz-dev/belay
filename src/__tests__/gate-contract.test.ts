@@ -8,6 +8,7 @@ import {
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { buildCapabilityEffectPlan } from '../core/effect-ir/build.js'
 import {
   classifyResultToGateVerdict,
   GATE_CONTRACT_VERSION,
@@ -19,7 +20,6 @@ import {
   GateNormalizationError,
   normalizeGatedAction,
 } from '../core/gate-engine.js'
-import { buildCapabilityEffectPlan } from '../core/effect-ir/build.js'
 
 describe('gate contract', () => {
   it('normalizes shell actions with contract version', () => {

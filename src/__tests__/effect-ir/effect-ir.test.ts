@@ -167,10 +167,7 @@ describe('effect-ir', () => {
       ]),
     )
     const processExec = requirements.find((entry) => entry.action === 'process.exec')
-    expect(processExec?.provenance.innerArgv).toEqual([
-      packageUrl,
-      '--label=a b',
-    ])
+    expect(processExec?.provenance.innerArgv).toEqual([packageUrl, '--label=a b'])
     const audit = JSON.stringify(effectPlanAuditFields(plan))
     expect(audit).not.toContain('--label=a b')
     expect(audit).not.toContain('user:secret')
@@ -205,9 +202,183 @@ describe('effect-ir', () => {
           entry.resource.host === 'packages.example',
       ),
     ).toBe(true)
-    expect(requirements.find((entry) => entry.action === 'process.exec')?.provenance.innerArgv).toEqual(
-      ['tool', '--version'],
+    expect(
+      requirements.find((entry) => entry.action === 'process.exec')?.provenance.innerArgv,
+    ).toEqual(['tool', '--version'])
+  })
+
+  it('retains known acquisition hosts when later launcher syntax is opaque', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=https://packages.example/tool.tgz', '--unsupported'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-opaque-known',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(
+      requirements.some(
+        (entry) => entry.resource.kind === 'network' && entry.resource.host === 'packages.example',
+      ),
+    ).toBe(true)
+    expect(requirements.some((entry) => entry.action === 'indeterminate')).toBe(true)
+  })
+
+  it('retains scoped npx package acquisition when the executable is ambiguous', () => {
+    const ctx = verdictTestContext()
+    const peel = peelPackageExecArgv(['npx', '@scope/tool'])
+    expect(peel).toMatchObject({
+      opaque: true,
+      acquisitionSpecs: ['@scope/tool'],
+    })
+    const plan = buildEffectPlan({
+      tokens: ['npx', '@scope/tool'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npx-scoped-package',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(
+      requirements.some(
+        (entry) =>
+          entry.action === 'network.connect' &&
+          entry.resource.kind === 'network' &&
+          entry.resource.host === 'registry.npmjs.org',
+      ),
+    ).toBe(true)
+    expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
+    expect(requirements.some((entry) => entry.action === 'indeterminate')).toBe(true)
+  })
+
+  it('retains registry acquisition when package specs mix registry and URL sources', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: [
+        'npm',
+        'exec',
+        '--package=https://packages.example/tool.tgz',
+        '--package=prettier',
+        '--',
+        'tool',
+      ],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-mixed-sources',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const hosts = collectRequirements(plan.root).flatMap((entry) =>
+      entry.resource.kind === 'network' ? [entry.resource.host] : [],
     )
+    expect(hosts).toEqual(expect.arrayContaining(['packages.example', 'registry.npmjs.org']))
+  })
+
+  it('targets the actual host for git over ssh package specs', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=git+ssh://git@code.example/team/tool.git', '--', 'tool'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-git-ssh',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const networkResources = collectRequirements(plan.root).flatMap((entry) =>
+      entry.resource.kind === 'network' ? [entry.resource] : [],
+    )
+    expect(networkResources).toContainEqual({
+      kind: 'network',
+      host: 'code.example',
+      protocol: 'ssh',
+    })
+    expect(networkResources.some((resource) => resource.host === 'registry.npmjs.org')).toBe(false)
+  })
+
+  it('targets GitHub for npm hosted-git shorthand package specs', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=owner/tool', '--', 'tool'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-github-shorthand',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const networkResources = collectRequirements(plan.root).flatMap((entry) =>
+      entry.resource.kind === 'network' ? [entry.resource] : [],
+    )
+    expect(networkResources).toContainEqual({
+      kind: 'network',
+      host: 'github.com',
+      protocol: 'git',
+    })
+    expect(networkResources.some((resource) => resource.host === 'registry.npmjs.org')).toBe(false)
+  })
+
+  it('does not invent a registry connection for local package specs', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=file:../tool', '--', 'tool'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-local-package',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(requirements.filter((entry) => entry.action === 'network.connect')).toEqual([])
+    expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
+  })
+
+  it('does not invent a registry connection for git+file package specs', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=git+file:///tmp/tool', '--', 'tool'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-git-file-package',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(requirements.some((entry) => entry.action === 'network.connect')).toBe(false)
+    expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
+  })
+
+  it('retains the cache write for a local package when later syntax is opaque', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npm', 'exec', '--package=file:../tool', '--unsupported'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npm-opaque-local-package',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+    const requirements = collectRequirements(plan.root)
+    expect(requirements.some((entry) => entry.action === 'network.connect')).toBe(false)
+    expect(requirements.some((entry) => entry.action === 'fs.write')).toBe(true)
+    expect(requirements.some((entry) => entry.action === 'indeterminate')).toBe(true)
   })
 
   it('combines policy decisions with deny over allow', () => {

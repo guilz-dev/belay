@@ -357,8 +357,9 @@ describe('grant lease', () => {
     const record = { ...approval, grants, grant: grants[0] }
 
     expect(validateGrantBundleForLeaseReuse(record, [request]).ok).toBe(true)
-    expect(validateGrantBundleForLeaseReuse({ ...record, grants: [], grant: undefined }, [request]))
-      .toMatchObject({ ok: false, reason: 'cardinality_mismatch' })
+    expect(
+      validateGrantBundleForLeaseReuse({ ...record, grants: [], grant: undefined }, [request]),
+    ).toMatchObject({ ok: false, reason: 'cardinality_mismatch' })
   })
 
   it.each([
@@ -373,20 +374,26 @@ describe('grant lease', () => {
       name: 'unrelated',
       requests: [request, networkRequest],
       grantsFor: [request, networkRequest],
-      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => [
-        grants[0]!,
-        { ...grants[1]!, resource: { kind: 'network' as const, host: 'evil.example' } },
-      ],
+      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => {
+        const [first, second] = grants
+        if (!first || !second) {
+          throw new Error('expected two minted grants')
+        }
+        return [first, { ...second, resource: { kind: 'network' as const, host: 'evil.example' } }]
+      },
       reason: 'grant_mismatch',
     },
     {
       name: 'broad',
       requests: [request, networkRequest],
       grantsFor: [request, networkRequest],
-      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => [
-        grants[0]!,
-        { ...grants[1]!, resource: { kind: 'network' as const, host: '*' } },
-      ],
+      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => {
+        const [first, second] = grants
+        if (!first || !second) {
+          throw new Error('expected two minted grants')
+        }
+        return [first, { ...second, resource: { kind: 'network' as const, host: '*' } }]
+      },
       reason: 'grant_scope_too_broad',
     },
   ])('rejects a $name grant bundle without consuming any lease', (fixture) => {

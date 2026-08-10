@@ -33,7 +33,10 @@ describe('effect-plan coverage', () => {
     )
 
     expect(result.effectPlan?.disposition).toBe('effects')
-    expect(collectRequirements(result.effectPlan!.root).map((entry) => entry.action)).toContain(
+    if (!result.effectPlan) {
+      throw new Error('expected effect plan')
+    }
+    expect(collectRequirements(result.effectPlan.root).map((entry) => entry.action)).toContain(
       'fs.write',
     )
   })
@@ -50,7 +53,10 @@ describe('effect-plan coverage', () => {
     )
 
     expect(result.effectPlan?.disposition).toBe('effects')
-    expect(collectRequirements(result.effectPlan!.root).map((entry) => entry.action)).toContain(
+    if (!result.effectPlan) {
+      throw new Error('expected effect plan')
+    }
+    expect(collectRequirements(result.effectPlan.root).map((entry) => entry.action)).toContain(
       'process.exec',
     )
   })

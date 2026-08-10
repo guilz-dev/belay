@@ -516,11 +516,11 @@ async function consumeApprovedApproval(
         }
         updatedApproval = validated.approval
       } else if (bundle.length > 0) {
-          const consumed = consumeApprovedRecordGrantBundle(approval)
-          if (!consumed.consumed) {
-            return { state: compacted, result: null }
-          }
-          updatedApproval = consumed.approval
+        const consumed = consumeApprovedRecordGrantBundle(approval)
+        if (!consumed.consumed) {
+          return { state: compacted, result: null }
+        }
+        updatedApproval = consumed.approval
       } else if (approval.grant) {
         updatedApproval = decrementApprovalLegacyGrant(approval)
       }
@@ -1100,8 +1100,7 @@ async function gateDecisionToVerdict(
       approvalId: approved.approval.approvalId,
       user_message:
         'Belay denied this action because its approved capability bundle did not exactly match the current request. Re-approve the exact action or run belay explain.',
-      agent_message:
-        `Belay denied this action because the approved capability bundle failed exact validation (${approved.reason}).`,
+      agent_message: `Belay denied this action because the approved capability bundle failed exact validation (${approved.reason}).`,
     })
   }
   if (approved?.status === 'consumed') {

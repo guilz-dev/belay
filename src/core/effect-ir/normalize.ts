@@ -69,9 +69,7 @@ export function mergeEffectPlans(
     root: { kind: 'merge', children },
     inputFingerprint: hashValue(`effect-plan-input:v1:${canonicalStringify(fingerprints)}`),
     opacity,
-    disposition: present.some((plan) => plan.disposition === 'effects')
-      ? 'effects'
-      : 'effect_free',
+    disposition: present.some((plan) => plan.disposition === 'effects') ? 'effects' : 'effect_free',
     completeness: present.every((plan) => plan.completeness === 'complete')
       ? 'complete'
       : 'partial',

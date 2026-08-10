@@ -217,11 +217,15 @@ function resourcePathForShellAnalysis(analysis: ShellCapabilityAnalysis): string
       ? canonicalPath(target)
       : resolveCapabilityPath(target, analysis.cwd),
   )
+  const [first] = resolved
+  if (!first) {
+    return null
+  }
   if (analysis.effect === 'local_mutation') {
     const outside = resolved.find((candidate) => !pathWithinRoot(repoRoot, candidate))
-    return outside ?? resolved[resolved.length - 1]!
+    return outside ?? resolved.at(-1) ?? first
   }
-  return resolved[0]!
+  return first
 }
 
 function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): CapabilityResource {
@@ -230,13 +234,13 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
   }
   if (isNetworkShellAnalysis(analysis)) {
     const exact = exactNetworkResources(analysis.command)
-    return exact.length === 1
-      ? exact[0]!
-      : {
-          kind: 'network',
-          host: '*',
-          protocol: 'unknown',
-        }
+    return (
+      (exact.length === 1 ? exact[0] : undefined) ?? {
+        kind: 'network',
+        host: '*',
+        protocol: 'unknown',
+      }
+    )
   }
   const resourcePath = resourcePathForShellAnalysis(analysis)
   if (resourcePath) {
@@ -273,9 +277,7 @@ function exactNetworkResources(
         protocol: url.protocol.slice(0, -1),
       }
       resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
-    } catch {
-      continue
-    }
+    } catch {}
   }
   return [...resources.values()]
 }
@@ -283,15 +285,17 @@ function exactNetworkResources(
 export function buildShellCapabilityRequest(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1 {
-  return buildShellCapabilityRequests(analysis)[0]!
+  const [request] = buildShellCapabilityRequests(analysis)
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return request
 }
 
 export function buildShellCapabilityRequests(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1[] {
-  const resources = isNetworkShellAnalysis(analysis)
-    ? exactNetworkResources(analysis.command)
-    : []
+  const resources = isNetworkShellAnalysis(analysis) ? exactNetworkResources(analysis.command) : []
   const selectedResources = resources.length > 0 ? resources : [resourceForShellAnalysis(analysis)]
   return selectedResources.map((resource) => ({
     version: CAPABILITY_REQUEST_VERSION,
@@ -771,7 +775,11 @@ export function evaluateShellPolicy(
     enrichedAuth,
     analysis.trustedWorkspaceRoots,
   )
-  return { request: requests[0]!, requests, decision }
+  const [request] = requests
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return { request, requests, decision }
 }
 
 export function evaluateFileMutationPolicy(

@@ -1,5 +1,5 @@
-import type { ApprovalRecord, ApprovalStateFile } from '../types.js'
 import { canonicalStringify } from '../fingerprint.js'
+import type { ApprovalRecord, ApprovalStateFile } from '../types.js'
 import type { CapabilityGrantV1 } from './grant.js'
 import { isGrantScopeTooBroad } from './grant.js'
 import { grantMatchesRequest } from './grant-match.js'
@@ -82,16 +82,12 @@ export function consumeApprovalGrantBundle(
   }
 }
 
-function exactGrantMatchesRequest(
-  grant: CapabilityGrantV1,
-  request: CapabilityRequestV1,
-): boolean {
+function exactGrantMatchesRequest(grant: CapabilityGrantV1, request: CapabilityRequestV1): boolean {
   return (
     persistedCanonicalStringify(grant.principal) ===
       persistedCanonicalStringify(request.principal) &&
     grant.action === request.action &&
-    persistedCanonicalStringify(grant.resource) ===
-      persistedCanonicalStringify(request.resource) &&
+    persistedCanonicalStringify(grant.resource) === persistedCanonicalStringify(request.resource) &&
     grant.inputFingerprint === request.context.inputFingerprint
   )
 }

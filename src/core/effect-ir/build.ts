@@ -153,14 +153,21 @@ function acquireRequirement(
   peel: PackageExecPeelResult,
   level: 'possible' | 'indeterminate',
 ): LauncherEffectNode {
-  const explicitSources = explicitPackageSources(peel.acquisitionSpecs)
-  const networkRequirements: EffectRequirement[] =
-    level === 'indeterminate'
-      ? [acquireNetworkRequirement(peel, { kind: 'unknown' }, level)]
-      : (explicitSources.length > 0
-          ? explicitSources
-          : [{ kind: 'network' as const, host: 'registry.npmjs.org', protocol: 'registry' }]
-        ).map((resource) => acquireNetworkRequirement(peel, resource, level))
+  const knownResources = packageAcquisitionResources(peel.acquisitionSpecs)
+  const networkRequirements: EffectRequirement[] = knownResources.map((resource) =>
+    acquireNetworkRequirement(peel, resource, 'possible'),
+  )
+  if (level === 'indeterminate') {
+    networkRequirements.push(acquireNetworkRequirement(peel, { kind: 'unknown' }, level))
+  } else if (networkRequirements.length === 0 && peel.acquisitionSpecs.length === 0) {
+    networkRequirements.push(
+      acquireNetworkRequirement(
+        peel,
+        { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' },
+        level,
+      ),
+    )
+  }
   return {
     kind: 'launcher',
     launcher: peel.launcher,
@@ -174,7 +181,9 @@ function acquireRequirement(
         segmentHead: peel.launcher,
         requirements: [
           ...networkRequirements,
-          ...(level === 'possible' ? [cacheWriteRequirement(peel)] : []),
+          ...(level === 'possible' || peel.acquisitionSpecs.length > 0
+            ? [cacheWriteRequirement(peel)]
+            : []),
         ],
       },
     ],
@@ -203,15 +212,12 @@ function acquireNetworkRequirement(
   }
 }
 
-function explicitPackageSources(
+function packageAcquisitionResources(
   specs: readonly string[],
 ): Array<Extract<EffectRequirement['resource'], { kind: 'network' }>> {
-  const resources = new Map<
-    string,
-    Extract<EffectRequirement['resource'], { kind: 'network' }>
-  >()
+  const resources = new Map<string, Extract<EffectRequirement['resource'], { kind: 'network' }>>()
   for (const spec of specs) {
-    const resource = explicitPackageSource(spec)
+    const resource = explicitPackageSource(spec) ?? registrySourceForPackageSpec(spec)
     if (resource) {
       resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`, resource)
     }
@@ -222,16 +228,27 @@ function explicitPackageSources(
 function explicitPackageSource(
   spec: string,
 ): Extract<EffectRequirement['resource'], { kind: 'network' }> | null {
-  const normalized = spec.startsWith('git+') ? spec.slice(4) : spec
+  const trimmed = spec.trim()
+  const normalized = trimmed.startsWith('git+') ? trimmed.slice(4) : trimmed
   if (normalized.startsWith('github:')) {
     return { kind: 'network', host: 'github.com', protocol: 'git' }
   }
   if (normalized.startsWith('gitlab:')) {
     return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
   }
+  if (normalized.startsWith('bitbucket:')) {
+    return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
+  }
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
+    return { kind: 'network', host: 'github.com', protocol: 'git' }
+  }
+  const scpStyle = normalized.match(/^(?:[^@/]+@)?([^:/]+):[^/].+$/)
+  if (scpStyle?.[1]?.includes('.')) {
+    return { kind: 'network', host: scpStyle[1], protocol: 'ssh' }
+  }
   try {
     const url = new URL(normalized)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    if (!['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) {
       return null
     }
     return {
@@ -243,6 +260,24 @@ function explicitPackageSource(
   } catch {
     return null
   }
+}
+
+function registrySourceForPackageSpec(
+  spec: string,
+): Extract<EffectRequirement['resource'], { kind: 'network' }> | null {
+  const normalized = spec.trim()
+  if (
+    normalized.startsWith('file:') ||
+    normalized.startsWith('git+file:') ||
+    normalized.startsWith('link:') ||
+    normalized.startsWith('workspace:') ||
+    normalized.startsWith('./') ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('/')
+  ) {
+    return null
+  }
+  return { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' }
 }
 
 export function collectRequirements(node: EffectNode): EffectRequirement[] {
