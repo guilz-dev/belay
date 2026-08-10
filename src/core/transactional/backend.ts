@@ -16,10 +16,15 @@ export interface TransactionalSnapshot {
   resourceRoot: string
   executionRoot: string
   baselineRoot?: string
+  resourceKind?: 'git_repository' | 'directory'
   resourceIdentity: string
   baselineTreeHash: string
   excludedRoots: string[]
   copyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  snapshotFileCount?: number
+  snapshotSourceBytes?: number
+  snapshotWorkspaceBytes?: number
+  snapshotPrepareMs?: number
   /** Relative cwd inside resourceRoot for isolated workspace mounts. */
   executionCwdRelative?: string
   /** Revalidates the source tree and metadata immediately before apply. */

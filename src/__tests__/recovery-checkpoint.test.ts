@@ -213,6 +213,42 @@ describe('recovery checkpoints', () => {
     })
   })
 
+  it('reports file-checkpoint availability and probe details in recover status', async () => {
+    const repoRoot = await createGitRepo()
+    await writeConfigFile(repoRoot, {
+      ...DEFAULT_CONFIG_V3,
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          enabled: true,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: true,
+          },
+          checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        },
+      },
+    })
+
+    const status = await recoveryCheckpointCommand({
+      targetDir: repoRoot,
+      subcommand: 'status',
+    })
+    expect(status).toMatchObject({
+      availableBackends: ['git_worktree', 'file_checkpoint'],
+      fileCheckpoint: {
+        enabled: true,
+        allowNonGit: false,
+        isolation: null,
+        probe: 'unavailable',
+      },
+    })
+    expect(status.fileCheckpoint).toBeDefined()
+    if (!status.fileCheckpoint) throw new Error('missing fileCheckpoint status')
+    expect(['clonefile', 'reflink', 'copy']).toContain(status.fileCheckpoint.copyStrategy)
+  })
+
   it('restores an existing durable manifest v1 fixture', async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'modified.txt'), 'after\n')
@@ -552,7 +588,10 @@ describe('recovery checkpoints', () => {
     await expect(readFile(path.join(repoRoot, 'modified.txt'), 'utf8')).resolves.toBe('after\n')
   })
 
-  it('requires and consumes an exact one-shot approval before CLI restore', async () => {
+  it.each([
+    'git_worktree',
+    'file_checkpoint',
+  ] as const)('requires and consumes an exact one-shot approval before CLI restore (%s)', async (backend) => {
     const repoRoot = await createGitRepo()
     const stateDir = path.join(repoRoot, '.cursor', 'belay')
     const config = {
@@ -562,35 +601,59 @@ describe('recovery checkpoints', () => {
         ...DEFAULT_CONFIG_V3.policy,
         transactional: {
           ...DEFAULT_CONFIG_V3.policy.transactional,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: backend === 'file_checkpoint',
+          },
           checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
         },
       },
     }
     await writeConfigFile(repoRoot, config)
-    const predicted = await classifyShellCore(
-      "printf 'after\\n' > modified.txt",
-      repoRoot,
-      repoRoot,
-      { unknownLocalEffect: 'allow_flagged' },
-    )
-    const execution = await runTransactionalExecution({
-      command: "printf 'after\\n' > modified.txt",
-      cwd: repoRoot,
-      repoRoot,
-      stateDir,
-      timeoutMs: 10_000,
-      predicted,
-      fileCheckpoint: config.policy.transactional.fileCheckpoint,
-      checkpoint: config.policy.transactional.checkpoint,
-      dirtyIgnoreRoots: [path.join(repoRoot, '.cursor')],
-      diffContext: {
+    let checkpointId: string
+    if (backend === 'git_worktree') {
+      const predicted = await classifyShellCore(
+        "printf 'after\\n' > modified.txt",
         repoRoot,
-        sensitivePaths: config.classifier.sensitivePaths,
-        protectedRoots: [],
-        maxDeletionCount: 10,
-      },
-    })
-    const checkpointId = execution.recoveryCheckpointId ?? ''
+        repoRoot,
+        { unknownLocalEffect: 'allow_flagged' },
+      )
+      const execution = await runTransactionalExecution({
+        command: "printf 'after\\n' > modified.txt",
+        cwd: repoRoot,
+        repoRoot,
+        stateDir,
+        timeoutMs: 10_000,
+        predicted,
+        fileCheckpoint: config.policy.transactional.fileCheckpoint,
+        checkpoint: config.policy.transactional.checkpoint,
+        dirtyIgnoreRoots: [path.join(repoRoot, '.cursor')],
+        diffContext: {
+          repoRoot,
+          sensitivePaths: config.classifier.sensitivePaths,
+          protectedRoots: [],
+          maxDeletionCount: 10,
+        },
+      })
+      checkpointId = execution.recoveryCheckpointId ?? ''
+    } else {
+      const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-fcp-one-shot-'))
+      tempDirs.push(executionRoot)
+      await writeFile(path.join(executionRoot, 'modified.txt'), 'after\n')
+      const checkpoint = await prepareRecoveryCheckpoint({
+        stateDir,
+        repoRoot,
+        worktreePath: executionRoot,
+        commandFingerprint: 'file-checkpoint-one-shot',
+        changes: [{ relativePath: 'modified.txt', kind: 'modified' }],
+        config: config.policy.transactional.checkpoint,
+        backend: 'file_checkpoint',
+      })
+      await writeFile(path.join(repoRoot, 'modified.txt'), 'after\n')
+      await markRecoveryCheckpointApplying(stateDir, checkpoint)
+      await markRecoveryCheckpointApplied(stateDir, checkpoint)
+      checkpointId = checkpoint.checkpointId
+    }
 
     const denied = await recoveryCheckpointCommand({
       targetDir: repoRoot,

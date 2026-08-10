@@ -16,6 +16,7 @@ import * as boundarySession from '../core/capability/boundary-session.js'
 import { DEFAULT_CONFIG_V3, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
 import { RECOVERY_DIRTY_WORKTREE } from '../core/recovery/fail-closed.js'
 import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
+import { runShellCommand } from '../core/transactional/git-worktree.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -174,6 +175,76 @@ describe('transactional gate runtime', () => {
     expect(verdict.user_message).toContain('belay session start')
     expect(verdict.user_message).not.toContain('Approval ID')
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('runs dirty Git file_checkpoint through the gate and audits snapshot details', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    const attestation = {
+      version: 1 as const,
+      driver: 'container' as const,
+      probedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      deniesUngrantedEffects: true,
+      materializesGrants: true,
+      isolatesWorkspaceMounts: true,
+      probeSignals: ['docker', 'workspace-mount-isolation'],
+    }
+    vi.spyOn(boundarySession, 'resolveBoundaryDriverContext').mockResolvedValue({
+      driver: {
+        id: 'container',
+        async probe() {
+          return attestation
+        },
+        async run(command, cwd, timeoutMs, options) {
+          const mount = options?.workspaceMount
+          return runShellCommand(command, mount ? mount.hostSourceRoot : cwd, timeoutMs)
+        },
+        materializeGrant() {
+          return null
+        },
+      },
+      driverId: 'container',
+      proxyActive: false,
+      proxyEnv: {},
+      prepareContext: { repoRoot, egressProxyActive: false, proxyEnv: {} },
+      attestationPath: path.join(repoRoot, '.belay', 'attestation.json'),
+      attestation,
+      attestationFresh: true,
+    })
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config: transactionalFileCheckpointConfig(),
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+
+    const verdict = await evaluateGatedAction(ctx, createDefaultGateRuntimeDeps(), {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'touch safe-dirty.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).resolves.toBeDefined()
+    const auditLines = (
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+    const audit = JSON.parse(auditLines.at(-1) ?? '{}')
+    expect(audit).toMatchObject({
+      transactional: true,
+      transactionalBackend: 'file_checkpoint',
+      resourceKind: 'git_repository',
+      recoveryBackend: 'file_checkpoint',
+    })
+    expect(audit.baselineTreeHash).toBe('<high-entropy>')
+    expect(audit.snapshotFileCount).toBeGreaterThan(0)
+    expect(audit.snapshotWorkspaceBytes).toBeGreaterThan(audit.snapshotSourceBytes)
+    expect(['clonefile', 'reflink', 'copy']).toContain(audit.snapshotCopyStrategy)
   })
 
   it('runs transactional recovery when only belay init artifacts are untracked', async () => {

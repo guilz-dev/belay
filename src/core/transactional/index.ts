@@ -26,9 +26,9 @@ export { evaluateTransactionalDiff } from './diff-evaluator.js'
 export { isTransactionalEligible } from './eligibility.js'
 export { fileCheckpointBackend } from './file-checkpoint-backend.js'
 export {
-  FILE_CHECKPOINT_BASELINE_MISMATCH,
   FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
   FILE_CHECKPOINT_GIT_METADATA_CHANGED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
   FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED,
   resolveExecutionCwdRelative,
 } from './file-checkpoint-git.js'

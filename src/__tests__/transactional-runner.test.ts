@@ -316,8 +316,13 @@ describe('transactional runner', () => {
     expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     expect(result.recoveryBackend).toBe('file_checkpoint')
     expect(result.transactionalBackend).toBe('file_checkpoint')
-    expect(result.transactionalBaselineTreeHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(['clonefile', 'reflink', 'copy']).toContain(result.transactionalCopyStrategy)
+    expect(result.resourceKind).toBe('git_repository')
+    expect(result.baselineTreeHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(result.snapshotFileCount).toBeGreaterThan(0)
+    expect(result.snapshotSourceBytes).toBeGreaterThan(0)
+    expect(result.snapshotWorkspaceBytes).toBeGreaterThan(result.snapshotSourceBytes ?? 0)
+    expect(['clonefile', 'reflink', 'copy']).toContain(result.snapshotCopyStrategy)
+    expect(result.snapshotPrepareMs).toBeGreaterThanOrEqual(0)
     await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).resolves.toBeDefined()
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('# dirty\n')
   })
@@ -360,6 +365,53 @@ describe('transactional runner', () => {
     await restoreRecoveryCheckpoint(stateDir, result.recoveryCheckpointId ?? '')
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
       '# dirty baseline\n',
+    )
+  })
+
+  it('changes a clean tracked file without touching unrelated dirty state', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'clean.txt'), 'clean baseline\n')
+    await execFileAsync('git', ['add', 'clean.txt'], { cwd: repoRoot })
+    await execFileAsync('git', ['commit', '-m', 'add clean file'], { cwd: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# unrelated dirty state\n')
+    const command = 'printf changed > clean.txt'
+    const predicted = await classifyShellCore(command, repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      return runShellCommand(
+        params.command,
+        mount ? mount.hostSourceRoot : params.cwd,
+        params.timeoutMs,
+      )
+    })
+    const params = runnerParams({
+      command,
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(repoRoot),
+    })
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(repoRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(readFile(path.join(repoRoot, 'clean.txt'), 'utf8')).resolves.toBe('changed')
+    await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
+      '# unrelated dirty state\n',
     )
   })
 
@@ -445,7 +497,7 @@ describe('transactional runner', () => {
     })
 
     expect(result.skipped).toBe(true)
-    expect(result.skipReason).toBe('file_checkpoint_baseline_mismatch')
+    expect(result.skipReason).toBe('file_checkpoint_source_changed')
     await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).rejects.toThrow()
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe(
       '# concurrent source edit\n',

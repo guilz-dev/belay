@@ -34,8 +34,13 @@ export interface TransactionalExecutionResult {
   result: ClassifyResult
   worktreePath?: string
   transactionalBackend?: 'git_worktree' | 'file_checkpoint'
-  transactionalBaselineTreeHash?: string
-  transactionalCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  resourceKind?: 'git_repository' | 'directory'
+  baselineTreeHash?: string
+  snapshotFileCount?: number
+  snapshotSourceBytes?: number
+  snapshotWorkspaceBytes?: number
+  snapshotCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  snapshotPrepareMs?: number
   commandExitCode?: number | null
   commandSignal?: string | null
   timedOut?: boolean

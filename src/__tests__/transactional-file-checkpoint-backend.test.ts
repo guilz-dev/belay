@@ -11,8 +11,8 @@ import type { BoundaryAttestation } from '../core/capability/attestation.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
 import { fileCheckpointBackend } from '../core/transactional/file-checkpoint-backend.js'
 import {
-  FILE_CHECKPOINT_BASELINE_MISMATCH,
   FILE_CHECKPOINT_GIT_METADATA_CHANGED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
 } from '../core/transactional/file-checkpoint-git.js'
 import { runShellCommand } from '../core/transactional/git-worktree.js'
 
@@ -156,7 +156,7 @@ describe('file checkpoint backend', () => {
       })
 
     await expect(fileCheckpointBackend.prepare(backendContext(repoRoot))).rejects.toThrow(
-      FILE_CHECKPOINT_BASELINE_MISMATCH,
+      FILE_CHECKPOINT_SOURCE_CHANGED,
     )
     buildSpy.mockRestore()
   })
@@ -179,12 +179,12 @@ describe('file checkpoint backend', () => {
     const snapshot = await fileCheckpointBackend.prepare(backendContext(repoRoot))
     await writeFile(path.join(repoRoot, 'concurrent.txt'), 'raced\n')
     await expect(snapshot.validateSourceState?.()).rejects.toThrow(
-      FILE_CHECKPOINT_BASELINE_MISMATCH,
+      FILE_CHECKPOINT_SOURCE_CHANGED,
     )
     await rm(path.join(repoRoot, 'concurrent.txt'))
     await execFileAsync('git', ['update-ref', 'refs/heads/concurrent', 'HEAD'], { cwd: repoRoot })
     await expect(snapshot.validateSourceState?.()).rejects.toThrow(
-      FILE_CHECKPOINT_BASELINE_MISMATCH,
+      FILE_CHECKPOINT_SOURCE_CHANGED,
     )
 
     await snapshot.cleanup()

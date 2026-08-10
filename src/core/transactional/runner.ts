@@ -78,8 +78,13 @@ export async function runTransactionalExecution(
     snapshot = await selection.backend.prepare(backendContext)
     const snapshotAudit = {
       transactionalBackend: snapshot.backend,
-      transactionalBaselineTreeHash: snapshot.baselineTreeHash,
-      ...(snapshot.copyStrategy ? { transactionalCopyStrategy: snapshot.copyStrategy } : {}),
+      resourceKind: snapshot.resourceKind,
+      baselineTreeHash: snapshot.baselineTreeHash,
+      snapshotFileCount: snapshot.snapshotFileCount,
+      snapshotSourceBytes: snapshot.snapshotSourceBytes,
+      snapshotWorkspaceBytes: snapshot.snapshotWorkspaceBytes,
+      snapshotCopyStrategy: snapshot.copyStrategy,
+      snapshotPrepareMs: snapshot.snapshotPrepareMs,
     }
     const runOptions =
       snapshot.backend === 'file_checkpoint' && snapshot.executionCwdRelative !== undefined
@@ -269,8 +274,13 @@ export async function runTransactionalExecution(
       ...(snapshot
         ? {
             transactionalBackend: snapshot.backend,
-            transactionalBaselineTreeHash: snapshot.baselineTreeHash,
-            ...(snapshot.copyStrategy ? { transactionalCopyStrategy: snapshot.copyStrategy } : {}),
+            resourceKind: snapshot.resourceKind,
+            baselineTreeHash: snapshot.baselineTreeHash,
+            snapshotFileCount: snapshot.snapshotFileCount,
+            snapshotSourceBytes: snapshot.snapshotSourceBytes,
+            snapshotWorkspaceBytes: snapshot.snapshotWorkspaceBytes,
+            snapshotCopyStrategy: snapshot.copyStrategy,
+            snapshotPrepareMs: snapshot.snapshotPrepareMs,
           }
         : {}),
     }

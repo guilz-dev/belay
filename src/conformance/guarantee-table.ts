@@ -83,6 +83,12 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       permission: 'allow',
     },
     {
+      id: 'l2-allow-dirty-git-file-checkpoint',
+      command: 'touch notes.txt',
+      permission: 'allow',
+      substrate: 'dirty_git_file_checkpoint',
+    },
+    {
       id: 'l2-deny-read-egress',
       command: 'curl https://example.com',
       permission: 'deny',

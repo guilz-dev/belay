@@ -6,7 +6,7 @@ import path from 'node:path'
 import { canonicalPath } from '../path-utils.js'
 
 export const FILE_CHECKPOINT_GIT_METADATA_CHANGED = 'file_checkpoint_git_metadata_changed'
-export const FILE_CHECKPOINT_BASELINE_MISMATCH = 'file_checkpoint_baseline_mismatch'
+export const FILE_CHECKPOINT_SOURCE_CHANGED = 'file_checkpoint_source_changed'
 export const FILE_CHECKPOINT_CWD_OUTSIDE_ROOT = 'file_checkpoint_cwd_outside_root'
 export const FILE_CHECKPOINT_PREPARE_FAILED = 'file_checkpoint_prepare_failed'
 export const FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED = 'file_checkpoint_split_index_unsupported'

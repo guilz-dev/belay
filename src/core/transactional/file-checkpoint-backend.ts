@@ -20,10 +20,10 @@ import {
   computeGitMetadataFingerprint,
   copyGitIndexState,
   execGit,
-  FILE_CHECKPOINT_BASELINE_MISMATCH,
   FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
   FILE_CHECKPOINT_GIT_METADATA_CHANGED,
   FILE_CHECKPOINT_PREPARE_FAILED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
   removeAllGitRemotes,
   resolveExecutionCwdRelative,
 } from './file-checkpoint-git.js'
@@ -117,6 +117,8 @@ interface PreparedFileCheckpointState {
   sourceGitMetadataFingerprint: string
   gitMetadataFingerprint: string
   copyStrategy: 'clonefile' | 'reflink' | 'copy'
+  workspaceBytes: number
+  prepareMs: number
 }
 
 async function directoryByteSize(root: string, deadlineMs: number): Promise<number> {
@@ -151,6 +153,7 @@ async function copyGitMetadataDirectory(
 async function prepareDirtyGitSnapshot(
   context: TransactionalBackendContext,
 ): Promise<PreparedFileCheckpointState> {
+  const prepareStartedAt = Date.now()
   const excludedRoots = context.dirtyIgnoreRoots ?? []
   const quotas = context.fileCheckpoint
   const deadlineMs = Date.now() + quotas.prepareTimeoutMs
@@ -193,10 +196,10 @@ async function prepareDirtyGitSnapshot(
       deadlineMs,
     })
     if (sourceIndex.treeHash !== baselineIndex.treeHash) {
-      throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
     }
     if ((await computeGitMetadataFingerprint(context.repoRoot)) !== sourceGitMetadataFingerprint) {
-      throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
     }
 
     await writeFile(
@@ -212,7 +215,8 @@ async function prepareDirtyGitSnapshot(
     })
     await copyGitMetadataDirectory(baselineRoot, executionRoot)
     const gitMetadataFingerprint = await computeGitMetadataFingerprint(executionRoot)
-    if ((await directoryByteSize(stagingRoot, deadlineMs)) > quotas.maxWorkspaceBytes) {
+    const workspaceBytes = await directoryByteSize(stagingRoot, deadlineMs)
+    if (workspaceBytes > quotas.maxWorkspaceBytes) {
       throw new Error(FILE_CHECKPOINT_QUOTA_EXCEEDED)
     }
 
@@ -225,13 +229,15 @@ async function prepareDirtyGitSnapshot(
       gitMetadataFingerprint,
       copyStrategy:
         executionCopy.strategy === baselineCopy.strategy ? executionCopy.strategy : 'copy',
+      workspaceBytes,
+      prepareMs: Date.now() - prepareStartedAt,
     }
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
     if (error instanceof Error && error.message === FILE_CHECKPOINT_CWD_OUTSIDE_ROOT) {
       throw error
     }
-    if (error instanceof Error && error.message === FILE_CHECKPOINT_BASELINE_MISMATCH) {
+    if (error instanceof Error && error.message === FILE_CHECKPOINT_SOURCE_CHANGED) {
       throw error
     }
     throw new Error(error instanceof Error ? error.message : FILE_CHECKPOINT_PREPARE_FAILED, {
@@ -263,10 +269,15 @@ export const fileCheckpointBackend: TransactionalBackend = {
       resourceRoot: context.repoRoot,
       executionRoot: prepared.executionRoot,
       baselineRoot: prepared.baselineRoot,
+      resourceKind: 'git_repository',
       resourceIdentity,
       baselineTreeHash: prepared.baselineIndex.treeHash,
       excludedRoots: context.dirtyIgnoreRoots ?? [],
       copyStrategy: prepared.copyStrategy,
+      snapshotFileCount: prepared.baselineIndex.fileCount,
+      snapshotSourceBytes: prepared.baselineIndex.totalFileBytes,
+      snapshotWorkspaceBytes: prepared.workspaceBytes,
+      snapshotPrepareMs: prepared.prepareMs,
       executionCwdRelative,
       async validateSourceState() {
         const sourceIndex = await buildFileTreeIndex({
@@ -279,7 +290,7 @@ export const fileCheckpointBackend: TransactionalBackend = {
           (await computeGitMetadataFingerprint(context.repoRoot)) !==
             prepared.sourceGitMetadataFingerprint
         ) {
-          throw new Error(FILE_CHECKPOINT_BASELINE_MISMATCH)
+          throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
         }
       },
       async collectChanges() {
