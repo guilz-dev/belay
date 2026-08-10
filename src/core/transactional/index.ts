@@ -24,7 +24,10 @@ export {
 } from './backend-selector.js'
 export { evaluateTransactionalDiff } from './diff-evaluator.js'
 export { isTransactionalEligible } from './eligibility.js'
-export { fileCheckpointBackend } from './file-checkpoint-backend.js'
+export {
+  FILE_CHECKPOINT_PROTECTED_PATH_CHANGED,
+  fileCheckpointBackend,
+} from './file-checkpoint-backend.js'
 export {
   FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
   FILE_CHECKPOINT_GIT_METADATA_CHANGED,

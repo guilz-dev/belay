@@ -213,6 +213,36 @@ describe('recovery checkpoints', () => {
     })
   })
 
+  it('captures file-checkpoint recovery pre-images from the immutable baseline', async () => {
+    const repoRoot = await createGitRepo()
+    const baselineRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-baseline-'))
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-execution-'))
+    tempDirs.push(baselineRoot, executionRoot)
+    const stateDir = path.join(repoRoot, '.recovery-state')
+    await writeFile(path.join(repoRoot, 'dirty.txt'), 'live source\n')
+    await writeFile(path.join(baselineRoot, 'dirty.txt'), 'dirty baseline\n')
+    await writeFile(path.join(executionRoot, 'dirty.txt'), 'after\n')
+
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot,
+      baselinePath: baselineRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'immutable-file-checkpoint-baseline',
+      changes: [{ relativePath: 'dirty.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+    await writeFile(path.join(repoRoot, 'dirty.txt'), 'after\n')
+    await markRecoveryCheckpointApplying(stateDir, checkpoint)
+    await markRecoveryCheckpointApplied(stateDir, checkpoint)
+
+    await restoreRecoveryCheckpoint(stateDir, checkpoint.checkpointId)
+    await expect(readFile(path.join(repoRoot, 'dirty.txt'), 'utf8')).resolves.toBe(
+      'dirty baseline\n',
+    )
+  })
+
   it('reports file-checkpoint availability and probe details in recover status', async () => {
     const repoRoot = await createGitRepo()
     await writeConfigFile(repoRoot, {

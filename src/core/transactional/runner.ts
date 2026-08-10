@@ -158,6 +158,7 @@ export async function runTransactionalExecution(
           ? await prepareRecoveryCheckpoint({
               stateDir,
               repoRoot,
+              baselinePath: snapshot.baselineRoot ?? repoRoot,
               worktreePath: snapshot.executionRoot,
               commandFingerprint: predicted.fingerprint,
               changes,

@@ -38,7 +38,10 @@ import {
   type FileTreeIndex,
 } from './file-tree.js'
 import { isDirtyWorktree, isGitWorktreeAvailable } from './git-worktree.js'
+import { readSnapshotNode } from './snapshot-node.js'
 import type { TransactionalFileChange } from './types.js'
+
+export const FILE_CHECKPOINT_PROTECTED_PATH_CHANGED = 'file_checkpoint_protected_path_changed'
 
 function fileCheckpointIsolationReason(context: TransactionalBackendContext): string | null {
   const attestation = context.boundaryAttestation
@@ -120,6 +123,43 @@ interface PreparedFileCheckpointState {
   copyStrategy: 'clonefile' | 'reflink' | 'copy'
   workspaceBytes: number
   prepareMs: number
+  protectedRootStates: Map<string, string>
+}
+
+async function protectedRootState(root: string): Promise<string> {
+  const node = await readSnapshotNode(root)
+  if (node.kind !== 'directory') {
+    return `${node.kind}:${node.kind === 'absent' ? '' : node.hash}`
+  }
+  const index = await buildFileTreeIndex({ resourceRoot: root })
+  return `directory:${node.hash}:${index.treeHash}`
+}
+
+function executionProtectedRoot(
+  resourceRoot: string,
+  executionRoot: string,
+  protectedRoot: string,
+): string | null {
+  const relative = path.relative(path.resolve(resourceRoot), path.resolve(protectedRoot))
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return null
+  }
+  return path.join(executionRoot, relative)
+}
+
+async function captureProtectedRootStates(
+  resourceRoot: string,
+  executionRoot: string,
+  protectedRoots: string[],
+): Promise<Map<string, string>> {
+  const states = new Map<string, string>()
+  for (const protectedRoot of protectedRoots) {
+    const executionPath = executionProtectedRoot(resourceRoot, executionRoot, protectedRoot)
+    if (executionPath) {
+      states.set(executionPath, await protectedRootState(executionPath))
+    }
+  }
+  return states
 }
 
 async function directoryByteSize(root: string, deadlineMs: number): Promise<number> {
@@ -219,6 +259,11 @@ async function prepareDirtyGitSnapshot(
     })
     await copyGitMetadataDirectory(baselineRoot, executionRoot)
     const gitMetadataFingerprint = await computeGitMetadataFingerprint(executionRoot)
+    const protectedRootStates = await captureProtectedRootStates(
+      context.repoRoot,
+      executionRoot,
+      excludedRoots,
+    )
     const workspaceBytes = await directoryByteSize(stagingRoot, deadlineMs)
     if (workspaceBytes > quotas.maxWorkspaceBytes) {
       throw new FileCheckpointDiagnosticError(
@@ -238,6 +283,7 @@ async function prepareDirtyGitSnapshot(
         executionCopy.strategy === baselineCopy.strategy ? executionCopy.strategy : 'copy',
       workspaceBytes,
       prepareMs: Date.now() - prepareStartedAt,
+      protectedRootStates,
     }
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
@@ -307,6 +353,11 @@ export const fileCheckpointBackend: TransactionalBackend = {
         const afterFingerprint = await computeGitMetadataFingerprint(prepared.executionRoot)
         if (afterFingerprint !== prepared.gitMetadataFingerprint) {
           throw new Error(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
+        }
+        for (const [protectedRoot, before] of prepared.protectedRootStates) {
+          if ((await protectedRootState(protectedRoot)) !== before) {
+            throw new Error(FILE_CHECKPOINT_PROTECTED_PATH_CHANGED)
+          }
         }
 
         const executionIndex = await buildFileTreeIndex({

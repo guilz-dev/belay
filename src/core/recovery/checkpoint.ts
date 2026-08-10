@@ -96,6 +96,8 @@ async function garbageCollect(
 export async function prepareRecoveryCheckpoint(params: {
   stateDir: string
   repoRoot: string
+  /** Immutable pre-command source for recovery blobs, when available. */
+  baselinePath?: string
   worktreePath: string
   commandFingerprint: string
   changes: TransactionalFileChange[]
@@ -144,10 +146,14 @@ export async function prepareRecoveryCheckpoint(params: {
       ) {
         throw new Error('recovery_protected_path')
       }
+      const baseline = await assertRecoverySafeTarget(
+        params.baselinePath ?? params.repoRoot,
+        change.relativePath,
+      )
       const source = await assertRecoverySafeTarget(params.worktreePath, change.relativePath)
       entries.push({
         path: change.relativePath,
-        before: await captureRecoverySnapshot(target, {
+        before: await captureRecoverySnapshot(baseline, {
           blobDir: path.join(temporary, 'blobs'),
         }),
         after: withoutRecoveryBlob(await captureRecoverySnapshot(source)),

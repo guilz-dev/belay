@@ -504,6 +504,54 @@ describe('transactional runner', () => {
     )
   })
 
+  it('rejects writes to excluded protected roots in the execution mirror', async () => {
+    const repoRoot = await createGitRepo()
+    await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
+    const protectedRoot = path.join(repoRoot, '.protected')
+    const command = 'mkdir -p .protected && printf blocked > .protected/attempt.txt'
+    const predicted = await classifyShellCore(command, repoRoot, repoRoot, {
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const stateDir = path.join(repoRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      return runShellCommand(
+        params.command,
+        mount ? mount.hostSourceRoot : params.cwd,
+        params.timeoutMs,
+      )
+    })
+
+    const params = runnerParams({
+      command,
+      cwd: repoRoot,
+      repoRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: [protectedRoot],
+    })
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(repoRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      skipped: true,
+      skipReason: 'file_checkpoint_protected_path_changed',
+    })
+    await expect(
+      readFile(path.join(repoRoot, '.protected', 'attempt.txt'), 'utf8'),
+    ).rejects.toThrow()
+  })
+
   it('ignores untracked belay init artifacts when dirtyIgnoreRoots is provided', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
