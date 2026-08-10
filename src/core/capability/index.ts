@@ -8,6 +8,7 @@ export {
   saveFsScopeAllowlist,
 } from './allowlist.js'
 export {
+  attestsWorkspaceMountIsolation,
   BOUNDARY_ATTESTATION_VERSION,
   type BoundaryAttestation,
   type BoundaryDriverId,

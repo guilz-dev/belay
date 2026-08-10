@@ -51,6 +51,7 @@ function hostIntegrationAttestation(driver: BoundaryDriverId): BoundaryAttestati
     expiresAt: new Date(Date.now() + ATTESTATION_TTL_MS).toISOString(),
     deniesUngrantedEffects: false,
     materializesGrants: false,
+    isolatesWorkspaceMounts: false,
     probeSignals: ['host-integration', 'l3-policy-only'],
   }
 }

@@ -39,6 +39,8 @@ export async function runTransactionalExecution(
     dirtyIgnoreRoots: params.dirtyIgnoreRoots,
     fileCheckpoint: params.fileCheckpoint,
     durableCheckpointEnabled: params.checkpoint?.enabled === true,
+    boundaryAttestation: params.boundaryContext?.attestation ?? null,
+    boundaryAttestationFresh: params.boundaryContext?.attestationFresh ?? false,
   }
 
   const selection = await selectTransactionalBackend(backendContext)
