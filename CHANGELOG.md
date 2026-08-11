@@ -6,16 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
-### Added
-
-- **Dirty Git file-checkpoint backend (PR 6)** — opt-in `file_checkpoint` backend for dirty Git workspaces with isolated execution mirrors, baseline tree indexing, git metadata fingerprint guards, selector/runner wiring behind attested workspace isolation, and recovery manifest/proof backend labeling.
-
-## 0.7.0 — 2026-08-09
+## 0.7.0 — 2026-08-12
 
 ### Added
 
-- **File checkpoint tree core (PR2)** — `snapshot-node`, `file-tree`, `file-clone`, and `file-checkpoint-staging` modules for UTF-8 bytewise path ordering, streaming hashes, exclusions, quotas, and owner markers. Defaults remain off until the file-checkpoint backend selector lands (PR5).
+- **Recovery v1** — opt-in durable repo-local checkpoints with artifact store, reconcile, and restore helpers.
+- **Recovery manifest v2** — checkpoint manifest schema for recovery proof and backend labeling.
+- **Transactional backend contract (PR 1)** — shared backend selector and file-checkpoint path scaffolding.
+- **File checkpoint tree core (PR2)** — `snapshot-node`, `file-tree`, `file-clone`, and `file-checkpoint-staging` modules for UTF-8 bytewise path ordering, streaming hashes, exclusions, quotas, and owner markers.
 - **Shared apply engine (PR3)** — `apply-observed-changes` with full parent-chain preflight, ordered apply, staged rollback restore, and post-verify. Git worktree transactional runner refactored to use `buildObservedChangesFromTransactional`.
+- **Isolated workspace boundary contract (PR 2)** — attested workspace isolation for file-checkpoint execution mirrors.
+- **Dirty Git file-checkpoint backend (PR 6)** — opt-in `file_checkpoint` backend for dirty Git workspaces with isolated execution mirrors, baseline tree indexing, git metadata fingerprint guards, selector/runner wiring behind attested workspace isolation, and recovery manifest/proof backend labeling.
 - **Effect IR** — intermediate representation for `pnpm` / `npm` / `npx` package-exec launcher evaluation, effect-plan policy combination, and audit hashing (`src/core/effect-ir/`).
 - **Grant bundle consumption** — `grants[]` on approval records consumed consistently at editor replay, CLI replay, and gate-runtime boundaries; fail-closed when capability requests are missing for grant leases.
 - **`AGENTS.md.example`** — committed agent guidelines template; local `AGENTS.md` is gitignored for per-developer customization.
@@ -25,12 +26,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - Transactional git-worktree apply/rollback uses the shared apply engine; rollback failures surface via `TRANSACTIONAL_APPLY_ROLLBACK_FAILED` in runner signals.
 - Grant lease helpers refactored for multi-grant bundles (`grantsFromApproval`, `consumeApprovalGrantBundle`, `consumeApprovedRecordGrantBundle`).
 - Gate runtime replays approved shell actions through `BoundaryDriver` instead of host subprocess only.
+- **Effect runtime enforcement hardening** — exact approval replay bundles, effect-plan coverage, and package-exec evaluation tightened for dogfood/enforce readiness.
 - Expanded shell corpus and tests for one-step replay, grant consumption, effect-plan worlds, and file-tree / apply acceptance coverage.
 
 ### Fixed
 
 - **Apply rollback** — recursive directory removal, staged restore (avoid delete-before-copy data loss), deepest-first directory deletion.
 - **One-step editor approval** — `/belay-approve <id>` now atomically claims and replays the exact denied shell action through the configured boundary driver on Cursor, Claude Code, and Codex without requiring a follow-up prompt. After successful replay, the approval-only prompt continues the host turn; Claude Code and Codex receive the replay result as model context. Claude Code prompt rejection now uses its native block decision. Failed or timed-out replay requires fresh approval.
+- **Approval replay failures** — hardened fail-closed paths when replay claim, boundary execution, or envelope validation fails.
 
 ## 0.6.0 — 2026-08-08
 
