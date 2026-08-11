@@ -284,16 +284,10 @@ export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisition
   }
 
   const transportSpec = normalized.startsWith('git+') ? normalized.slice(4) : normalized
-  if (transportSpec.startsWith('github:')) {
-    return { kind: 'network', host: 'github.com', protocol: 'git' }
-  }
-  if (transportSpec.startsWith('gitlab:')) {
-    return { kind: 'network', host: 'gitlab.com', protocol: 'git' }
-  }
-  if (transportSpec.startsWith('bitbucket:')) {
-    return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
-  }
-  const endpoint = parseNetworkEndpoint(transportSpec)
+  const endpoint = parseNetworkEndpoint(transportSpec, {
+    allowHostedGitShorthand: true,
+    allowScpStyle: true,
+  })
   if (endpoint) {
     return { kind: 'network', ...endpoint }
   }

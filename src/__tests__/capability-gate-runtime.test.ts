@@ -660,6 +660,58 @@ describe('capability gate runtime', () => {
     })
   })
 
+  it('deduplicates concurrent pending approvals atomically', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-concurrent-pending-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = brokerInactiveConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const baseDeps = createDefaultGateRuntimeDeps()
+    let pendingLoads = 0
+    let releasePendingLoads: (() => void) | undefined
+    const pendingLoadsReady = new Promise<void>((resolve) => {
+      releasePendingLoads = resolve
+    })
+    const deps = {
+      ...baseDeps,
+      async loadApprovals(...args: Parameters<typeof baseDeps.loadApprovals>) {
+        const loaded = await baseDeps.loadApprovals(...args)
+        if (args[1] === 'pending-approvals.json' && pendingLoads < 2) {
+          pendingLoads += 1
+          if (pendingLoads === 2) {
+            releasePendingLoads?.()
+          }
+          await pendingLoadsReady
+        }
+        return loaded
+      },
+    }
+
+    const verdicts = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        evaluateGatedAction(ctx, deps, {
+          kind: 'shell',
+          cwd: repoRoot,
+          command: 'npx -y prettier --version',
+        }),
+      ),
+    )
+
+    const approvalIds = new Set(verdicts.map((verdict) => verdict.approvalId))
+    expect(approvalIds.size).toBe(1)
+    const stateDir = cursorAdapter.layout.repoLocalStateDir(repoRoot)
+    const pending = JSON.parse(
+      await readFile(path.join(stateDir, 'pending-approvals.json'), 'utf8'),
+    ) as { approvals: Array<{ approvalId: string }> }
+    expect(pending.approvals).toHaveLength(1)
+    expect(pending.approvals[0]?.approvalId).toBe(verdicts[0]?.approvalId)
+  })
+
   it('denies replay when effect plan hash mismatches approved record', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-effect-plan-hash-'))
     tempDirs.push(repoRoot)
@@ -734,6 +786,34 @@ describe('capability gate runtime', () => {
     })
     expect(replay.permission).toBe('deny')
     expect(replay.reason).toBe('approval_replay_mismatch')
+    expect(replay.approvalId).toBeDefined()
+    expect(replay.approvalId).not.toBe(approvedRecord.approvalId)
+
+    const approvedAfter = JSON.parse(
+      await readFile(path.join(stateDir, 'approved-approvals.json'), 'utf8'),
+    ) as { approvals: unknown[] }
+    expect(approvedAfter.approvals).toEqual([])
+    const pendingAfter = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<{ approvalId: string }>
+    }
+    expect(pendingAfter.approvals).toEqual([
+      expect.objectContaining({ approvalId: replay.approvalId }),
+    ])
+    const auditRecords = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const mismatchAudit = auditRecords.at(-1)
+    expect(mismatchAudit).toMatchObject({
+      reason: 'approval_replay_mismatch',
+      replayMismatchKind: 'effect_plan',
+      rejectedApprovalId: '<approval-id>',
+    })
+    expect(mismatchAudit?.rejectedApprovalCorrelationId).toMatch(/^[0-9a-f]{16}$/)
+    expect(mismatchAudit?.replacementApprovalCorrelationId).toMatch(/^[0-9a-f]{16}$/)
+    expect(mismatchAudit?.rejectedApprovalCorrelationId).not.toBe(
+      mismatchAudit?.replacementApprovalCorrelationId,
+    )
   })
 
   it('allows replay for legacy approvals without effect plan hash', async () => {

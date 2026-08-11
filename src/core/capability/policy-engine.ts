@@ -234,7 +234,7 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
     return { kind: 'git-ref', ref: 'push' }
   }
   if (isNetworkShellAnalysis(analysis)) {
-    const exact = exactNetworkResources(analysis.command)
+    const exact = exactNetworkResources(analysis)
     return (
       (exact.length === 1 ? exact[0] : undefined) ?? {
         kind: 'network',
@@ -259,13 +259,97 @@ function isNetworkShellAnalysis(analysis: ShellCapabilityAnalysis): boolean {
   )
 }
 
+const SCP_STYLE_COMMANDS = new Set(['git', 'rsync', 'scp'])
+const PACKAGE_SPEC_COMMANDS = new Set(['bun', 'npm', 'npx', 'pnpm', 'yarn'])
+const NETWORK_VALUE_OPTIONS = new Set(['--registry', '--url'])
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  '-C',
+  '-b',
+  '-c',
+  '-o',
+  '--branch',
+  '--config',
+  '--depth',
+  '--filter',
+  '--git-dir',
+  '--namespace',
+  '--origin',
+  '--reference',
+  '--separate-git-dir',
+  '--upload-pack',
+  '--work-tree',
+])
+
+function gitRemoteOperand(tokens: string[]): string | null {
+  let cursor = 1
+  while (cursor < tokens.length) {
+    const token = tokens[cursor]
+    if (!token) {
+      return null
+    }
+    if (GIT_OPTIONS_WITH_VALUE.has(token)) {
+      cursor += 2
+      continue
+    }
+    if (token.startsWith('-')) {
+      cursor += 1
+      continue
+    }
+    break
+  }
+
+  const subcommand = tokens[cursor]
+  if (!subcommand) {
+    return null
+  }
+  const positionals: string[] = []
+  let skipOptionValue = false
+  for (const token of tokens.slice(cursor + 1)) {
+    if (skipOptionValue) {
+      skipOptionValue = false
+      continue
+    }
+    if (GIT_OPTIONS_WITH_VALUE.has(token)) {
+      skipOptionValue = true
+      continue
+    }
+    if (token.startsWith('-')) {
+      continue
+    }
+    positionals.push(token)
+  }
+
+  if (['clone', 'fetch', 'ls-remote', 'pull', 'push'].includes(subcommand)) {
+    return positionals[0] ?? null
+  }
+  if (subcommand === 'remote' && positionals[0] === 'add') {
+    return positionals[2] ?? null
+  }
+  if (subcommand === 'submodule' && positionals[0] === 'add') {
+    return positionals[1] ?? null
+  }
+  return null
+}
+
 function exactNetworkResources(
-  command: string,
+  analysis: ShellCapabilityAnalysis,
 ): Array<Extract<CapabilityResource, { kind: 'network' }>> {
   const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
-  for (const rawToken of tokenizeShell(command)) {
-    const token = rawToken.startsWith('--url=') ? rawToken.slice('--url='.length) : rawToken
-    const endpoint = parseNetworkEndpoint(token)
+  const shellTokens = tokenizeShell(analysis.command)
+  const gitRemote = analysis.segmentHead === 'git' ? gitRemoteOperand(shellTokens) : null
+  for (const rawToken of shellTokens) {
+    const optionSeparator = rawToken.startsWith('-') ? rawToken.indexOf('=') : -1
+    const optionName = optionSeparator === -1 ? null : rawToken.slice(0, optionSeparator)
+    const token =
+      optionSeparator !== -1 && optionName && NETWORK_VALUE_OPTIONS.has(optionName)
+        ? rawToken.slice(optionSeparator + 1)
+        : rawToken
+    const endpoint = parseNetworkEndpoint(token, {
+      allowHostedGitShorthand: PACKAGE_SPEC_COMMANDS.has(analysis.segmentHead),
+      allowScpStyle:
+        SCP_STYLE_COMMANDS.has(analysis.segmentHead) &&
+        (analysis.segmentHead !== 'git' || rawToken === gitRemote),
+    })
     if (!endpoint) {
       continue
     }
@@ -288,7 +372,7 @@ export function buildShellCapabilityRequest(
 export function buildShellCapabilityRequests(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1[] {
-  const resources = isNetworkShellAnalysis(analysis) ? exactNetworkResources(analysis.command) : []
+  const resources = isNetworkShellAnalysis(analysis) ? exactNetworkResources(analysis) : []
   const selectedResources = resources.length > 0 ? resources : [resourceForShellAnalysis(analysis)]
   return selectedResources.map((resource) => ({
     version: CAPABILITY_REQUEST_VERSION,

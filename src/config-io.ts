@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
+import { mutateApprovalStateWithRetry } from './core/capability/approval-state-mutation.js'
 import {
   approvedApprovalsFile,
   type BelayConfigV3,
@@ -137,12 +139,34 @@ async function repoLocalApprovalsEmpty(repoRoot: string, config: BelayConfigV3):
 }
 
 async function writeApprovalStateFile(filePath: string, state: ApprovalStateFile): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
-  await writeFile(filePath, `${JSON.stringify(compactApprovals(state), null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  })
-  await chmod(filePath, 0o600)
+  const directory = path.dirname(filePath)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const tempPath = path.join(
+    directory,
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+  )
+  let handle: Awaited<ReturnType<typeof open>> | null = null
+  try {
+    handle = await open(tempPath, 'wx', 0o600)
+    await handle.writeFile(`${JSON.stringify(compactApprovals(state), null, 2)}\n`, 'utf8')
+    await handle.sync()
+    await handle.close()
+    handle = null
+    await rename(tempPath, filePath)
+    await chmod(filePath, 0o600)
+
+    const directoryHandle = await open(directory, 'r')
+    try {
+      await directoryHandle.sync().catch(() => undefined)
+    } finally {
+      await directoryHandle.close()
+    }
+  } finally {
+    if (handle) {
+      await handle.close().catch(() => undefined)
+    }
+    await unlink(tempPath).catch(() => undefined)
+  }
 }
 
 async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string): Promise<void> {
@@ -153,20 +177,32 @@ async function migrateApprovalFilesBetween(sourceDir: string, targetDir: string)
     if (!existsSync(from)) {
       continue
     }
-    if (!existsSync(to)) {
-      if (await isCorruptApprovalStateFile(from)) {
-        continue
-      }
-      await copyFile(from, to)
-      await chmod(to, 0o600)
+    if (
+      (await isCorruptApprovalStateFile(from)) ||
+      (existsSync(to) && (await isCorruptApprovalStateFile(to)))
+    ) {
       continue
     }
-    if ((await isCorruptApprovalStateFile(from)) || (await isCorruptApprovalStateFile(to))) {
-      continue
-    }
-    const targetState = await readApprovalStateFileStrict(to)
     const sourceState = await readApprovalStateFileStrict(from)
-    await writeApprovalStateFile(to, mergeApprovalStates(targetState, sourceState))
+    const migrated = await mutateApprovalStateWithRetry({
+      load: async () => ({
+        filePath: to,
+        state: existsSync(to)
+          ? await readApprovalStateFileStrict(to)
+          : { version: 1, approvals: [] },
+      }),
+      write: writeApprovalStateFile,
+      mutate: (targetState) => ({
+        state:
+          targetState.approvals.length === 0
+            ? sourceState
+            : mergeApprovalStates(targetState, sourceState),
+        result: true,
+      }),
+    })
+    if (migrated !== true) {
+      throw new Error(`Failed to migrate approval state to ${to}`)
+    }
   }
 }
 

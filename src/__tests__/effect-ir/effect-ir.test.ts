@@ -330,6 +330,25 @@ describe('effect-ir', () => {
     expect(networkResources.some((resource) => resource.host === 'registry.npmjs.org')).toBe(false)
   })
 
+  it('does not interpret a package patch protocol as an SSH host', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npx', 'patch:tool#./fix.patch'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npx-patch-protocol',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+
+    const networkResources = collectRequirements(plan.root).flatMap((entry) =>
+      entry.resource.kind === 'network' ? [entry.resource] : [],
+    )
+    expect(networkResources.some((resource) => resource.host === 'patch')).toBe(false)
+  })
+
   it('targets GitHub for npm hosted-git shorthand package specs', () => {
     const ctx = verdictTestContext()
     const plan = buildEffectPlan({

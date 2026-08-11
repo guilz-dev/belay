@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-
+import { withStateFileLock } from '../capability/approval-state-mutation.js'
 import type { BelayConfigV3 } from '../config.js'
 import { belayStateDir } from '../config.js'
 import type { EgressAllowlistEntry, EgressAllowlistFile } from './types.js'
@@ -27,6 +27,17 @@ export async function saveEgressAllowlist(
 ): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true })
   await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+}
+
+export async function mutateEgressAllowlist(
+  filePath: string,
+  mutate: (state: EgressAllowlistFile) => EgressAllowlistFile,
+): Promise<EgressAllowlistFile> {
+  return withStateFileLock(filePath, async () => {
+    const updated = mutate(await loadEgressAllowlist(filePath))
+    await saveEgressAllowlist(filePath, updated)
+    return updated
+  })
 }
 
 export function isHostAllowlisted(host: string, allowlist: EgressAllowlistFile): boolean {

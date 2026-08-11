@@ -56,7 +56,7 @@ describe('config-io control plane migration', () => {
             reason: 'external_effect',
             summary: 'git push',
             createdAt: '2026-01-01T00:00:00.000Z',
-            expiresAt: '2026-01-01T00:15:00.000Z',
+            expiresAt: '2099-01-01T00:15:00.000Z',
           },
         ],
       })}\n`,

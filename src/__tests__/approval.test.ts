@@ -97,4 +97,46 @@ describe('compactApprovals', () => {
 
     expect(compacted.approvals).toHaveLength(0)
   })
+
+  it('drops approved entries with an invalid execution lease timestamp', () => {
+    const compacted = compactApprovals({
+      version: 3,
+      approvals: [
+        {
+          approvalId: 'belay_lease_invalid',
+          kind: 'shell',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'unknown_local_effect',
+          summary: 'git push',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: '2099-01-01T00:00:00.000Z',
+          approvedAt: '2026-01-01T00:00:00.000Z',
+          executionLeaseExpiresAt: 'not-a-timestamp',
+        },
+      ],
+    })
+
+    expect(compacted.approvals).toHaveLength(0)
+  })
+
+  it('drops entries with an invalid approval expiry timestamp', () => {
+    const compacted = compactApprovals({
+      version: 3,
+      approvals: [
+        {
+          approvalId: 'belay_expiry_invalid',
+          kind: 'shell',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'unknown_local_effect',
+          summary: 'git push',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: 'not-a-timestamp',
+        },
+      ],
+    })
+
+    expect(compacted.approvals).toHaveLength(0)
+  })
 })

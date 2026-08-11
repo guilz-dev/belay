@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -321,20 +321,7 @@ async function ensurePendingApproval(
   approval: Awaited<ReturnType<typeof createApprovalRecordWithEnvelope>>
   created: boolean
 }> {
-  const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
-  pending.state = compactApprovals(pending.state)
-  const existing = pending.state.approvals.find(
-    (approval) =>
-      approval.kind === kind &&
-      approval.fingerprint === result.fingerprint &&
-      approval.repoRoot === ctx.repoRoot,
-  )
-  if (existing) {
-    await deps.writeApprovals(pending.filePath, pending.state)
-    return { approval: existing, created: false }
-  }
-
-  const approval = createApprovalRecordWithEnvelope({
+  const candidate = createApprovalRecordWithEnvelope({
     kind,
     fingerprint: result.fingerprint,
     repoRoot: ctx.repoRoot,
@@ -347,11 +334,36 @@ async function ensurePendingApproval(
     capabilityRequests: result.capabilityRequests,
     effectPlanHash: result.effectPlan ? hashEffectPlan(result.effectPlan) : undefined,
   })
-  pending.state.version = APPROVAL_STATE_VERSION_V3
-  pending.state.revision = (pending.state.revision ?? 0) + 1
-  pending.state.approvals.push(approval)
-  await deps.writeApprovals(pending.filePath, pending.state)
-  return { approval, created: true }
+  const outcome = await mutateApprovalStateWithRetry<{
+    approval: typeof candidate
+    created: boolean
+  }>({
+    load: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const existing = compacted.approvals.find(
+        (approval) =>
+          approval.kind === kind &&
+          approval.fingerprint === result.fingerprint &&
+          approval.repoRoot === ctx.repoRoot,
+      )
+      if (existing) {
+        return { state: compacted, result: { approval: existing, created: false } }
+      }
+      compacted.version = APPROVAL_STATE_VERSION_V3
+      compacted.approvals.push(candidate)
+      return { state: compacted, result: { approval: candidate, created: true } }
+    },
+  })
+  if (!outcome) {
+    throw new Error('Failed to persist pending approval')
+  }
+  return outcome
+}
+
+function approvalCorrelationId(approvalId: string): string {
+  return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
 }
 
 function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
@@ -534,6 +546,28 @@ async function consumeApprovedApproval(
     return null
   }
   return consumed
+}
+
+async function discardApprovedApproval(
+  ctx: GateRuntimeContext,
+  deps: GateRuntimeDeps,
+  approvalId: string,
+): Promise<void> {
+  const discarded = await mutateApprovalStateWithRetry({
+    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const index = compacted.approvals.findIndex((approval) => approval.approvalId === approvalId)
+      if (index !== -1) {
+        compacted.approvals.splice(index, 1)
+      }
+      return { state: compacted, result: true }
+    },
+  })
+  if (discarded !== true) {
+    throw new Error(`Failed to discard rejected approval ${approvalId}`)
+  }
 }
 
 export async function evaluateGatedAction(
@@ -910,6 +944,7 @@ async function gateDecisionToVerdict(
   const denyWithPendingApproval = async (failure?: {
     reason: string
     grantBundleFailureReason?: GrantBundleValidationFailureReason
+    auditFields?: Record<string, unknown> | ((approval: ApprovalRecord) => Record<string, unknown>)
     userMessage: (approvalId: string) => string
     agentMessage: string
   }): Promise<GateVerdict> => {
@@ -957,6 +992,10 @@ async function gateDecisionToVerdict(
       })
     }
 
+    const failureAuditFields =
+      typeof failure?.auditFields === 'function'
+        ? failure.auditFields(approval)
+        : failure?.auditFields
     await deps.appendAudit(ctx, {
       ...gateBase,
       verdict: failure ? 'deny_pending_approval' : result.verdict,
@@ -965,6 +1004,7 @@ async function gateDecisionToVerdict(
       ...(failure?.grantBundleFailureReason
         ? { grantBundleFailureReason: failure.grantBundleFailureReason }
         : {}),
+      ...failureAuditFields,
       wouldBlock: true,
       permission: 'deny',
     })
@@ -987,6 +1027,25 @@ async function gateDecisionToVerdict(
         (autoReplayShell
           ? `Belay denied this action as ${result.reason}. Wait for approval; Belay will replay the exact shell action automatically. Do not retry unless replay fails.`
           : `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`),
+    })
+  }
+
+  const denyReplayMismatch = async (
+    approval: ApprovalRecord,
+    mismatchKind: 'capability_requests' | 'effect_plan' | 'replay_envelope',
+    messages: { user: string; agent: string },
+  ): Promise<GateVerdict> => {
+    await discardApprovedApproval(ctx, deps, approval.approvalId)
+    return denyWithPendingApproval({
+      reason: 'approval_replay_mismatch',
+      auditFields: (replacement) => ({
+        rejectedApprovalId: approval.approvalId,
+        rejectedApprovalCorrelationId: approvalCorrelationId(approval.approvalId),
+        replacementApprovalCorrelationId: approvalCorrelationId(replacement.approvalId),
+        replayMismatchKind: mismatchKind,
+      }),
+      userMessage: (approvalId) => `${messages.user} New approval ID: ${approvalId}.`,
+      agentMessage: `${messages.agent} Wait for the new exact approval, then retry once.`,
     })
   }
 
@@ -1070,55 +1129,18 @@ async function gateDecisionToVerdict(
           matchedApproval.capabilityRequestHash !==
             hashCapabilityRequests(result.capabilityRequests))
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
-          agent_message:
-            'Belay denied this action because capability requests changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'capability_requests', {
+          user: 'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because capability requests changed after approval.',
         })
       }
       if (
         matchedApproval?.effectPlanHash &&
         (!result.effectPlan || matchedApproval.effectPlanHash !== hashEffectPlan(result.effectPlan))
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because the effect plan changed after approval. Re-approve the exact action or run belay explain.',
-          agent_message: 'Belay denied this action because the effect plan changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'effect_plan', {
+          user: 'Belay denied this action because the effect plan changed after approval. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because the effect plan changed after approval.',
         })
       }
       if (
@@ -1126,28 +1148,9 @@ async function gateDecisionToVerdict(
         auditExtras.replayAction &&
         !validateReplayEnvelope(matchedApproval, auditExtras.replayAction)
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because it does not match the approved replay envelope. Re-approve the exact action or run belay explain.',
-          agent_message:
-            'Belay denied this action because cwd, tool, or payload changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'replay_envelope', {
+          user: 'Belay denied this action because it does not match the approved replay envelope. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because cwd, tool, or payload changed after approval.',
         })
       }
       approved = await consumeApprovedApproval(
@@ -1163,6 +1166,11 @@ async function gateDecisionToVerdict(
     return denyWithPendingApproval({
       reason: 'capability_grant_unavailable',
       grantBundleFailureReason: approved.reason,
+      auditFields: (replacement) => ({
+        rejectedApprovalId: approved.approval.approvalId,
+        rejectedApprovalCorrelationId: approvalCorrelationId(approved.approval.approvalId),
+        replacementApprovalCorrelationId: approvalCorrelationId(replacement.approvalId),
+      }),
       userMessage: (approvalId) =>
         `Belay denied this action because its approved capability bundle did not exactly match the current request. New approval ID: ${approvalId}. Re-approve the exact action or run belay explain.`,
       agentMessage: `Belay denied this action because the approved capability bundle failed exact validation (${approved.reason}). Wait for the new exact approval, then retry once.`,

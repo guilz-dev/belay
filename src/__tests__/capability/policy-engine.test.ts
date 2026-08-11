@@ -131,6 +131,194 @@ describe('TypeScript PolicyEngine', () => {
     expect(decision.outcome).toBe('require_approval')
   })
 
+  it('emits an exact network request for SCP-style Git syntax without a user', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'git clone forge:repo',
+        hookKind: 'shell',
+        segmentHead: 'git',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-git-clone-scp-no-user',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'forge', protocol: 'ssh' },
+    ])
+  })
+
+  it('does not interpret a Git refspec as an SCP-style remote', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'git push origin main:release',
+        hookKind: 'shell',
+        segmentHead: 'git',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'destructive',
+        pathArgs: [],
+        signals: ['external_effect', 'git.push'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-git-push-refspec',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([{ kind: 'git-ref', ref: 'push' }])
+  })
+
+  it('does not interpret an arbitrary colon token as an SSH endpoint outside Git context', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'curl x:team/tool.git',
+        hookKind: 'shell',
+        segmentHead: 'curl',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-colon-token',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: '*', protocol: 'unknown' },
+    ])
+  })
+
+  it('does not interpret a Git config value as an SCP-style remote', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'git -c http.proxy=https://proxy.invalid push origin HEAD:main',
+        hookKind: 'shell',
+        segmentHead: 'git',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'destructive',
+        pathArgs: [],
+        signals: ['external_effect', 'git.push'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-git-config-refspec',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([{ kind: 'git-ref', ref: 'push' }])
+  })
+
+  it('does not interpret a bare host and port as an scp-style endpoint', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'curl example.com:443',
+        hookKind: 'shell',
+        segmentHead: 'curl',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-host-port-token',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: '*', protocol: 'unknown' },
+    ])
+  })
+
+  it('resolves hosted-git package shorthands before scp-style parsing', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'npm install github:owner/tool',
+        hookKind: 'shell',
+        segmentHead: 'npm',
+        effect: 'local_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-npm-hosted-git-shorthand',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'github.com', protocol: 'git' },
+    ])
+  })
+
+  it('extracts an exact network endpoint from a URL-valued option', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'npm --registry=https://registry.example install package-name',
+        hookKind: 'shell',
+        segmentHead: 'npm',
+        effect: 'local_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-npm-registry-option',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'registry.example', protocol: 'https' },
+    ])
+  })
+
+  it('does not treat URL-like header values as network destinations', () => {
+    const { requests } = evaluateShellPolicy(
+      {
+        command: 'curl --header=https://header.invalid https://target.example/data',
+        hookKind: 'shell',
+        segmentHead: 'curl',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-curl-header-value',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'target.example', protocol: 'https' },
+    ])
+  })
+
   it('denies matching forged broad grants', () => {
     const request = buildShellCapabilityRequest({
       command: 'curl https://example.com',
