@@ -1,8 +1,10 @@
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createContainerBoundaryDriver,
@@ -15,8 +17,20 @@ import {
 
 const dockerAvailable = await isDockerAvailable()
 const DOCKER_TEST_TIMEOUT_MS = 60_000
+const execFileAsync = promisify(execFile)
+const testNetworks = new Set<string>()
 
 describe('container boundary isolation', () => {
+  afterEach(async () => {
+    const networks = [...testNetworks]
+    testNetworks.clear()
+    await Promise.all(
+      networks.map((network) =>
+        execFileAsync('docker', ['network', 'rm', network]).catch(() => undefined),
+      ),
+    )
+  })
+
   it.skipIf(!dockerAvailable)(
     'blocks writes on read-only mounts inside the working directory',
     async () => {
@@ -79,6 +93,7 @@ describe('container boundary isolation', () => {
     'prepare creates container network when egress proxy is active',
     async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-container-net-'))
+      testNetworks.add(belayContainerNetworkName(repoRoot))
       const driver = createContainerBoundaryDriver({
         egressProxyEnv: { HTTP_PROXY: 'http://127.0.0.1:17831' },
         repoRoot,

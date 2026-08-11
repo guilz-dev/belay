@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import type { BelayConfigV4 } from '../config.js'
 import { matchesSensitivePath } from '../glob.js'
+import { parseNetworkEndpoint } from '../network-endpoint.js'
 import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
 import { tokenizeShell } from '../shell-tokenizer.js'
 import type { VerdictEffect, VerdictLocation, VerdictOpacity } from '../verdict/types.js'
@@ -264,20 +265,12 @@ function exactNetworkResources(
   const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
   for (const rawToken of tokenizeShell(command)) {
     const token = rawToken.startsWith('--url=') ? rawToken.slice('--url='.length) : rawToken
-    const normalized = token.startsWith('git+') ? token.slice(4) : token
-    try {
-      const url = new URL(normalized)
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        continue
-      }
-      const resource = {
-        kind: 'network' as const,
-        host: url.hostname,
-        ...(url.port ? { port: Number(url.port) } : {}),
-        protocol: url.protocol.slice(0, -1),
-      }
-      resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
-    } catch {}
+    const endpoint = parseNetworkEndpoint(token)
+    if (!endpoint) {
+      continue
+    }
+    const resource = { kind: 'network' as const, ...endpoint }
+    resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
   }
   return [...resources.values()]
 }

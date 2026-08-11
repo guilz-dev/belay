@@ -54,6 +54,43 @@ describe('gate-runtime integration', () => {
     expect(auditEvents[0]?.location).toBe('repo_local')
   })
 
+  it('audits distinct effect plans for malformed gated inputs', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-malformed-gate-'))
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    const first = await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      toolName: 'MalformedOne',
+    })
+    const second = await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      toolName: 'MalformedTwo',
+    })
+
+    expect(first.reason).toBe('normalization_failed')
+    expect(second.reason).toBe('normalization_failed')
+    expect(first.effectPlan?.inputFingerprint).not.toBe('unnormalized')
+    expect(first.effectPlan?.inputFingerprint).not.toBe(second.effectPlan?.inputFingerprint)
+    expect(auditEvents[0]).toMatchObject({
+      fingerprint: first.effectPlan?.inputFingerprint,
+      effectPlanVersion: 1,
+      effectPlanDisposition: 'effects',
+      effectPlanCompleteness: 'partial',
+    })
+    expect(auditEvents[0]?.effectIRHash).toBeTypeOf('string')
+    expect(auditEvents[0]?.effectIRHash).not.toBe(auditEvents[1]?.effectIRHash)
+  })
+
   it('applies standing-allow when classifier would ask for a provably-benign catalog command', async () => {
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
       verdict: 'deny_pending_approval',

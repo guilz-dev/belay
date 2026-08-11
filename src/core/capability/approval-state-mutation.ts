@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
-import { open, readFile, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, unlink } from 'node:fs/promises'
+import path from 'node:path'
 
 import type { ApprovalStateFile } from '../types.js'
 import { upgradeApprovalStateToV3 } from './approval-v3.js'
@@ -38,6 +39,7 @@ async function acquireApprovalStateLock(
   lockPath: string,
   maxRetries: number,
 ): Promise<() => Promise<void>> {
+  await mkdir(path.dirname(lockPath), { recursive: true })
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     try {
       const handle = await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY)

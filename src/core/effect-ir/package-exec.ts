@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
+import { parseNetworkEndpoint } from '../network-endpoint.js'
 import { pathWithinRoot } from '../path-utils.js'
 import type { PackageExecLauncher } from './types.js'
 
@@ -292,21 +293,10 @@ export function classifyPackageAcquisitionSpec(spec: string): PackageAcquisition
   if (transportSpec.startsWith('bitbucket:')) {
     return { kind: 'network', host: 'bitbucket.org', protocol: 'git' }
   }
-  const scpStyle = transportSpec.match(/^(?:[^@/]+@)?([^:/]+):[^/].+$/)
-  if (scpStyle?.[1]?.includes('.')) {
-    return { kind: 'network', host: scpStyle[1], protocol: 'ssh' }
+  const endpoint = parseNetworkEndpoint(transportSpec)
+  if (endpoint) {
+    return { kind: 'network', ...endpoint }
   }
-  try {
-    const url = new URL(transportSpec)
-    if (['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) {
-      return {
-        kind: 'network',
-        host: url.hostname,
-        ...(url.port ? { port: Number(url.port) } : {}),
-        protocol: url.protocol.slice(0, -1),
-      }
-    }
-  } catch {}
 
   if (/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^/]+(?:#.*)?$/.test(normalized)) {
     return { kind: 'network', host: 'github.com', protocol: 'git' }

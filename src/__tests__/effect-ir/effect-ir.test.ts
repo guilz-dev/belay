@@ -306,6 +306,30 @@ describe('effect-ir', () => {
     expect(networkResources.some((resource) => resource.host === 'registry.npmjs.org')).toBe(false)
   })
 
+  it('targets a short scp-style SSH host for package acquisition', () => {
+    const ctx = verdictTestContext()
+    const plan = buildEffectPlan({
+      tokens: ['npx', 'git@forge:team/tool.git'],
+      cwd: ctx.cwd,
+      repoRoot: ctx.repoRoot,
+      inputFingerprint: 'fp-npx-scp-short-host',
+    })
+    expect(plan).not.toBeNull()
+    if (!plan) {
+      throw new Error('expected effect plan')
+    }
+
+    const networkResources = collectRequirements(plan.root).flatMap((entry) =>
+      entry.resource.kind === 'network' ? [entry.resource] : [],
+    )
+    expect(networkResources).toContainEqual({
+      kind: 'network',
+      host: 'forge',
+      protocol: 'ssh',
+    })
+    expect(networkResources.some((resource) => resource.host === 'registry.npmjs.org')).toBe(false)
+  })
+
   it('targets GitHub for npm hosted-git shorthand package specs', () => {
     const ctx = verdictTestContext()
     const plan = buildEffectPlan({

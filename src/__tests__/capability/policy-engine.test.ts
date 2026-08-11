@@ -106,6 +106,31 @@ describe('TypeScript PolicyEngine', () => {
     expect(decision.outcome).toBe('require_approval')
   })
 
+  it('emits an exact network request for a short scp-style SSH host', () => {
+    const { requests, decision } = evaluateShellPolicy(
+      {
+        command: 'git clone git@forge:team/tool.git',
+        hookKind: 'shell',
+        segmentHead: 'git',
+        effect: 'remote_mutation',
+        location: 'external',
+        opacity: 'transparent',
+        egressClass: 'read',
+        pathArgs: [],
+        signals: ['external_effect'],
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp-git-clone-scp-short-host',
+      },
+      config,
+    )
+
+    expect(requests.map((request) => request.resource)).toEqual([
+      { kind: 'network', host: 'forge', protocol: 'ssh' },
+    ])
+    expect(decision.outcome).toBe('require_approval')
+  })
+
   it('denies matching forged broad grants', () => {
     const request = buildShellCapabilityRequest({
       command: 'curl https://example.com',

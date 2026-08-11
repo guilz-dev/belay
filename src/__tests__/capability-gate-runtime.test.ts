@@ -469,7 +469,7 @@ describe('capability gate runtime', () => {
     expect(second.reason).toBe('external_effect')
   })
 
-  it('consumes every grant in a bundle on fingerprint-matched approved_once replay', async () => {
+  it('reuses an exhausted multi-grant bundle only within its execution lease', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-approved-bundle-'))
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
@@ -542,20 +542,46 @@ describe('capability gate runtime', () => {
     expect(first.permission).toBe('allow')
     expect(first.reason).toBe('approved_once')
 
-    const approvedAfterFirst = JSON.parse(
-      await readFile(path.join(stateDir, 'approved-approvals.json'), 'utf8'),
-    ) as { approvals: unknown[] }
-    expect(approvedAfterFirst.approvals).toHaveLength(0)
+    const approvedPath = path.join(stateDir, 'approved-approvals.json')
+    const approvedAfterFirst = JSON.parse(await readFile(approvedPath, 'utf8')) as {
+      approvals: Array<{
+        executionLeaseExpiresAt?: string
+        grants?: Array<{ usesRemaining: number }>
+      }>
+    }
+    expect(approvedAfterFirst.approvals).toHaveLength(1)
+    expect(approvedAfterFirst.approvals[0]?.executionLeaseExpiresAt).toBeDefined()
+    expect(
+      approvedAfterFirst.approvals[0]?.grants?.every((grant) => grant.usesRemaining === 0),
+    ).toBe(true)
 
     const second = await evaluateGatedAction(ctx, deps, {
       kind: 'shell',
       cwd: repoRoot,
       command,
     })
-    expect(second.permission).toBe('deny')
+    expect(second.permission).toBe('allow')
+    expect(second.reason).toBe('approved_once')
+
+    const expired = JSON.parse(await readFile(approvedPath, 'utf8')) as {
+      version: number
+      approvals: Array<{ executionLeaseExpiresAt?: string }>
+    }
+    if (!expired.approvals[0]) {
+      throw new Error('expected leased approval')
+    }
+    expired.approvals[0].executionLeaseExpiresAt = new Date(Date.now() - 1_000).toISOString()
+    await writeFile(approvedPath, `${JSON.stringify(expired, null, 2)}\n`)
+
+    const afterLease = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command,
+    })
+    expect(afterLease.permission).toBe('deny')
   })
 
-  it('denies a marked approved_once replay when one exact grant is missing', async () => {
+  it('replaces an invalid exact bundle with a fresh pending approval', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-incomplete-bundle-'))
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
@@ -609,12 +635,29 @@ describe('capability gate runtime', () => {
 
     expect(replay.permission).toBe('deny')
     expect(replay.reason).toBe('capability_grant_unavailable')
+    expect(replay.approvalId).toBeDefined()
+    expect(replay.approvalId).not.toBe(approvedRecord.approvalId)
     const approvedAfter = JSON.parse(
       await readFile(path.join(stateDir, 'approved-approvals.json'), 'utf8'),
-    ) as { approvals: Array<{ grants?: Array<{ usesRemaining: number }> }> }
-    expect(approvedAfter.approvals[0]?.grants?.every((grant) => grant.usesRemaining === 1)).toBe(
-      true,
-    )
+    ) as { approvals: unknown[] }
+    expect(approvedAfter.approvals).toEqual([])
+
+    const pendingAfter = JSON.parse(await readFile(pendingPath, 'utf8')) as {
+      approvals: Array<{ approvalId: string }>
+    }
+    expect(pendingAfter.approvals).toEqual([
+      expect.objectContaining({ approvalId: replay.approvalId }),
+    ])
+
+    const auditRecords = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(auditRecords.at(-1)).toMatchObject({
+      reason: 'capability_grant_unavailable',
+      grantBundleFailureReason: 'cardinality_mismatch',
+      approvalId: '<approval-id>',
+    })
   })
 
   it('denies replay when effect plan hash mismatches approved record', async () => {
