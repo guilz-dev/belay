@@ -8,6 +8,7 @@ import {
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { buildCapabilityEffectPlan } from '../core/effect-ir/build.js'
 import {
   classifyResultToGateVerdict,
   GATE_CONTRACT_VERSION,
@@ -115,9 +116,17 @@ describe('gate contract', () => {
     })
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe('normalization_failed')
+    expect(verdict.effectPlan?.completeness).toBe('partial')
   })
 
   it('maps classify results to gate verdicts', () => {
+    const effectPlan = buildCapabilityEffectPlan({
+      actionKind: 'shell',
+      summary: 'git status',
+      inputFingerprint: 'fp',
+      requests: [],
+      effectFree: true,
+    })
     const verdict = classifyResultToGateVerdict({
       result: {
         verdict: 'allow',
@@ -130,6 +139,7 @@ describe('gate contract', () => {
           confidence: 1,
           signals: [],
         },
+        effectPlan,
       },
       mode: 'enforce',
       permission: 'allow',
@@ -137,5 +147,28 @@ describe('gate contract', () => {
     })
     expect(verdict.contractVersion).toBe(GATE_CONTRACT_VERSION)
     expect(verdict.permission).toBe('allow')
+    expect(verdict.effectPlan).toBe(effectPlan)
+  })
+
+  it('returns a partial effect plan when a gate is disabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-gate-disabled-'))
+    const ctx = {
+      layout: cursorLayout,
+      repoRoot,
+      config: {
+        ...DEFAULT_CONFIG_V3,
+        gates: { ...DEFAULT_CONFIG_V3.gates, shell: false },
+      },
+      configPath: path.join(repoRoot, '.cursor', 'belay.config.json'),
+    }
+    const verdict = await evaluateGatedAction(ctx, createDefaultGateRuntimeDeps(), {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'unknown-command --do-something',
+    })
+
+    expect(verdict.permission).toBe('allow')
+    expect(verdict.effectPlan?.disposition).toBe('effects')
+    expect(verdict.effectPlan?.completeness).toBe('partial')
   })
 })

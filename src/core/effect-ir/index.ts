@@ -1,5 +1,6 @@
 export { effectPlanAuditFields, hashEffectPlan } from './audit.js'
 export {
+  buildCapabilityEffectPlan,
   buildEffectPlan,
   buildPackageExecEffectNode,
   collectRequirements,

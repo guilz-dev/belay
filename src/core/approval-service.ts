@@ -7,7 +7,10 @@ import {
 import { compactApprovals } from './approval.js'
 import { buildApprovalRecordedMessage, type ReplayAdapterId } from './approval-replay.js'
 import { verifyApprovalToken } from './approval-token.js'
-import { mutateApprovalStateWithRetry } from './capability/approval-state-mutation.js'
+import {
+  mutateApprovalStateWithRetry,
+  mutatePendingAndApprovedWithRetry,
+} from './capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3, mintGrantForApprovedRecord } from './capability/approval-v3.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
@@ -31,15 +34,20 @@ export async function recordApproval(params: {
 }): Promise<{ ok: boolean; message: string; approval?: ApprovalStateFile['approvals'][number] }> {
   const { approvalId, config, store, token, requireSignedToken = false, adapter } = params
 
-  const pending = await store.loadPending()
+  const [pending, approved] = await Promise.all([store.loadPending(), store.loadApproved()])
   pending.state = compactApprovals(pending.state)
-  const index = pending.state.approvals.findIndex((approval) => approval.approvalId === approvalId)
-  if (index === -1) {
-    await store.writePending(pending.filePath, pending.state)
+  approved.state = compactApprovals(approved.state)
+  const pendingApproval = pending.state.approvals.find((entry) => entry.approvalId === approvalId)
+  const approvedApproval = approved.state.approvals.find((entry) => entry.approvalId === approvalId)
+  const approval = pendingApproval ?? approvedApproval
+  if (!approval) {
+    await mutateApprovalStateWithRetry({
+      load: store.loadPending,
+      write: store.writePending,
+      mutate: (state) => ({ state: compactApprovals(state), result: true }),
+    })
     return { ok: false, message: 'Belay approval not found or expired.' }
   }
-
-  const [approval] = pending.state.approvals.slice(index, index + 1)
 
   if (requireSignedToken) {
     if (!token) {
@@ -55,24 +63,73 @@ export async function recordApproval(params: {
     }
   }
 
-  pending.state.approvals.splice(index, 1)
-  await store.writePending(pending.filePath, pending.state)
+  if (!pendingApproval && approvedApproval) {
+    return {
+      ok: true,
+      message: buildApprovalRecordedMessage(config, approvedApproval, adapter),
+      approval: approvedApproval,
+    }
+  }
 
-  const approved = await store.loadApproved()
-  approved.state = compactApprovals(approved.state)
-  const approvedRecord = mintGrantForApprovedRecord({
-    ...approval,
-    approvedAt: new Date().toISOString(),
+  const recorded = await mutatePendingAndApprovedWithRetry({
+    loadPending: store.loadPending,
+    loadApproved: store.loadApproved,
+    writePending: store.writePending,
+    writeApproved: store.writeApproved,
+    mutate: (pendingState, approvedState) => {
+      const compactedPending = compactApprovals(pendingState)
+      const compactedApproved = compactApprovals(approvedState)
+      const existing = compactedApproved.approvals.find((entry) => entry.approvalId === approvalId)
+      if (
+        existing &&
+        (existing.fingerprint !== approval.fingerprint || existing.repoRoot !== approval.repoRoot)
+      ) {
+        return null
+      }
+      const pendingIndex = compactedPending.approvals.findIndex(
+        (entry) =>
+          entry.approvalId === approvalId &&
+          entry.fingerprint === approval.fingerprint &&
+          entry.repoRoot === approval.repoRoot,
+      )
+      if (pendingIndex === -1) {
+        return existing
+          ? {
+              pending: compactedPending,
+              approved: compactedApproved,
+              result: existing,
+            }
+          : null
+      }
+      const [claimed] = compactedPending.approvals.splice(pendingIndex, 1)
+      if (!claimed) {
+        return null
+      }
+      const approvedRecord =
+        existing ??
+        mintGrantForApprovedRecord({
+          ...claimed,
+          approvedAt: new Date().toISOString(),
+        })
+      if (!existing) {
+        compactedApproved.version = APPROVAL_STATE_VERSION_V3
+        compactedApproved.approvals.push(approvedRecord)
+      }
+      return {
+        pending: compactedPending,
+        approved: compactedApproved,
+        result: approvedRecord,
+      }
+    },
   })
-  approved.state.version = APPROVAL_STATE_VERSION_V3
-  approved.state.revision = (approved.state.revision ?? 0) + 1
-  approved.state.approvals.push(approvedRecord)
-  await store.writeApproved(approved.filePath, approved.state)
+  if (!recorded) {
+    return { ok: false, message: 'Belay approval not found, expired, or already claimed.' }
+  }
 
   return {
     ok: true,
-    message: buildApprovalRecordedMessage(config, approval, adapter),
-    approval: approvedRecord,
+    message: buildApprovalRecordedMessage(config, recorded, adapter),
+    approval: recorded,
   }
 }
 

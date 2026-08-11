@@ -11,6 +11,8 @@ import {
   consumeGrantLeasesForRequests,
   findMatchingGrant,
   grantsFromApprovedState,
+  validateAndConsumeGrantBundle,
+  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import type { CapabilityRequestV1 } from '../../core/capability/request.js'
 import type { ApprovalRecord } from '../../core/types.js'
@@ -275,5 +277,158 @@ describe('grant lease', () => {
     const consumed = consumeApprovedRecordGrantBundle(record)
     expect(consumed.consumed).toBe(false)
     expect(consumed.approval).toBe(record)
+  })
+
+  it('atomically consumes an exact marked bundle independent of grant order', () => {
+    const approval: ApprovalRecord = {
+      approvalId: 'exact-reordered',
+      kind: 'shell',
+      fingerprint: 'fp-exact',
+      repoRoot: '/repo',
+      reason: 'external_effect',
+      summary: 'npx prettier',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-02T00:00:00.000Z',
+      approvedAt: '2026-01-01T00:01:00.000Z',
+      capabilityRequests: [request, networkRequest],
+      grantBundleVersion: 1,
+    }
+    const grants = mintCapabilityGrantBundle({
+      approval,
+      capabilityRequests: approval.capabilityRequests ?? [],
+    }).reverse()
+    const record = { ...approval, grants, grant: grants[0] }
+
+    const consumed = validateAndConsumeGrantBundle(record, [request, networkRequest])
+
+    expect(consumed.ok).toBe(true)
+    if (!consumed.ok) {
+      throw new Error(`expected exact bundle success, got ${consumed.reason}`)
+    }
+    expect(consumed.approval.grants?.every((grant) => grant.usesRemaining === 0)).toBe(true)
+  })
+
+  it('matches the same exact bundle after JSON persistence removes undefined fields', () => {
+    const currentRequest: CapabilityRequestV1 = {
+      ...request,
+      principal: { ...request.principal, adapter: undefined },
+    }
+    const approval: ApprovalRecord = {
+      approvalId: 'exact-persisted',
+      kind: 'shell',
+      fingerprint: 'fp-exact-persisted',
+      repoRoot: '/repo',
+      reason: 'external_effect',
+      summary: 'git push origin main',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-02T00:00:00.000Z',
+      approvedAt: '2026-01-01T00:01:00.000Z',
+      capabilityRequests: [currentRequest],
+      grantBundleVersion: 1,
+    }
+    const grants = mintCapabilityGrantBundle({
+      approval,
+      capabilityRequests: [currentRequest],
+    })
+    const persisted = JSON.parse(
+      JSON.stringify({ ...approval, grants, grant: grants[0] }),
+    ) as ApprovalRecord
+
+    expect(validateAndConsumeGrantBundle(persisted, [currentRequest]).ok).toBe(true)
+  })
+
+  it('revalidates an already-consumed exact bundle during lease reuse', () => {
+    const approval: ApprovalRecord = {
+      approvalId: 'exact-lease',
+      kind: 'shell',
+      fingerprint: 'fp-exact-lease',
+      repoRoot: '/repo',
+      reason: 'external_effect',
+      summary: 'write',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-02T00:00:00.000Z',
+      approvedAt: '2026-01-01T00:01:00.000Z',
+      capabilityRequests: [request],
+      grantBundleVersion: 1,
+    }
+    const grants = mintCapabilityGrantBundle({ approval, capabilityRequests: [request] }).map(
+      (grant) => ({ ...grant, usesRemaining: 0 }),
+    )
+    const record = { ...approval, grants, grant: grants[0] }
+
+    expect(validateGrantBundleForLeaseReuse(record, [request]).ok).toBe(true)
+    expect(
+      validateGrantBundleForLeaseReuse({ ...record, grants: [], grant: undefined }, [request]),
+    ).toMatchObject({ ok: false, reason: 'cardinality_mismatch' })
+  })
+
+  it.each([
+    {
+      name: 'extra',
+      requests: [request],
+      grantsFor: [request, networkRequest],
+      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => grants,
+      reason: 'cardinality_mismatch',
+    },
+    {
+      name: 'unrelated',
+      requests: [request, networkRequest],
+      grantsFor: [request, networkRequest],
+      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => {
+        const [first, second] = grants
+        if (!first || !second) {
+          throw new Error('expected two minted grants')
+        }
+        return [first, { ...second, resource: { kind: 'network' as const, host: 'evil.example' } }]
+      },
+      reason: 'grant_mismatch',
+    },
+    {
+      name: 'broad',
+      requests: [request, networkRequest],
+      grantsFor: [request, networkRequest],
+      mutate: (grants: NonNullable<ApprovalRecord['grants']>) => {
+        const [first, second] = grants
+        if (!first || !second) {
+          throw new Error('expected two minted grants')
+        }
+        return [first, { ...second, resource: { kind: 'network' as const, host: '*' } }]
+      },
+      reason: 'grant_scope_too_broad',
+    },
+  ])('rejects a $name grant bundle without consuming any lease', (fixture) => {
+    const approval: ApprovalRecord = {
+      approvalId: `exact-${fixture.name}`,
+      kind: 'shell',
+      fingerprint: 'fp-exact-invalid',
+      repoRoot: '/repo',
+      reason: 'external_effect',
+      summary: 'npx prettier',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-02T00:00:00.000Z',
+      approvedAt: '2026-01-01T00:01:00.000Z',
+      capabilityRequests: fixture.requests,
+      grantBundleVersion: 1,
+    }
+    const minted = mintCapabilityGrantBundle({
+      approval,
+      capabilityRequests: fixture.grantsFor,
+    })
+    const grants = fixture.mutate(minted)
+    const record = { ...approval, grants, grant: grants[0] }
+
+    const consumed = validateAndConsumeGrantBundle(record, fixture.requests)
+
+    expect(consumed).toMatchObject({ ok: false, reason: fixture.reason })
+    expect(record.grants?.every((grant) => grant.usesRemaining === 1)).toBe(true)
+  })
+
+  it('does not interpret unmarked version-3 records as exact bundles', () => {
+    const approval = approvedWithGrant()
+
+    expect(validateAndConsumeGrantBundle(approval, [request])).toEqual({
+      ok: false,
+      reason: 'legacy_record',
+    })
   })
 })

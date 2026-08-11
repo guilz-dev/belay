@@ -6,9 +6,6 @@ export function normalizeEffectTags(tags: Iterable<EffectTag>): readonly EffectT
   if (set.has('read_only') && set.size > 1) {
     throw new Error('read_only must not co-occur with other effect tags')
   }
-  if (set.has('indeterminate') && set.size > 1) {
-    throw new Error('indeterminate must not co-occur with other effect tags')
-  }
   return [...set].sort()
 }
 
@@ -20,20 +17,27 @@ export function mergeRequirements(
     for (const req of group) {
       const key = `${req.action}:${req.resource.kind}:${resourceKey(req.resource)}`
       const existing = seen.get(key)
-      if (!existing || evidenceRank(req.evidence.level) > evidenceRank(existing.evidence.level)) {
-        seen.set(key, req)
+      if (!existing) {
+        seen.set(key, {
+          ...req,
+          provenances: uniqueProvenances(req.provenances ?? [req.provenance]),
+        })
         continue
       }
-      if (evidenceRank(req.evidence.level) === evidenceRank(existing.evidence.level)) {
-        seen.set(key, {
-          ...existing,
-          evidence: {
-            ...existing.evidence,
-            signals: [...new Set([...existing.evidence.signals, ...req.evidence.signals])],
-            basis: [...new Set([...existing.evidence.basis, ...req.evidence.basis])],
-          },
-        })
-      }
+      const strongest =
+        evidenceRank(req.evidence.level) > evidenceRank(existing.evidence.level) ? req : existing
+      seen.set(key, {
+        ...strongest,
+        evidence: {
+          level: strongest.evidence.level,
+          signals: [...new Set([...existing.evidence.signals, ...req.evidence.signals])],
+          basis: [...new Set([...existing.evidence.basis, ...req.evidence.basis])],
+        },
+        provenances: uniqueProvenances([
+          ...(existing.provenances ?? [existing.provenance]),
+          ...(req.provenances ?? [req.provenance]),
+        ]),
+      })
     }
   }
   return [...seen.values()]
@@ -65,8 +69,22 @@ export function mergeEffectPlans(
     root: { kind: 'merge', children },
     inputFingerprint: hashValue(`effect-plan-input:v1:${canonicalStringify(fingerprints)}`),
     opacity,
+    disposition: present.some((plan) => plan.disposition === 'effects') ? 'effects' : 'effect_free',
+    completeness: present.every((plan) => plan.completeness === 'complete')
+      ? 'complete'
+      : 'partial',
     signals: [...new Set(present.flatMap((plan) => [...plan.signals]))].sort(),
   }
+}
+
+function uniqueProvenances(
+  provenances: readonly EffectRequirement['provenance'][],
+): EffectRequirement['provenance'][] {
+  const seen = new Map<string, EffectRequirement['provenance']>()
+  for (const provenance of provenances) {
+    seen.set(canonicalStringify(provenance), provenance)
+  }
+  return [...seen.values()]
 }
 
 function resourceKey(resource: EffectRequirement['resource']): string {

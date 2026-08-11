@@ -22,9 +22,13 @@ function memoryStore(
       return { filePath: '/tmp/approved.json', state: approved }
     },
     async writePending(_filePath: string, state: ApprovalStateFile) {
+      pending.version = state.version
+      pending.revision = state.revision
       pending.approvals = state.approvals
     },
     async writeApproved(_filePath: string, state: ApprovalStateFile) {
+      approved.version = state.version
+      approved.revision = state.revision
       approved.approvals = state.approvals
     },
   }
@@ -162,5 +166,249 @@ describe('recordApproval', () => {
     })
     expect(rejected.ok).toBe(false)
     expect(rejected.message).toContain('does not match')
+  })
+
+  it('does not restore a consumed approval when recording races with consumption', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-race-'))
+    tempDirs.push(stateDir)
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    let pending: ApprovalStateFile = {
+      version: 3,
+      revision: 0,
+      approvals: [
+        {
+          approvalId: 'belay_new',
+          kind: 'shell',
+          fingerprint: 'fp-new',
+          repoRoot: '/repo',
+          reason: 'external_effect',
+          summary: 'git push',
+          createdAt: new Date().toISOString(),
+          expiresAt,
+        },
+      ],
+    }
+    const staleApproved: ApprovalStateFile = {
+      version: 3,
+      revision: 0,
+      approvals: [
+        {
+          approvalId: 'belay_consumed',
+          kind: 'shell',
+          fingerprint: 'fp-old',
+          repoRoot: '/repo',
+          reason: 'external_effect',
+          summary: 'git push',
+          createdAt: new Date().toISOString(),
+          expiresAt,
+          approvedAt: new Date().toISOString(),
+        },
+      ],
+    }
+    let approved: ApprovalStateFile = { version: 3, revision: 1, approvals: [] }
+    let approvedLoads = 0
+    const clone = (state: ApprovalStateFile): ApprovalStateFile => structuredClone(state)
+    const store = {
+      async loadPending() {
+        return { filePath: path.join(stateDir, 'pending.json'), state: clone(pending) }
+      },
+      async loadApproved() {
+        approvedLoads += 1
+        return {
+          filePath: path.join(stateDir, 'approved.json'),
+          state: clone(approvedLoads === 1 ? staleApproved : approved),
+        }
+      },
+      async writePending(_filePath: string, state: ApprovalStateFile) {
+        pending = clone(state)
+      },
+      async writeApproved(_filePath: string, state: ApprovalStateFile) {
+        approved = clone(state)
+      },
+    }
+
+    const result = await recordApproval({
+      approvalId: 'belay_new',
+      config: DEFAULT_CONFIG_V3,
+      store,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(approved.approvals.map((approval) => approval.approvalId)).toEqual(['belay_new'])
+    expect(approved.revision).toBe(2)
+  })
+
+  it('records only one grant when the same approval is recorded concurrently', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-claim-race-'))
+    tempDirs.push(stateDir)
+    let pending: ApprovalStateFile = {
+      version: 3,
+      revision: 0,
+      approvals: [
+        {
+          approvalId: 'belay_once',
+          kind: 'shell',
+          fingerprint: 'fp-once',
+          repoRoot: '/repo',
+          reason: 'external_effect',
+          summary: 'git push',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      ],
+    }
+    let approved: ApprovalStateFile = { version: 3, revision: 0, approvals: [] }
+    let initialPendingLoads = 0
+    let releaseInitialLoads: (() => void) | undefined
+    const initialLoadsReady = new Promise<void>((resolve) => {
+      releaseInitialLoads = resolve
+    })
+    const clone = (state: ApprovalStateFile): ApprovalStateFile => structuredClone(state)
+    const store = {
+      async loadPending() {
+        const loaded = clone(pending)
+        if (initialPendingLoads < 2) {
+          initialPendingLoads += 1
+          if (initialPendingLoads === 2) {
+            releaseInitialLoads?.()
+          }
+          await initialLoadsReady
+        }
+        return { filePath: path.join(stateDir, 'pending.json'), state: loaded }
+      },
+      async loadApproved() {
+        return { filePath: path.join(stateDir, 'approved.json'), state: clone(approved) }
+      },
+      async writePending(_filePath: string, state: ApprovalStateFile) {
+        pending = clone(state)
+      },
+      async writeApproved(_filePath: string, state: ApprovalStateFile) {
+        approved = clone(state)
+      },
+    }
+
+    const results = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        recordApproval({ approvalId: 'belay_once', config: DEFAULT_CONFIG_V3, store }),
+      ),
+    )
+
+    expect(results.every((result) => result.ok)).toBe(true)
+    expect(pending.approvals).toEqual([])
+    expect(approved.approvals.map((approval) => approval.approvalId)).toEqual(['belay_once'])
+  })
+
+  it('preserves separate approvals recorded concurrently', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-concurrent-'))
+    tempDirs.push(stateDir)
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    let pending: ApprovalStateFile = {
+      version: 3,
+      revision: 0,
+      approvals: ['first', 'second'].map((suffix) => ({
+        approvalId: `belay_${suffix}`,
+        kind: 'shell' as const,
+        fingerprint: `fp-${suffix}`,
+        repoRoot: '/repo',
+        reason: 'external_effect',
+        summary: 'git push',
+        createdAt: new Date().toISOString(),
+        expiresAt,
+      })),
+    }
+    let approved: ApprovalStateFile = { version: 3, revision: 0, approvals: [] }
+    let initialApprovedLoads = 0
+    let releaseInitialLoads: (() => void) | undefined
+    const initialLoadsReady = new Promise<void>((resolve) => {
+      releaseInitialLoads = resolve
+    })
+    const clone = (state: ApprovalStateFile): ApprovalStateFile => structuredClone(state)
+    const store = {
+      async loadPending() {
+        return { filePath: path.join(stateDir, 'pending.json'), state: clone(pending) }
+      },
+      async loadApproved() {
+        if (initialApprovedLoads < 2) {
+          initialApprovedLoads += 1
+          if (initialApprovedLoads === 2) {
+            releaseInitialLoads?.()
+          }
+          await initialLoadsReady
+        }
+        return { filePath: path.join(stateDir, 'approved.json'), state: clone(approved) }
+      },
+      async writePending(_filePath: string, state: ApprovalStateFile) {
+        pending = clone(state)
+      },
+      async writeApproved(_filePath: string, state: ApprovalStateFile) {
+        approved = clone(state)
+      },
+    }
+
+    const results = await Promise.all(
+      ['belay_first', 'belay_second'].map((approvalId) =>
+        recordApproval({ approvalId, config: DEFAULT_CONFIG_V3, store }),
+      ),
+    )
+
+    expect(results.every((result) => result.ok)).toBe(true)
+    expect(pending.approvals).toEqual([])
+    expect(approved.approvals.map((approval) => approval.approvalId).sort()).toEqual([
+      'belay_first',
+      'belay_second',
+    ])
+  })
+
+  it('retires pending state before publishing and makes a persisted partial write retryable', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-partial-write-'))
+    tempDirs.push(stateDir)
+    let pending: ApprovalStateFile = {
+      version: 3,
+      revision: 0,
+      approvals: [
+        {
+          approvalId: 'belay_partial',
+          kind: 'shell',
+          fingerprint: 'fp-partial',
+          repoRoot: '/repo',
+          reason: 'external_effect',
+          summary: 'git push',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      ],
+    }
+    let approved: ApprovalStateFile = { version: 3, revision: 0, approvals: [] }
+    const clone = (state: ApprovalStateFile): ApprovalStateFile => structuredClone(state)
+    const store = {
+      async loadPending() {
+        return { filePath: path.join(stateDir, 'pending.json'), state: clone(pending) }
+      },
+      async loadApproved() {
+        return { filePath: path.join(stateDir, 'approved.json'), state: clone(approved) }
+      },
+      async writePending(_filePath: string, state: ApprovalStateFile) {
+        pending = clone(state)
+      },
+      async writeApproved(_filePath: string, state: ApprovalStateFile) {
+        approved = clone(state)
+        throw new Error('simulated approved-state persistence failure')
+      },
+    }
+
+    await expect(
+      recordApproval({ approvalId: 'belay_partial', config: DEFAULT_CONFIG_V3, store }),
+    ).rejects.toThrow('simulated approved-state persistence failure')
+
+    expect(pending.approvals).toEqual([])
+    expect(approved.approvals.map((approval) => approval.approvalId)).toEqual(['belay_partial'])
+
+    const retry = await recordApproval({
+      approvalId: 'belay_partial',
+      config: DEFAULT_CONFIG_V3,
+      store,
+    })
+    expect(retry.ok).toBe(true)
+    expect(approved.approvals.map((approval) => approval.approvalId)).toEqual(['belay_partial'])
   })
 })

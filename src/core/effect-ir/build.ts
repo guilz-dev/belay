@@ -2,6 +2,7 @@ import type { CapabilityPrincipal, CapabilityRequestV1 } from '../capability/req
 import type { LauncherResolution } from '../verdict/launcher-resolve.js'
 import { mergeRequirements } from './normalize.js'
 import {
+  classifyPackageAcquisitionSpec,
   innerRecipeFromPeel,
   type PackageExecPeelResult,
   peelPackageExecArgv,
@@ -22,6 +23,14 @@ export interface BuildEffectPlanParams {
   inputFingerprint: string
   launcherResolution?: LauncherResolution | null
   innerRequirements?: readonly EffectRequirement[]
+}
+
+export interface BuildCapabilityEffectPlanParams {
+  actionKind: 'shell' | 'tool' | 'subagent'
+  summary: string
+  inputFingerprint: string
+  requests: readonly CapabilityRequestV1[]
+  effectFree: boolean
 }
 
 export function buildPackageExecEffectNode(params: BuildEffectPlanParams): EffectNode | null {
@@ -118,6 +127,7 @@ function delegateExecNode(
               launcher: peel.launcher,
               phase: 'delegate',
               innerCommand: innerRecipe,
+              innerArgv: [...peel.innerTokens],
             },
           },
         ],
@@ -144,6 +154,21 @@ function acquireRequirement(
   peel: PackageExecPeelResult,
   level: 'possible' | 'indeterminate',
 ): LauncherEffectNode {
+  const knownResources = packageAcquisitionResources(peel.acquisitionSpecs)
+  const networkRequirements: EffectRequirement[] = knownResources.map((resource) =>
+    acquireNetworkRequirement(peel, resource, 'possible'),
+  )
+  if (level === 'indeterminate') {
+    networkRequirements.push(acquireNetworkRequirement(peel, { kind: 'unknown' }, level))
+  } else if (networkRequirements.length === 0 && peel.acquisitionSpecs.length === 0) {
+    networkRequirements.push(
+      acquireNetworkRequirement(
+        peel,
+        { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' },
+        level,
+      ),
+    )
+  }
   return {
     kind: 'launcher',
     launcher: peel.launcher,
@@ -156,25 +181,59 @@ function acquireRequirement(
         commandRedacted: peel.innerTokens.join(' ') || peel.launcher,
         segmentHead: peel.launcher,
         requirements: [
-          {
-            tag: level === 'indeterminate' ? 'indeterminate' : 'network.acquire',
-            action: level === 'indeterminate' ? 'indeterminate' : 'network.connect',
-            resource:
-              level === 'indeterminate'
-                ? { kind: 'unknown' }
-                : { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' },
-            evidence: {
-              level,
-              signals: [...peel.signals, 'package_acquire_possible'],
-              basis: [`launcher:${peel.launcher}:acquire`],
-            },
-            provenance: { launcher: peel.launcher, phase: 'acquire' },
-          },
-          ...(level === 'possible' ? [cacheWriteRequirement(peel)] : []),
+          ...networkRequirements,
+          ...(level === 'possible' || peel.acquisitionSpecs.length > 0
+            ? [cacheWriteRequirement(peel)]
+            : []),
         ],
       },
     ],
   }
+}
+
+function acquireNetworkRequirement(
+  peel: PackageExecPeelResult,
+  resource: EffectRequirement['resource'],
+  level: 'possible' | 'indeterminate',
+): EffectRequirement {
+  return {
+    tag: level === 'indeterminate' ? 'indeterminate' : 'network.acquire',
+    action: level === 'indeterminate' ? 'indeterminate' : 'network.connect',
+    resource,
+    evidence: {
+      level,
+      signals: [...peel.signals, 'package_acquire_possible'],
+      basis: [`launcher:${peel.launcher}:acquire`],
+    },
+    provenance: {
+      launcher: peel.launcher,
+      phase: 'acquire',
+      innerArgv: [...peel.acquisitionSpecs],
+    },
+  }
+}
+
+function packageAcquisitionResources(
+  specs: readonly string[],
+): Array<Extract<EffectRequirement['resource'], { kind: 'network' }>> {
+  const resources = new Map<string, Extract<EffectRequirement['resource'], { kind: 'network' }>>()
+  for (const spec of specs) {
+    const source = classifyPackageAcquisitionSpec(spec)
+    if (source.kind === 'local') {
+      continue
+    }
+    const resource: Extract<EffectRequirement['resource'], { kind: 'network' }> =
+      source.kind === 'registry'
+        ? { kind: 'network', host: 'registry.npmjs.org', protocol: 'registry' }
+        : {
+            kind: 'network',
+            host: source.host,
+            ...(source.port ? { port: source.port } : {}),
+            protocol: source.protocol,
+          }
+    resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`, resource)
+  }
+  return [...resources.values()]
 }
 
 export function collectRequirements(node: EffectNode): EffectRequirement[] {
@@ -211,7 +270,61 @@ export function buildEffectPlan(params: BuildEffectPlanParams): EffectPlan | nul
     root,
     inputFingerprint: params.inputFingerprint,
     opacity,
+    disposition: requirements.length > 0 ? 'effects' : 'effect_free',
+    completeness: opacity === 'recursive' ? 'complete' : 'partial',
     signals,
+  }
+}
+
+function effectTagForAction(action: CapabilityRequestV1['action']): EffectRequirement['tag'] {
+  return action === 'indeterminate' ? 'indeterminate' : action
+}
+
+/** Build the canonical plan envelope for non-package-exec gated actions. */
+export function buildCapabilityEffectPlan(params: BuildCapabilityEffectPlanParams): EffectPlan {
+  const provenance = { segment: params.actionKind }
+  const requirements: EffectRequirement[] = params.requests.map((request) => ({
+    tag: effectTagForAction(request.action),
+    action: request.action,
+    resource: request.resource,
+    evidence: {
+      level: request.evidence.level,
+      signals: [...request.evidence.signals],
+      basis: [...request.context.analysisBasis],
+    },
+    provenance,
+    provenances: [provenance],
+  }))
+
+  if (!params.effectFree && requirements.length === 0) {
+    requirements.push({
+      tag: 'indeterminate',
+      action: 'indeterminate',
+      resource: { kind: 'unknown' },
+      evidence: {
+        level: 'indeterminate',
+        signals: ['effect_plan.incomplete'],
+        basis: [`gated_action:${params.actionKind}`],
+      },
+      provenance,
+      provenances: [provenance],
+    })
+  }
+
+  const partial = requirements.some((requirement) => requirement.evidence.level === 'indeterminate')
+  return {
+    version: 1,
+    root: {
+      kind: 'exec',
+      commandRedacted: params.summary,
+      segmentHead: params.actionKind,
+      requirements,
+    },
+    inputFingerprint: params.inputFingerprint,
+    opacity: partial ? 'opaque' : 'transparent',
+    disposition: params.effectFree ? 'effect_free' : 'effects',
+    completeness: partial ? 'partial' : 'complete',
+    signals: [...new Set(requirements.flatMap((requirement) => requirement.evidence.signals))],
   }
 }
 
