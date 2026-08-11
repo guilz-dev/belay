@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Dirty Git file-checkpoint backend (PR 6)** — opt-in `file_checkpoint` backend for dirty Git workspaces with isolated execution mirrors, baseline tree indexing, git metadata fingerprint guards, selector/runner wiring behind attested workspace isolation, and recovery manifest/proof backend labeling.
+
 ## 0.7.0 — 2026-08-09
 
 ### Added

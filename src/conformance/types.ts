@@ -6,4 +6,5 @@ export interface LayerConformanceScenario {
   reason?: string
   kind?: 'shell' | 'tool'
   toolPayload?: Record<string, unknown>
+  substrate?: 'clean_git_worktree' | 'dirty_git_file_checkpoint' | 'non_git_file_checkpoint'
 }

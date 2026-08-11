@@ -20,6 +20,16 @@ export const FILE_CHECKPOINT_NESTED_REPOSITORY = 'file_checkpoint_nested_reposit
 export const FILE_CHECKPOINT_QUOTA_EXCEEDED = 'file_checkpoint_quota_exceeded'
 export const FILE_CHECKPOINT_PREPARE_TIMEOUT = 'file_checkpoint_prepare_timeout'
 
+export class FileCheckpointDiagnosticError extends Error {
+  constructor(
+    message: string,
+    readonly diagnostic: string,
+  ) {
+    super(message)
+    this.name = 'FileCheckpointDiagnosticError'
+  }
+}
+
 export interface FileTreeEntry {
   relativePath: string
   node: PresentSnapshotNode
@@ -56,7 +66,10 @@ interface BuildCounters {
 
 function assertWithinDeadline(deadlineMs: number | undefined): void {
   if (deadlineMs !== undefined && Date.now() > deadlineMs) {
-    throw new Error(FILE_CHECKPOINT_PREPARE_TIMEOUT)
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_PREPARE_TIMEOUT,
+      `snapshot preparation exceeded deadlineMs=${deadlineMs}`,
+    )
   }
 }
 
@@ -66,10 +79,16 @@ function assertWithinQuotas(counters: BuildCounters, quotas: FileTreeBuildOption
   }
   const nodeCount = counters.fileCount + counters.directoryCount
   if (nodeCount > quotas.maxFiles) {
-    throw new Error(FILE_CHECKPOINT_QUOTA_EXCEEDED)
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_QUOTA_EXCEEDED,
+      `snapshot nodeCount=${nodeCount} exceeds maxFiles=${quotas.maxFiles}`,
+    )
   }
   if (counters.totalFileBytes > quotas.maxSourceBytes) {
-    throw new Error(FILE_CHECKPOINT_QUOTA_EXCEEDED)
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_QUOTA_EXCEEDED,
+      `snapshot sourceBytes=${counters.totalFileBytes} exceeds maxSourceBytes=${quotas.maxSourceBytes}`,
+    )
   }
 }
 

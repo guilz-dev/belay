@@ -3,7 +3,9 @@ import path from 'node:path'
 
 import type { BelayConfigV4 } from '../config.js'
 import { matchesSensitivePath } from '../glob.js'
+import { parseNetworkEndpoint } from '../network-endpoint.js'
 import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
+import { tokenizeShell } from '../shell-tokenizer.js'
 import type { VerdictEffect, VerdictLocation, VerdictOpacity } from '../verdict/types.js'
 import {
   BOUNDARY_GRANT_ISSUER_CONTAINER,
@@ -216,24 +218,30 @@ function resourcePathForShellAnalysis(analysis: ShellCapabilityAnalysis): string
       ? canonicalPath(target)
       : resolveCapabilityPath(target, analysis.cwd),
   )
+  const [first] = resolved
+  if (!first) {
+    return null
+  }
   if (analysis.effect === 'local_mutation') {
     const outside = resolved.find((candidate) => !pathWithinRoot(repoRoot, candidate))
-    return outside ?? resolved[resolved.length - 1]!
+    return outside ?? resolved.at(-1) ?? first
   }
-  return resolved[0]!
+  return first
 }
 
 function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): CapabilityResource {
   if (isGitRefWrite(analysis)) {
     return { kind: 'git-ref', ref: 'push' }
   }
-  if (
-    analysis.egressClass === 'ambiguous' ||
-    analysis.egressClass === 'read' ||
-    analysis.egressClass === 'destructive' ||
-    analysis.location === 'external'
-  ) {
-    return { kind: 'network', host: '*', protocol: 'unknown' }
+  if (isNetworkShellAnalysis(analysis)) {
+    const exact = exactNetworkResources(analysis)
+    return (
+      (exact.length === 1 ? exact[0] : undefined) ?? {
+        kind: 'network',
+        host: '*',
+        protocol: 'unknown',
+      }
+    )
   }
   const resourcePath = resourcePathForShellAnalysis(analysis)
   if (resourcePath) {
@@ -242,10 +250,131 @@ function resourceForShellAnalysis(analysis: ShellCapabilityAnalysis): Capability
   return { kind: 'executable', command: analysis.segmentHead }
 }
 
+function isNetworkShellAnalysis(analysis: ShellCapabilityAnalysis): boolean {
+  return (
+    analysis.egressClass === 'ambiguous' ||
+    analysis.egressClass === 'read' ||
+    analysis.egressClass === 'destructive' ||
+    analysis.location === 'external'
+  )
+}
+
+const SCP_STYLE_COMMANDS = new Set(['git', 'rsync', 'scp'])
+const PACKAGE_SPEC_COMMANDS = new Set(['bun', 'npm', 'npx', 'pnpm', 'yarn'])
+const NETWORK_VALUE_OPTIONS = new Set(['--registry', '--url'])
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  '-C',
+  '-b',
+  '-c',
+  '-o',
+  '--branch',
+  '--config',
+  '--depth',
+  '--filter',
+  '--git-dir',
+  '--namespace',
+  '--origin',
+  '--reference',
+  '--separate-git-dir',
+  '--upload-pack',
+  '--work-tree',
+])
+
+function gitRemoteOperand(tokens: string[]): string | null {
+  let cursor = 1
+  while (cursor < tokens.length) {
+    const token = tokens[cursor]
+    if (!token) {
+      return null
+    }
+    if (GIT_OPTIONS_WITH_VALUE.has(token)) {
+      cursor += 2
+      continue
+    }
+    if (token.startsWith('-')) {
+      cursor += 1
+      continue
+    }
+    break
+  }
+
+  const subcommand = tokens[cursor]
+  if (!subcommand) {
+    return null
+  }
+  const positionals: string[] = []
+  let skipOptionValue = false
+  for (const token of tokens.slice(cursor + 1)) {
+    if (skipOptionValue) {
+      skipOptionValue = false
+      continue
+    }
+    if (GIT_OPTIONS_WITH_VALUE.has(token)) {
+      skipOptionValue = true
+      continue
+    }
+    if (token.startsWith('-')) {
+      continue
+    }
+    positionals.push(token)
+  }
+
+  if (['clone', 'fetch', 'ls-remote', 'pull', 'push'].includes(subcommand)) {
+    return positionals[0] ?? null
+  }
+  if (subcommand === 'remote' && positionals[0] === 'add') {
+    return positionals[2] ?? null
+  }
+  if (subcommand === 'submodule' && positionals[0] === 'add') {
+    return positionals[1] ?? null
+  }
+  return null
+}
+
+function exactNetworkResources(
+  analysis: ShellCapabilityAnalysis,
+): Array<Extract<CapabilityResource, { kind: 'network' }>> {
+  const resources = new Map<string, Extract<CapabilityResource, { kind: 'network' }>>()
+  const shellTokens = tokenizeShell(analysis.command)
+  const gitRemote = analysis.segmentHead === 'git' ? gitRemoteOperand(shellTokens) : null
+  for (const rawToken of shellTokens) {
+    const optionSeparator = rawToken.startsWith('-') ? rawToken.indexOf('=') : -1
+    const optionName = optionSeparator === -1 ? null : rawToken.slice(0, optionSeparator)
+    const token =
+      optionSeparator !== -1 && optionName && NETWORK_VALUE_OPTIONS.has(optionName)
+        ? rawToken.slice(optionSeparator + 1)
+        : rawToken
+    const endpoint = parseNetworkEndpoint(token, {
+      allowHostedGitShorthand: PACKAGE_SPEC_COMMANDS.has(analysis.segmentHead),
+      allowScpStyle:
+        SCP_STYLE_COMMANDS.has(analysis.segmentHead) &&
+        (analysis.segmentHead !== 'git' || rawToken === gitRemote),
+    })
+    if (!endpoint) {
+      continue
+    }
+    const resource = { kind: 'network' as const, ...endpoint }
+    resources.set(`${resource.host}:${resource.port ?? ''}:${resource.protocol}`, resource)
+  }
+  return [...resources.values()]
+}
+
 export function buildShellCapabilityRequest(
   analysis: ShellCapabilityAnalysis,
 ): CapabilityRequestV1 {
-  return {
+  const [request] = buildShellCapabilityRequests(analysis)
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return request
+}
+
+export function buildShellCapabilityRequests(
+  analysis: ShellCapabilityAnalysis,
+): CapabilityRequestV1[] {
+  const resources = isNetworkShellAnalysis(analysis) ? exactNetworkResources(analysis) : []
+  const selectedResources = resources.length > 0 ? resources : [resourceForShellAnalysis(analysis)]
+  return selectedResources.map((resource) => ({
     version: CAPABILITY_REQUEST_VERSION,
     principal: {
       adapter: analysis.adapter,
@@ -253,7 +382,7 @@ export function buildShellCapabilityRequest(
       sessionHash: hashSession(`${analysis.repoRoot}:${analysis.cwd}`),
     },
     action: actionForShellAnalysis(analysis),
-    resource: resourceForShellAnalysis(analysis),
+    resource,
     context: {
       cwd: analysis.cwd,
       inputFingerprint: analysis.inputFingerprint,
@@ -269,7 +398,7 @@ export function buildShellCapabilityRequest(
       level: evidenceLevelForOpacity(analysis.opacity),
       signals: [...analysis.signals],
     },
-  }
+  }))
 }
 
 function actionForFileMutation(analysis: FileMutationCapabilityAnalysis): CapabilityAction {
@@ -711,17 +840,23 @@ export function evaluateShellPolicy(
   analysis: ShellCapabilityAnalysis,
   config: BelayConfigV4,
   auth?: PolicyAuthExtras,
-): { request: CapabilityRequestV1; decision: PolicyDecision } {
-  const request = buildShellCapabilityRequest(analysis)
-  const enriched = enrichAuthWithMaterializedGrants(request, config, {
+): { request: CapabilityRequestV1; requests: CapabilityRequestV1[]; decision: PolicyDecision } {
+  const requests = buildShellCapabilityRequests(analysis)
+  const enrichedAuth = {
     ...auth,
     sensitivePaths: auth?.sensitivePaths ?? analysis.sensitivePaths,
-  })
-  const decision = getDefaultPolicyEngine().evaluate(
-    request,
-    buildAuthorizationContext(config, analysis.trustedWorkspaceRoots, enriched),
+  }
+  const { decision } = evaluateCapabilityRequestsPolicy(
+    requests,
+    config,
+    enrichedAuth,
+    analysis.trustedWorkspaceRoots,
   )
-  return { request, decision }
+  const [request] = requests
+  if (!request) {
+    throw new Error('shell analysis produced no capability request')
+  }
+  return { request, requests, decision }
 }
 
 export function evaluateFileMutationPolicy(

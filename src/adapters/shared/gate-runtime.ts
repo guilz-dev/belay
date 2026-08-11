@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -45,7 +45,10 @@ import {
   consumeApprovedRecordGrantBundle,
   consumeGrantLeasesForRequests,
   decrementApprovalLegacyGrant,
+  type GrantBundleValidationFailureReason,
   grantsFromApproval,
+  validateAndConsumeGrantBundle,
+  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
@@ -61,7 +64,8 @@ import {
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
-import { hashEffectPlan } from '../../core/effect-ir/audit.js'
+import { effectPlanAuditFields, hashEffectPlan } from '../../core/effect-ir/audit.js'
+import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
 import {
   classifyResultToGateVerdict,
   type GatedAction,
@@ -86,6 +90,7 @@ import {
   canonicalStringify,
   classifierOptionsFromConfig,
   configuredControlPlaneDir,
+  hashValue,
   pendingApprovalsFile,
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
@@ -111,6 +116,7 @@ import {
   standingAllowFile,
 } from '../../core/standing-allow.js'
 import {
+  FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   isTransactionalEligible,
   runTransactionalExecution,
   TRANSACTIONAL_ALREADY_APPLIED,
@@ -337,20 +343,7 @@ async function ensurePendingApproval(
   approval: Awaited<ReturnType<typeof createApprovalRecordWithEnvelope>>
   created: boolean
 }> {
-  const pending = await deps.loadApprovals(ctx, 'pending-approvals.json')
-  pending.state = compactApprovals(pending.state)
-  const existing = pending.state.approvals.find(
-    (approval) =>
-      approval.kind === kind &&
-      approval.fingerprint === result.fingerprint &&
-      approval.repoRoot === ctx.repoRoot,
-  )
-  if (existing) {
-    await deps.writeApprovals(pending.filePath, pending.state)
-    return { approval: existing, created: false }
-  }
-
-  const approval = createApprovalRecordWithEnvelope({
+  const candidate = createApprovalRecordWithEnvelope({
     kind,
     fingerprint: result.fingerprint,
     repoRoot: ctx.repoRoot,
@@ -363,11 +356,36 @@ async function ensurePendingApproval(
     capabilityRequests: result.capabilityRequests,
     effectPlanHash: result.effectPlan ? hashEffectPlan(result.effectPlan) : undefined,
   })
-  pending.state.version = APPROVAL_STATE_VERSION_V3
-  pending.state.revision = (pending.state.revision ?? 0) + 1
-  pending.state.approvals.push(approval)
-  await deps.writeApprovals(pending.filePath, pending.state)
-  return { approval, created: true }
+  const outcome = await mutateApprovalStateWithRetry<{
+    approval: typeof candidate
+    created: boolean
+  }>({
+    load: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const existing = compacted.approvals.find(
+        (approval) =>
+          approval.kind === kind &&
+          approval.fingerprint === result.fingerprint &&
+          approval.repoRoot === ctx.repoRoot,
+      )
+      if (existing) {
+        return { state: compacted, result: { approval: existing, created: false } }
+      }
+      compacted.version = APPROVAL_STATE_VERSION_V3
+      compacted.approvals.push(candidate)
+      return { state: compacted, result: { approval: candidate, created: true } }
+    },
+  })
+  if (!outcome) {
+    throw new Error('Failed to persist pending approval')
+  }
+  return outcome
+}
+
+function approvalCorrelationId(approvalId: string): string {
+  return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
 }
 
 function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
@@ -451,32 +469,31 @@ function deriveWorkspaceRootScopeHint(params: {
   return { scope: 'workspace-root', path: validation.normalizedPath }
 }
 
+type ApprovalConsumeMutationResult =
+  | { status: 'consumed'; approval: ApprovalRecord; firstExecution: boolean }
+  | {
+      status: 'invalid_bundle'
+      approval: ApprovalRecord
+      reason: GrantBundleValidationFailureReason
+    }
+  | null
+
 async function consumeApprovedApproval(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
   kind: GatedActionKind,
   fingerprint: string,
-): Promise<{ approval: ApprovalRecord; firstExecution: boolean } | null> {
-  const loaded = await deps.loadApprovals(ctx, 'approved-approvals.json')
-  loaded.state = compactApprovals(loaded.state)
-  const index = loaded.state.approvals.findIndex(
-    (approval) =>
-      approval.kind === kind &&
-      approval.fingerprint === fingerprint &&
-      approval.repoRoot === ctx.repoRoot,
-  )
-  if (index === -1) {
-    await deps.writeApprovals(loaded.filePath, loaded.state)
-    return null
-  }
-
-  const approval = loaded.state.approvals[index]
-  if (approval.executionLeaseExpiresAt) {
-    await deps.writeApprovals(loaded.filePath, loaded.state)
-    return { approval, firstExecution: false }
-  }
-
-  const consumed = await mutateApprovalStateWithRetry({
+  requests: NonNullable<ClassifyResult['capabilityRequests']>,
+): Promise<
+  | { status: 'consumed'; approval: ApprovalRecord; firstExecution: boolean }
+  | {
+      status: 'invalid_bundle'
+      approval: ApprovalRecord
+      reason: GrantBundleValidationFailureReason
+    }
+  | null
+> {
+  const consumed = await mutateApprovalStateWithRetry<ApprovalConsumeMutationResult>({
     load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
     write: (filePath, state) => deps.writeApprovals(filePath, state),
     mutate: (state) => {
@@ -488,10 +505,26 @@ async function consumeApprovedApproval(
           approval.repoRoot === ctx.repoRoot,
       )
       if (matchIndex === -1) {
-        return null
+        return { state: compacted, result: null }
       }
 
       const approval = compacted.approvals[matchIndex]
+      if (approval.executionLeaseExpiresAt) {
+        if (approval.grantBundleVersion === 1) {
+          const validated = validateGrantBundleForLeaseReuse(approval, requests)
+          if (!validated.ok) {
+            compacted.approvals.splice(matchIndex, 1)
+            return {
+              state: compacted,
+              result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
+            }
+          }
+        }
+        return {
+          state: compacted,
+          result: { status: 'consumed' as const, approval, firstExecution: false },
+        }
+      }
       if (approvalGrantBundleExhausted(approval) && !approval.executionLeaseExpiresAt) {
         compacted.approvals.splice(matchIndex, 1)
         return { state: compacted, result: null }
@@ -499,7 +532,17 @@ async function consumeApprovedApproval(
 
       let updatedApproval = approval
       const bundle = grantsFromApproval(approval)
-      if (bundle.length > 0) {
+      if (approval.grantBundleVersion === 1) {
+        const validated = validateAndConsumeGrantBundle(approval, requests)
+        if (!validated.ok) {
+          compacted.approvals.splice(matchIndex, 1)
+          return {
+            state: compacted,
+            result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
+          }
+        }
+        updatedApproval = validated.approval
+      } else if (bundle.length > 0) {
         const consumed = consumeApprovedRecordGrantBundle(approval)
         if (!consumed.consumed) {
           return { state: compacted, result: null }
@@ -509,24 +552,44 @@ async function consumeApprovedApproval(
         updatedApproval = decrementApprovalLegacyGrant(approval)
       }
 
-      if (bundle.length > 1 && approvalGrantBundleExhausted(updatedApproval)) {
-        compacted.approvals.splice(matchIndex, 1)
-        return { state: compacted, result: updatedApproval }
-      }
-
       compacted.approvals[matchIndex] = {
         ...updatedApproval,
         executionLeaseExpiresAt: new Date(
           Date.now() + getExecutionLeaseMs(ctx.config),
         ).toISOString(),
       }
-      return { state: compacted, result: updatedApproval }
+      return {
+        state: compacted,
+        result: { status: 'consumed' as const, approval: updatedApproval, firstExecution: true },
+      }
     },
   })
   if (!consumed) {
     return null
   }
-  return { approval: consumed, firstExecution: true }
+  return consumed
+}
+
+async function discardApprovedApproval(
+  ctx: GateRuntimeContext,
+  deps: GateRuntimeDeps,
+  approvalId: string,
+): Promise<void> {
+  const discarded = await mutateApprovalStateWithRetry({
+    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
+    write: (filePath, state) => deps.writeApprovals(filePath, state),
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const index = compacted.approvals.findIndex((approval) => approval.approvalId === approvalId)
+      if (index !== -1) {
+        compacted.approvals.splice(index, 1)
+      }
+      return { state: compacted, result: true }
+    },
+  })
+  if (discarded !== true) {
+    throw new Error(`Failed to discard rejected approval ${approvalId}`)
+  }
 }
 
 export async function evaluateGatedAction(
@@ -552,18 +615,43 @@ export async function evaluateGatedAction(
       agentAssessment: extractAgentAssessment(params.payload),
     })
   } catch {
-    const verdict = unnormalizedGateVerdict({
-      reason: 'normalization_failed',
-      mode: ctx.config.mode,
-      user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
-      agent_message: 'Belay denied this action because the hook payload could not be normalized.',
-    })
+    const scrubbedInput = scrubValue(
+      {
+        kind: params.kind,
+        cwd: params.cwd,
+        command: params.command,
+        payload: params.payload,
+        toolName: params.toolName,
+      },
+      scrubOptionsFromConfig(ctx.config),
+    )
+    const inputFingerprint = hashValue(
+      `unnormalized-gated-action:v1:${canonicalStringify(scrubbedInput)}`,
+    )
+    const verdict: GateVerdict = {
+      ...unnormalizedGateVerdict({
+        reason: 'normalization_failed',
+        mode: ctx.config.mode,
+        user_message: 'belay could not normalize this gated action. Run belay doctor, then retry.',
+        agent_message: 'Belay denied this action because the hook payload could not be normalized.',
+      }),
+      fingerprint: inputFingerprint,
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: params.kind,
+        summary: params.command ?? params.toolName ?? params.kind,
+        inputFingerprint,
+        requests: [],
+        effectFree: false,
+      }),
+    }
     await deps.appendAudit(ctx, {
       event: gateAuditEventName(params.kind),
       kind: params.kind,
+      fingerprint: verdict.fingerprint,
       verdict: verdict.verdict,
       reason: verdict.reason,
       mode: ctx.config.mode,
+      ...effectPlanAuditFields(verdict.effectPlan),
       wouldBlock: true,
       permission: 'deny',
     })
@@ -571,19 +659,27 @@ export async function evaluateGatedAction(
   }
 
   if (!gateEnabledForAction(ctx.config, action)) {
-    return classifyResultToGateVerdict({
-      result: {
-        verdict: 'allow',
-        reason: 'gate_disabled',
-        fingerprint: 'gate_disabled',
-        assessment: {
-          reversibility: 'reversible',
-          external: false,
-          blastRadius: 'none',
-          confidence: 1,
-          signals: ['gate_disabled'],
-        },
+    const result: ClassifyResult = {
+      verdict: 'allow',
+      reason: 'gate_disabled',
+      fingerprint: 'gate_disabled',
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 1,
+        signals: ['gate_disabled'],
       },
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: action.kind,
+        summary: action.command ?? action.toolName ?? action.kind,
+        inputFingerprint: 'gate_disabled',
+        requests: [],
+        effectFree: false,
+      }),
+    }
+    return classifyResultToGateVerdict({
+      result,
       mode: ctx.config.mode,
       permission: 'allow',
       wouldBlock: false,
@@ -660,6 +756,16 @@ export async function evaluateGatedAction(
       observedAssessment = txResult.observed.assessment
       transactionalLayer = {
         transactional: true,
+        transactionalBackend: txResult.transactionalBackend,
+        resourceKind: txResult.resourceKind,
+        baselineTreeHash: txResult.baselineTreeHash,
+        snapshotFileCount: txResult.snapshotFileCount,
+        snapshotSourceBytes: txResult.snapshotSourceBytes,
+        snapshotWorkspaceBytes: txResult.snapshotWorkspaceBytes,
+        snapshotCopyStrategy: txResult.snapshotCopyStrategy,
+        snapshotPrepareMs: txResult.snapshotPrepareMs,
+        executionRoute: `boundary:${boundaryContext.driverId}`,
+        enforcementStatus: 'mediated_unattested',
         transactionalReason: txResult.observed.reason,
         transactionalCategories: txResult.observed.categories,
         transactionalChangeCount: txResult.observed.changes.length,
@@ -675,12 +781,23 @@ export async function evaluateGatedAction(
       }
     } else {
       const skipReason = txResult.skipReason ?? 'recovery_observation_failed'
-      result = recoveryFailClosedResult(predicted, recoveryFailReasonFromSkip(skipReason), [
-        skipReason,
-      ])
+      const failReason =
+        skipReason === FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
+          ? FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
+          : recoveryFailReasonFromSkip(skipReason)
+      result = recoveryFailClosedResult(predicted, failReason, [skipReason])
       transactionalLayer = {
         transactional: false,
+        transactionalBackend: txResult.transactionalBackend,
+        resourceKind: txResult.resourceKind,
+        baselineTreeHash: txResult.baselineTreeHash,
+        snapshotFileCount: txResult.snapshotFileCount,
+        snapshotSourceBytes: txResult.snapshotSourceBytes,
+        snapshotWorkspaceBytes: txResult.snapshotWorkspaceBytes,
+        snapshotCopyStrategy: txResult.snapshotCopyStrategy,
+        snapshotPrepareMs: txResult.snapshotPrepareMs,
         transactionalSkipReason: skipReason,
+        transactionalSkipDetail: txResult.skipDetail,
         recoveryFailClosed: true,
       }
     }
@@ -820,6 +937,18 @@ async function gateDecisionToVerdict(
     scopeHintPayload?: Record<string, unknown>
   } = {},
 ): Promise<GateVerdict> {
+  if (!result.effectPlan) {
+    result = {
+      ...result,
+      effectPlan: buildCapabilityEffectPlan({
+        actionKind: kind,
+        summary: result.normalizedCommand ?? result.summary ?? kind,
+        inputFingerprint: result.fingerprint,
+        requests: result.capabilityRequests ?? [],
+        effectFree: result.reason === 'read_only',
+      }),
+    }
+  }
   const replayContext = buildAuditReplayContext(kind, result, auditExtras.replayAction)
   const actionSnapshot = buildAuditActionSnapshot(kind, result, auditExtras.replayAction)
   const providerId = String(ctx.config.judge?.providerId ?? 'cursor')
@@ -845,10 +974,118 @@ async function gateDecisionToVerdict(
     mode: ctx.config.mode,
     schemaVersion: result.axes ? 2 : 1,
     ...(result.axes ?? {}),
-    ...auditExtras.transactionalLayer,
     ...capabilityAudit,
+    ...auditExtras.transactionalLayer,
     ...(replayContext ? { replayContext } : {}),
     ...(actionSnapshot ? { actionSnapshot } : {}),
+  }
+
+  const denyWithPendingApproval = async (failure?: {
+    reason: string
+    grantBundleFailureReason?: GrantBundleValidationFailureReason
+    auditFields?: Record<string, unknown> | ((approval: ApprovalRecord) => Record<string, unknown>)
+    userMessage: (approvalId: string) => string
+    agentMessage: string
+  }): Promise<GateVerdict> => {
+    const { approval, created } = await ensurePendingApproval(
+      ctx,
+      deps,
+      kind,
+      result,
+      auditExtras.approvalInput,
+      deriveWorkspaceRootScopeHint({
+        result,
+        replayAction: auditExtras.replayAction,
+        payloadForScopeHint: auditExtras.scopeHintPayload,
+        options: auditExtras.classifierOptions ?? {},
+      }),
+    )
+    if (created) {
+      await recordGateApprovalAsk(stateDir, result.reason, false)
+    }
+    let approvalToken: string | undefined
+    try {
+      approvalToken = await issueApprovalToken(
+        {
+          approvalId: approval.approvalId,
+          fingerprint: approval.fingerprint,
+          repoRoot: approval.repoRoot,
+          issuedAt: approval.createdAt,
+          expiresAt: approval.expiresAt,
+        },
+        configuredControlPlaneDir(ctx.config),
+      )
+    } catch {
+      approvalToken = undefined
+    }
+
+    const denialReason = failure?.reason ?? result.reason
+    if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
+      await notifyDeny(ctx.config.notifications, {
+        approvalId: approval.approvalId,
+        reason: denialReason,
+        summary: result.normalizedCommand ?? result.summary ?? '',
+        repoRoot: ctx.repoRoot,
+        fingerprint: result.fingerprint,
+        approvalToken,
+      })
+    }
+
+    const failureAuditFields =
+      typeof failure?.auditFields === 'function'
+        ? failure.auditFields(approval)
+        : failure?.auditFields
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: failure ? 'deny_pending_approval' : result.verdict,
+      reason: denialReason,
+      approvalId: approval.approvalId,
+      ...(failure?.grantBundleFailureReason
+        ? { grantBundleFailureReason: failure.grantBundleFailureReason }
+        : {}),
+      ...failureAuditFields,
+      wouldBlock: true,
+      permission: 'deny',
+    })
+
+    const adapter = adapterIdFromContext(ctx)
+    const autoReplayShell = kind === 'shell' && canAutoReplay(ctx.config, kind, adapter)
+    return classifyResultToGateVerdict({
+      result: failure
+        ? { ...result, verdict: 'deny_pending_approval', reason: denialReason }
+        : result,
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      approvalId: approval.approvalId,
+      user_message:
+        failure?.userMessage(approval.approvalId) ??
+        `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstructionForConfig(ctx.config, ctx.config.tokenPrefix, approval.approvalId, kind, adapter)} For details, run belay explain or /belay why.`,
+      agent_message:
+        failure?.agentMessage ??
+        (autoReplayShell
+          ? `Belay denied this action as ${result.reason}. Wait for approval; Belay will replay the exact shell action automatically. Do not retry unless replay fails.`
+          : `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`),
+    })
+  }
+
+  const denyReplayMismatch = async (
+    approval: ApprovalRecord,
+    mismatchKind: 'capability_requests' | 'effect_plan' | 'replay_envelope',
+    messages: { user: string; agent: string },
+  ): Promise<GateVerdict> => {
+    await discardApprovedApproval(ctx, deps, approval.approvalId)
+    return denyWithPendingApproval({
+      reason: 'approval_replay_mismatch',
+      auditFields: (replacement) => ({
+        rejectedApprovalId: approval.approvalId,
+        rejectedApprovalCorrelationId: approvalCorrelationId(approval.approvalId),
+        replacementApprovalCorrelationId: approvalCorrelationId(replacement.approvalId),
+        replayMismatchKind: mismatchKind,
+      }),
+      userMessage: (approvalId) => `${messages.user} New approval ID: ${approvalId}.`,
+      agentMessage: `${messages.agent} Wait for the new exact approval, then retry once.`,
+    })
   }
 
   if (result.reason === TRANSACTIONAL_ALREADY_APPLIED) {
@@ -931,55 +1168,18 @@ async function gateDecisionToVerdict(
           matchedApproval.capabilityRequestHash !==
             hashCapabilityRequests(result.capabilityRequests))
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
-          agent_message:
-            'Belay denied this action because capability requests changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'capability_requests', {
+          user: 'Belay denied this action because capability requests changed after approval. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because capability requests changed after approval.',
         })
       }
       if (
         matchedApproval?.effectPlanHash &&
         (!result.effectPlan || matchedApproval.effectPlanHash !== hashEffectPlan(result.effectPlan))
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because the effect plan changed after approval. Re-approve the exact action or run belay explain.',
-          agent_message: 'Belay denied this action because the effect plan changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'effect_plan', {
+          user: 'Belay denied this action because the effect plan changed after approval. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because the effect plan changed after approval.',
         })
       }
       if (
@@ -987,34 +1187,35 @@ async function gateDecisionToVerdict(
         auditExtras.replayAction &&
         !validateReplayEnvelope(matchedApproval, auditExtras.replayAction)
       ) {
-        await deps.appendAudit(ctx, {
-          ...gateBase,
-          verdict: 'deny_pending_approval',
-          reason: 'approval_replay_mismatch',
-          approvalId: matchedApproval.approvalId,
-          wouldBlock: true,
-          permission: 'deny',
-        })
-        return classifyResultToGateVerdict({
-          result: {
-            ...result,
-            verdict: 'deny_pending_approval',
-            reason: 'approval_replay_mismatch',
-          },
-          mode: ctx.config.mode,
-          permission: 'deny',
-          wouldBlock: true,
-          approvalId: matchedApproval.approvalId,
-          user_message:
-            'Belay denied this action because it does not match the approved replay envelope. Re-approve the exact action or run belay explain.',
-          agent_message:
-            'Belay denied this action because cwd, tool, or payload changed after approval.',
+        return denyReplayMismatch(matchedApproval, 'replay_envelope', {
+          user: 'Belay denied this action because it does not match the approved replay envelope. Re-approve the exact action or run belay explain.',
+          agent: 'Belay denied this action because cwd, tool, or payload changed after approval.',
         })
       }
-      approved = await consumeApprovedApproval(ctx, deps, kind, result.fingerprint)
+      approved = await consumeApprovedApproval(
+        ctx,
+        deps,
+        kind,
+        result.fingerprint,
+        result.capabilityRequests ?? [],
+      )
     }
   }
-  if (approved) {
+  if (approved?.status === 'invalid_bundle') {
+    return denyWithPendingApproval({
+      reason: 'capability_grant_unavailable',
+      grantBundleFailureReason: approved.reason,
+      auditFields: (replacement) => ({
+        rejectedApprovalId: approved.approval.approvalId,
+        rejectedApprovalCorrelationId: approvalCorrelationId(approved.approval.approvalId),
+        replacementApprovalCorrelationId: approvalCorrelationId(replacement.approvalId),
+      }),
+      userMessage: (approvalId) =>
+        `Belay denied this action because its approved capability bundle did not exactly match the current request. New approval ID: ${approvalId}. Re-approve the exact action or run belay explain.`,
+      agentMessage: `Belay denied this action because the approved capability bundle failed exact validation (${approved.reason}). Wait for the new exact approval, then retry once.`,
+    })
+  }
+  if (approved?.status === 'consumed') {
     if (approved.firstExecution) {
       await recordGateApprovalAsk(stateDir, result.reason, true)
     }
@@ -1023,6 +1224,8 @@ async function gateDecisionToVerdict(
       verdict: 'allow',
       reason: 'approved_once',
       approvalId: approved.approval.approvalId,
+      authorizationMode:
+        approved.approval.grantBundleVersion === 1 ? 'exact_bundle' : 'legacy_approval',
       wouldBlock: false,
       permission: 'allow',
     })
@@ -1124,71 +1327,29 @@ async function gateDecisionToVerdict(
     })
   }
 
-  const { approval, created } = await ensurePendingApproval(
-    ctx,
-    deps,
-    kind,
-    result,
-    auditExtras.approvalInput,
-    deriveWorkspaceRootScopeHint({
-      result,
-      replayAction: auditExtras.replayAction,
-      payloadForScopeHint: auditExtras.scopeHintPayload,
-      options: auditExtras.classifierOptions ?? {},
-    }),
-  )
-  if (created) {
-    await recordGateApprovalAsk(stateDir, result.reason, false)
-  }
-  let approvalToken: string | undefined
-  try {
-    approvalToken = await issueApprovalToken(
-      {
-        approvalId: approval.approvalId,
-        fingerprint: approval.fingerprint,
-        repoRoot: approval.repoRoot,
-        issuedAt: approval.createdAt,
-        expiresAt: approval.expiresAt,
-      },
-      configuredControlPlaneDir(ctx.config),
-    )
-  } catch {
-    approvalToken = undefined
-  }
-
-  if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
-    await notifyDeny(ctx.config.notifications, {
-      approvalId: approval.approvalId,
+  if (result.reason === FILE_CHECKPOINT_ISOLATION_UNAVAILABLE) {
+    const userMessage =
+      'Belay cannot run file_checkpoint because attested workspace isolation is unavailable. Run `belay session start`, then retry.'
+    const agentMessage =
+      'Belay denied this action because file_checkpoint lacks a fresh matching workspace-isolation attestation. Ask the operator to run `belay session start`, then retry the exact action.'
+    await deps.appendAudit(ctx, {
+      ...gateBase,
+      verdict: result.verdict,
       reason: result.reason,
-      summary: result.normalizedCommand ?? result.summary ?? '',
-      repoRoot: ctx.repoRoot,
-      fingerprint: result.fingerprint,
-      approvalToken,
+      wouldBlock: true,
+      permission: 'deny',
+    })
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      user_message: userMessage,
+      agent_message: agentMessage,
     })
   }
 
-  await deps.appendAudit(ctx, {
-    ...gateBase,
-    verdict: result.verdict,
-    reason: result.reason,
-    approvalId: approval.approvalId,
-    wouldBlock: true,
-    permission: 'deny',
-  })
-
-  const adapter = adapterIdFromContext(ctx)
-  const autoReplayShell = kind === 'shell' && canAutoReplay(ctx.config, kind, adapter)
-  return classifyResultToGateVerdict({
-    result,
-    mode: ctx.config.mode,
-    permission: 'deny',
-    wouldBlock: true,
-    approvalId: approval.approvalId,
-    user_message: `Belay blocked this high-risk action. Approval ID: ${approval.approvalId}. ${buildRetryInstructionForConfig(ctx.config, ctx.config.tokenPrefix, approval.approvalId, kind, adapter)} For details, run belay explain or /belay why.`,
-    agent_message: autoReplayShell
-      ? `Belay denied this action as ${result.reason}. Wait for approval; Belay will replay the exact shell action automatically. Do not retry unless replay fails.`
-      : `Belay denied this action as ${result.reason}. Wait for approval, then retry the exact same action once.`,
-  })
+  return denyWithPendingApproval()
 }
 
 export async function processApprovalPrompt(

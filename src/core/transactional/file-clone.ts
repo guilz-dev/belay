@@ -1,10 +1,24 @@
 import { constants as fsConstants } from 'node:fs'
-import { copyFile, lstat, mkdir, readlink, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import type { BelayFileCheckpointConfig } from '../config.js'
-import { buildFileTreeIndex } from './file-tree.js'
+import {
+  buildFileTreeIndex,
+  FILE_CHECKPOINT_QUOTA_EXCEEDED,
+  FileCheckpointDiagnosticError,
+} from './file-tree.js'
 import { compareRelativePathsBytewise, joinRelativePath } from './file-tree-path.js'
 
 export const FILE_CHECKPOINT_COPY_FAILED = 'file_checkpoint_copy_failed'
@@ -103,39 +117,83 @@ export async function cloneDirectoryTree(
   })
 
   if (options.quotas && sourceIndex.totalFileBytes * 2 > options.quotas.maxWorkspaceBytes) {
-    throw new Error('file_checkpoint_quota_exceeded')
+    throw new FileCheckpointDiagnosticError(
+      FILE_CHECKPOINT_QUOTA_EXCEEDED,
+      `estimated workspaceBytes=${sourceIndex.totalFileBytes * 2} exceeds maxWorkspaceBytes=${options.quotas.maxWorkspaceBytes}`,
+    )
   }
 
   const sortedPaths = [...sourceIndex.entries]
     .map((entry) => entry.relativePath)
     .sort(compareRelativePathsBytewise)
 
-  let strategy: FileCloneStrategy = 'clonefile'
-  for (const relativePath of sortedPaths) {
-    const used = await copyNode(sourceRoot, destinationRoot, relativePath, strategy)
+  const concurrency = options.quotas?.copyConcurrency ?? 1
+  const strategyState: { value: FileCloneStrategy } = { value: 'clonefile' }
+
+  await mapWithConcurrency(sortedPaths, concurrency, async (relativePath) => {
+    const used = await copyNode(sourceRoot, destinationRoot, relativePath, strategyState.value)
     if (used === 'copy') {
-      strategy = 'copy'
+      strategyState.value = 'copy'
+    }
+  })
+
+  return { strategy: strategyState.value, sourceIndex }
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) {
+    return
+  }
+  const limit = Math.max(1, Math.min(concurrency, items.length))
+  let nextIndex = 0
+  async function runWorker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      await worker(items[index])
     }
   }
-
-  return { strategy, sourceIndex }
+  await Promise.all(Array.from({ length: limit }, () => runWorker()))
 }
 
 export async function probeFileCloneStrategy(): Promise<FileCloneStrategy> {
-  const tempDir = path.join(os.tmpdir(), `belay-clone-probe-${process.pid}`)
-  await mkdir(tempDir, { recursive: true })
-  const source = path.join(tempDir, 'source.txt')
-  const destination = path.join(tempDir, 'dest.txt')
+  let tempDir: string | null = null
   try {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), 'belay-clone-probe-'))
+    const source = path.join(tempDir, 'source.txt')
+    const destination = path.join(tempDir, 'dest.txt')
     await writeFile(source, 'probe\n')
+
+    if (fsConstants.COPYFILE_FICLONE_FORCE !== undefined) {
+      try {
+        await copyFile(source, destination, fsConstants.COPYFILE_FICLONE_FORCE)
+        return 'clonefile'
+      } catch {
+        // fall through to clonefile or copy
+      }
+    }
     if (fsConstants.COPYFILE_FICLONE !== undefined) {
-      await copyFile(source, destination, fsConstants.COPYFILE_FICLONE)
-      return 'clonefile'
+      try {
+        await copyFile(source, destination, fsConstants.COPYFILE_FICLONE)
+        return 'clonefile'
+      } catch {
+        return 'copy'
+      }
     }
     return 'copy'
   } catch {
     return 'copy'
   } finally {
-    await rm(tempDir, { recursive: true, force: true })
+    if (tempDir) {
+      try {
+        await rm(tempDir, { recursive: true, force: true })
+      } catch {
+        // best effort cleanup
+      }
+    }
   }
 }

@@ -16,6 +16,7 @@ export type {
 export {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
+  FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
   FILE_CHECKPOINT_NOT_IMPLEMENTED,
   probeTransactionalBackends,
@@ -23,6 +24,17 @@ export {
 } from './backend-selector.js'
 export { evaluateTransactionalDiff } from './diff-evaluator.js'
 export { isTransactionalEligible } from './eligibility.js'
+export {
+  FILE_CHECKPOINT_PROTECTED_PATH_CHANGED,
+  fileCheckpointBackend,
+} from './file-checkpoint-backend.js'
+export {
+  FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
+  FILE_CHECKPOINT_GIT_METADATA_CHANGED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
+  FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED,
+  resolveExecutionCwdRelative,
+} from './file-checkpoint-git.js'
 export {
   collectDeadOwnerStaging,
   type FileCheckpointOwnerMarker,
@@ -39,6 +51,7 @@ export {
 export {
   buildFileTreeIndex,
   diffFileTreeIndices,
+  FileCheckpointDiagnosticError,
   type FileTreeEntry,
   type FileTreeIndex,
   type ObservedFileChange,

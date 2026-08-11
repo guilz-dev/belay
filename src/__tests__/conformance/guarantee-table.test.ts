@@ -86,6 +86,34 @@ describe('guarantee table conformance', () => {
       unknownLocalEffect: 'allow_flagged',
     })
     expect(isTransactionalEligible(config, 'shell', predicted)).toBe(true)
+    expect(
+      GUARANTEE_SCENARIOS['l1-l2-transactional'].some(
+        (scenario) => scenario.substrate === 'dirty_git_file_checkpoint',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps recovery-blocking capabilities outside the dirty-Git file-checkpoint path', async () => {
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        unknownLocalEffect: 'allow_flagged' as const,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          enabled: true,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: true,
+          },
+        },
+      },
+    }
+    const network = await classifyShellCore('curl https://example.com', repoRoot, repoRoot)
+    expect(
+      network.capabilityRequests?.some((request) => request.action === 'network.connect'),
+    ).toBe(true)
+    expect(isTransactionalEligible(config, 'shell', network)).toBe(false)
   })
 
   it('reports posture mismatch when L1-full is configured without attestation', () => {

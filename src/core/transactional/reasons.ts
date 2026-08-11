@@ -15,4 +15,5 @@ export const TRANSACTIONAL_APPROVAL_BYPASS_REASONS = new Set([
   'recovery_substrate_unavailable',
   'recovery_execution_failed',
   'recovery_dirty_worktree',
+  'file_checkpoint_isolation_unavailable',
 ])

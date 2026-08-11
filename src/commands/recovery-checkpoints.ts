@@ -7,6 +7,7 @@ import { createGateApprovalStore } from '../core/approval-service.js'
 import { issueApprovalToken } from '../core/approval-token.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import { mutateApprovalStateWithRetry } from '../core/capability/approval-state-mutation.js'
+import { boundarySessionStatus } from '../core/capability/boundary-session.js'
 import { configuredControlPlaneDir, DEFAULT_RECOVERY_CHECKPOINT } from '../core/config.js'
 import { notifyDeny } from '../core/notify.js'
 import { canonicalPath } from '../core/path-utils.js'
@@ -26,6 +27,7 @@ import {
   recoveryNotificationSetupWarning,
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
+import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import type { ApprovalRecord } from '../core/types.js'
 
 export type RecoveryCheckpointSubcommand = 'status' | 'list' | 'show' | 'apply'
@@ -166,11 +168,54 @@ export async function recoveryCheckpointCommand(options: {
       ]),
     )
     const advisories = summarizeRecoveryCheckpointDiagnostics(checkpoints)
+    const backendCounts = Object.fromEntries(
+      [...new Set(checkpoints.map((checkpoint) => checkpoint.backend))].map((backend) => [
+        backend,
+        checkpoints.filter((checkpoint) => checkpoint.backend === backend).length,
+      ]),
+    )
+    const checkpointBackends = Object.keys(backendCounts)
+    const fileCheckpointConfig = config.policy.transactional.fileCheckpoint
+    const configuredBoundary =
+      config.capability?.boundaryDriver ??
+      (config.sandbox.runtime === 'container' ? 'container' : null)
+    let isolation: string | null = configuredBoundary
+    let isolationAvailable = false
+    if (configuredBoundary) {
+      try {
+        const session = await boundarySessionStatus({ repoRoot, config })
+        isolationAvailable =
+          session.fresh === true && session.attestation?.isolatesWorkspaceMounts === true
+        isolation = isolationAvailable ? (session.attestation?.driver ?? configuredBoundary) : null
+      } catch {
+        isolation = null
+      }
+    }
+    const copyStrategy = fileCheckpointConfig.enabled ? await probeFileCloneStrategy() : null
+    const fileCheckpointAvailable =
+      fileCheckpointConfig.enabled &&
+      config.policy.transactional.enabled &&
+      checkpointConfig.enabled &&
+      isolationAvailable
     return {
       ok: true,
       subcommand: 'status',
       repoRoot,
-      backend: 'git_worktree',
+      backend:
+        checkpointBackends.length === 1
+          ? checkpointBackends[0]
+          : checkpointBackends.length > 1
+            ? 'mixed'
+            : 'git_worktree',
+      availableBackends: ['git_worktree', 'file_checkpoint'],
+      backendCounts,
+      fileCheckpoint: {
+        enabled: fileCheckpointConfig.enabled,
+        allowNonGit: fileCheckpointConfig.allowNonGit,
+        isolation,
+        copyStrategy: copyStrategy ?? undefined,
+        probe: fileCheckpointAvailable ? 'available' : 'unavailable',
+      },
       enabled: checkpointConfig.enabled,
       checkpointCount: checkpoints.length,
       storageBytes: await recoveryCheckpointStorageBytes(stateDir, repoRoot),

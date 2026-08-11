@@ -47,9 +47,18 @@ export function safeBoundaryCleanupResourceId(value: unknown): string | undefine
   return value.resourceId
 }
 
+export interface BoundaryWorkspaceMount {
+  hostSourceRoot: string
+  guestTargetRoot: string
+  cwdRelative: string
+  writable: boolean
+  hideHostSourcePath: boolean
+}
+
 export interface BoundaryRunOptions {
   /** When true, container driver mounts the working directory read-only. */
   mountReadOnly?: boolean
+  workspaceMount?: BoundaryWorkspaceMount
 }
 
 export interface BoundaryPrepareContext {

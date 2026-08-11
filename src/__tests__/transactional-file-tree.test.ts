@@ -239,4 +239,27 @@ describe('transactional file clone', () => {
   it('probes clonefile or copy support', async () => {
     await expect(probeFileCloneStrategy()).resolves.toMatch(/^(clonefile|copy)$/)
   })
+
+  it('clones many files with bounded copyConcurrency', async () => {
+    const source = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-conc-src-'))
+    const destination = await mkdtemp(path.join(os.tmpdir(), 'belay-fclone-conc-dst-'))
+    tempDirs.push(source, destination)
+    for (let index = 0; index < 24; index += 1) {
+      await writeFile(path.join(source, `file-${index}.txt`), `payload-${index}\n`)
+    }
+
+    const result = await cloneDirectoryTree(source, destination, {
+      quotas: {
+        maxFiles: 100,
+        maxSourceBytes: 10_000_000,
+        maxWorkspaceBytes: 20_000_000,
+        prepareTimeoutMs: 30_000,
+        copyConcurrency: 4,
+      },
+    })
+    expect(result.sourceIndex.fileCount).toBe(24)
+    await expect(readFile(path.join(destination, 'file-12.txt'), 'utf8')).resolves.toBe(
+      'payload-12\n',
+    )
+  })
 })

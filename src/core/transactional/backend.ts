@@ -1,3 +1,4 @@
+import type { BoundaryAttestation, BoundaryDriverId } from '../capability/attestation.js'
 import type { BelayFileCheckpointConfig } from '../config.js'
 import type { TransactionalFileChange } from './types.js'
 
@@ -15,10 +16,19 @@ export interface TransactionalSnapshot {
   resourceRoot: string
   executionRoot: string
   baselineRoot?: string
+  resourceKind?: 'git_repository' | 'directory'
   resourceIdentity: string
   baselineTreeHash: string
   excludedRoots: string[]
   copyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  snapshotFileCount?: number
+  snapshotSourceBytes?: number
+  snapshotWorkspaceBytes?: number
+  snapshotPrepareMs?: number
+  /** Relative cwd inside resourceRoot for isolated workspace mounts. */
+  executionCwdRelative?: string
+  /** Revalidates the source tree and metadata immediately before apply. */
+  validateSourceState?(): Promise<void>
   collectChanges(): Promise<TransactionalFileChange[]>
   cleanup(): Promise<void>
 }
@@ -31,6 +41,11 @@ export interface TransactionalBackendContext {
   fileCheckpoint: BelayFileCheckpointConfig
   /** Required for file_checkpoint eligibility once implemented. */
   durableCheckpointEnabled: boolean
+  /** Verified boundary attestation for file_checkpoint isolation checks. */
+  boundaryAttestation?: BoundaryAttestation | null
+  boundaryAttestationFresh?: boolean
+  /** Resolved boundary driver; attestation must match this id for file_checkpoint. */
+  boundaryDriverId?: BoundaryDriverId
 }
 
 export interface TransactionalBackend {

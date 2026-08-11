@@ -114,9 +114,16 @@ export {
 } from './path-utils.js'
 export type {
   RecoveryBackend,
+  RecoveryCheckpointEntry,
+  RecoveryCheckpointEntryV1,
+  RecoveryCheckpointEntryV2,
+  RecoveryCheckpointManifest,
   RecoveryCheckpointManifestV1,
+  RecoveryCheckpointManifestV2,
   RecoveryCheckpointState,
   RecoveryCheckpointSummary,
+  RecoveryFileSnapshotV1,
+  RecoveryFileSnapshotV2,
   RecoveryProofV1,
   RecoveryReceiptV1,
 } from './recovery/index.js'
