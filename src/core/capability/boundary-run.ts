@@ -1,6 +1,52 @@
 import type { ShellRunResult } from '../transactional/git-worktree.js'
 import type { ClassifyResult } from '../types.js'
 
+const SAFE_CONTAINER_RESOURCE_ID =
+  /^belay-run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+export interface BoundaryCleanupFailure {
+  code: 'BOUNDARY_CLEANUP_UNCONFIRMED'
+  resourceKind: 'container'
+  resourceId: string
+  executionStarted: true
+  cleanupConfirmed: false
+}
+
+export class BoundaryCleanupError extends Error implements BoundaryCleanupFailure {
+  readonly code = 'BOUNDARY_CLEANUP_UNCONFIRMED' as const
+  readonly executionStarted = true as const
+  readonly cleanupConfirmed = false as const
+
+  constructor(
+    readonly resourceKind: 'container',
+    readonly resourceId: string,
+  ) {
+    super('Boundary cleanup could not be confirmed')
+    this.name = 'BoundaryCleanupError'
+  }
+}
+
+export function isBoundaryCleanupError(value: unknown): value is BoundaryCleanupFailure {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as Record<string, unknown>
+  return (
+    candidate.code === 'BOUNDARY_CLEANUP_UNCONFIRMED' &&
+    candidate.resourceKind === 'container' &&
+    typeof candidate.resourceId === 'string' &&
+    candidate.executionStarted === true &&
+    candidate.cleanupConfirmed === false
+  )
+}
+
+export function safeBoundaryCleanupResourceId(value: unknown): string | undefined {
+  if (!isBoundaryCleanupError(value) || !SAFE_CONTAINER_RESOURCE_ID.test(value.resourceId)) {
+    return undefined
+  }
+  return value.resourceId
+}
+
 export interface BoundaryWorkspaceMount {
   hostSourceRoot: string
   guestTargetRoot: string

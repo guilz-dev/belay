@@ -1,12 +1,17 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 
 import { canonicalPath } from '../path-utils.js'
-import type { ShellRunResult } from '../transactional/git-worktree.js'
+import { runProcessWithBoundedOutput, type ShellRunResult } from '../process-runner.js'
 import type { BoundaryAttestation } from './attestation.js'
 import type { BoundaryDriver, BoundaryMaterializeContext } from './boundary-driver.js'
 import { dockerEnvArgs, dockerNetworkArgs, ensureBelayContainerNetwork } from './boundary-egress.js'
 import { materializeContainerBoundaryGrant } from './boundary-grant-materialize.js'
-import type { BoundaryPrepareContext, BoundaryRunOptions } from './boundary-run.js'
+import {
+  BoundaryCleanupError,
+  type BoundaryPrepareContext,
+  type BoundaryRunOptions,
+} from './boundary-run.js'
 import {
   buildWorkspaceMountSpec,
   resolveGuestWorkdir,
@@ -15,6 +20,33 @@ import {
 
 const ATTESTATION_TTL_MS = 15 * 60_000
 const DEFAULT_IMAGE = 'alpine:3.20'
+const CONTAINER_CLEANUP_TIMEOUT_MS = 10_000
+const CONTAINER_INSPECT_TIMEOUT_MS = 2_000
+const CONTAINER_ABSENCE_ATTEMPTS = 10
+const CONTAINER_ABSENCE_RETRY_MS = 100
+
+function containerDoesNotExist(result: ShellRunResult): boolean {
+  return /no such container/i.test(`${result.stderr ?? ''}\n${result.stdout ?? ''}`)
+}
+
+async function confirmContainerAbsent(containerName: string): Promise<boolean> {
+  for (let attempt = 0; attempt < CONTAINER_ABSENCE_ATTEMPTS; attempt += 1) {
+    const inspection = await runProcessWithBoundedOutput(
+      'docker',
+      ['inspect', '--type', 'container', containerName],
+      {},
+      CONTAINER_INSPECT_TIMEOUT_MS,
+    )
+    if (!inspection.timedOut && inspection.exitCode !== 0 && containerDoesNotExist(inspection)) {
+      return true
+    }
+    if (inspection.timedOut || (inspection.exitCode !== 0 && !containerDoesNotExist(inspection))) {
+      return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, CONTAINER_ABSENCE_RETRY_MS))
+  }
+  return false
+}
 
 export async function isDockerAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -69,11 +101,13 @@ export interface ContainerRunParams {
   mountReadOnly: boolean
   repoRoot?: string
   runOptions?: BoundaryRunOptions
+  containerName?: string
 }
 
 export function buildContainerRunArgs(params: ContainerRunParams): string[] {
   const proxyActive = Object.keys(params.proxyEnv).length > 0
   const networkArgs = dockerNetworkArgs(proxyActive, params.repoRoot)
+  const containerNameArgs = params.containerName ? ['--name', params.containerName] : []
   const workspaceMount = params.runOptions?.workspaceMount
 
   if (workspaceMount) {
@@ -90,6 +124,7 @@ export function buildContainerRunArgs(params: ContainerRunParams): string[] {
     return [
       'run',
       '--rm',
+      ...containerNameArgs,
       ...networkArgs,
       '--mount',
       buildWorkspaceMountSpec(workspaceMount),
@@ -109,6 +144,7 @@ export function buildContainerRunArgs(params: ContainerRunParams): string[] {
   return [
     'run',
     '--rm',
+    ...containerNameArgs,
     ...networkArgs,
     '-v',
     mountSpec,
@@ -122,7 +158,7 @@ export function buildContainerRunArgs(params: ContainerRunParams): string[] {
   ]
 }
 
-function runInContainer(
+async function runInContainer(
   image: string,
   command: string,
   cwd: string,
@@ -132,6 +168,7 @@ function runInContainer(
   repoRoot?: string,
   runOptions?: BoundaryRunOptions,
 ): Promise<ShellRunResult> {
+  const containerName = `belay-run-${randomUUID()}`
   const args = buildContainerRunArgs({
     image,
     command,
@@ -140,27 +177,25 @@ function runInContainer(
     mountReadOnly,
     repoRoot,
     runOptions,
+    containerName,
   })
-  return new Promise((resolve) => {
-    const child = spawn('docker', args, { stdio: 'ignore' })
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGTERM')
-    }, timeoutMs)
-    child.on('error', () => {
-      clearTimeout(timer)
-      resolve({ exitCode: 1, signal: null, timedOut })
-    })
-    child.on('close', (exitCode, signal) => {
-      clearTimeout(timer)
-      resolve({
-        exitCode,
-        signal: signal ? String(signal) : null,
-        timedOut,
-      })
-    })
-  })
+  const result = await runProcessWithBoundedOutput('docker', args, {}, timeoutMs)
+  if (result.timedOut) {
+    const cleanup = await runProcessWithBoundedOutput(
+      'docker',
+      ['rm', '-f', containerName],
+      {},
+      CONTAINER_CLEANUP_TIMEOUT_MS,
+    )
+    const cleanupFailed = cleanup.timedOut || cleanup.exitCode !== 0
+    const absent =
+      containerDoesNotExist(cleanup) ||
+      (cleanupFailed && (await confirmContainerAbsent(containerName)))
+    if (cleanupFailed && !absent) {
+      throw new BoundaryCleanupError('container', containerName)
+    }
+  }
+  return result
 }
 
 export function createContainerBoundaryDriver(

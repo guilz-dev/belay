@@ -131,6 +131,7 @@ describe('Phase 3 plan — Runtime parity', () => {
 
     it('fail-closed when neither http nor cli transport is available', async () => {
       vi.stubEnv('BELAY_DETERMINISTIC_JUDGE', '')
+      vi.stubEnv('BELAY_JUDGE_DISABLE_CLI_TRANSPORT', '1')
       delete process.env.BELAY_JUDGE_API_KEY
 
       const config = normalizeConfig({

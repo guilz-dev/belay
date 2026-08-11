@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -103,20 +103,29 @@ describe('container boundary isolation', () => {
     'prepare creates container network when egress proxy is active',
     async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-container-net-'))
+      const networkName = belayContainerNetworkName(repoRoot)
       const driver = createContainerBoundaryDriver({
         egressProxyEnv: { HTTP_PROXY: 'http://127.0.0.1:17831' },
         repoRoot,
       })
 
-      await driver.prepare?.({
-        repoRoot,
-        egressProxyActive: true,
-        proxyEnv: { HTTP_PROXY: 'http://127.0.0.1:17831' },
-      })
-      testNetworks.add(belayContainerNetworkName(repoRoot))
+      try {
+        await driver.prepare?.({
+          repoRoot,
+          egressProxyActive: true,
+          proxyEnv: { HTTP_PROXY: 'http://127.0.0.1:17831' },
+        })
+        testNetworks.add(networkName)
 
-      expect(await isBelayContainerNetworkReady(repoRoot)).toBe(true)
-      expect(belayContainerNetworkName(repoRoot)).toMatch(/^belay-int-/)
+        expect(await isBelayContainerNetworkReady(repoRoot)).toBe(true)
+        expect(networkName).toMatch(/^belay-int-/)
+      } finally {
+        try {
+          await execFileAsync('docker', ['network', 'rm', networkName])
+          testNetworks.delete(networkName)
+        } catch {}
+        await rm(repoRoot, { recursive: true, force: true })
+      }
     },
     DOCKER_TEST_TIMEOUT_MS,
   )
