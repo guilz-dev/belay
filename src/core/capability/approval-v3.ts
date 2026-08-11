@@ -144,6 +144,7 @@ export function mintGrantForApprovedRecord(approval: ApprovalRecord): ApprovalRe
     ...normalized,
     grants,
     grant: grants[0],
+    grantBundleVersion: 1,
   }
 }
 

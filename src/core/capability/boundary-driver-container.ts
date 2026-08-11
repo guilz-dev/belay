@@ -42,10 +42,12 @@ function containerAttestation(proxyEnv: Record<string, string>): BoundaryAttesta
     driver: 'container',
     probedAt,
     expiresAt: new Date(Date.now() + ATTESTATION_TTL_MS).toISOString(),
-    deniesUngrantedEffects: true,
-    materializesGrants: true,
+    // Mount and network classes are isolated, but exact grants are not yet
+    // passed to and enforced by the process runner.
+    deniesUngrantedEffects: false,
+    materializesGrants: false,
     isolatesWorkspaceMounts: true,
-    probeSignals: signals,
+    probeSignals: [...signals, 'exact-grant-enforcement-unavailable'],
   }
 }
 

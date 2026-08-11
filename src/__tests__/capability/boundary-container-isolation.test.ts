@@ -1,8 +1,10 @@
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import {
   createContainerBoundaryDriver,
@@ -15,8 +17,30 @@ import {
 
 const dockerAvailable = await isDockerAvailable()
 const DOCKER_TEST_TIMEOUT_MS = 60_000
+const execFileAsync = promisify(execFile)
+const testNetworks = new Set<string>()
+
+async function cleanupTestNetworks(): Promise<void> {
+  const failures: unknown[] = []
+  await Promise.all(
+    [...testNetworks].map(async (network) => {
+      try {
+        await execFileAsync('docker', ['network', 'rm', network])
+        testNetworks.delete(network)
+      } catch (error) {
+        failures.push(error)
+      }
+    }),
+  )
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Failed to clean up Docker test networks')
+  }
+}
 
 describe('container boundary isolation', () => {
+  afterEach(cleanupTestNetworks)
+  afterAll(cleanupTestNetworks)
+
   it.skipIf(!dockerAvailable)(
     'blocks writes on read-only mounts inside the working directory',
     async () => {
@@ -89,6 +113,7 @@ describe('container boundary isolation', () => {
         egressProxyActive: true,
         proxyEnv: { HTTP_PROXY: 'http://127.0.0.1:17831' },
       })
+      testNetworks.add(belayContainerNetworkName(repoRoot))
 
       expect(await isBelayContainerNetworkReady(repoRoot)).toBe(true)
       expect(belayContainerNetworkName(repoRoot)).toMatch(/^belay-int-/)

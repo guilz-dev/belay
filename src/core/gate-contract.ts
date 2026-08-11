@@ -36,6 +36,8 @@ export interface GateVerdict extends GatePermissionResponse {
   axes?: ClassifyResult['axes']
   capabilityRequests?: ClassifyResult['capabilityRequests']
   authorizationDecision?: ClassifyResult['authorizationDecision']
+  effectPlan?: ClassifyResult['effectPlan']
+  effectPlanPolicyDecisions?: ClassifyResult['effectPlanPolicyDecisions']
   boundaryProfile?: string
 }
 
@@ -79,6 +81,8 @@ export function classifyResultToGateVerdict(params: {
     axes: result.axes,
     capabilityRequests: result.capabilityRequests,
     authorizationDecision: result.authorizationDecision,
+    effectPlan: result.effectPlan,
+    effectPlanPolicyDecisions: result.effectPlanPolicyDecisions,
     boundaryProfile: result.boundaryProfile,
   }
 }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -80,6 +80,42 @@ describe('claude adapter', () => {
         decision: 'block',
         reason: 'belay failed while processing approval state. Run belay doctor, then retry.',
       })
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('PreToolUse: unsupported MCP tools record a partial fallback effect plan', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-claude-adapter-'))
+    try {
+      await mkdir(path.join(repoRoot, '.git'))
+      await claudeAdapter.install(repoRoot, {})
+
+      const result = await runClaudeRunner(repoRoot, 'belay-tool-gate', {
+        tool_name: 'mcp__example__mutate',
+        tool_input: { value: 'opaque' },
+      })
+
+      expect(result.exitCode).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+        },
+      })
+
+      const config = await loadConfigFile(repoRoot, 'claude')
+      const auditPath = path.isAbsolute(config.audit.logPath)
+        ? config.audit.logPath
+        : path.join(repoRoot, config.audit.logPath)
+      const auditLines = (await readFile(auditPath, 'utf8')).trim().split('\n')
+      const auditRecord = JSON.parse(auditLines.at(-1) ?? '{}')
+      expect(auditRecord).toMatchObject({
+        reason: 'unsupported_mcp_tool',
+        effectPlanDisposition: 'effects',
+        effectPlanCompleteness: 'partial',
+      })
+      expect(auditRecord.effectIRHash).toEqual(expect.any(String))
     } finally {
       await rm(repoRoot, { recursive: true, force: true })
     }

@@ -1,13 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { compactApprovals, createApprovalRecord } from './approval.js'
 import { issueApprovalToken } from './approval-token.js'
+import { mutateApprovalStateWithRetry } from './capability/approval-state-mutation.js'
 import type { BelayConfigV3 } from './config.js'
 import { configuredControlPlaneDir } from './config.js'
-import {
-  addDomainToAllowlist,
-  loadEgressAllowlist,
-  saveEgressAllowlist,
-} from './egress/allowlist.js'
+import { addDomainToAllowlist, mutateEgressAllowlist } from './egress/allowlist.js'
 import { parseHostFromSummary } from './egress/fingerprint.js'
 import type { EgressApprovalScope, EgressPolicyResult } from './egress/types.js'
 import { notifyDeny } from './notify.js'
@@ -28,22 +25,8 @@ export async function ensurePendingEgressApproval(params: {
   store: EgressApprovalStore
 }): Promise<{ approvalId: string; approval: ApprovalRecord; created: boolean }> {
   const { config, repoRoot, policyResult, store } = params
-  const pending = await store.loadPending()
-  pending.state = compactApprovals(pending.state)
-
-  const existing = pending.state.approvals.find(
-    (approval) =>
-      approval.kind === 'egress' &&
-      approval.fingerprint === policyResult.fingerprint &&
-      approval.repoRoot === repoRoot,
-  )
-  if (existing) {
-    await store.writePending(pending.filePath, pending.state)
-    return { approvalId: existing.approvalId, approval: existing, created: false }
-  }
-
   const approvalId = `belay_${randomUUID().replaceAll('-', '').slice(0, 12)}`
-  const approval = createApprovalRecord({
+  const candidate = createApprovalRecord({
     kind: 'egress',
     fingerprint: policyResult.fingerprint,
     repoRoot,
@@ -52,32 +35,34 @@ export async function ensurePendingEgressApproval(params: {
     approvalTtlMinutes: config.approvalTtlMinutes,
     approvalId,
   })
-  pending.state.approvals.push(approval)
-  await store.writePending(pending.filePath, pending.state)
-  return { approvalId, approval, created: true }
-}
-
-const consumeLocks = new Map<string, Promise<void>>()
-
-async function withConsumeLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const previous = consumeLocks.get(key) ?? Promise.resolve()
-  let release!: () => void
-  const gate = new Promise<void>((resolve) => {
-    release = resolve
+  const outcome = await mutateApprovalStateWithRetry({
+    load: store.loadPending,
+    write: store.writePending,
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const existing = compacted.approvals.find(
+        (approval) =>
+          approval.kind === 'egress' &&
+          approval.fingerprint === policyResult.fingerprint &&
+          approval.repoRoot === repoRoot,
+      )
+      if (existing) {
+        return {
+          state: compacted,
+          result: { approvalId: existing.approvalId, approval: existing, created: false },
+        }
+      }
+      compacted.approvals.push(candidate)
+      return {
+        state: compacted,
+        result: { approvalId, approval: candidate, created: true },
+      }
+    },
   })
-  consumeLocks.set(
-    key,
-    previous.then(() => gate),
-  )
-  await previous
-  try {
-    return await fn()
-  } finally {
-    release()
-    if (consumeLocks.get(key) === gate) {
-      consumeLocks.delete(key)
-    }
+  if (!outcome) {
+    throw new Error('Failed to persist pending egress approval')
   }
+  return outcome
 }
 
 export async function consumeApprovedEgress(params: {
@@ -85,23 +70,23 @@ export async function consumeApprovedEgress(params: {
   fingerprint: string
   store: EgressApprovalStore
 }): Promise<ApprovalRecord | null> {
-  const lockKey = `${params.repoRoot}:${params.fingerprint}`
-  return withConsumeLock(lockKey, async () => {
-    const approved = await params.store.loadApproved()
-    approved.state = compactApprovals(approved.state)
-    const index = approved.state.approvals.findIndex(
-      (approval) =>
-        approval.kind === 'egress' &&
-        approval.fingerprint === params.fingerprint &&
-        approval.repoRoot === params.repoRoot,
-    )
-    if (index === -1) {
-      await params.store.writeApproved(approved.filePath, approved.state)
-      return null
-    }
-    const [approval] = approved.state.approvals.splice(index, 1)
-    await params.store.writeApproved(approved.filePath, approved.state)
-    return approval
+  return mutateApprovalStateWithRetry<ApprovalRecord | null>({
+    load: params.store.loadApproved,
+    write: params.store.writeApproved,
+    mutate: (state) => {
+      const compacted = compactApprovals(state)
+      const index = compacted.approvals.findIndex(
+        (approval) =>
+          approval.kind === 'egress' &&
+          approval.fingerprint === params.fingerprint &&
+          approval.repoRoot === params.repoRoot,
+      )
+      if (index === -1) {
+        return null
+      }
+      const [approval] = compacted.approvals.splice(index, 1)
+      return { state: compacted, result: approval ?? null }
+    },
   })
 }
 
@@ -156,9 +141,9 @@ export async function recordEgressApproval(params: {
   const match = pending.state.approvals.find(
     (approval) => approval.approvalId === params.approvalId,
   )
-  const host = match ? parseHostFromSummary(match.summary) : null
+  const pendingHost = match ? parseHostFromSummary(match.summary) : null
 
-  if (params.scope === 'domain' && match && !host) {
+  if (params.scope === 'domain' && match && !pendingHost) {
     return {
       ok: false,
       message: `Cannot add domain to egress allowlist: could not parse host from summary "${match.summary}".`,
@@ -173,17 +158,18 @@ export async function recordEgressApproval(params: {
     store: params.store,
   })
 
+  const host = result.approval ? parseHostFromSummary(result.approval.summary) : pendingHost
   if (!result.ok || params.scope !== 'domain' || !host) {
     return { ok: result.ok, message: result.message }
   }
 
-  const allowlist = await loadEgressAllowlist(params.store.allowlistPath)
-  const updated = addDomainToAllowlist(allowlist, {
-    host,
-    approvedAt: new Date().toISOString(),
-    approvalId: params.approvalId,
-  })
-  await saveEgressAllowlist(params.store.allowlistPath, updated)
+  await mutateEgressAllowlist(params.store.allowlistPath, (allowlist) =>
+    addDomainToAllowlist(allowlist, {
+      host,
+      approvedAt: new Date().toISOString(),
+      approvalId: params.approvalId,
+    }),
+  )
   return {
     ok: true,
     message: `${result.message} Domain ${host} added to egress allowlist.`,

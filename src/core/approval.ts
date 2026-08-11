@@ -11,14 +11,16 @@ export function nowIso(): string {
 }
 
 export function isExpired(approval: ApprovalRecord): boolean {
-  return Date.parse(approval.expiresAt) <= Date.now()
+  const expiresAt = Date.parse(approval.expiresAt)
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now()
 }
 
 export function isExecutionLeaseExpired(approval: ApprovalRecord): boolean {
   if (!approval.executionLeaseExpiresAt) {
     return false
   }
-  return Date.parse(approval.executionLeaseExpiresAt) <= Date.now()
+  const expiresAt = Date.parse(approval.executionLeaseExpiresAt)
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now()
 }
 
 export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {

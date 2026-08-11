@@ -40,6 +40,7 @@ export interface EffectProvenance {
   launcher?: PackageExecLauncher
   phase?: LauncherPhase
   innerCommand?: string
+  innerArgv?: readonly string[]
 }
 
 export interface EffectRequirement {
@@ -48,6 +49,8 @@ export interface EffectRequirement {
   resource: CapabilityResource
   evidence: EffectEvidence
   provenance: EffectProvenance
+  /** All contributing sources after requirement de-duplication. */
+  provenances?: readonly EffectProvenance[]
 }
 
 export interface ExecEffectNode {
@@ -78,5 +81,7 @@ export interface EffectPlan {
   root: EffectNode
   inputFingerprint: string
   opacity: VerdictOpacity
+  disposition: 'effects' | 'effect_free'
+  completeness: 'complete' | 'partial'
   signals: readonly string[]
 }

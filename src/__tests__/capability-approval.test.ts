@@ -26,9 +26,13 @@ function memoryStore(
       return { filePath: '/tmp/approved.json', state: approved }
     },
     async writePending(_filePath: string, state: ApprovalStateFile) {
+      pending.version = state.version
+      pending.revision = state.revision
       pending.approvals = state.approvals
     },
     async writeApproved(_filePath: string, state: ApprovalStateFile) {
+      approved.version = state.version
+      approved.revision = state.revision
       approved.approvals = state.approvals
     },
   }
