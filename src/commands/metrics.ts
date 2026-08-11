@@ -51,6 +51,15 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     )
   }
 
+  if (Object.keys(report.gateEventsByRuntime).length > 0) {
+    lines.push('', 'Gate events by runtime:')
+    for (const [runtime, count] of Object.entries(report.gateEventsByRuntime).sort(
+      (left, right) => right[1] - left[1],
+    )) {
+      lines.push(`- ${runtime}: ${count}`)
+    }
+  }
+
   if (report.bypassAttemptCount > 0) {
     lines.push(`Bypass attempts detected: ${report.bypassAttemptCount}`)
   }

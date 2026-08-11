@@ -20,6 +20,9 @@ export interface AuditRecord {
   judgeFallbackReason?: string
   permission?: string
   mode?: string
+  runtimeVersion?: string
+  runtimeBuildStamp?: string
+  configFingerprint?: string
   assessment?: Assessment
   predictedAssessment?: Assessment
   observedAssessment?: Assessment

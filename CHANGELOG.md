@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Audit runtime provenance** — gate audit events now record the Belay runtime version, build stamp, and a stable configuration fingerprint; `belay metrics` groups gate events by recorded runtime build.
+
 ## 0.7.0 — 2026-08-12
 
 ### Added

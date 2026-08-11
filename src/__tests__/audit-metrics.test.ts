@@ -59,6 +59,36 @@ describe('audit-metrics', () => {
     expect(report.dogfood.notes.join(' ')).toContain('Dogfood config detected')
   })
 
+  it('groups gate events by recorded runtime build', () => {
+    const report = computeAuditMetrics([
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        runtimeVersion: '0.7.0',
+        runtimeBuildStamp: '0.7.0@2026-08-11T23:22:02.616Z',
+      },
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        verdict: 'allow',
+        runtimeVersion: '0.7.0',
+        runtimeBuildStamp: '0.7.0@2026-08-11T23:22:02.616Z',
+      },
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+      },
+    ])
+
+    expect(report.gateEventsByRuntime).toEqual({
+      '0.7.0@2026-08-11T23:22:02.616Z': 2,
+      unrecorded: 1,
+    })
+    expect(formatMetricsReport(report)).toContain('Gate events by runtime:')
+  })
+
   it('aggregates verdict audit axes when present', () => {
     const report = computeAuditMetrics([
       {

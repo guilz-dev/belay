@@ -47,6 +47,7 @@ export interface AuditMetricsReport {
   byOpacity: Record<string, number>
   byEffect: Record<string, number>
   byConfidence: Record<string, number>
+  gateEventsByRuntime: Record<string, number>
   approvalRecordedCount: number
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
   approvalLatency: {
@@ -105,6 +106,7 @@ export function computeAuditMetrics(
   const byOpacity: Record<string, number> = {}
   const byEffect: Record<string, number> = {}
   const byConfidence: Record<string, number> = {}
+  const gateEventsByRuntime: Record<string, number> = {}
   const summaryCounts = new Map<string, { summary: string; reason: string; count: number }>()
   let gateEvents = 0
   let wouldBlockCount = 0
@@ -121,6 +123,13 @@ export function computeAuditMetrics(
     }
 
     gateEvents += 1
+    const runtimeBuild =
+      typeof record.runtimeBuildStamp === 'string'
+        ? record.runtimeBuildStamp
+        : typeof record.runtimeVersion === 'string'
+          ? record.runtimeVersion
+          : 'unrecorded'
+    increment(gateEventsByRuntime, runtimeBuild)
     const reason = typeof record.reason === 'string' ? record.reason : 'unknown'
     const kind = typeof record.kind === 'string' ? record.kind : 'unknown'
     increment(byReason, reason)
@@ -253,6 +262,7 @@ export function computeAuditMetrics(
     byOpacity,
     byEffect,
     byConfidence,
+    gateEventsByRuntime,
     approvalRecordedCount,
     topWouldBlockSummaries,
     approvalLatency,

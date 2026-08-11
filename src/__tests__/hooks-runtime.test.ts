@@ -12,6 +12,7 @@ import {
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
+import { PACKAGE_VERSION } from '../version.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
@@ -130,6 +131,28 @@ describe('generated hook runtime', () => {
 
     const approved = await readJson(approvedApprovalsPath(repoRoot, config))
     expect(approved.approvals).toHaveLength(0)
+  })
+
+  it('writes rendered runtime provenance into gate audit events', async () => {
+    const repoRoot = await initIsolatedRepo()
+
+    const result = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git status',
+      cwd: repoRoot,
+    })
+
+    expect(JSON.parse(result.stdout)).toEqual({ permission: 'allow' })
+    const lines = (await readFile(await auditLogPath(repoRoot), 'utf8')).trim().split('\n')
+    const record = JSON.parse(lines.at(-1) ?? '{}') as Record<string, unknown>
+
+    expect(record).toMatchObject({
+      runtimeVersion: PACKAGE_VERSION,
+      runtimeBuildStamp: expect.stringMatching(
+        new RegExp(`^${PACKAGE_VERSION.replace(/\./g, '\\.')}@`),
+      ),
+      configFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+    expect(record.runtimeBuildStamp).not.toBe(`${PACKAGE_VERSION}@source`)
   })
 
   it('resumes the host turn after an approval-only prompt', async () => {
