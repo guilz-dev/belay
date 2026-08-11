@@ -178,6 +178,17 @@ export interface StatusReport {
   dogfood: DogfoodStatus
   health: HealthSnapshot
   visibility: AuditVisibilityReport
+  fileCheckpoint: {
+    enabled: boolean
+    allowNonGit: boolean
+    transactionalEnabled: boolean
+    durableCheckpointEnabled: boolean
+    maxFiles: number
+    maxSourceBytes: number
+    maxWorkspaceBytes: number
+    prepareTimeoutMs: number
+    copyConcurrency: number
+  }
 }
 
 export interface ReportOptions {

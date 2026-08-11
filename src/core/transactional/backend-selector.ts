@@ -4,6 +4,7 @@ import type {
   TransactionalBackendProbe,
   TransactionalBackendSelection,
 } from './backend.js'
+import { fileCheckpointBackend } from './file-checkpoint-backend.js'
 import { isDirtyWorktree, isGitWorktreeAvailable } from './git-worktree.js'
 import { gitWorktreeBackend } from './git-worktree-backend.js'
 
@@ -74,7 +75,14 @@ async function probeFileCheckpointForGit(
   if (isolationReason) {
     return fileCheckpointProbe(isolationReason, [...signals, 'isolation_unavailable'])
   }
-  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, [...signals, 'not_implemented'])
+  const backendProbe = await fileCheckpointBackend.probe(context)
+  if (backendProbe.eligible) {
+    return backendProbe
+  }
+  return fileCheckpointProbe(backendProbe.reason ?? FILE_CHECKPOINT_NOT_IMPLEMENTED, [
+    ...signals,
+    ...(backendProbe.reason === FILE_CHECKPOINT_NOT_IMPLEMENTED ? ['not_implemented'] : []),
+  ])
 }
 
 async function probeFileCheckpointForNonGit(
@@ -112,6 +120,12 @@ export async function selectTransactionalBackend(
 
   if (await isGitWorktreeAvailable(context.repoRoot)) {
     const fileProbe = await probeFileCheckpointForGit(context)
+    if (fileProbe.eligible) {
+      return {
+        backend: fileCheckpointBackend,
+        probe: fileProbe,
+      }
+    }
     return {
       backend: null,
       probe: fileProbe,

@@ -25,6 +25,17 @@ export {
 export { evaluateTransactionalDiff } from './diff-evaluator.js'
 export { isTransactionalEligible } from './eligibility.js'
 export {
+  FILE_CHECKPOINT_PROTECTED_PATH_CHANGED,
+  fileCheckpointBackend,
+} from './file-checkpoint-backend.js'
+export {
+  FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
+  FILE_CHECKPOINT_GIT_METADATA_CHANGED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
+  FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED,
+  resolveExecutionCwdRelative,
+} from './file-checkpoint-git.js'
+export {
   collectDeadOwnerStaging,
   type FileCheckpointOwnerMarker,
   isOwnerProcessAlive,
@@ -40,6 +51,7 @@ export {
 export {
   buildFileTreeIndex,
   diffFileTreeIndices,
+  FileCheckpointDiagnosticError,
   type FileTreeEntry,
   type FileTreeIndex,
   type ObservedFileChange,

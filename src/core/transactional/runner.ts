@@ -3,6 +3,7 @@ import {
   runWithBoundaryRunnable,
 } from '../capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../capability/boundary-session.js'
+import { resolveGuestWorkdir } from '../capability/boundary-workspace-mount.js'
 import {
   discardPreparedRecoveryCheckpoint,
   listRecoveryCheckpoints,
@@ -15,6 +16,7 @@ import type { ClassifyResult } from '../types.js'
 import { buildObservedChangesFromTransactional } from './apply-observed-changes.js'
 import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
+import { FileCheckpointDiagnosticError } from './file-tree.js'
 import {
   applyWorktreeChanges,
   resolveWorktreeCwd,
@@ -75,7 +77,35 @@ export async function runTransactionalExecution(
   let snapshot: Awaited<ReturnType<typeof selection.backend.prepare>> | null = null
   try {
     snapshot = await selection.backend.prepare(backendContext)
-    const execCwd = resolveWorktreeCwd(repoRoot, snapshot.executionRoot, cwd)
+    const snapshotAudit = {
+      transactionalBackend: snapshot.backend,
+      resourceKind: snapshot.resourceKind,
+      baselineTreeHash: snapshot.baselineTreeHash,
+      snapshotFileCount: snapshot.snapshotFileCount,
+      snapshotSourceBytes: snapshot.snapshotSourceBytes,
+      snapshotWorkspaceBytes: snapshot.snapshotWorkspaceBytes,
+      snapshotCopyStrategy: snapshot.copyStrategy,
+      snapshotPrepareMs: snapshot.snapshotPrepareMs,
+    }
+    const runOptions =
+      snapshot.backend === 'file_checkpoint' && snapshot.executionCwdRelative !== undefined
+        ? {
+            mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
+            workspaceMount: {
+              hostSourceRoot: snapshot.executionRoot,
+              guestTargetRoot: snapshot.resourceRoot,
+              cwdRelative: snapshot.executionCwdRelative,
+              writable: true,
+              hideHostSourcePath: true,
+            },
+          }
+        : {
+            mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
+          }
+    const execCwd =
+      snapshot.backend === 'file_checkpoint' && runOptions.workspaceMount
+        ? resolveGuestWorkdir(runOptions.workspaceMount)
+        : resolveWorktreeCwd(repoRoot, snapshot.executionRoot, cwd)
     const boundaryContext =
       params.boundaryContext ?? hostIntegrationBoundaryContext(params.repoRoot)
     const shellResult = await runWithBoundaryRunnable(boundaryContext.driver, {
@@ -83,9 +113,7 @@ export async function runTransactionalExecution(
       command,
       cwd: execCwd,
       timeoutMs,
-      runOptions: {
-        mountReadOnly: boundaryMountReadOnlyFromPrediction(predicted),
-      },
+      runOptions,
     })
 
     if (shellResult.timedOut) {
@@ -95,6 +123,7 @@ export async function runTransactionalExecution(
         skipReason: 'transactional_timed_out',
         predicted,
         result: predicted,
+        ...snapshotAudit,
         commandExitCode: shellResult.exitCode,
         commandSignal: shellResult.signal,
         timedOut: true,
@@ -108,6 +137,7 @@ export async function runTransactionalExecution(
         skipReason: 'transactional_command_failed',
         predicted,
         result: predicted,
+        ...snapshotAudit,
         commandExitCode: shellResult.exitCode,
         commandSignal: shellResult.signal,
       }
@@ -117,8 +147,9 @@ export async function runTransactionalExecution(
     const observed = evaluateTransactionalDiff(changes, diffContext)
 
     if (observed.verdict === 'allow') {
+      await snapshot.validateSourceState?.()
       const observedChanges = await buildObservedChangesFromTransactional(
-        repoRoot,
+        snapshot.baselineRoot ?? repoRoot,
         snapshot.executionRoot,
         changes,
       )
@@ -127,11 +158,13 @@ export async function runTransactionalExecution(
           ? await prepareRecoveryCheckpoint({
               stateDir,
               repoRoot,
+              baselinePath: snapshot.baselineRoot ?? repoRoot,
               worktreePath: snapshot.executionRoot,
               commandFingerprint: predicted.fingerprint,
               changes,
               protectedRoots: diffContext.protectedRoots,
               config: params.checkpoint,
+              backend: snapshot.backend,
             })
           : null
       try {
@@ -160,13 +193,14 @@ export async function runTransactionalExecution(
           observed,
           result,
           worktreePath: snapshot.executionRoot,
+          ...snapshotAudit,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
           ...(checkpoint && receipt
             ? {
                 recoveryCheckpointId: checkpoint.checkpointId,
-                recoveryBackend: 'git_worktree' as const,
+                recoveryBackend: snapshot.backend,
                 recoveryProofHash: receipt.proofHash,
                 recoveryState: 'applied' as const,
               }
@@ -206,6 +240,7 @@ export async function runTransactionalExecution(
           observed,
           result,
           worktreePath: snapshot.executionRoot,
+          ...snapshotAudit,
           commandExitCode: shellResult.exitCode,
           commandSignal: shellResult.signal,
           timedOut: shellResult.timedOut,
@@ -226,6 +261,7 @@ export async function runTransactionalExecution(
       observed,
       result,
       worktreePath: snapshot.executionRoot,
+      ...snapshotAudit,
       commandExitCode: shellResult.exitCode,
       commandSignal: shellResult.signal,
       timedOut: shellResult.timedOut,
@@ -235,12 +271,29 @@ export async function runTransactionalExecution(
       ok: false,
       skipped: true,
       skipReason: error instanceof Error ? error.message : 'transactional_execution_failed',
+      ...(error instanceof FileCheckpointDiagnosticError ? { skipDetail: error.diagnostic } : {}),
       predicted,
       result: predicted,
+      ...(snapshot
+        ? {
+            transactionalBackend: snapshot.backend,
+            resourceKind: snapshot.resourceKind,
+            baselineTreeHash: snapshot.baselineTreeHash,
+            snapshotFileCount: snapshot.snapshotFileCount,
+            snapshotSourceBytes: snapshot.snapshotSourceBytes,
+            snapshotWorkspaceBytes: snapshot.snapshotWorkspaceBytes,
+            snapshotCopyStrategy: snapshot.copyStrategy,
+            snapshotPrepareMs: snapshot.snapshotPrepareMs,
+          }
+        : {}),
     }
   } finally {
     if (snapshot) {
-      await snapshot.cleanup()
+      try {
+        await snapshot.cleanup()
+      } catch {
+        // Cleanup is best effort and must not overturn a verified apply or observed-risk result.
+      }
     }
   }
 }

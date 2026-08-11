@@ -34,6 +34,11 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
     dogfood: operational.dogfood,
     health,
     visibility,
+    fileCheckpoint: {
+      ...config.policy.transactional.fileCheckpoint,
+      transactionalEnabled: config.policy.transactional.enabled,
+      durableCheckpointEnabled: config.policy.transactional.checkpoint?.enabled === true,
+    },
   }
 }
 
@@ -63,6 +68,8 @@ export function formatStatusReport(report: StatusReport): string {
     `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} (mode=${report.dogfood.mode}, unknownLocalEffect=${report.dogfood.unknownLocalEffect})`,
     `Metrics: ${report.dogfood.gateEvents} gate events, ${report.dogfood.wouldBlockCount} would-block (${(report.dogfood.wouldBlockRate * 100).toFixed(1)}%)`,
     `Ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'not yet'}`,
+    `File checkpoint: ${report.fileCheckpoint.enabled ? 'enabled' : 'disabled'} (transactional=${report.fileCheckpoint.transactionalEnabled}, durable=${report.fileCheckpoint.durableCheckpointEnabled}, nonGit=${report.fileCheckpoint.allowNonGit})`,
+    `File checkpoint limits: files=${report.fileCheckpoint.maxFiles}, sourceBytes=${report.fileCheckpoint.maxSourceBytes}, workspaceBytes=${report.fileCheckpoint.maxWorkspaceBytes}, prepareTimeoutMs=${report.fileCheckpoint.prepareTimeoutMs}, copyConcurrency=${report.fileCheckpoint.copyConcurrency}`,
     '',
     'Audit visibility:',
     `  Gate events: ${report.visibility.gateEvents}`,

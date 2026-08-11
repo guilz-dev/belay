@@ -14,7 +14,6 @@ import {
   FILE_CHECKPOINT_DURABLE_REQUIRED,
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
-  FILE_CHECKPOINT_NOT_IMPLEMENTED,
   probeTransactionalBackends,
   selectTransactionalBackend,
 } from '../core/transactional/backend-selector.js'
@@ -119,7 +118,7 @@ describe('transactional backend selector', () => {
     expect(selection.probe.reason).toBe(FILE_CHECKPOINT_DURABLE_REQUIRED)
   })
 
-  it('reports not implemented when file checkpoint prerequisites are met on dirty Git', async () => {
+  it('selects file_checkpoint when prerequisites are met on dirty Git', async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
 
@@ -133,10 +132,10 @@ describe('transactional backend selector', () => {
       }),
     )
 
-    expect(selection.backend).toBeNull()
-    expect(selection.skipReason).toBe('dirty_worktree')
-    expect(selection.probe.reason).toBe(FILE_CHECKPOINT_NOT_IMPLEMENTED)
-    expect(selection.probe.signals).toContain('not_implemented')
+    expect(selection.backend?.id).toBe('file_checkpoint')
+    expect(selection.probe.eligible).toBe(true)
+    expect(selection.probe.signals).toContain('dirty_git_file_checkpoint')
+    expect(selection.skipReason).toBeUndefined()
   })
 
   it('requires attested workspace isolation before file checkpoint on dirty Git', async () => {

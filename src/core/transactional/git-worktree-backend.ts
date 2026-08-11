@@ -55,6 +55,7 @@ export const gitWorktreeBackend: TransactionalBackend = {
       backend: 'git_worktree',
       resourceRoot: context.repoRoot,
       executionRoot: snapshot.worktreePath,
+      resourceKind: 'git_repository',
       resourceIdentity: '',
       baselineTreeHash: '',
       excludedRoots: context.dirtyIgnoreRoots ?? [],

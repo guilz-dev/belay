@@ -24,10 +24,19 @@ export interface AuditRecord {
   predictedAssessment?: Assessment
   observedAssessment?: Assessment
   transactional?: boolean
+  transactionalBackend?: 'git_worktree' | 'file_checkpoint'
+  resourceKind?: 'git_repository' | 'directory'
+  baselineTreeHash?: string
+  snapshotFileCount?: number
+  snapshotSourceBytes?: number
+  snapshotWorkspaceBytes?: number
+  snapshotCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  snapshotPrepareMs?: number
   transactionalReason?: string
   transactionalCategories?: string[]
   transactionalChangeCount?: number
   transactionalSkipReason?: string
+  transactionalSkipDetail?: string
   recoveryCheckpointId?: string
   recoveryBackend?: string
   recoveryProofHash?: string

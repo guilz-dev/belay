@@ -734,6 +734,14 @@ export async function evaluateGatedAction(
       observedAssessment = txResult.observed.assessment
       transactionalLayer = {
         transactional: true,
+        transactionalBackend: txResult.transactionalBackend,
+        resourceKind: txResult.resourceKind,
+        baselineTreeHash: txResult.baselineTreeHash,
+        snapshotFileCount: txResult.snapshotFileCount,
+        snapshotSourceBytes: txResult.snapshotSourceBytes,
+        snapshotWorkspaceBytes: txResult.snapshotWorkspaceBytes,
+        snapshotCopyStrategy: txResult.snapshotCopyStrategy,
+        snapshotPrepareMs: txResult.snapshotPrepareMs,
         executionRoute: `boundary:${boundaryContext.driverId}`,
         enforcementStatus: 'mediated_unattested',
         transactionalReason: txResult.observed.reason,
@@ -758,7 +766,16 @@ export async function evaluateGatedAction(
       result = recoveryFailClosedResult(predicted, failReason, [skipReason])
       transactionalLayer = {
         transactional: false,
+        transactionalBackend: txResult.transactionalBackend,
+        resourceKind: txResult.resourceKind,
+        baselineTreeHash: txResult.baselineTreeHash,
+        snapshotFileCount: txResult.snapshotFileCount,
+        snapshotSourceBytes: txResult.snapshotSourceBytes,
+        snapshotWorkspaceBytes: txResult.snapshotWorkspaceBytes,
+        snapshotCopyStrategy: txResult.snapshotCopyStrategy,
+        snapshotPrepareMs: txResult.snapshotPrepareMs,
         transactionalSkipReason: skipReason,
+        transactionalSkipDetail: txResult.skipDetail,
         recoveryFailClosed: true,
       }
     }

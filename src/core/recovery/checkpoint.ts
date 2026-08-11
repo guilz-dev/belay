@@ -38,12 +38,20 @@ import {
   withoutRecoveryBlob,
 } from './snapshot-node.js'
 import type {
+  RecoveryBackend,
   RecoveryCheckpointEntryV2,
   RecoveryCheckpointManifest,
   RecoveryCheckpointState,
   RecoveryCheckpointSummary,
   RecoveryProofV1,
 } from './types.js'
+
+function recoveryProofProbeSignals(backend: RecoveryBackend): string[] {
+  if (backend === 'file_checkpoint') {
+    return ['dirty_git_worktree', 'file_checkpoint', 'observed_repo_local_diff']
+  }
+  return ['clean_git_worktree', 'observed_repo_local_diff']
+}
 
 export const RECOVERY_CHECKPOINT_QUOTA = 'recovery_checkpoint_quota_exceeded'
 
@@ -88,12 +96,16 @@ async function garbageCollect(
 export async function prepareRecoveryCheckpoint(params: {
   stateDir: string
   repoRoot: string
+  /** Immutable pre-command source for recovery blobs, when available. */
+  baselinePath?: string
   worktreePath: string
   commandFingerprint: string
   changes: TransactionalFileChange[]
   protectedRoots?: string[]
   config: CheckpointConfig
+  backend?: RecoveryBackend
 }): Promise<PreparedRecoveryCheckpoint> {
+  const backend = params.backend ?? 'git_worktree'
   await mkdir(checkpointsRoot(params.stateDir), { recursive: true, mode: 0o700 })
   await cleanupOrphanedStaging(params.stateDir)
   await garbageCollect(params.stateDir, params.config, params.repoRoot)
@@ -134,10 +146,14 @@ export async function prepareRecoveryCheckpoint(params: {
       ) {
         throw new Error('recovery_protected_path')
       }
+      const baseline = await assertRecoverySafeTarget(
+        params.baselinePath ?? params.repoRoot,
+        change.relativePath,
+      )
       const source = await assertRecoverySafeTarget(params.worktreePath, change.relativePath)
       entries.push({
         path: change.relativePath,
-        before: await captureRecoverySnapshot(target, {
+        before: await captureRecoverySnapshot(baseline, {
           blobDir: path.join(temporary, 'blobs'),
         }),
         after: withoutRecoveryBlob(await captureRecoverySnapshot(source)),
@@ -147,7 +163,7 @@ export async function prepareRecoveryCheckpoint(params: {
     const createdAt = new Date().toISOString()
     const proof: RecoveryProofV1 = {
       version: 1,
-      backend: 'git_worktree',
+      backend,
       inputFingerprint: params.commandFingerprint,
       resourceScope: canonicalPath(params.repoRoot),
       baseStateHash: hashValue(canonicalStringify(entries.map((entry) => entry.before))),
@@ -156,12 +172,12 @@ export async function prepareRecoveryCheckpoint(params: {
       expiresAt: new Date(
         Date.now() + params.config.appliedRetentionHours * 60 * 60 * 1000,
       ).toISOString(),
-      probeSignals: ['clean_git_worktree', 'observed_repo_local_diff'],
+      probeSignals: recoveryProofProbeSignals(backend),
     }
     const manifest: RecoveryCheckpointManifest = {
       version: 2,
       checkpointId,
-      backend: 'git_worktree',
+      backend,
       repoRoot: canonicalPath(params.repoRoot),
       resourceKind: 'git_repository',
       repoIdentity: await currentRecoveryResourceIdentity(params.repoRoot, 'git_repository'),

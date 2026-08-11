@@ -32,6 +32,7 @@ import {
   recoveryNotificationSetupWarning,
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
+import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { egressStatus } from '../services/egress-service.js'
@@ -356,6 +357,24 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
     }
 
+    const fileCheckpoint = loadedConfig.policy.transactional.fileCheckpoint
+    if (fileCheckpoint.enabled) {
+      const copyStrategy = await probeFileCloneStrategy()
+      notes.push(
+        `File checkpoint: enabled (copyStrategy=${copyStrategy}, non-Git=${fileCheckpoint.allowNonGit}, maxFiles=${fileCheckpoint.maxFiles}, maxSourceBytes=${fileCheckpoint.maxSourceBytes}, maxWorkspaceBytes=${fileCheckpoint.maxWorkspaceBytes}, prepareTimeoutMs=${fileCheckpoint.prepareTimeoutMs}, copyConcurrency=${fileCheckpoint.copyConcurrency}).`,
+      )
+      if (!loadedConfig.policy.transactional.enabled) {
+        warnings.push(
+          'File checkpoint is enabled but transactional execution is disabled; dirty Git workspaces cannot use the backend.',
+        )
+      }
+      if (!loadedConfig.policy.transactional.checkpoint?.enabled) {
+        warnings.push(
+          'File checkpoint is enabled but durable Recovery checkpointing is disabled; backend selection will fail closed.',
+        )
+      }
+    }
+
     if (loadedConfig.policy.transactional.checkpoint?.enabled) {
       notes.push(
         'Recovery checkpoint: enabled — repo-local pre-images are persisted before observed-safe transactional apply.',
@@ -411,6 +430,14 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const boundaryDriver =
       loadedConfig.capability?.boundaryDriver ??
       (loadedConfig.sandbox.runtime === 'container' ? 'container' : null)
+    if (
+      loadedConfig.policy.transactional.fileCheckpoint.enabled &&
+      boundaryDriver !== 'container'
+    ) {
+      warnings.push(
+        'File checkpoint requires an attested workspace-isolating boundary driver; configure the container boundary and run belay session start.',
+      )
+    }
     if (loadedConfig.capability || boundaryDriver === 'container') {
       const attestationPath = boundaryAttestationPath(repoRoot, loadedConfig)
       const attestationFormat = await inspectBoundaryAttestationFile(attestationPath)
@@ -433,6 +460,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       } else if (!session.fresh) {
         warnings.push(
           'Boundary attestation is stale or expired. Run belay session start to refresh.',
+        )
+      } else if (
+        loadedConfig.policy.transactional.fileCheckpoint.enabled &&
+        session.attestation.isolatesWorkspaceMounts !== true
+      ) {
+        warnings.push(
+          'File checkpoint is enabled but the fresh boundary attestation does not prove workspace-mount isolation. Run belay session start with a compatible boundary.',
         )
       } else if (session.attestation.probeSignals.includes('repo-mount-ro-default')) {
         notes.push(

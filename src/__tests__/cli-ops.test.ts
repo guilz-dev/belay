@@ -137,6 +137,13 @@ describe('v0.2 operational commands', () => {
 
     const before = await statusProject({ targetDir: repoRoot })
     expect(before.pending).toHaveLength(1)
+    expect(before.fileCheckpoint).toMatchObject({
+      enabled: false,
+      allowNonGit: false,
+      transactionalEnabled: false,
+      durableCheckpointEnabled: false,
+      maxFiles: 100_000,
+    })
 
     const revoked = await revokeApproval({
       targetDir: repoRoot,

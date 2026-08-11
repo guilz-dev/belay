@@ -29,15 +29,24 @@ export interface TransactionalExecutionResult {
   ok: boolean
   skipped?: boolean
   skipReason?: string
+  skipDetail?: string
   predicted: ClassifyResult
   observed?: TransactionalDiffEvaluation
   result: ClassifyResult
   worktreePath?: string
+  transactionalBackend?: 'git_worktree' | 'file_checkpoint'
+  resourceKind?: 'git_repository' | 'directory'
+  baselineTreeHash?: string
+  snapshotFileCount?: number
+  snapshotSourceBytes?: number
+  snapshotWorkspaceBytes?: number
+  snapshotCopyStrategy?: 'clonefile' | 'reflink' | 'copy'
+  snapshotPrepareMs?: number
   commandExitCode?: number | null
   commandSignal?: string | null
   timedOut?: boolean
   recoveryCheckpointId?: string
-  recoveryBackend?: 'git_worktree'
+  recoveryBackend?: 'git_worktree' | 'file_checkpoint'
   recoveryProofHash?: string
   recoveryState?: 'applied'
 }
