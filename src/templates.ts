@@ -64,12 +64,17 @@ export async function renderRuntimeCore(
   adapter: 'cursor' | 'claude' | 'codex' = 'cursor',
 ): Promise<string> {
   const bundle = await readRuntimeBundle(adapter)
-  const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(`${PACKAGE_VERSION}@${new Date().toISOString()}`)};\n`
+  const runtimeBuildStamp = `${PACKAGE_VERSION}@${new Date().toISOString()}`
+  const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(runtimeBuildStamp)};\n`
   const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`
+  const provenance = `globalThis[Symbol.for("agent-belay.runtime-provenance")] = ${JSON.stringify({
+    runtimeVersion: PACKAGE_VERSION,
+    runtimeBuildStamp,
+  })};\n`
   const withoutStamp = bundle
     .replace(/^export const RUNTIME_BUILD_STAMP = .*;\n/gm, '')
     .replace(/^export const RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
     .replace(/^var RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
     .replace(/\n {2}RUNTIME_PACKAGE_VERSION,\n/, '\n')
-  return `${versionLine}${stamp}${withoutStamp}`
+  return `${versionLine}${stamp}${provenance}${withoutStamp}`
 }

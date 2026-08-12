@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,7 @@ import {
 } from '../../adapters/shared/gate-runtime.js'
 import { mergeConfig } from '../../core/config.js'
 import * as gateEngine from '../../core/gate-engine.js'
+import { PACKAGE_VERSION } from '../../version.js'
 
 describe('gate-runtime integration', () => {
   afterEach(() => {
@@ -52,6 +53,31 @@ describe('gate-runtime integration', () => {
     expect(verdict.axes?.location).toBe('repo_local')
     expect(auditEvents[0]?.schemaVersion).toBe(2)
     expect(auditEvents[0]?.location).toBe('repo_local')
+  })
+
+  it('records runtime and configuration provenance with each audit event', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-provenance-'))
+    const ctx = gateContext(repoRoot)
+
+    await evaluateGatedAction(ctx, createDefaultGateRuntimeDeps(), {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'git status',
+    })
+
+    const auditPath = path.join(repoRoot, enforceConfig.audit.logPath)
+    const [record] = (await readFile(auditPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+
+    expect(record).toMatchObject({
+      runtimeVersion: PACKAGE_VERSION,
+      runtimeBuildStamp: expect.stringMatching(
+        new RegExp(`^${PACKAGE_VERSION.replace(/\./g, '\\.')}@`),
+      ),
+      configFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
   })
 
   it('audits distinct effect plans for malformed gated inputs', async () => {

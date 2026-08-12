@@ -130,12 +130,38 @@ import type {
   ClassifierOptions,
 } from '../../core/types.js'
 import { egressStatus } from '../../services/egress-service.js'
+import { PACKAGE_VERSION } from '../../version.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
 const EMPTY_APPROVALS: ApprovalStateFile = {
   version: 1,
   approvals: [],
+}
+
+const RUNTIME_PROVENANCE_KEY = Symbol.for('agent-belay.runtime-provenance')
+
+interface RuntimeBuildProvenance {
+  runtimeVersion?: unknown
+  runtimeBuildStamp?: unknown
+}
+
+function auditProvenance(config: BelayConfigV3): Record<string, string> {
+  const runtime = (globalThis as Record<PropertyKey, unknown>)[RUNTIME_PROVENANCE_KEY] as
+    | RuntimeBuildProvenance
+    | undefined
+  const runtimeVersion =
+    typeof runtime?.runtimeVersion === 'string' ? runtime.runtimeVersion : PACKAGE_VERSION
+  const runtimeBuildStamp =
+    typeof runtime?.runtimeBuildStamp === 'string'
+      ? runtime.runtimeBuildStamp
+      : `${PACKAGE_VERSION}@source`
+
+  return {
+    runtimeVersion,
+    runtimeBuildStamp,
+    configFingerprint: hashValue(canonicalStringify(config)),
+  }
 }
 
 function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
@@ -220,7 +246,12 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
     async appendAudit(ctx, event) {
       const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
       await mkdir(path.dirname(auditPath), { recursive: true })
-      const record: Record<string, unknown> = { timestamp: new Date().toISOString(), ...event }
+      const provenance = auditProvenance(ctx.config)
+      const record: Record<string, unknown> = {
+        timestamp: new Date().toISOString(),
+        ...event,
+        ...provenance,
+      }
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment
       }
@@ -228,6 +259,7 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
         string,
         unknown
       >
+      Object.assign(scrubbed, provenance)
       await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
         encoding: 'utf8',
         flag: 'a',

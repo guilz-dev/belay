@@ -103,6 +103,8 @@ describe('v0.2 operational commands', () => {
     expect(coreAfter).toMatch(
       new RegExp(`RUNTIME_BUILD_STAMP = "${PACKAGE_VERSION.replace(/\./g, '\\.')}@`),
     )
+    expect(coreAfter).toContain('agent-belay.runtime-provenance')
+    expect(coreAfter).toContain(`"runtimeVersion":"${PACKAGE_VERSION}"`)
     expect(coreAfter).toContain('verdict')
   })
 
