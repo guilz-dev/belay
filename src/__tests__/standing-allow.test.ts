@@ -12,8 +12,6 @@ import {
   type StandingAllowFile,
 } from '../core/standing-allow.js'
 import type { ClassifyResult } from '../core/types.js'
-import { MUST_ALLOW_SHELL_COMMANDS } from '../corpus/must-allow-commands.js'
-import { STANDING_ALLOW_CATALOG } from '../corpus/standing-allow-catalog.generated.js'
 
 function denyResult(overrides: Partial<ClassifyResult> = {}): ClassifyResult {
   return {
@@ -40,38 +38,42 @@ describe('standing-allow', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('standing-allow catalog covers structural MUST-ALLOW commands', () => {
-    const catalogCommands = new Set(
-      STANDING_ALLOW_CATALOG.shell.mustAllow.map((entry) => entry.command),
+  it('has no catalog-only source or emitted audit field', async () => {
+    const repoRoot = path.resolve(import.meta.dirname, '../..')
+    const [standingSource, gateRuntimeSource] = await Promise.all([
+      readFile(path.join(repoRoot, 'src/core/standing-allow.ts'), 'utf8'),
+      readFile(path.join(repoRoot, 'src/adapters/shared/gate-runtime.ts'), 'utf8'),
+    ])
+
+    expect(standingSource).not.toContain("'provably-benign-corpus'")
+    expect(standingSource).not.toContain("'must-allow-catalog'")
+    expect(standingSource).not.toContain('catalogCommand')
+    expect(gateRuntimeSource).not.toContain('standingAllowCatalogCommand')
+  })
+
+  it('does not let a shell standing entry override a partial EffectPlan ask', () => {
+    const state = addStandingAllowEntry(
+      { version: 1, entries: [] },
+      {
+        kind: 'shell',
+        fingerprint: 'partial-plan-fp',
+        source: 'operator',
+        reason: 'legacy shell standing allow',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      },
     )
-    for (const command of MUST_ALLOW_SHELL_COMMANDS) {
-      expect(catalogCommands.has(command), `missing catalog entry for ${command}`).toBe(true)
-    }
-  })
-
-  it('matches provably-benign catalog by normalized shell command', () => {
-    const match = resolveStandingAllowMatch({
-      kind: 'shell',
-      result: denyResult({ normalizedCommand: 'git status', summary: 'git status' }),
-      repoRoot: '/tmp/repo',
-      state: { version: 1, entries: [] },
-    })
-    expect(match?.source).toBe('provably-benign-corpus')
-    expect(match?.catalogCommand).toBe('git status')
-  })
-
-  it('matches must-allow catalog entries', () => {
     const match = resolveStandingAllowMatch({
       kind: 'shell',
       result: denyResult({
-        normalizedCommand: 'pnpm test',
-        summary: 'pnpm test',
-        fingerprint: 'pnpm-test-fp',
+        normalizedCommand: 'git status',
+        summary: 'git status',
+        fingerprint: 'partial-plan-fp',
       }),
       repoRoot: '/tmp/repo',
-      state: { version: 1, entries: [] },
+      state,
     })
-    expect(match?.source).toBe('must-allow-catalog')
+
+    expect(match).toBeNull()
   })
 
   it('does not match when verdict is already allow', () => {
@@ -176,11 +178,11 @@ describe('standing-allow', () => {
     }
   })
 
-  it('matches operator state entries by fingerprint with TTL', () => {
+  it('preserves non-shell operator state entries by fingerprint with TTL', () => {
     const state = addStandingAllowEntry(
       { version: 1, entries: [] },
       {
-        kind: 'shell',
+        kind: 'tool',
         fingerprint: 'operator-fp',
         source: 'availability-reconfirmed',
         reason: 'judge_fallback',
@@ -189,7 +191,7 @@ describe('standing-allow', () => {
       },
     )
     const match = resolveStandingAllowMatch({
-      kind: 'shell',
+      kind: 'tool',
       result: denyResult({
         normalizedCommand: 'gh pr list',
         fingerprint: 'operator-fp',

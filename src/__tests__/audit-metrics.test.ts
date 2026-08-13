@@ -23,6 +23,35 @@ describe('audit-metrics', () => {
     expect(records).toHaveLength(2)
   })
 
+  it('keeps historical audit records readable without EffectPlan or runtime fields', () => {
+    const records = parseAuditNdjson(
+      [
+        JSON.stringify({
+          timestamp: '2026-01-01T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          reason: 'external_command',
+          by: 'v2',
+          summary: 'curl https://example.com',
+        }),
+        '{malformed',
+      ].join('\n'),
+    )
+    const normalized = records.map(toAuditRecord)
+    const report = computeAuditMetrics(records)
+
+    expect(normalized).toEqual([
+      expect.objectContaining({
+        verdict: 'deny_pending_approval',
+        by: 'verdict',
+      }),
+    ])
+    expect(report.gateEvents).toBe(1)
+    expect(report.wouldBlockCount).toBe(1)
+    expect(report.gateEventsByRuntime).toEqual({ unrecorded: 1 })
+  })
+
   it('computes would-block metrics for dogfood config', () => {
     const report = computeAuditMetrics(
       [
@@ -57,6 +86,8 @@ describe('audit-metrics', () => {
     expect(report.wouldBlockRate).toBe(0.5)
     expect(report.approvalRecordedCount).toBe(1)
     expect(report.dogfood.notes.join(' ')).toContain('Dogfood config detected')
+    expect(report.dogfood.notes.join(' ')).toContain('EffectPlan semantics')
+    expect(report.dogfood.notes.join(' ')).not.toContain('overrides.allow')
   })
 
   it('groups gate events by recorded runtime build', () => {
@@ -356,5 +387,37 @@ describe('audit-metrics', () => {
     expect(formatted).toContain('Repeated fingerprint asks')
     expect(formatted).toContain('x2 short-fp: git status')
     expect(formatted).not.toContain('short-fp…')
+  })
+
+  it('recommends exact Effect remediation instead of standing command lists', () => {
+    const report = computeAuditMetrics(
+      [
+        {
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          reason: 'unknown_local_effect',
+          wouldBlock: true,
+          fingerprint: 'fp-repeat',
+          summary: 'make build',
+        },
+        {
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          reason: 'unknown_local_effect',
+          wouldBlock: true,
+          fingerprint: 'fp-repeat',
+          summary: 'make build',
+        },
+      ],
+      { mode: 'audit', unknownLocalEffect: 'deny' },
+    )
+    const guidance = report.dogfood.notes.join(' ')
+
+    expect(guidance).toContain('EffectPlan semantics')
+    expect(guidance).toContain('exact approval')
+    expect(guidance).not.toContain('overrides.allow')
+    expect(guidance).not.toContain('standing-allow')
   })
 })

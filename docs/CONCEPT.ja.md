@@ -1,10 +1,12 @@
 # agent-belay CONCEPT v2.0 — belay 再設計: 復元可能性の床(restorability floor)
 
-Status: **検証済みプロトタイプに基づく設計(作り直しの土台)**
+Status: **現行コンセプト（プロトタイプ履歴は根拠として保持）**
 基づくもの: 動作確認済みスパイク `~/.belay-spike/`(`verdict.mjs` / `hook.mjs` / `warm.mjs`)
 思想の出典: Opus との原設計（storyline）、[`docs/adr/ADR-001-layered-enforcement.md`](./adr/ADR-001-layered-enforcement.md)
-位置づけ: v0.3〜v0.9 の「静的コマンドリストで事前予測する gate」を core において**置き換える**。
-ADR-001 が示した方向(予測を境界から外す)を、実測で裏づけた具体形。
+位置づけ: 正規化 shell の authority は
+[ADR-004](./adr/ADR-004-effectplan-shell-authority.md) が定める canonical
+`EffectPlan` → PolicyEngine projection。以下の Tier0/Tier1 記述はプロトタイプ時代の
+根拠であり、別の runtime authority ではない。
 
 > 日本語訳: [`CONCEPT.md`](./CONCEPT.md) が正本。両者が食い違う場合は英語版に従う。
 
@@ -27,7 +29,8 @@ belay は **YOLO モードで動かすエージェントのための、復元可
 
 - テスト赤でマージ / 雑なコミット / repo内のファイル削除 → 戻せる → **通す**
 - `drop db` / `git push --force` / 本番デプロイ / 秘密・永続エージェント設定 → 戻せない → **止める(人に渡す)**
-- ローカル復元可能な repo 外編集(例: IDE plan 文書) → デフォルト L3 では **Tier1 後に通す**
+- repo/workspace-local な可逆編集 → **allow_flagged**
+- repo 外編集 → 同一 Git common-dir identity または明示 trusted workspace root でない限り **ask**
 
 storyline 212 の到達点。「危険か」は主観で人の頭の中にしかないが、「戻せるか」はほぼ客観で、
 行動と環境の性質として判定できる。
@@ -52,69 +55,60 @@ storyline 212 の到達点。「危険か」は主観で人の頭の中にしか
 
 ---
 
-## 3. アーキテクチャ ── 2検出器の床
+## 3. アーキテクチャ ── 正規化 Effect の単一 authority
 
 `verdict(command, cwd, repoRoot)` が `allow` か `ask` を返す。
-**2つの独立した検出器のどちらかが「戻せない」と言えば ask。** 互いの穴が重ならないので、
-無限コスト案件に対する defense in depth になる。
+各 shell segment を再帰的に lower し、1つの canonical `EffectPlan` を構築する。
+runtime command allow/deny list は policy 判定に使わない。
 
 ```
 verdict(command, cwd, repoRoot):
 
-  ── Tier0:決定論(コード)。構造的に確実なものだけ。cwd を使う ──
-    git push / リモート操作        → not-restorable (ask)   ※remote は snapshot 外
-    git その他(ローカル)          → restorable (allow)     ※git snapshot で戻せる
-    control-plane 変更            → not-restorable (ask)   ※改ざん耐性(M3 台帳)
-    高リスクパスへの FS 変更      → not-restorable (ask)   ※ .git / ~ / 保護ルート
-    repo 内の FS 変更             → restorable (allow)     ※fs snapshot で戻せる
-    repo 外のローカル変更         → 判断保留 → Tier1      ※ Tier0 一括 ask ではない(ADR-002)
-    上記以外                        → 判断保留 → Tier1 へ
+  shell grammar / launcher / egress / Git を EffectRequirement へ lower
+    → canonical EffectPlan
+    → operation + resource + payload + evidence を PolicyEngine で評価
+    → 最も厳しい requirement を最終 projection にする
 
-  ── Tier1:ローカル LLM。列挙不能な意味。平坦な事実スキーマ ──
-    local_recoverable: 誤実行をローカルで戻せるか(snapshot / 再取得 / 再作成)?
-    destroys_history_or_secrets: git 履歴・秘密・永続エージェント設定を壊すか?
-        !local_recoverable OR destroys_history_or_secrets → not-restorable (ask)
-        else → restorable (allow)
-    ※読み取り(describe/list/get/SELECT/HTTP GET)は CHANGE しない → local_recoverable
-    ※ユーザ home 配下の IDE plan ファイルはローカル文書 → allow(MUST-ALLOW 台帳)
-
-  ── fallback ──
-    judge 落ち / タイムアウト → ask(安全側 escalate。開放領域なので)
-
-  床:  どれかが not-restorable → ask  /  全て restorable → allow(98%)
+  payloadなし network read / process inspect / 通常 fs read → allow
+  repo/workspace-local reversible mutation                   → allow_flagged
+  external mutation / 明示 payload・secret 送信              → ask
+  high-stakes / destructive Git / partial・indeterminate     → ask
 ```
 
-**レイヤ注記(ADR-001):** デフォルト L3+L4 では Tier1 後に repo 外の*ローカル復元可能*変更を通す。
-**L1-full** (`sandbox.runtime` 有効) は `gate-engine` で OS 境界を追加し、fs-scope 未許可の
-repo 外書き込み/リダイレクトを deny する — これは封じ込めであり床そのものではない。
+command name は grammar decoder 選択にだけ使う。`git fetch` / `git pull` は payloadなし
+network read + local reversible update なので `allow_flagged`、`git push` は remote mutation
+なので ask。linked worktree は canonical Git common-dir が一致するときだけ local とする。
+
+**レイヤ注記(ADR-001):** L3+L4 は協力的 agent 向け policy/approval。
+**L1-full** は別の OS 境界を加える。boundary resource scope と exact grant は command
+allowlist ではなく、EffectPlan projection を置き換えない。
 [`docs/guarantee-table.md`](./guarantee-table.md) を参照。
 
-### 役割分担が「実測で」決まった理由
+### 決定論的な構造解析が必要な理由
 
 | 検出器 | 担当 | なぜそこか(実測の根拠) |
 |---|---|---|
-| **Tier0(決定論)** | git リモート操作、control plane、高リスクパス | LLM が `git push --force` を「git だから戻せる」と**合理化して見逃した**。git のリモート挙動とパス算術は**文書化された事実**で、コードで確実に拾える。LLM の機嫌に依らない |
-| **Tier1(LLM)** | DB / クラウド / ネットワーク / repo 外の復元可能性 | 列挙が破綻する開放領域。`Write ~/.cursor/plans/foo`(allow) と `Write ~/.ssh/authorized_keys`(ask) を区別 |
-| **fallback** | judge 不在時の開放領域 | judge が落ちても床は壊れず、安全側に倒れる |
+| **Semantic lowering** | Git/egress/process/launcher grammar と resource | LLM が `git push --force` を合理化したため、文書化された operation semantics は決定論で扱う |
+| **Effect policy** | operation/resource/payload/evidence の disposition | command name 例外を authority にしない |
+| **Indeterminate fallback** | unsupported / partial grammar | 既知 Effect を保持しつつ indeterminate を追加して ask |
 
-これは「2Bでも当たる」ではなく「**2Bが当たる範囲だけ2Bに任せ、当たらない構造判断は決定論が拾う**」。
-小型ローカルモデル前提でアーキテクチャを組んだ結果。
+LLM judge は非同期 shadow evidence のみで、同期 gate decision を変更しない。
 
-### Tier1 のプロンプト設計(重要 ── 平坦な事実にする)
+### 過去の Tier1 prompt から得た教訓
 
 複合判断はモデルに合理化の余地を与える(force push が「git は戻せる、リモートは仮定で消す」で
-すり抜けた実例)。だから Tier1 には**構造化された事実フィールド**を使う:
+すり抜けた実例)。これが deterministic EffectPlan lowering の根拠になった。shadow judge
+にも単一の危険度ではなく構造化された事実フィールドを使う:
 
 > 誤実行を**ローカル**で戻せるか(filesystem/git snapshot、再ダウンロード、再作成)を評価する。
 > `.git` 削除、認証情報パス、シェル起動ファイル、crontab/launchd 等は `destroys_history_or_secrets`。
 > 外部システムの読み取りはローカル状態を変えない。復元可能性が不明なら not recoverable とする。
 
-構造化出力: `{local_recoverable: boolean, destroys_outside_repo: boolean, destroys_history_or_secrets: boolean, reason: string}`。
-レガシー `external_change` は互換のためマップする。
+shadow 出力は監査専用。legacy judge record は互換のため読み取り可能なまま残す。
 
 ---
 
-## 4. なぜローカル LLM(gemma4:e2b)か
+## 4. 過去のプロトタイプ: なぜローカル LLM を評価したか
 
 - **エグレスゼロ** ── belay は外部効果を止める道具。判定のたびにコマンド全文を cloud に送るのは
   自家撞着。ローカルなら判定がマシンの外に出ない
@@ -138,8 +132,8 @@ repo 外書き込み/リダイレクトを deny する — これは封じ込め
 ### trace(ndjson、全判定を記録)
 
 ```json
-{ "ts", "mode", "command", "cwd", "cwdFromPayload", "repoRoot",
-  "sandbox", "would", "by"(Tier0|Tier1|fallback), "reason" }
+{ "ts", "mode", "commandRedacted", "commandFingerprint", "cwd", "repoRoot",
+  "would", "effectPlanHash", "effectPlanCompleteness", "reason" }
 ```
 
 `would` は床が言ったこと(audit でも記録)。これが勝利条件の段階2(実分布計測)と、申告 vs 現実の
@@ -147,7 +141,9 @@ repo 外書き込み/リダイレクトを deny する — これは封じ込め
 
 ### 承認ループ(既存 belay から流用)
 
-`ask` → 人が `/belay-approve <id>` で一回だけ許可(one-shot、TTL、revoke)。
+`ask` → 人が `/belay-approve <id>` で one-shot / resource-scoped authorization を与える。
+fingerprint、exact request/resource、TTL/use count、存在する場合は EffectPlan/request hash
+に束縛する。
 storyline の「人が最終の不確実性を引き受ける」層。承認は**人の知識**(これは test DB だ等)と
 **substrate 宣言**(config)が持ち、モデルには聞かない(「バックアップ在るか」を judge に
 聞くと合理化する、の教訓)。
@@ -187,8 +183,8 @@ Cursor は sandbox 経路で `cwd:""` を送ることがある(実測)。その�
   その上に積んだ v0.3〜v0.9 の硬化(fail-closed リスト既定、control-plane ハッシュピン、
   サンドボックスブローカー、4次元判定 等)
 - 理由:これらは「コマンド名から効果を事前予測する」予測 gate で、リストの穴=安全性の穴。
-  本設計は予測を「構造的に確実な決定論(Tier0)」と「列挙不能な意味のローカル LLM(Tier1)」に
-  分け、リストを安全境界から外す
+  現行設計は shell を canonical EffectPlan に lower し、operation/resource/payload/evidence
+  を PolicyEngine で評価する。LLM は shadow-only。
 
 ### core の置き換え
 
@@ -202,17 +198,17 @@ Cursor は sandbox 経路で `cwd:""` を送ることがある(実測)。その�
 | 層 | ADR-001 | 本設計での現在地 |
 |---|---|---|
 | L4 人間の承認 | 最終受け皿 | **実装済み(流用)** |
-| L3 予測 | ノイズ削減 | **作り直し** = Tier0(構造的に確実)+ Tier1(列挙不能をローカル LLM)。リストではない |
+| L3 予測 | ノイズ削減 | **作り直し** = deterministic shell lowering + EffectPlan policy。LLM は shadow-only、runtime command list は inert |
 | L2 観測(substrate) | スナップショット上で実測 | **未実装(前提として宣言)** ← §10 の穴 |
 | L1 封じ込め(egress) | deny-all が境界 | 未実装(将来) |
 
-本設計は「L3+L4 を正しくやり直した(決定論 + ローカル LLM)」段階。
+本設計は「L3+L4 を正しくやり直した(deterministic effects + exact approval)」段階。
 「restorable か」の判定は L2 の substrate(git+fs スナップショット)が在る**前提**で答えている ──
 そこが次の層。
 
 ---
 
-## 9. 検証済みのこと(実測の記録)
+## 9. 過去のプロトタイプ実測記録
 
 - `permission:"ask"` は Cursor 実機で確認ダイアログを出す(`sandbox:false`/`true` 両方)
 - gemma4:e2b は「reversible」を operational に定義(= substrate で戻せるか、「バックアップ在る」は
@@ -226,14 +222,14 @@ Cursor は sandbox 経路で `cwd:""` を送ることがある(実測)。その�
 
 ---
 
-## 10. 正直な穴(命名・重大度つき)
+## 10. 過去のプロトタイプの穴（現行で supersede 済みを含む）
 
 | # | 穴 | 重大度 | 現状の挙動 |
 |---|---|---|---|
 | H1 | **チェーン `a && b` / コマンド置換 `$(...)` / サブシェル** をトークナイザが分割しない。隠れた破滅(`ls && dropdb prod`)を取りこぼす | **高(偽陰性)** | YOLO ベースラインに戻るだけ(悪化はしない)。**最優先で塞ぐ** |
 | H2 | sandbox 経路で **cwd が来ない** → 相対パスの包含が解けない | 中 | ask に倒す(安全だが偽陽性増の可能性) |
 | H3 | **コールドスタート** で初回開放コマンドが fallback ask | 低 | 安全側。プリウォークで緩和 |
-| H4 | **開放領域の残存偽陰性** ── 2B が知らない新種の外部変更ツールを allow しうる | 中(真の残存) | Tier0 の backstop が届かない唯一の領域。緩和:大きいモデル / よくある外部ファミリーの構造認識を第三検出器 / 承認キャッシュ |
+| H4 | **開放領域の残存偽陰性** ── 2B が知らない新種の外部変更ツールを allow しうる | 中(過去) | shell authority では supersede 済み。partial/unsupported EffectPlan は ask、LLM は shadow-only |
 | H5 | **substrate 未実装(L2)** ── 「restorable」は git+fs スナップショットが在る前提だが未実装。git追跡分は本物、未追跡ファイル削除は「再生成可能」に寄りかかる | 中 | git worktree / fs スナップショットを実装すれば文字通り真になる |
 | H6 | Tier1 = 2B はドリフトしうる | 低〜中 | 構造判断は決定論に逃がしてある。開放領域のみ LLM 単独 |
 
@@ -258,14 +254,15 @@ YOLO を強めて見逃すと悪化する。だから穴は正直に文書化す
 
 ---
 
-## 12. 作る順番(バージョン番号もロードマップも作らない、次の1つだけ)
+## 12. 過去の build order
 
 1. **Tier0 トークナイザ強化(H1)** ── `&& || ; |` と改行でセグメント分割、`$(...)`/バックティック/
    サブシェルを検出。各セグメントを判定し、解析不能なら ask。これで最大の穴が閉じる
 2. **adservarial コーパス + 評価ハーネス** ── 偽陰性=0 をハードゲートに。実 trace から育てる
 3. **audit dogfood 継続** ── 実分布の偽陽性を測り、コーパスの種にする
 4. (後で)**L2 substrate**(git worktree スナップショット)で「restorable」を文字通り真にする
-5. (後で)**承認キャッシュ**で describe 級の偽陽性を吸収(初回 ask → 許可登録 → 以降素通り)
+5. (superseded) standing approval cache は採用せず、EffectPlan semantics の修正または
+   exact one-shot/resource-scoped grant を使う
 
 各ステップは「作った日に使う」。動かないステップ・使わない最適化は作らない。
 

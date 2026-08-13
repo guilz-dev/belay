@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { isGitMetadataPath } from '../git-resource-identity.js'
 import { matchesSensitivePath } from '../glob.js'
 import {
   canonicalPath,
@@ -64,6 +65,9 @@ export function locationForPath(
 }
 
 export function isGitPath(resolvedPath: string, repoRoot: string): boolean {
+  if (isGitMetadataPath(resolvedPath, repoRoot)) {
+    return true
+  }
   const relative = relativeWithinRepo(repoRoot, resolvedPath)
   if (!relative) {
     return false

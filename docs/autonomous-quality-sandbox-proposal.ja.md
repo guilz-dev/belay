@@ -147,7 +147,7 @@ nightly probe が FN を検出 → issue 化までは自動。しかし **FIX �
 
 ### G5. FP 改善ループ（recursive-quality-loop）との未統合
 
-[`recursive-quality-loop.md`](./recursive-quality-loop.md) が指摘する FP 削減（harvest → standing-allow → simulate トリアージ）と、敵対的 FN 検知ループが **別ドキュメント・別運用** として存在する。統合ワークフローがない。
+[`recursive-quality-loop.md`](./recursive-quality-loop.md) が指摘する FP 削減（harvest → Effect semantics 修正 → simulate トリアージ）と、敵対的 FN 検知ループが **別ドキュメント・別運用** として存在する。統合ワークフローがない。
 
 ---
 
@@ -194,7 +194,7 @@ flowchart TB
 | ループ | 焦点 | 既存資産 | ワークフロー内の位置 |
 |---|---|---|---|
 | **FN 検知ループ** | must-ask 見逃し | probe, structural, corpus | diagnose → fix → verify |
-| **FP 削減ループ** | 過剰ブロック | harvest, simulate, standing-allow | harvest-review → simulate-triage → fix |
+| **FP 削減ループ** | 過剰ブロック | harvest, simulate, EffectPlan tests | harvest-review → simulate-triage → fix |
 
 統合原則: **FN 修正が常に優先**。FP 修正は FN ゲートを通過した後にのみ ratchet 可能。
 

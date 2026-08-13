@@ -8,6 +8,7 @@ import {
   evaluateGatedAction,
 } from '../../adapters/shared/gate-runtime.js'
 import { mergeConfig } from '../../core/config.js'
+import { buildShellEffectPlan } from '../../core/effect-ir/index.js'
 import * as gateEngine from '../../core/gate-engine.js'
 import { PACKAGE_VERSION } from '../../version.js'
 
@@ -117,7 +118,32 @@ describe('gate-runtime integration', () => {
     expect(auditEvents[0]?.effectIRHash).not.toBe(auditEvents[1]?.effectIRHash)
   })
 
-  it('applies standing-allow when classifier would ask for a provably-benign catalog command', async () => {
+  it('does not let standing-allow override an authoritative shell EffectPlan', async () => {
+    const effectPlan = buildShellEffectPlan({
+      inputFingerprint: 'standing-allow-test-fp',
+      segments: [
+        {
+          commandRedacted: 'git status',
+          segmentHead: 'git',
+          requirements: [
+            {
+              tag: 'indeterminate',
+              action: 'indeterminate',
+              resource: { kind: 'unknown' },
+              evidence: {
+                level: 'indeterminate',
+                signals: ['fixture.indeterminate'],
+                basis: ['fixture'],
+              },
+              provenance: { segment: 'git status' },
+            },
+          ],
+          completeness: 'partial',
+          opacity: 'opaque',
+          signals: ['fixture.indeterminate'],
+        },
+      ],
+    })
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
@@ -131,6 +157,7 @@ describe('gate-runtime integration', () => {
         confidence: 0.5,
         signals: ['unknown_local_effect'],
       },
+      effectPlan,
     })
 
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-standing-allow-gate-'))
@@ -154,9 +181,9 @@ describe('gate-runtime integration', () => {
       command: 'git status',
     })
 
-    expect(verdict.permission).toBe('allow')
-    expect(auditEvents[0]?.reason).toBe('standing_allow')
-    expect(auditEvents[0]?.standingAllowSource).toBe('provably-benign-corpus')
+    expect(verdict.permission).toBe('deny')
+    expect(auditEvents[0]?.reason).not.toBe('standing_allow')
+    expect(auditEvents[0]?.standingAllowSource).toBeUndefined()
   })
 
   it('blocks rm -rf .git and creates verdict audit trace', async () => {

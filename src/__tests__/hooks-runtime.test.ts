@@ -214,14 +214,14 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(deniedAgain.stdout).permission).toBe('deny')
   })
 
-  it('requires approval for read-only network shell commands', async () => {
+  it('allows payload-free network reads and flags local mutations', async () => {
     const repoRoot = await initIsolatedRepo()
 
     const networkRead = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'curl https://example.com',
       cwd: repoRoot,
     })
-    expect(JSON.parse(networkRead.stdout).permission).toBe('deny')
+    expect(JSON.parse(networkRead.stdout).permission).toBe('allow')
 
     const flagged = await runRunner(repoRoot, 'belay-shell-gate', {
       command: 'touch notes.txt',
@@ -230,7 +230,7 @@ describe('generated hook runtime', () => {
     expect(JSON.parse(flagged.stdout)).toEqual({ permission: 'allow' })
 
     const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
-    expect(auditRaw).toContain('"verdict":"deny_pending_approval"')
+    expect(auditRaw).toContain('"verdict":"allow"')
     expect(auditRaw).toContain('"verdict":"allow_flagged"')
   })
 

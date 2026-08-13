@@ -123,4 +123,52 @@ describe('package-exec verdict', () => {
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('external_effect')
   })
+
+  it.each([
+    'pnpm exec',
+    'npx',
+    'npm exec',
+  ])('retains remote database effects through %s package execution', async (launcher) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-package-exec-prisma-'))
+    tempDirs.push(dir)
+    const binDir = path.join(dir, 'node_modules', '.bin')
+    await mkdir(binDir, { recursive: true })
+    await writeFile(path.join(binDir, 'prisma'), '#!/usr/bin/env node\n')
+
+    const result = await verdict(
+      `DATABASE_URL=postgresql://user@db.example.com:5432/app ${launcher} prisma migrate deploy`,
+      { ...verdictTestContext(), cwd: dir, repoRoot: dir },
+    )
+
+    expect(result.permission).toBe('ask')
+    expect(
+      result.capabilityRequests?.some(
+        (request) =>
+          request.action === 'network.connect' &&
+          request.resource.kind === 'network' &&
+          request.resource.host === 'db.example.com' &&
+          request.resource.mode === 'mutate',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps unknown prisma endpoints partial through local package execution', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-package-exec-prisma-unknown-'))
+    tempDirs.push(dir)
+    const binDir = path.join(dir, 'node_modules', '.bin')
+    await mkdir(binDir, { recursive: true })
+    await writeFile(path.join(binDir, 'prisma'), '#!/usr/bin/env node\n')
+
+    const result = await verdict('pnpm exec prisma migrate deploy', {
+      ...verdictTestContext(),
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.capabilityRequests?.some((request) => request.action === 'indeterminate')).toBe(
+      true,
+    )
+  })
 })

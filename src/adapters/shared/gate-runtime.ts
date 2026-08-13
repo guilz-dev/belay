@@ -1143,6 +1143,7 @@ async function gateDecisionToVerdict(
   }
 
   if (
+    kind !== 'shell' &&
     result.verdict === 'deny_pending_approval' &&
     ctx.config.mode === 'enforce' &&
     !TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason)
@@ -1164,9 +1165,6 @@ async function gateDecisionToVerdict(
         verdict: 'allow',
         reason: 'standing_allow',
         standingAllowSource: standingMatch.source,
-        ...(standingMatch.catalogCommand
-          ? { standingAllowCatalogCommand: standingMatch.catalogCommand }
-          : {}),
         wouldBlock: false,
         permission: 'allow',
       })

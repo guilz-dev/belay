@@ -80,6 +80,10 @@ export {
   type CapabilityRequestContext,
   type CapabilityRequestV1,
   type CapabilityResource,
+  type GitRefScope,
+  type NetworkMode,
+  type NetworkPayload,
+  type ProcessOperation,
 } from './request.js'
 export {
   addTrustedWorkspaceRoot,

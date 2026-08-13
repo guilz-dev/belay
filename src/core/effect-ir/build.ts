@@ -114,7 +114,11 @@ function delegateExecNode(
           {
             tag: 'process.exec',
             action: 'process.exec',
-            resource: { kind: 'executable', command: resolvedLocalPath ?? segmentHead },
+            resource: {
+              kind: 'executable',
+              command: resolvedLocalPath ?? segmentHead,
+              operation: 'spawn',
+            },
             evidence: {
               level: resolvedLocalPath ? 'certain' : peel.forceAcquire ? 'possible' : 'certain',
               signals: [

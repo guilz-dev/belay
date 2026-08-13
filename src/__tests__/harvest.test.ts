@@ -182,7 +182,9 @@ describe('harvest', () => {
     expect(promoted.applied).toBe(true)
     expect(promoted.ok).toBe(true)
     expect(promoted.message).toContain('pnpm corpus')
-    expect(promoted.message).toContain('pnpm build')
+    expect(promoted.message).toContain('CI')
+    expect(promoted.message).not.toContain('pnpm build')
+    expect(promoted.message).not.toContain('standing-allow')
     expect(promoted.cases.at(-1)).toMatchObject({
       category: 'provably-benign',
       verdict: 'allow',

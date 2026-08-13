@@ -20,12 +20,14 @@ Include:
 matching mistakes, or bypasses in hook integration should be treated as
 security-relevant reports.
 
-## L3 classifier lists (v1.0)
+## L3 shell authority
 
-Built-in command keys (`src/core/policy/command-keys.ts`) and policy rules are a
-**noise-reduction cache** for the prediction layer (L3). They are **not** security
-boundaries unless paired with L1/L2 enforcement. List updates ship in **minor**
-releases per [docs/ops/semver-policy.md](docs/ops/semver-policy.md).
+Normalized shell actions are authorized only by their canonical `EffectPlan` and
+PolicyEngine projection. Command-name allow/deny lists, legacy overrides, corpus entries,
+and shell standing-allow records are forbidden as runtime authority. Payload-free network
+reads allow; external mutation, explicit payload/file/secret sends, high-stakes effects,
+and partial/indeterminate plans require approval. See
+[ADR-004](docs/adr/ADR-004-effectplan-shell-authority.md).
 
 ## Recommended adversarial configuration (v1.0)
 
@@ -77,9 +79,9 @@ Requires external OS sandbox runtime + running egress proxy. See
 
 ### Mitigations in v0.4
 
-- **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` (Tier1-recoverable unknowns run with audit flag); `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and stricter `unknownLocalEffect: deny`. Control plane defaults to enabled.
-- **Overrides** — `overrides.allow` / `overrides.external` provide audited escape hatches; overrides cannot bypass repo-local belay artifacts or the control plane.
-- **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, command substitution wrappers, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools.
+- **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` only as a compatibility fallback for non-EffectPlan paths, while normalized partial/indeterminate shell plans still ask. `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and the stricter fallback `unknownLocalEffect: deny`. Control plane defaults to enabled.
+- **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but ignored by shell authorization.
+- **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, unresolved/dynamic substitutions, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools. Statically recoverable nested effects are retained before the partial plan asks.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
 - **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records runtime hashes; `doctor` verifies them.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
@@ -150,11 +152,9 @@ v0.9 adds the **configuration path** toward full L1, but belay does **not** impl
 sandboxes itself. A real sandbox runtime (container / seatbelt / landlock / Cursor
 sandbox) must enforce deny-all; belay brokers capability widening:
 
-- **FS outside repo** — `sandbox.enabled` with `runtime` ≠ `none` + fs-scope allowlist grown via
-  `approve --scope path`; shell rules become `capability_fs_hint` for allowlisted paths only when
-  a real sandbox runtime is configured.
-  One-shot shell approvals do not bypass outside-repo rules while the broker is active;
-  use `--scope path` to persist fs-scope allowances
+- **FS outside repo** — `sandbox.enabled` with `runtime` ≠ `none` can enforce an approved
+  path scope for brokered file-mutation tools. This persisted boundary resource scope is
+  not a shell command allowlist and does not override an outside-repo shell EffectPlan ask.
 - **Egress** — continues to use the v0.7 egress proxy + domain allowlist
 - **Control-plane isolation** — `controlPlane.isolation` verifies that the agent process
   should not write approval state / signing keys; paired with `approvalSigning.required`

@@ -103,6 +103,16 @@ export {
   gateEnabledForAction,
   normalizeGatedAction,
 } from './gate-engine.js'
+export type {
+  GitResourceIdentity,
+  GitResourceIdentityInspection,
+} from './git-resource-identity.js'
+export {
+  inspectGitResourceIdentity,
+  isGitMetadataPath,
+  resolveGitResourceIdentity,
+  sameGitResourceIdentity,
+} from './git-resource-identity.js'
 export { matchesSensitivePath } from './glob.js'
 export {
   canonicalPath,

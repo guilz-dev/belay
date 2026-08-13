@@ -120,8 +120,9 @@ re-asking what a human already blessed.*
 
 - **L2 substrate — git-worktree observation delivered; durable repo-local checkpoint
   recovery delivered as opt-in.** CoW and dirty/non-Git file-checkpoint backends remain.
-- **Approval cache** so a first ask on a recurring describe-class action becomes a
-  standing allow (first ask → register → pass through).
+- **Exact approval/grant ergonomics** without restoring shell standing-allow authority.
+  Repeated false positives must be fixed in EffectPlan semantics; intentional exceptions
+  remain one-shot or resource-scoped.
 - **Tier1 judge improvements** — prompt/model calibration to erase residual
   read-class false positives without touching the FN line.
 - **Latency budget** kept invisible (prewarm, keep-alive) so precision never costs

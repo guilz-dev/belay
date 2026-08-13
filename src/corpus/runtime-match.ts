@@ -30,8 +30,9 @@ export async function deriveShellCorpusRuntimeKey(
 }
 
 /**
- * Attach derived `runtimeKey` to provably-benign shell cases that omit it.
+ * Attach derived stable CI `runtimeKey` to provably-benign shell cases that omit it.
  * When `runtimeKey` is precomputed in the fixture, verify it matches the derived fingerprint.
+ * The key is retained for corpus compatibility and is not runtime authorization.
  */
 export async function enrichProvablyBenignRuntimeKeys(
   cases: CorpusCase[],

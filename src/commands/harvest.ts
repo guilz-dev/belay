@@ -1,6 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { loadConfigFile } from '../config-io.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import { toAuditRecord } from '../core/audit-query.js'
 import type { AuditRecord } from '../core/audit-types.js'
@@ -31,22 +30,19 @@ export interface HarvestApplyOptions {
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
   const records = await loadAuditRecords(repoRoot)
   return harvestReportFromRecords(records, {
     since: options.since,
     until: options.until,
-    allowPatterns: config.overrides.allow,
   })
 }
 
 export function harvestReportFromRecords(
   records: AuditRecord[],
-  options: { since?: string; until?: string; allowPatterns?: string[] } = {},
+  options: { since?: string; until?: string } = {},
 ): HarvestReport {
   return buildHarvestReport(
     filterRecordsForHarvest(records, { since: options.since, until: options.until }),
-    { allowPatterns: options.allowPatterns },
   )
 }
 

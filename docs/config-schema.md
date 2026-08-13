@@ -17,7 +17,7 @@ exhaustive field defaults).
 | `gates` | object | all enabled | `shell`, `subagent`, `fileMutation`, `toolShell` |
 | `classifier` | object | | `strictChains`, `sensitivePaths` |
 | `policy` | object | fail-closed | See below |
-| `overrides` | object | empty | `allow`, `external` command keys |
+| `overrides` | object | empty | Legacy `allow` / `external` lists are accepted only for config compatibility; deprecated and ignored by shell authorization |
 | `redaction` | object | masks on | Audit scrubbing |
 | `controlPlane` | object | enabled | See below |
 | `notifications` | object | | webhook / command hook |
@@ -164,11 +164,10 @@ command again. There is no standing allow, auto-replay, `--yes`, or force-restor
 | `runtime` | `"none"` \| `"cursor-sandbox"` \| `"container"` \| `"seatbelt"` \| `"landlock"` |
 | `denyNetworkByDefault` | `true` |
 
-When `enabled: true` and `runtime` is not `none`, `gate-engine` applies an fs-scope
-boundary: shell redirects and mutations targeting paths outside the repository deny unless
-the path is on the fs-scope allowlist (`belay approve <id> --scope path`). This is separate
-from the L3 restorability floor (repo-outside local-recoverable mutations are allowed at
-default L3 after Tier1 — see ADR-002).
+When `enabled: true` and `runtime` is not `none`, the sandbox can enforce approved
+filesystem resource scopes for brokered file-mutation tools. A persisted `--scope path`
+resource exception is not a shell command allowlist and does not override the normalized
+shell EffectPlan: repo-outside shell mutations still require approval. See ADR-004.
 
 ## `approval`
 
@@ -209,7 +208,7 @@ Use `belay init --preset <name>` or the team config `preset` field:
 | From | Behavior |
 |------|----------|
 | v1 / v2 / v3 | Automatic merge to v4 on load (`migrateConfig`) |
-| v0.x command lists | Use `overrides.allow` / `overrides.external` |
+| v0.x command lists | `overrides.allow` / `overrides.external` remain parse-compatible but are deprecated and ignored by shell authorization; `belay doctor` warns when either list is non-empty |
 
 Versioning follows [semver-policy.md](./ops/semver-policy.md). The restorability floor and its
 rules are described in [CONCEPT.md](./CONCEPT.md) / [adr/ADR-002-concept-conformance.md](./adr/ADR-002-concept-conformance.md).

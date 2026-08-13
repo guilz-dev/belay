@@ -5,7 +5,7 @@ import { collectRequirements, normalizeEffectTags } from '../../core/effect-ir/i
 import { classifyGatedAction, normalizeGatedAction } from '../../core/gate-engine.js'
 
 describe('effect-plan coverage', () => {
-  it('emits an explicit effect-free plan for a read-only shell action', async () => {
+  it('emits explicit read effects for a read-only shell action', async () => {
     const result = await classifyGatedAction(
       normalizeGatedAction({
         kind: 'shell',
@@ -16,8 +16,14 @@ describe('effect-plan coverage', () => {
       DEFAULT_CONFIG_V3,
     )
 
-    expect(result.effectPlan?.disposition).toBe('effect_free')
+    expect(result.effectPlan?.disposition).toBe('effects')
     expect(result.effectPlan?.completeness).toBe('complete')
+    if (!result.effectPlan) {
+      throw new Error('expected effect plan')
+    }
+    expect(collectRequirements(result.effectPlan.root).map((entry) => entry.action)).toEqual(
+      expect.arrayContaining(['process.exec', 'fs.read']),
+    )
   })
 
   it('emits a plan for an ordinary file-mutation tool action', async () => {

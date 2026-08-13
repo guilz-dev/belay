@@ -18,7 +18,7 @@ describe('capability request conformance', () => {
     const shell = await classifyShell('curl https://example.com', cwd, repoRoot, config)
     expect(shell.capabilityRequests?.[0]?.version).toBe(CAPABILITY_REQUEST_VERSION)
     expect(shell.capabilityRequests?.[0]?.action).toBe('network.connect')
-    expect(shell.authorizationDecision?.outcome).toBe('require_approval')
+    expect(shell.authorizationDecision?.outcome).toBe('allow')
     expect(shell.boundaryProfile).toBe(BOUNDARY_PROFILE_L3_L4_ONLY)
 
     const tool = await classifyToolUse(
@@ -53,7 +53,7 @@ describe('capability request conformance', () => {
   it('attaches capability metadata on routine in-repo shell allows', async () => {
     const shell = await classifyShell('touch notes.txt', cwd, repoRoot, config)
     expect(shell.verdict).toBe('allow_flagged')
-    expect(shell.capabilityRequests?.[0]?.action).toBe('fs.write')
+    expect(shell.capabilityRequests?.map((request) => request.action)).toContain('fs.write')
     expect(shell.authorizationDecision?.outcome).toBe('allow')
     expect(shell.boundaryProfile).toBe(BOUNDARY_PROFILE_L3_L4_ONLY)
   })

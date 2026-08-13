@@ -14,6 +14,7 @@
 - [x] `boundaryProfile` フィールド
 - [x] `docs/CONTEXT.md` 用語・不変条件
 - [x] ADR-003 resource-scoped capability authorization
+- [x] ADR-004 EffectPlan authority（ADR-003 の network-read 一律 ask を supersede）
 - [x] ADR-001 Accepted 化の明示（既存 Accepted、CONTEXT からリンク済み）
 
 ### 1. 決定的な判定核
@@ -31,7 +32,7 @@
 - [x] precedence: forbid → grant → boundary → builtin → default
 - [x] repo 内 routine read/write allow
 - [x] sensitive / control-plane / git.ref.write 承認対象
-- [x] network（GET 含む）承認対象
+- [x] network は payloadなしreadを allow、mutation / payload / secret / 不定を承認対象
 - [x] broad grant / forgery は deny
 - [x] stale attestation は fail-closed（テスト）
 - [x] opaque / unparseable の policy 統一（内部シグナル `tier0_external` は監査互換のため残存）
@@ -169,12 +170,12 @@ Phase 7 (docs) → Phase 1 (prepare) → Phase 2a/2b (tests) → Phase 5 → Pha
 | ケース | 検証対象 |
 |--------|----------|
 | L1-full 設定 + proxy 停止 | `evaluateL1FullStatus` → `l1FullActive: false`；configured は `l1-partial-egress` にダウングレード（`postureMismatch` は false） |
-| gate が network で allow しない | L3 PolicyEngine は proxy 無関係で `require_approval`（既存確認 or 回帰） |
+| payloadなし network read | L3 EffectPlan は proxy 無関係で `allow`。remote mutation / payload send は引き続き `require_approval` |
 | approval state 破損 JSON | 読み取り fail-closed |
 
 **やらない:** PolicyEngine の grant forgery テスト（`policy-engine.test.ts` で既存）。
 
-- [x] `guarantee-posture` + L1-full + proxy 停止テスト
+- [x] `guarantee-posture` + L1-full + proxy 停止、payload-free read / remote mutation 回帰テスト
 - [x] approval state 破損 fail-closed テスト
 
 ### Phase 3: p95 遅延（PR-E、リスク: 中 — CI flake 注意）

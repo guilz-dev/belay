@@ -45,7 +45,7 @@ ADR-002 M2 は **「benign を1件でも止めたら concept violation（FN と�
 | **Surface**（人に見せる） | `belay metrics`（noisy rule candidates / top would-block summaries / dogfood readiness） | [`commands/metrics.ts`](../src/commands/metrics.ts) |
 | **Replay**（設定変更の影響を実トレースで差分抽出＝トリアージ。※再分類は lossy、施策6 参照） | `belay simulate`（候補 config で再分類し `allow→deny` / `deny→allow` を集計） | [`commands/simulate.ts`](../src/commands/simulate.ts) ＋ [`reclassify.ts`](../src/core/reclassify.ts) |
 | **Gate**（CI で回帰を止める） | `pnpm corpus`（コーパス評価をベースラインと比較） | [`scripts/corpus.mjs`](../scripts/corpus.mjs) ＋ [`corpus/`](../corpus) |
-| **Tune**（直す手段） | `overrides.allow`、MUST-ALLOW カタログ、Tier1 プロンプト、presets | config / [`CONCEPT.md`](./CONCEPT.md) §3 |
+| **Tune**（直す手段） | EffectPlan semantics / resource scope の修正、exact approval、presets | Effect IR / capability grants / [`CONCEPT.md`](./CONCEPT.md) §3 |
 
 **結論:** 新規に作るより、**この部品群を1本のループに結線する**ほうが投資対効果が高い。
 
@@ -166,9 +166,9 @@ fallback = ask（[`CONCEPT.md`](./CONCEPT.md) §3, H2/H3）。これは「危険
 - **何を:** 実トレースから「後悔した ask（regretted ask）」を抽出し corpus 候補に。ただし **`approve` は ground truth ではなく候補信号の1つ**として扱い、**候補の出所によって意味づけ（＝流す先のキュー）を厳格に分ける**:
   - **benign 候補キュー**:
     - **deny→approve**（[`detectNoisyRules`](../src/core/audit-analysis.ts) / `ApprovalRoundTrip`）= 「今回は人間が不確実性を引き受けた」信号。**単体では must-allow 証拠にならない**。
-    - **後から `overrides.allow` に足されたコマンド** = 人間が事後に「これは通すべきだった」と判断した信号。これも単体では hard ground truth にしない。
+    - **EffectPlan semantics / resource scope のレビュー修正** = 分類根拠が具体的に訂正された信号。単体では hard ground truth にしない。
     - **read / describe / list / get / payload-less GET** などの静的特徴。
-    - **同一 reason / fingerprint での高頻度承認**、**実行後の副作用ゼロ確認**、**既存 MUST-ALLOW カタログとの一致** などの補助証拠。
+    - **同一 reason / fingerprint での高頻度承認**、**実行後の副作用ゼロ確認**、**既存 MUST-ALLOW CI 期待値との一致** などの補助証拠。
   - **可用性事故キュー**（＝corpus には流さない。施策4 に回す）:
     - **fallback / timeout / cwd 欠落 由来の ask** は「**その時点で判定できなかった**」だけで、基底の操作が benign だった証拠には**ならない**。これを must-allow 候補に寄せると、危険な deny を「可用性ノイズ」として誤って緩める方向にバイアスする。よって corpus には載せず、可用性指標（施策4）として別集計する。
   - benign 候補キューの各件は、**証拠強度で振り分ける**:
@@ -180,17 +180,15 @@ fallback = ask（[`CONCEPT.md`](./CONCEPT.md) §3, H2/H3）。これは「危険
 - **接続:** `detectNoisyRules` / `ApprovalRoundTrip` / `parseAuditNdjson` を再利用。
 - **FN ガード:** harvest は **候補提示まで**。`approve` は単なる候補信号に留め、昇格には複数証拠か構造的説明を要求する。可用性事故は corpus を一切汚さない。
 
-### 施策3 approval cache / standing-allow（再発 FP の即時消去）
+### 施策3 exact approval / resource-scoped grants（再試行の厳密な認可）
 
-- **何を:** standing-allow は **「一度 approve されたもの」ではなく「既に benign と確定したもの」** にだけ付与する。対象は:
-  - `provably-benign` corpus に載った fingerprint / パターン
-  - MUST-ALLOW カタログに一致する read-class
-  - 一時的な可用性事故で ask になったが、判定自体は benign と再確認できたもの
-
-  これらに限って standing-allow に登録し、次回から沈黙。
-- **なぜ FP が減るか:** describe 系の「毎回 ask」を消す。**最大の体感改善**（G3 を解消、CONCEPT #5 / Horizon 1）。
-- **接続:** 既存の承認ループ（fingerprint / TTL / revoke）を拡張。
-- **FN ガード:** **approve 済みであること自体は十分条件にしない。** 対象は benign と説明可能な read/reversible クラスに限定。TTL + revoke 必須。**Tier0 の must-ask 経路（git remote / control-plane / high-stakes paths）は対象外**。standing-allow も監査ログに残す。
+- **何を:** ask の再試行は、承認対象になった request / EffectPlan と一対一で一致する
+  one-shot approval または resource-scoped grant だけで認可する。コマンド一覧や corpus
+  ラベルは runtime authority にしない。
+- **なぜ安全か:** 承認時に確認していない追加 effect、別 resource、broad grant は認可されない。
+- **接続:** approval bundle、grant lease、EffectPlan hash、TTL / uses / revoke。
+- **FN ガード:** corpus は CI 期待値に限定し、partial / opaque / must-ask の runtime 判定を
+  standing command list で上書きしない。
 
 ### 施策4 judge 可用性ハードニング（構造的 FP の除去）
 
@@ -201,7 +199,7 @@ fallback = ask（[`CONCEPT.md`](./CONCEPT.md) §3, H2/H3）。これは「危険
 
 ### 施策5 Tier1 キャリブレーション回帰セット
 
-- **何を:** harvest した `provably-benign` / `accepted-benign`（特に read / describe / IDE plan files）を **Tier1 プロンプトの回帰テスト**に。プロンプト/モデル変更時に read クラス FP が増えないことを保証。MUST-ALLOW カタログ（CONCEPT §3）の拡充をデータ駆動化。
+- **何を:** harvest した `provably-benign` / `accepted-benign`（特に read / describe / IDE plan files）を Effect lowering / policy の回帰テストに。分類変更時に read クラス FP が増えないことを保証し、MUST-ALLOW CI 期待値（CONCEPT §3）をデータ駆動で拡充する。
 - **なぜ FP が減るか:** 残差 FP（H4: 2B モデルが read を誤って not-recoverable と判定）を削り、かつプロンプト改善時のデグレを防ぐ。
 - **接続:** corpus（施策1）＋ Tier1 judge。
 - **FN ガード:** 同じ回帰セットに must-ask も含め、read 寄りに振った際に catastrophe を取りこぼさないことを同時検証。
@@ -251,7 +249,7 @@ fallback = ask（[`CONCEPT.md`](./CONCEPT.md) §3, H2/H3）。これは「危険
 
 1. **全ての FP 削減は FN=0 ゲートの下で行う。** その FN=0 を保証するのは **施策1 のラベル付き corpus（must-ask=0）**であって、simulate の件数（施策6）ではない。simulate は影響範囲を洗い出すトリアージで、それ自体は安全性を証明しない。FP を1つ消す変更が catastrophe を1つ通すなら、それは退行であり、施策1 のゲートが落とす。
 2. **緩めてよいのは reversible / read クラスのみ。** Tier0 の must-ask（git remote / control-plane mutation / high-stakes paths）は決して緩めない（[`CONCEPT.md`](./CONCEPT.md) §3）。
-3. **standing-allow / override は TTL + revoke + 監査必須。** さらに、`approve 済み` を standing-allow の十分条件にしない。永続的な穴を作らない。
+3. **runtime 認可は exact request / EffectPlan に限定する。** one-shot approval と resource-scoped grant は TTL + uses + revoke + 監査を持ち、command list や corpus category を認可根拠にしない。
 4. **「危険そうだが reversible」を止めるのは FP**（ADR-002 §6）。逆に**「分からないから一律 allow」は FN**。両者を分ける本筋は、**L2 substrate（git-worktree / CoW snapshot）で reversible を"証明"する**こと（Horizon 1）。証明できれば、より多くを安全に allow でき、FP の上限自体が下がる。
 
 ---
@@ -271,7 +269,7 @@ fallback = ask（[`CONCEPT.md`](./CONCEPT.md) §3, H2/H3）。これは「危険
 
 ## 8. 成功条件（「効いた」と言える状態）
 
-- `provably-benign` corpus が実トレースと MUST-ALLOW カタログから育ち、**FP=0 が CI ハードゲート**として常時緑。`accepted-benign` は review-required から始まり、根拠が固まったものだけが hard gate 側に昇格する。
+- `provably-benign` corpus が実トレースと Effect semantics のレビューから育ち、**FP=0 が CI ハードゲート**として常時緑。`accepted-benign` は review-required から始まり、根拠が固まったものだけが hard gate 側に昇格する。
 - dogfood の **silent-pass rate が ~98% に漸近**、`benignBlockRate` が**単調減少**、かつ **FN 回帰ゼロ**。
 - 同一 reason / fingerprint の repeat ask が新規にほぼ出ない。出たら harvest / cache / fix で**そのターンのうちに閉じる**。
 - 結果として、ユーザーが「止めなくていいものが止まった」と感じる頻度が、リリースを重ねるごとに**観測可能な形で下がり続ける**。

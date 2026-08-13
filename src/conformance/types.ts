@@ -3,6 +3,7 @@ export type LayerProfileId = 'l3-l4-only' | 'l1-partial-egress' | 'l1-l2-transac
 export interface LayerConformanceScenario {
   command: string
   permission: 'allow' | 'deny'
+  hookVerdict?: 'allow' | 'allow_flagged' | 'deny_pending_approval'
   reason?: string
   kind?: 'shell' | 'tool'
   toolPayload?: Record<string, unknown>

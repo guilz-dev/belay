@@ -9,11 +9,13 @@ import { classifyToolUse } from './classify-tool.js'
 import type { BelayConfigV3 } from './config.js'
 import { classifierOptionsFromConfig } from './config.js'
 import { buildCapabilityEffectPlan } from './effect-ir/build.js'
+import { evaluateEffectPlanPolicy } from './effect-ir/policy.js'
+import { buildShellEffectPlan } from './effect-ir/shell-build.js'
 import type { GatedAction, GatedActionKind } from './gate-contract.js'
 import { GATE_CONTRACT_VERSION } from './gate-contract.js'
 import { mergeAgentAssessment } from './judgment.js'
 import type { Assessment, ClassifierOptions, ClassifyResult } from './types.js'
-import { classifyShell } from './verdict/adapter.js'
+import { buildVerdictContext, classifyShell } from './verdict/adapter.js'
 
 export class GateNormalizationError extends Error {
   readonly reason = 'normalization_failed'
@@ -213,38 +215,6 @@ function applyFsScopePeripheralPolicy(
   return result
 }
 
-function applySandboxOutsideBoundary(
-  command: string,
-  action: GatedAction,
-  result: ClassifyResult,
-  options: ClassifierOptions,
-): ClassifyResult {
-  const outsideRepoPaths = collectOutsideRepoPaths(
-    command,
-    action.cwd,
-    action.repoRoot,
-    options.trustedWorkspaceRoots,
-  )
-  return applySandboxFsScopeBoundary(outsideRepoPaths, result, options, {
-    redirect: command.includes('>'),
-  })
-}
-
-function applyShellPeripheralPolicy(
-  command: string,
-  action: GatedAction,
-  result: ClassifyResult,
-  options: ClassifierOptions,
-): ClassifyResult {
-  const outsideRepoPaths = collectOutsideRepoPaths(
-    command,
-    action.cwd,
-    action.repoRoot,
-    options.trustedWorkspaceRoots,
-  )
-  return applyFsScopePeripheralPolicy(outsideRepoPaths, result, options)
-}
-
 function outsideRepoPathsForToolAction(action: GatedAction, options: ClassifierOptions): string[] {
   const payload = action.payload ?? {}
   const paths = new Set(
@@ -288,34 +258,29 @@ export async function classifyGatedAction(
   config: BelayConfigV3,
   extraOptions: ClassifierOptions = {},
 ): Promise<ClassifyResult> {
+  const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
   const limitResult = checkGatedActionLimits(action)
   if (limitResult) {
+    if (action.kind === 'shell') {
+      return projectShellLimitResult(action, limitResult, config, options)
+    }
     return attachEffectPlan(action, limitResult)
   }
-
-  const options = { ...classifierOptionsFromConfig(config), ...extraOptions }
 
   if (action.kind === 'shell') {
     const command = action.command ?? shellCommandFromPayload(action.payload ?? {})
     if (!command) {
       throw new GateNormalizationError('Shell gated action requires a command.')
     }
-    let result = await classifyShell(command, action.cwd, action.repoRoot, config, options)
-    result = applySandboxOutsideBoundary(command, action, result, options)
-    result = applyShellPeripheralPolicy(command, action, result, options)
+    const result = await classifyShell(command, action.cwd, action.repoRoot, config, options)
     if (!action.agentAssessment) {
-      return attachEffectPlan(action, result)
+      return result
     }
     const merged = mergeAgentAssessment(result.assessment, action.agentAssessment)
-    if (!merged.mismatch) {
-      return attachEffectPlan(action, { ...result, assessment: merged.assessment })
-    }
-    return attachEffectPlan(action, {
+    return {
       ...result,
-      verdict: 'deny_pending_approval',
-      reason: 'agent_assessment_mismatch',
       assessment: merged.assessment,
-    })
+    }
   }
 
   if (action.kind === 'subagent') {
@@ -346,6 +311,67 @@ export async function classifyGatedAction(
     reason: 'agent_assessment_mismatch',
     assessment: merged.assessment,
   })
+}
+
+function projectShellLimitResult(
+  action: GatedAction,
+  result: ClassifyResult,
+  config: BelayConfigV3,
+  options: ClassifierOptions,
+): ClassifyResult {
+  const summary = result.summary ?? 'oversized shell input'
+  const effectPlan = buildShellEffectPlan({
+    inputFingerprint: result.fingerprint,
+    segments: [
+      {
+        commandRedacted: summary,
+        segmentHead: 'input-limit',
+        requirements: [
+          {
+            tag: 'indeterminate',
+            action: 'indeterminate',
+            resource: { kind: 'unknown' },
+            evidence: {
+              level: 'indeterminate',
+              signals: ['input_too_large', 'analysis_budget_exceeded'],
+              basis: ['gate:input_limit'],
+            },
+            provenance: { segment: summary },
+          },
+        ],
+        completeness: 'partial',
+        opacity: 'opaque',
+        signals: ['input_too_large', 'analysis_budget_exceeded'],
+      },
+    ],
+  })
+  const policy = evaluateEffectPlanPolicy(
+    effectPlan,
+    buildVerdictContext({
+      cwd: action.cwd,
+      repoRoot: action.repoRoot,
+      config,
+      options,
+    }),
+  )
+  return {
+    ...result,
+    verdict: policy.projection.hookVerdict,
+    axes: {
+      location: 'unknown',
+      opacity: effectPlan.opacity,
+      effect: 'unknown',
+      confidence: 'deterministic',
+      would: policy.projection.permission,
+      by: 'effect_plan',
+      signals: [...effectPlan.signals],
+    },
+    capabilityRequests: policy.capabilityRequests,
+    authorizationDecision: policy.authorizationDecision,
+    effectPlan,
+    effectPlanPolicyDecisions: policy.decisions,
+    effectPlanProjection: policy.projection,
+  }
 }
 
 function attachEffectPlan(action: GatedAction, result: ClassifyResult): ClassifyResult {

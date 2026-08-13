@@ -8,21 +8,46 @@ import { verdictTestContext } from './helpers.js'
 describe('config overrides', () => {
   const fixtureRoot = path.join(import.meta.dirname, 'fixtures')
 
-  it('honors overrides.allow for launcher commands', async () => {
+  it('keeps overrides.allow parse-compatible but inert for shell decisions', async () => {
+    const baseline = await classifyShell(
+      'pnpm release:staging',
+      fixtureRoot,
+      fixtureRoot,
+      mergeConfig({}),
+    )
     const config = mergeConfig({ overrides: { allow: ['pnpm release:staging'] } })
     const result = await classifyShell('pnpm release:staging', fixtureRoot, fixtureRoot, config)
-    expect(result.verdict).toBe('allow')
-    expect(result.reason).toBe('custom_allow')
+
+    expect(config.overrides.allow).toEqual(['pnpm release:staging'])
+    expect(result.verdict).toBe(baseline.verdict)
+    expect(result.reason).toBe(baseline.reason)
+    expect(result.authorizationDecision).toEqual(baseline.authorizationDecision)
   })
 
-  it('honors overrides.external before generic unknown classification', async () => {
+  it('keeps overrides.external parse-compatible but inert for shell decisions', async () => {
+    const baseline = await classifyShell('make deploy', fixtureRoot, fixtureRoot, mergeConfig({}))
     const config = mergeConfig({ overrides: { external: ['make deploy'] } })
     const result = await classifyShell('make deploy', fixtureRoot, fixtureRoot, config)
-    expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('custom_external')
+
+    expect(config.overrides.external).toEqual(['make deploy'])
+    expect(result.verdict).toBe(baseline.verdict)
+    expect(result.reason).toBe(baseline.reason)
+    expect(result.authorizationDecision).toEqual(baseline.authorizationDecision)
   })
 
-  it('does not let overrides.allow bypass protected control-plane paths', async () => {
+  it('does not let legacy classifier option overrides alter shell decisions', async () => {
+    const baseline = await classifyShell('make deploy', fixtureRoot, fixtureRoot, mergeConfig({}))
+    const result = await classifyShell('make deploy', fixtureRoot, fixtureRoot, mergeConfig({}), {
+      customAllowCommands: ['make deploy'],
+      customExternalCommands: ['make deploy'],
+    })
+
+    expect(result.verdict).toBe(baseline.verdict)
+    expect(result.reason).toBe(baseline.reason)
+    expect(result.authorizationDecision).toEqual(baseline.authorizationDecision)
+  })
+
+  it('does not let inert overrides.allow bypass protected control-plane paths', async () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
     const config = mergeConfig({
       overrides: { allow: [`tee ${controlPlaneDir}/pending-approvals.json`] },
@@ -35,19 +60,7 @@ describe('config overrides', () => {
       { controlPlaneDir },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('protected_artifact')
-  })
-
-  it('prefers custom_allow when a command is listed in both allow and external', async () => {
-    const config = mergeConfig({
-      overrides: {
-        allow: ['git push origin main'],
-        external: ['git push origin main'],
-      },
-    })
-    const result = await classifyShell('git push origin main', fixtureRoot, fixtureRoot, config)
-    expect(result.verdict).toBe('allow')
-    expect(result.reason).toBe('custom_allow')
+    expect(result.reason).toBe('tier1_catastrophic')
   })
 })
 
@@ -60,6 +73,6 @@ describe('protected artifact roots', () => {
     const { verdict } = await import('../../core/verdict/verdict.js')
     const result = await verdict(`tee ${controlPlaneDir}/pending-approvals.json`, ctx)
     expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('high_stakes_path')
+    expect(result.reason).toBe('tier1_catastrophic')
   })
 })

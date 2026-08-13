@@ -1,5 +1,6 @@
 /**
- * Structural-suite MUST-ALLOW ledger — keep in sync with standing-allow catalog generation.
+ * Structural-suite MUST-ALLOW CI expectations.
+ * These commands guard classifier availability in tests and never grant runtime authority.
  * @see src/__tests__/verdict/structural-suite.test.ts
  */
 export const MUST_ALLOW_SHELL_COMMANDS = [

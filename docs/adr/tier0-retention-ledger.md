@@ -23,7 +23,7 @@ Each retained Tier0 rule has a one-line justification and paired MUST-ALLOW / MU
 | repo-outside secret/credential paths (`~/.env`, `~/.env.local`, `~/.ssh/id_*`, `~/.npmrc`, `~/secret.pem`, etc.) | secret overwrite/exfil |
 | `rm -rf .git` / `rm -rf ~` | catastrophic cores |
 
-## MUST-ALLOW catalog (M2)
+## MUST-ALLOW CI expectations (M2)
 
 | case | why allow |
 |---|---|

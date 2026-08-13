@@ -66,6 +66,9 @@ describe('guarantee table conformance', () => {
         expect(result.verdict === 'deny_pending_approval' ? 'deny' : 'allow').toBe(
           scenario.permission,
         )
+        if (scenario.hookVerdict) {
+          expect(result.verdict).toBe(scenario.hookVerdict)
+        }
         if (scenario.reason) {
           expect(result.reason).toBe(scenario.reason)
         }

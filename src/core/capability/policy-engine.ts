@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 import type { BelayConfigV4 } from '../config.js'
+import { isGitMetadataPath } from '../git-resource-identity.js'
 import { matchesSensitivePath } from '../glob.js'
 import { parseNetworkEndpoint } from '../network-endpoint.js'
 import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
@@ -29,6 +30,285 @@ import {
 export type PolicyAuthExtras = Pick<AuthorizationContext, 'grants' | 'attestation'> & {
   egressProxyActive?: boolean
   sensitivePaths?: string[]
+}
+
+export type EffectPolicyDisposition = 'allow' | 'allow_flagged' | 'ask'
+
+export interface EffectRequirementPolicyInput {
+  tag: string
+  action: CapabilityAction
+  resource: CapabilityResource
+  evidence: {
+    level: CapabilityEvidenceLevel
+    signals: readonly string[]
+    basis: readonly string[]
+  }
+  provenance?: unknown
+}
+
+export interface EffectRequirementPolicyContext {
+  cwd: string
+  repoRoot: string
+  trustedWorkspaceRoots?: readonly string[]
+  sensitivePaths?: readonly string[]
+  protectedArtifactRoots?: readonly string[]
+  grants?: readonly CapabilityGrantV1[]
+  capabilityRequest?: CapabilityRequestV1
+}
+
+export interface EffectRequirementPolicyDecision extends PolicyDecision {
+  effectDisposition: EffectPolicyDisposition
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '0:0:0:0:0:0:0:1'])
+const DESTRUCTIVE_EFFECT_SIGNALS = new Set([
+  'git_history_destructive',
+  'git.destructive_history_write',
+  'git.destructive_worktree_write',
+])
+const HIGH_STAKES_EFFECT_PATHS = [
+  /(?:^|[/\\])(?:\.env(?:\..*)?|credentials?(?:\.json)?|secrets?|authorized_keys|id_(?:rsa|dsa|ecdsa|ed25519)|[^/\\]+\.pem|\.ssh[/\\]config|\.zshrc|\.bashrc|\.git-credentials|\.npmrc|\.netrc|\.kube[/\\]config|\.docker[/\\]config\.json|\.gnupg(?:[/\\].*)?|\.pypirc)(?:$|[/\\])/i,
+  /(?:^|[/\\])application_default_credentials\.json$/i,
+  /(?:^|[/\\])\.config[/\\]gcloud[/\\](?:application_default_credentials\.json|credentials\.db|access_tokens\.db|legacy_credentials(?:[/\\].*)?)$/i,
+  /(?:^|[/\\])\.aws[/\\](?:credentials|config)$/i,
+  /(?:^|[/\\])\.azure[/\\](?:accessTokens\.json|azureProfile\.json|msal_token_cache\.(?:bin|json)|service_principal_entries\.json)$/i,
+  /(?:^|[/\\])\.terraform\.d[/\\]credentials\.tfrc\.json$/i,
+  /(?:^|[/\\])\.config[/\\]gh[/\\]hosts\.ya?ml$/i,
+  /(?:^|[/\\])\.oci[/\\]config$/i,
+  /(?:^|[/\\])\.config[/\\]doctl[/\\]config\.ya?ml$/i,
+] as const
+
+function effectDecision(
+  effectDisposition: EffectPolicyDisposition,
+  reason: string,
+  matchedRule: string,
+  signals: readonly string[],
+): EffectRequirementPolicyDecision {
+  return {
+    effectDisposition,
+    outcome: effectDisposition === 'ask' ? 'require_approval' : 'allow',
+    reason,
+    signals: [...signals],
+    matchedRule,
+  }
+}
+
+function effectPathIsLocal(target: string, context: EffectRequirementPolicyContext): boolean {
+  const resolved = resolveCapabilityPath(target, context.cwd)
+  return (
+    resolveWorkspaceRootMatch(
+      context.repoRoot,
+      [...(context.trustedWorkspaceRoots ?? [])],
+      resolved,
+    ) !== null
+  )
+}
+
+function effectPathIsHighStakes(target: string, context: EffectRequirementPolicyContext): boolean {
+  const resolved = resolveCapabilityPath(target, context.cwd)
+  if (HIGH_STAKES_EFFECT_PATHS.some((pattern) => pattern.test(resolved))) {
+    return true
+  }
+  if (
+    context.protectedArtifactRoots?.some((root) => pathWithinRoot(canonicalPath(root), resolved))
+  ) {
+    return true
+  }
+  if (isGitMetadataPath(resolved, context.repoRoot)) {
+    return true
+  }
+  const workspaceMatch = resolveWorkspaceRootMatch(
+    context.repoRoot,
+    [...(context.trustedWorkspaceRoots ?? [])],
+    resolved,
+  )
+  if (!workspaceMatch) {
+    return false
+  }
+  return matchesSensitivePath(workspaceMatch.relativePath.replaceAll('\\', '/'), [
+    ...(context.sensitivePaths ?? []),
+  ])
+}
+
+/**
+ * Policy for a lowered shell effect. It intentionally ignores executable
+ * command names, segment heads, command text, and config allowlists.
+ */
+export function evaluateEffectRequirementPolicy(
+  requirement: EffectRequirementPolicyInput,
+  context: EffectRequirementPolicyContext,
+): EffectRequirementPolicyDecision {
+  const signals = [...requirement.evidence.signals]
+  const capabilityRequest: CapabilityRequestV1 = context.capabilityRequest ?? {
+    version: CAPABILITY_REQUEST_VERSION,
+    principal: { repoRoot: context.repoRoot },
+    action: requirement.action,
+    resource: requirement.resource,
+    context: {
+      cwd: context.cwd,
+      inputFingerprint: 'effect-plan',
+      hookKind: 'shell',
+      analysisBasis: [...requirement.evidence.basis],
+    },
+    evidence: {
+      level: requirement.evidence.level,
+      signals,
+    },
+  }
+  if (signals.includes('forged_grant')) {
+    return effectDecision('ask', 'grant_forgery', 'forbid.grant_forgery', [
+      ...signals,
+      'grant_forgery',
+    ])
+  }
+  if (
+    context.grants?.some(
+      (grant) => isGrantScopeTooBroad(grant) && broadGrantTargetsRequest(grant, capabilityRequest),
+    )
+  ) {
+    return effectDecision('ask', 'grant_scope_too_broad', 'forbid.broad_grant', [
+      ...signals,
+      'grant_scope_too_broad',
+    ])
+  }
+  const matchedGrant =
+    requirement.resource.kind === 'executable'
+      ? null
+      : findFreshGrant(capabilityRequest, [...(context.grants ?? [])])
+  if (matchedGrant) {
+    return effectDecision(
+      'allow',
+      'capability_grant',
+      'grant.exact',
+      grantDecisionSignals(capabilityRequest, matchedGrant),
+    )
+  }
+  if (
+    requirement.evidence.level === 'indeterminate' ||
+    requirement.action === 'indeterminate' ||
+    requirement.tag === 'indeterminate'
+  ) {
+    return effectDecision('ask', 'indeterminate_effect', 'effect.indeterminate', [
+      ...signals,
+      'indeterminate',
+    ])
+  }
+  if (signals.some((signal) => DESTRUCTIVE_EFFECT_SIGNALS.has(signal))) {
+    return effectDecision('ask', 'git_history_destructive', 'effect.destructive', signals)
+  }
+  if (signals.includes('belay_control_plane_command')) {
+    return effectDecision(
+      'allow',
+      'belay_control_plane_command',
+      'effect.belay_control_plane_command',
+      signals,
+    )
+  }
+
+  switch (requirement.action) {
+    case 'fs.read':
+      if (
+        requirement.resource.kind === 'path' &&
+        effectPathIsHighStakes(requirement.resource.path, context)
+      ) {
+        return effectDecision('ask', 'high_stakes_path', 'effect.fs_read_high_stakes', [
+          ...signals,
+          'sensitive_path_read',
+        ])
+      }
+      return effectDecision('allow', 'read_only', 'effect.fs_read', signals)
+    case 'fs.write':
+      if (requirement.resource.kind === 'package-cache') {
+        return effectDecision(
+          'allow_flagged',
+          'repo_local_mutation',
+          'effect.package_cache_write',
+          signals,
+        )
+      }
+      if (requirement.resource.kind !== 'path') {
+        return effectDecision('ask', 'indeterminate_effect', 'effect.fs_write_unknown', signals)
+      }
+      if (effectPathIsHighStakes(requirement.resource.path, context)) {
+        return effectDecision('ask', 'high_stakes_path', 'effect.fs_write_high_stakes', [
+          ...signals,
+          'tier1_catastrophic',
+          ...(!effectPathIsLocal(requirement.resource.path, context)
+            ? ['outside_repo_secret_credential_path']
+            : []),
+        ])
+      }
+      return effectPathIsLocal(requirement.resource.path, context)
+        ? effectDecision('allow_flagged', 'repo_local_mutation', 'effect.fs_write_local', signals)
+        : effectDecision('ask', 'outside_repo_mutation', 'effect.fs_write_outside', signals)
+    case 'process.exec':
+      if (requirement.resource.kind !== 'executable') {
+        return effectDecision('ask', 'indeterminate_effect', 'effect.process_unknown', signals)
+      }
+      if (requirement.resource.operation === 'inspect') {
+        return effectDecision('allow', 'read_only', 'effect.process_inspect', signals)
+      }
+      if (requirement.resource.operation === 'spawn') {
+        return effectDecision(
+          'allow_flagged',
+          'repo_local_mutation',
+          'effect.process_spawn',
+          signals,
+        )
+      }
+      return effectDecision('ask', 'high_stakes_path', 'effect.process_signal', signals)
+    case 'network.connect': {
+      if (
+        requirement.tag === 'network.acquire' ||
+        requirement.resource.kind !== 'network' ||
+        !requirement.resource.mode ||
+        !requirement.resource.payload
+      ) {
+        return effectDecision('ask', 'external_effect', 'effect.network_unknown', signals)
+      }
+      const loopback = LOOPBACK_HOSTS.has(
+        requirement.resource.host.replace(/^\[|\]$/g, '').toLowerCase(),
+      )
+      if (requirement.resource.payload === 'secret') {
+        return effectDecision('ask', 'high_stakes_path', 'effect.network_secret_payload', [
+          ...signals,
+          'secret_payload_send',
+        ])
+      }
+      if (loopback && requirement.resource.mode === 'mutate') {
+        return effectDecision(
+          'allow_flagged',
+          'repo_local_mutation',
+          'effect.network_loopback_mutation',
+          signals,
+        )
+      }
+      if (requirement.resource.mode === 'read' && requirement.resource.payload === 'none') {
+        return effectDecision('allow', 'read_only', 'effect.network_read', signals)
+      }
+      return effectDecision('ask', 'external_effect', 'effect.network_remote_mutation', signals)
+    }
+    case 'git.ref.write':
+      if (requirement.resource.kind !== 'git-ref' || !requirement.resource.scope) {
+        return effectDecision('ask', 'indeterminate_effect', 'effect.git_ref_unknown', signals)
+      }
+      if (requirement.resource.scope === 'remote') {
+        return effectDecision('ask', 'external_effect', 'effect.git_ref_remote', signals)
+      }
+      if (
+        requirement.resource.repoPath &&
+        !effectPathIsLocal(requirement.resource.repoPath, context)
+      ) {
+        return effectDecision('ask', 'outside_repo_mutation', 'effect.git_ref_outside', signals)
+      }
+      return effectDecision('allow_flagged', 'repo_local_mutation', 'effect.git_ref_local', signals)
+    case 'secret.read':
+      return effectDecision('ask', 'high_stakes_path', 'effect.secret_read', signals)
+    case 'control_plane.write':
+      return effectDecision('ask', 'control_plane_mutation', 'effect.control_plane_write', signals)
+    default:
+      return effectDecision('ask', 'indeterminate_effect', 'effect.unknown', signals)
+  }
 }
 
 function enrichAuthWithMaterializedGrants(

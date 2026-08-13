@@ -7,18 +7,18 @@
 | Bump | When |
 |------|------|
 | **MAJOR** | Breaking changes to documented adapter SDK exports, `GATE_CONTRACT_VERSION` incompatible change, breaking config v3 schema changes, removal of supported adapters |
-| **MINOR** | New features, new policy rules, **L3 command-key list updates**, new conformance scenarios, new presets, new optional config fields with defaults |
+| **MINOR** | New features, new EffectPlan semantic decoders/policy rules, new conformance scenarios, new presets, new optional config fields with defaults |
 | **PATCH** | Bug fixes, documentation, internal refactors with no observable behavior change |
 
-## L3 classifier lists
+## L3 shell classification
 
-Files such as `src/core/policy/command-keys.ts` and `src/core/policy/default-rules.ts`
-maintain **noise-reduction caches** for the prediction layer (L3). They are **not**
-security boundaries when L1/L2 are absent.
+Normalized shell authorization is based on canonical EffectPlan semantics, not command-key
+allow/deny lists. Legacy list-shaped config remains parse-compatible but inert.
 
-- Adding, removing, or reclassifying command keys ships in a **minor** release.
-- Do **not** label routine list maintenance as a security advisory unless it fixes
-  an actual enforcement bypass in L1/L2 or approval logic.
+- Adding or changing a semantic decoder, effect policy rule, or documented conformance
+  scenario ships in a **minor** release.
+- A correction that closes an EffectPlan, boundary, or approval bypass may be
+  security-relevant even when the public schema does not change.
 - Operators needing hard boundaries must enable **L1** (egress / sandbox) and/or **L2**
   (transactional) per [guarantee-table.md](../guarantee-table.md).
 

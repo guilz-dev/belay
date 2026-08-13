@@ -92,13 +92,19 @@ function resourceKey(resource: EffectRequirement['resource']): string {
     case 'path':
       return resource.path
     case 'network':
-      return `${resource.host}:${resource.port ?? ''}:${resource.protocol ?? ''}`
+      return [
+        resource.host,
+        resource.port ?? '',
+        resource.protocol ?? '',
+        resource.mode ?? '',
+        resource.payload ?? '',
+      ].join(':')
     case 'executable':
-      return resource.command
+      return `${resource.command}:${resource.operation ?? ''}`
     case 'package-cache':
       return resource.manager
     case 'git-ref':
-      return resource.ref
+      return `${resource.ref}:${resource.scope ?? ''}:${resource.repoPath ?? ''}`
     case 'unknown':
       return 'unknown'
     default:

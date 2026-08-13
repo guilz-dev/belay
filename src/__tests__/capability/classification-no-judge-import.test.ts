@@ -8,7 +8,6 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
 const CLASSIFICATION_FILES = [
   'src/core/verdict/verdict.ts',
   'src/core/verdict/adapter.ts',
-  'src/core/verdict/shell-policy.ts',
   'src/core/verdict/prescan.ts',
   'src/core/capability/resolver.ts',
   'src/core/classify-tool.ts',

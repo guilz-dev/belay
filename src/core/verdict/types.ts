@@ -1,7 +1,7 @@
 import type { PolicyDecision } from '../capability/policy-types.js'
 import type { CapabilityRequestV1 } from '../capability/request.js'
 import type { BelayConfigV4 } from '../config.js'
-import type { EffectPlan } from '../effect-ir/types.js'
+import type { EffectPlan, EffectPlanPolicyProjection } from '../effect-ir/types.js'
 
 export type VerdictPermission = 'allow' | 'ask'
 
@@ -32,6 +32,7 @@ export interface VerdictResult {
   authorizationDecision?: PolicyDecision
   effectPlan?: EffectPlan
   effectPlanPolicyDecisions?: PolicyDecision[]
+  effectPlanProjection?: EffectPlanPolicyProjection
 }
 
 export interface Tier1Verdict {
@@ -98,8 +99,6 @@ export interface VerdictContext {
   trustedWorkspaceRoots?: string[]
   sensitivePaths: string[]
   protectedArtifactRoots?: string[]
-  customAllowCommands?: string[]
-  customExternalCommands?: string[]
   mode: VerdictMode
   unknownLocalEffect: 'allow_flagged' | 'deny'
   unparseableShell: 'allow_flagged' | 'deny'

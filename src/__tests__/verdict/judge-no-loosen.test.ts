@@ -17,7 +17,7 @@ describe('T13 no silent loosen on provider change', () => {
 
   it('requires approval for shell redirects outside repo (policy engine)', async () => {
     const context = verdictTestContext()
-    const result = await verdict('echo hi > ../outside.txt', context)
+    const result = await verdict('echo hi > /tmp/belay-judge-no-loosen-outside.txt', context)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('outside_repo_mutation')
     expect(result.authorizationDecision?.outcome).toBe('require_approval')
@@ -27,7 +27,7 @@ describe('T13 no silent loosen on provider change', () => {
     const context = verdictTestContext()
     const result = await verdict('rm -rf .git', context)
     expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('high_stakes_path')
+    expect(result.reason).toBe('control_plane_mutation')
   })
 
   it('requires approval for ambiguous external commands without sync judge', async () => {

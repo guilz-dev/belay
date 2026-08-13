@@ -26,7 +26,7 @@ describe('classifyShell nested substitution', () => {
   it('denies nested command substitution', async () => {
     const result = await classifyShellCore('$(echo $(git push origin main))', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('command_substitution')
+    expect(['command_substitution', 'external_effect']).toContain(result.reason)
   })
 
   it('denies chained substitution segments', async () => {
@@ -41,11 +41,11 @@ describe('classifyShell nested substitution', () => {
     expect(findCommandSubstitutions('echo \\$(git push origin main)')).toEqual([])
   })
 
-  it('fails closed on quoted substitution syntax under v2', async () => {
+  it('treats single-quoted substitution syntax as literal text', async () => {
     expect(findCommandSubstitutions("echo '$(git push origin main)'")).toEqual([])
     const result = await classifyShellCore("echo '$(git push origin main)'", cwd, repoRoot)
-    expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('command_substitution')
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('read_only')
   })
 
   it('still denies when outer command is external alongside benign substitution', async () => {

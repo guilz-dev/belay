@@ -1,7 +1,9 @@
 # CONTEXT — Capability authorization vocabulary
 
 This document records the normative terms for Belay's resource-scoped capability
-authorization model. It complements [ADR-003](./adr/ADR-003-resource-scoped-capability.md).
+authorization model. It complements
+[ADR-003](./adr/ADR-003-resource-scoped-capability.md) and
+[ADR-004](./adr/ADR-004-effectplan-shell-authority.md).
 
 ## Core objects
 
@@ -19,10 +21,11 @@ authorization model. It complements [ADR-003](./adr/ADR-003-resource-scoped-capa
 ## Invariants
 
 1. Hook gate decisions are **deterministic**. Sync LLM judge is not on the gate path.
-2. **Default deny**: unknown actions/resources and stale attestations fail closed to
-   `require_approval`.
-3. **Network** includes read-only HTTP (GET). Query strings may carry secrets; egress is never
-   silently allowed at L3.
+2. **EffectPlan authority**: normalized shell actions are authorized only from their
+   canonical effects. Legacy command lists, overrides, corpus entries, and shell
+   standing-allow state are inert.
+3. **Network**: payload-free reads allow. External mutation, explicit payload/file/secret
+   sends, and ambiguous network effects require approval.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
 5. `deny_pending_approval` is never auto-approved; human escalation is mandatory.
 6. **Recovery execution** (transactional; durable checkpoint backend is opt-in): when enabled,
@@ -33,6 +36,8 @@ authorization model. It complements [ADR-003](./adr/ADR-003-resource-scoped-capa
    maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or
    `recovery_execution_failed` — the host must not fall back to unproven execution. Belay-managed
    init artifacts under adapter state paths are excluded from dirty-worktree gating.
+7. Linked worktrees are repository-local only when their canonical Git common directory
+   matches the primary repository. Separate and malformed repositories fail closed.
 
 ## Policy precedence
 
@@ -70,7 +75,8 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 
 | Layer | Network read (e.g. `curl` GET) | Notes |
 |-------|----------------------------------|-------|
-| **L3 hook gate** | `require_approval` (`network.connect`) | PolicyEngine; ADR-003 supersedes ADR-002 for this path |
+| **L3 hook gate** | `allow` when normalized as `mode: read`, `payload: none` | EffectPlan + PolicyEngine; ADR-004 supersedes ADR-003's blanket network-read ask |
 | **L1 egress proxy** | `allow` when allowlisted / default read policy | `evaluateEgressConnect` in `egress/policy.ts` |
 
-Do not assume hook verdict and egress-proxy verdict match for the same command string.
+L1 resource scopes are boundary configuration, not shell command allowlists. They do not
+replace the L3 EffectPlan projection.

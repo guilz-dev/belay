@@ -1,5 +1,8 @@
 import path from 'node:path'
-import { findCommandSubstitutions } from '../shell-substitution.js'
+import {
+  findCommandSubstitutions,
+  findStructuralCommandSubstitutions,
+} from '../shell-substitution.js'
 import { commandKey, tokenizeShell } from '../shell-tokenizer.js'
 import { detectUnparseableShell } from '../shell-unparseable.js'
 import type { VerdictOpacity } from './types.js'
@@ -210,6 +213,108 @@ export function splitTopLevelSegments(command: string): string[] {
   return segments.filter((segment) => segment.trim().length > 0)
 }
 
+export function splitStructuralShellSegments(command: string): string[] {
+  const segments: string[] = []
+  let current = ''
+  type ShellFrame = {
+    quote: "'" | '"' | null
+    escaping: boolean
+    backtick: boolean
+  }
+  const outer: ShellFrame = { quote: null, escaping: false, backtick: false }
+  const substitutions: ShellFrame[] = []
+
+  const flush = () => {
+    const segment = current.trim()
+    if (segment) {
+      segments.push(segment)
+    }
+    current = ''
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index] ?? ''
+    const next = command[index + 1] ?? ''
+    const frame = substitutions.at(-1) ?? outer
+    if (frame.escaping) {
+      current += char
+      frame.escaping = false
+      continue
+    }
+    if (char === '\\' && frame.quote !== "'") {
+      current += char
+      frame.escaping = true
+      continue
+    }
+    if (frame.quote === "'") {
+      current += char
+      if (char === "'") {
+        frame.quote = null
+      }
+      continue
+    }
+    if (char === '`') {
+      frame.backtick = !frame.backtick
+      current += char
+      continue
+    }
+    if (frame.backtick) {
+      current += char
+      continue
+    }
+    if (char === '$' && next === '(') {
+      current += '$('
+      substitutions.push({ quote: null, escaping: false, backtick: false })
+      index += 1
+      continue
+    }
+    if (frame.quote) {
+      current += char
+      if (char === frame.quote) {
+        frame.quote = null
+      }
+      continue
+    }
+    if (char === "'" || char === '"') {
+      frame.quote = char
+      current += char
+      continue
+    }
+    if (substitutions.length > 0 && char === ')') {
+      substitutions.pop()
+      current += char
+      continue
+    }
+    if (substitutions.length > 0) {
+      current += char
+      continue
+    }
+    if (
+      char === '&' &&
+      (command[index - 1] === '>' || command[index - 1] === '<' || next === '>')
+    ) {
+      current += char
+      continue
+    }
+    const twoCharacterOperator =
+      (char === '&' && next === '&') ||
+      (char === '|' && next === '|') ||
+      (char === '|' && next === '&')
+    if (twoCharacterOperator) {
+      flush()
+      index += 1
+      continue
+    }
+    if (char === ';' || char === '|' || char === '&' || char === '\n' || char === '\r') {
+      flush()
+      continue
+    }
+    current += char
+  }
+  flush()
+  return segments
+}
+
 export function parseSegment(command: string): ParsedSegment {
   const tokens = tokenizeShell(command)
   const { tokens: peeled } = peelTransparentWrappers(tokens)
@@ -247,6 +352,10 @@ export function segmentOpacity(command: string): VerdictOpacity {
 
 export function substitutionInners(command: string): string[] {
   return findCommandSubstitutions(command)
+}
+
+export function structuralSubstitutionInners(command: string): string[] {
+  return findStructuralCommandSubstitutions(command)
 }
 
 export function redactCommand(command: string): string {

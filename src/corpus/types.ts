@@ -34,9 +34,9 @@ export interface CorpusCase {
   verdict: HookVerdict
   reason?: string
   /**
-   * Stable runtime-facing key for `provably-benign` shell cases (verdict fingerprint).
+   * Stable CI/deduplication key for `provably-benign` shell cases (verdict fingerprint).
    * Offline fixtures may omit this; loaders derive it via `deriveShellCorpusRuntimeKey`.
-   * Consumed by future standing-allow / catalog code — not used by evaluation harness alone.
+   * This key is not runtime authorization.
    */
   runtimeKey?: string
   /** Optional case origin metadata for quality-loop ratchet and harvest audit. */

@@ -1,6 +1,7 @@
 # Recursive Quality Loop — Issue Breakdown
 
-Status: **Implementation planning**
+Status: **Historical implementation breakdown**. Shell standing-allow/catalog authority was
+retired after the EffectPlan authority cutover; corpus categories are CI expectations only.
 Related: [`recursive-quality-loop.md`](./recursive-quality-loop.md) · [`CONCEPT.md`](./CONCEPT.md) · [`ROADMAP.md`](./ROADMAP.md) · [`adr/ADR-002-concept-conformance.md`](./adr/ADR-002-concept-conformance.md)
 
 This document breaks the recursive quality loop proposal into GitHub-ready issues.
@@ -20,7 +21,7 @@ The ordering is intentional:
 | P0 | Task | Extend corpus schema for `must-ask` / `provably-benign` / `accepted-benign` | tracked by Issue 0 |
 | P0 | Task | Make corpus evaluation enforce `must-ask=0` and `provably-benign block=0` | tracked by Issue 0; depends on corpus schema |
 | P1 | Task | Expand audit metrics for repeat asks and availability-caused asks | tracked by Issue 0; depends on corpus gates |
-| P1 | Feature | Add standing-allow for already-benign fingerprints | tracked by Issue 0; depends on corpus schema and corpus gates |
+| P1 | Retired | Standing-allow for shell fingerprints | superseded by exact EffectPlan approvals and resource-scoped grants |
 | P1 | Task | Add harvest/review flow for `accepted-benign` candidates | tracked by Issue 0; depends on corpus schema and audit metrics |
 | P2 | Task | Improve replay fidelity for `simulate` triage | tracked by Issue 0; depends on corpus schema |
 
@@ -40,7 +41,7 @@ Today belay can record audits and evaluate a corpus, but it cannot represent the
 - operations that operators believe are benign but still require review, and
 - operations that must always ask.
 
-That makes recursive false-positive reduction unsafe: approvals and overrides can be over-interpreted as ground truth, and CI does not yet hard-gate the right invariants.
+That makes recursive false-positive reduction unsafe: approvals can be over-interpreted as ground truth, and CI does not yet hard-gate the right invariants.
 
 **Proposed solution**
 
@@ -49,7 +50,7 @@ Introduce a labeled corpus and execution loop where:
 - `must-ask` remains the hard false-negative boundary,
 - `provably-benign` becomes the hard false-positive boundary,
 - `accepted-benign` captures review-needed benign candidates without polluting the hard gate,
-- audit metrics and standing-allow build on top of those labels rather than on raw approvals.
+- audit metrics and EffectPlan regression tests build on top of those labels rather than on raw approvals.
 
 **Why this fits belay**
 
@@ -91,9 +92,8 @@ Without a schema-level distinction, later tasks have nowhere safe to store the d
   - `provably-benign`
   - `accepted-benign`
 - Keep current `verdict` / `reason` expectations, but make the benign/catastrophic label explicit.
-- Define how `provably-benign` cases become **runtime-matchable**:
-  - store or derive a stable runtime-facing representation (for example fingerprint, normalized pattern, or catalog key) that standing-allow can reference later
-  - document which parts are offline-only corpus fixtures vs which parts are meant to be consumed by runtime code
+- Define a stable corpus identity for deduplication and CI comparisons.
+- Document that every corpus label is offline-only and is not consumed as runtime authority.
 - Add docs/comments describing what belongs in each bucket.
 - Seed a minimal initial split from the existing corpus.
 - Keep the initial implementation **shell-only**, but make the schema extensible enough that tool/subagent support can be added without redesigning the labels.
@@ -105,13 +105,13 @@ Without a schema-level distinction, later tasks have nowhere safe to store the d
 - Corpus cases include a forward-compatible action kind field, even if only `shell` is populated initially.
 - Existing evaluation/tests load the new schema successfully.
 - A small initial set is classified into the new buckets with no ambiguity in the fixture format.
-- `provably-benign` entries have a defined path to runtime matching, rather than existing only as offline test labels.
+- `provably-benign` entries have a stable CI identity without creating runtime permission.
 - Documentation explains that `accepted-benign` is not a hard-gate label.
 
 **Additional context**
 
 - Related: [`recursive-quality-loop.md`](./recursive-quality-loop.md)
-- Follow-on: corpus evaluation hard gates, harvest flow, standing-allow
+- Follow-on: corpus evaluation hard gates and harvest flow
 
 ---
 
@@ -197,49 +197,46 @@ Recursive improvement needs targeting data. Aggregate would-block rate is not en
 ## Issue 4
 
 **Type:** Feature request  
-**Title:** `[Feature]: Standing-allow for already-benign fingerprints`  
+**Title:** `[Retired]: Standing-allow for already-benign shell fingerprints`
 **Area:** Shell classification / verdict engine
 
 **Problem statement**
 
-Today a one-shot approval becomes `approved_once`, but belay has no durable way to silence repeat asks for actions that are already known benign. Re-asking those cases creates the highest day-to-day friction.
+This issue originally proposed durable command-list authority for known-benign shell actions.
+That authority conflicts with exact EffectPlan authorization and has been retired.
 
 **Proposed solution**
 
-Add a separate standing-allow path for fingerprints/patterns that are already confirmed benign through labeled corpus or MUST-ALLOW catalog membership. Do not derive standing-allow directly from one-off approvals.
+Use corpus entries only as CI expectations. Fix incorrect EffectPlan semantics or resource scope;
+when the model is correct and approval is still required, authorize the exact request with a
+one-shot approval or resource-scoped grant.
 
 **Why this fits belay**
 
-This narrows interruptions without weakening the catastrophe boundary. It removes repeated asks only for cases already justified as reversible/benign.
+This keeps runtime authority tied to the request that was actually reviewed and prevents a command
+label from overriding partial, opaque, or newly expanded effects.
 
 **Alternatives considered**
 
-- Reuse `approved-approvals.json`: wrong semantics; that file represents one-shot human acceptance, not durable benign classification.
-- Promote every approval to standing allow: unsafe.
+- Reuse a command fingerprint as durable permission: unsafe because effects and resources can differ.
+- Promote every approval to a standing command allow: unsafe.
 
 **Example scenarios**
 
-- `gh pr list` or `aws s3 ls` should stop asking after benign confirmation.
-- `git push origin main` must never become standing-allowed through repeated approval.
+- `gh pr list` or `aws s3 ls` should stop asking only when Effect lowering proves read semantics.
+- `git push origin main` remains behind exact approval.
 
 **Scope**
 
-- Introduce a separate state/store for standing-allow entries.
-- Wire matching into gate runtime after classification and before prompting.
-- Consume the runtime-matchable benign representation defined in Issue 1, rather than inventing a second benign catalog format here.
-- Restrict eligibility to:
-  - `provably-benign` corpus matches
-  - explicit MUST-ALLOW catalog matches
-  - availability-caused asks that were re-confirmed benign out of band
-- Add TTL/revoke/audit behavior.
-- Add tests proving that `approved_once` and standing-allow stay semantically separate.
+- Keep legacy standing state readable/revocable for compatibility, but inert for shell decisions.
+- Keep one-shot approval and resource-scoped grant paths exact, leased, revocable, and audited.
+- Add tests proving corpus labels and legacy standing entries cannot override an authoritative ask.
 
 **Definition of done**
 
-- Repeat asks for eligible benign fingerprints are silenced.
-- One-off approvals do not automatically create standing-allow.
-- Tier0 `must-ask` paths cannot be standing-allowed through this feature.
-- Audit trail and revoke path exist.
+- Shell standing entries never change a runtime verdict.
+- Exact approval/grant authorization still succeeds for its matching request.
+- Corpus expectations remain enforced in CI.
 
 **Additional context**
 
@@ -267,7 +264,7 @@ This is how the corpus grows from real work. Without a harvest path, the same ov
 - Add a CLI/report flow that surfaces benign candidates from **shell** audit traces.
 - Candidate sources may include:
   - repeated `deny→approve` patterns
-  - later `overrides.allow` additions
+  - historical `custom_allow` audit rows retained for parser compatibility
   - read/describe/list/get-style static signals
 - Keep fallback/timeout/cwd-missing asks in a separate availability queue.
 - Support review outcomes such as:
