@@ -1,7 +1,3 @@
-export {
-  evaluateSegmentShellPolicy,
-  type SegmentShellPolicyInput,
-} from '../verdict/shell-policy.js'
 export { BOUNDARY_PROFILE_L3_POLICY, checkGatedActionLimits } from './limits.js'
 export {
   type CapabilityAuthorizationMetadata,

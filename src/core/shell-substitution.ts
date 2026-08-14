@@ -73,6 +73,70 @@ export function findCommandSubstitutions(command: string): string[] {
   return results
 }
 
+export function findStructuralCommandSubstitutions(command: string): string[] {
+  const results: string[] = []
+  let index = 0
+  let inSingle = false
+  let inDouble = false
+  let escaping = false
+
+  while (index < command.length) {
+    const char = command[index]
+    if (escaping) {
+      escaping = false
+      index += 1
+      continue
+    }
+    if (char === '\\' && !inSingle) {
+      escaping = true
+      index += 1
+      continue
+    }
+    if (!inDouble && char === "'") {
+      inSingle = !inSingle
+      index += 1
+      continue
+    }
+    if (!inSingle && char === '"') {
+      inDouble = !inDouble
+      index += 1
+      continue
+    }
+    if (inSingle) {
+      index += 1
+      continue
+    }
+    if (char === '`') {
+      const end = findClosingBacktick(command, index + 1)
+      if (end === -1) {
+        break
+      }
+      const inner = command.slice(index + 1, end).trim()
+      if (inner) {
+        results.push(inner)
+      }
+      index = end + 1
+      continue
+    }
+    if (char === '$' && command[index + 1] === '(') {
+      const closed = extractBalancedParenContent(command, index + 2)
+      if (!closed) {
+        index += 1
+        continue
+      }
+      const inner = closed.content.trim()
+      if (inner) {
+        results.push(inner)
+      }
+      index = closed.endIndex
+      continue
+    }
+    index += 1
+  }
+
+  return results
+}
+
 function findClosingBacktick(command: string, start: number): number {
   let index = start
   while (index < command.length) {

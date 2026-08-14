@@ -23,6 +23,6 @@ describe('parser xargs', () => {
       unparseableShell: 'allow_flagged',
     })
     expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('tier0_external')
+    expect(result.reason).toBe('unknown_local_effect')
   })
 })

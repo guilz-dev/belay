@@ -109,6 +109,17 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       for (const entry of layered.provenance) {
         notes.push(`Config layer [${entry.source}]: ${entry.path}`)
       }
+      const ignoredShellOverrideLists = [
+        ...(loadedConfig.overrides.allow.length > 0 ? ['overrides.allow'] : []),
+        ...(loadedConfig.overrides.external.length > 0 ? ['overrides.external'] : []),
+      ]
+      if (ignoredShellOverrideLists.length > 0) {
+        warnings.push(
+          `Legacy shell ${ignoredShellOverrideLists.join(' and ')} ${
+            ignoredShellOverrideLists.length === 1 ? 'is' : 'are'
+          } deprecated and ignored. Remove the command list; inspect the EffectPlan and correct effect semantics or resource scope instead.`,
+        )
+      }
       if (loadedConfig.version !== 4) {
         warnings.push(
           `Config version is ${loadedConfig.version}; expected 4. Run belay upgrade to migrate.`,

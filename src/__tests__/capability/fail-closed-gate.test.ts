@@ -55,10 +55,22 @@ describe('capability fail-closed gate', () => {
     expect(posture.postureMismatch).toBe(true)
   })
 
-  it('requires approval for network commands at L3 regardless of egress proxy', async () => {
+  it('allows payload-free network reads at L3 regardless of egress proxy', async () => {
     const config = mergeConfig({})
     const result = await classifyShell(
       'curl https://example.com',
+      '/workspace/project/src',
+      '/workspace/project',
+      config,
+    )
+    expect(result.verdict).toBe('allow')
+    expect(result.authorizationDecision?.outcome).toBe('allow')
+  })
+
+  it('still requires approval for remote network mutation', async () => {
+    const config = mergeConfig({})
+    const result = await classifyShell(
+      'curl -X POST -d payload https://example.com',
       '/workspace/project/src',
       '/workspace/project',
       config,

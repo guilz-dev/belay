@@ -107,7 +107,7 @@ describe('launcher-resolve', () => {
   })
 
   it('classifies npm forwarded args against the effective invocation', async () => {
-    const result = await verdict('npm run build -- --outDir ../published', ctx)
+    const result = await verdict('npm run build -- --outDir /tmp/belay-launcher-published', ctx)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('outside_repo_mutation')
   })
@@ -128,7 +128,7 @@ describe('launcher-resolve', () => {
 
     const result = await verdict('make build', { ...ctx, cwd: dir, repoRoot: dir })
     expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('tier0_external')
+    expect(result.reason).toBe('tier1_catastrophic')
     expect(result.effect).toBe('remote_mutation')
   })
 

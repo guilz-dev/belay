@@ -40,7 +40,7 @@ describe('capability broker policy', () => {
     expect(result.reason).toBe('outside_repo_mutation')
   })
 
-  it('demotes outside-repo shell denies to capability hints when paths are allowlisted', async () => {
+  it('does not let a broker path allowlist override shell EffectPlan authority', async () => {
     const result = await classifyShellGated(
       'echo hi > ../outside.txt',
       repoRoot,
@@ -57,9 +57,9 @@ describe('capability broker policy', () => {
         unknownLocalEffect: 'deny',
       },
     )
-    expect(result.verdict).toBe('allow_flagged')
-    expect(result.reason).toBe('capability_fs_hint')
-    expect(result.assessment.signals).toContain('sandbox_boundary_expected')
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
+    expect(result.effectPlanProjection?.permission).toBe('ask')
   })
 
   it('requires approval for outside-repo shell when broker is inactive (default L3)', async () => {

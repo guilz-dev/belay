@@ -143,25 +143,37 @@ function resolveNpmRecipe(
   if (!scripts || typeof scripts !== 'object') {
     return { recipes: [], opaque: true, reason: 'package_scripts_missing' }
   }
-  const recipe = (scripts as Record<string, string>)[scriptName]
+  const scriptMap = scripts as Record<string, unknown>
+  const recipe = scriptMap[scriptName]
   if (!recipe || typeof recipe !== 'string') {
     if (/deploy|publish|release|ship|prod/i.test(scriptName)) {
       return { recipes: [], opaque: true, reason: 'external_script' }
     }
     return { recipes: [], opaque: true, reason: 'npm_script_undefined' }
   }
-  if (/\$\(/.test(recipe) || /\$\{/.test(recipe)) {
-    return { recipes: [], opaque: true, reason: 'npm_script_dynamic' }
+  const lifecycleRecipes = [
+    scriptMap[`pre${scriptName}`],
+    applyForwardedArgs(recipe, extraArgs),
+    scriptMap[`post${scriptName}`],
+  ].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+  if (lifecycleRecipes.some((entry) => /\$\(/.test(entry) || /\$\{/.test(entry))) {
+    return { recipes: lifecycleRecipes, opaque: true, reason: 'npm_script_dynamic' }
   }
   return {
-    recipes: [applyForwardedArgs(recipe, extraArgs)],
+    recipes: lifecycleRecipes,
     opaque: false,
     reason: 'npm_script_resolved',
   }
 }
 
-function parseMakefileRecipes(makefilePath: string): Map<string, string[]> {
-  const recipes = new Map<string, string[]>()
+interface MakeTarget {
+  prerequisites: string[]
+  recipes: string[]
+  opaquePrerequisites: boolean
+}
+
+function parseMakefileRecipes(makefilePath: string): Map<string, MakeTarget> {
+  const targets = new Map<string, MakeTarget>()
   try {
     const content = readFileSync(makefilePath, 'utf8')
     const lines = content.split('\n')
@@ -169,11 +181,17 @@ function parseMakefileRecipes(makefilePath: string): Map<string, string[]> {
     let recipeLines: string[] = []
 
     const flush = () => {
-      if (currentTarget && recipeLines.length > 0) {
-        recipes.set(
-          currentTarget,
-          recipeLines.map((line) => line.trim()).filter((line) => line.length > 0),
-        )
+      if (currentTarget) {
+        const current = targets.get(currentTarget) ?? {
+          prerequisites: [],
+          recipes: [],
+          opaquePrerequisites: false,
+        }
+        targets.set(currentTarget, {
+          prerequisites: current.prerequisites,
+          recipes: recipeLines.map((line) => line.trim()).filter((line) => line.length > 0),
+          opaquePrerequisites: current.opaquePrerequisites,
+        })
       }
       currentTarget = null
       recipeLines = []
@@ -183,13 +201,32 @@ function parseMakefileRecipes(makefilePath: string): Map<string, string[]> {
       if (line.trim().startsWith('#')) {
         continue
       }
-      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line)
+      const targetMatch = /^([A-Za-z0-9_.-]+)\s*:(?!=)\s*([^#]*)/.exec(line)
       if (targetMatch) {
         flush()
         currentTarget = targetMatch[1] ?? null
-        const inline = line.slice(targetMatch[0].length).trim()
-        if (inline && !inline.startsWith('#')) {
-          recipeLines.push(inline)
+        if (currentTarget) {
+          const targetBody = (targetMatch[2] ?? '').trim()
+          const inlineRecipeIndex = targetBody.indexOf(';')
+          const prerequisiteText =
+            inlineRecipeIndex >= 0 ? targetBody.slice(0, inlineRecipeIndex).trim() : targetBody
+          const inlineRecipe =
+            inlineRecipeIndex >= 0 ? targetBody.slice(inlineRecipeIndex + 1).trim() : ''
+          const prerequisiteTokens = prerequisiteText
+            .split(/\s+/)
+            .filter((token) => token && token !== '|')
+          targets.set(currentTarget, {
+            prerequisites: prerequisiteTokens.filter(
+              (token) => !token.includes('$(') && !token.includes('${'),
+            ),
+            recipes: [],
+            opaquePrerequisites: prerequisiteTokens.some(
+              (token) => token.includes('$(') || token.includes('${'),
+            ),
+          })
+          if (inlineRecipe) {
+            recipeLines.push(inlineRecipe)
+          }
         }
         continue
       }
@@ -199,9 +236,9 @@ function parseMakefileRecipes(makefilePath: string): Map<string, string[]> {
     }
     flush()
   } catch {
-    return recipes
+    return targets
   }
-  return recipes
+  return targets
 }
 
 function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): LauncherResolution {
@@ -225,15 +262,47 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
   if (!makefilePath) {
     return { recipes: [], opaque: true, reason: 'unknown_local_effect' }
   }
-  const recipes = parseMakefileRecipes(makefilePath)
-  const recipeLines = recipes.get(target)
-  if (!recipeLines || recipeLines.length === 0) {
+  const targets = parseMakefileRecipes(makefilePath)
+  if (!targets.has(target)) {
     return { recipes: [], opaque: true, reason: 'make_target_undefined' }
+  }
+  const recipeLines: string[] = []
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  let opaquePrerequisites = false
+  const collect = (name: string): boolean => {
+    if (visited.has(name)) {
+      return true
+    }
+    if (visiting.has(name)) {
+      return false
+    }
+    const entry = targets.get(name)
+    if (!entry) {
+      return true
+    }
+    visiting.add(name)
+    opaquePrerequisites ||= entry.opaquePrerequisites
+    for (const prerequisite of entry.prerequisites) {
+      if (targets.has(prerequisite) && !collect(prerequisite)) {
+        return false
+      }
+    }
+    recipeLines.push(...entry.recipes)
+    visiting.delete(name)
+    visited.add(name)
+    return true
+  }
+  if (!collect(target)) {
+    return { recipes: recipeLines, opaque: true, reason: 'make_dependency_cycle' }
   }
   for (const line of recipeLines) {
     if (/\$\(/.test(line) || /\$\{/.test(line)) {
-      return { recipes: [], opaque: true, reason: 'make_recipe_dynamic' }
+      return { recipes: recipeLines, opaque: true, reason: 'make_recipe_dynamic' }
     }
+  }
+  if (opaquePrerequisites) {
+    return { recipes: recipeLines, opaque: true, reason: 'make_prerequisite_dynamic' }
   }
   return { recipes: recipeLines, opaque: false, reason: 'make_recipe_resolved' }
 }

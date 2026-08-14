@@ -13,6 +13,13 @@ import {
   relativeWithinRepo,
   resolveWorkspaceRootMatch,
 } from '../core/path-utils.js'
+import {
+  createRealBareRepository,
+  createRealGitRepository,
+  createRealLinkedWorktree,
+  initializeRealBareRepository,
+  initializeRealGitRepository,
+} from './helpers/git-fixtures.js'
 
 const tempDirs: string[] = []
 
@@ -138,6 +145,86 @@ describe('resolveWorkspaceRootMatch', () => {
     const escapedTarget = path.join(trustedRoot, 'escape.txt')
     expect(resolveWorkspaceRootMatch(repoRoot, [frozenTrustedRoot], escapedTarget)).toBeNull()
   })
+
+  it('matches a linked worktree by canonical Git common-dir identity', async () => {
+    const repositoryRoot = await createRealGitRepository(tempDirs, 'belay-workspace-identity-main-')
+    const linkedRoot = `${repositoryRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, repositoryRoot, linkedRoot, 'linked')
+
+    expect(
+      resolveWorkspaceRootMatch(repositoryRoot, [], path.join(linkedRoot, 'nested', 'new-file.ts')),
+    ).toEqual({
+      kind: 'repo',
+      root: canonicalPath(linkedRoot),
+      relativePath: path.join('nested', 'new-file.ts'),
+    })
+  })
+
+  it('does not use path containment for a nested separate repository', async () => {
+    const repositoryRoot = await createRealGitRepository(
+      tempDirs,
+      'belay-workspace-identity-parent-',
+    )
+    const separateRoot = path.join(repositoryRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+
+    expect(resolveWorkspaceRootMatch(repositoryRoot, [], separateRoot)).toBeNull()
+  })
+
+  it('fails closed at malformed nested .git metadata', async () => {
+    const repositoryRoot = await createRealGitRepository(
+      tempDirs,
+      'belay-workspace-identity-malformed-',
+    )
+    const malformedRoot = path.join(repositoryRoot, 'malformed')
+    await mkdir(malformedRoot)
+    await writeFile(path.join(malformedRoot, '.git'), 'malformed\n')
+
+    expect(resolveWorkspaceRootMatch(repositoryRoot, [], malformedRoot)).toBeNull()
+  })
+
+  it('uses path containment only when the workspace has no Git boundary', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-workspace-no-git-'))
+    tempDirs.push(workspaceRoot)
+    const target = path.join(workspaceRoot, 'nested', 'new-file.ts')
+
+    expect(resolveWorkspaceRootMatch(workspaceRoot, [], target)).toEqual({
+      kind: 'repo',
+      root: canonicalPath(workspaceRoot),
+      relativePath: path.join('nested', 'new-file.ts'),
+    })
+  })
+
+  it('fails closed instead of falling back for malformed root metadata', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-workspace-malformed-root-'))
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, '.git'), 'malformed\n')
+
+    expect(
+      resolveWorkspaceRootMatch(workspaceRoot, [], path.join(workspaceRoot, 'notes.txt')),
+    ).toBe(null)
+  })
+
+  it('treats a nested bare repository as outside the workspace', async () => {
+    const repositoryRoot = await createRealGitRepository(tempDirs, 'belay-workspace-bare-parent-')
+    const bareRoot = path.join(repositoryRoot, 'vendor', 'remote.git')
+    await mkdir(bareRoot, { recursive: true })
+    await initializeRealBareRepository(bareRoot)
+
+    expect(resolveWorkspaceRootMatch(repositoryRoot, [], bareRoot)).toBeNull()
+  })
+
+  it('matches paths when repoRoot is itself a bare repository', async () => {
+    const bareRoot = await createRealBareRepository(tempDirs, 'belay-workspace-bare-root-')
+    const target = path.join(bareRoot, 'refs', 'heads', 'new-ref')
+
+    expect(resolveWorkspaceRootMatch(bareRoot, [], target)).toEqual({
+      kind: 'repo',
+      root: canonicalPath(bareRoot),
+      relativePath: path.join('refs', 'heads', 'new-ref'),
+    })
+  })
 })
 
 describe('containingGitRoot', () => {
@@ -145,5 +232,11 @@ describe('containingGitRoot', () => {
     const nonGitDir = await mkdtemp(path.join(os.tmpdir(), 'belay-nongit-'))
     tempDirs.push(nonGitDir)
     expect(containingGitRoot(nonGitDir)).toBeNull()
+  })
+
+  it('returns a bare repository boundary for nested paths', async () => {
+    const bareRoot = await createRealBareRepository(tempDirs, 'belay-containing-bare-')
+
+    expect(containingGitRoot(path.join(bareRoot, 'refs', 'heads'))).toBe(canonicalPath(bareRoot))
   })
 })

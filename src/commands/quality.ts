@@ -59,9 +59,7 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
     mode: config.mode,
     unknownLocalEffect: config.policy.unknownLocalEffect,
   })
-  const harvest = harvestReportFromRecords(auditRecords, {
-    allowPatterns: config.overrides.allow,
-  })
+  const harvest = harvestReportFromRecords(auditRecords)
 
   const notes: string[] = [
     'Overall ok reflects corpus hard gates only; audit and harvest signals are advisory.',

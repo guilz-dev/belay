@@ -1,8 +1,21 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalPath } from '../../core/path-utils.js'
 import { analyzePathTargets, resolveTrustedPath } from '../../core/verdict/containment.js'
+import {
+  createRealGitRepository,
+  createRealLinkedWorktree,
+  initializeRealGitRepository,
+} from '../helpers/git-fixtures.js'
 import { verdictTestContext } from './helpers.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
 describe('containment', () => {
   const ctx = verdictTestContext()
@@ -104,5 +117,80 @@ describe('containment', () => {
     })
     expect(analysis.location).toBe('unknown')
     expect(analysis.signals).toContain('missing_trusted_cwd')
+  })
+
+  it('locates linked-worktree targets as repo-local by common-dir identity', async () => {
+    const repositoryRoot = await createRealGitRepository(tempDirs, 'belay-containment-linked-main-')
+    const linkedRoot = `${repositoryRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, repositoryRoot, linkedRoot, 'linked')
+
+    const analysis = analyzePathTargets({
+      targets: [path.join(linkedRoot, 'nested', 'new-file.ts')],
+      cwd: repositoryRoot,
+      repoRoot: repositoryRoot,
+      trustedCwd: true,
+      sensitivePaths: [],
+    })
+
+    expect(analysis.location).toBe('repo_local')
+    expect(analysis.isHighStakes).toBe(false)
+  })
+
+  it('keeps linked-worktree Git metadata high stakes', async () => {
+    const repositoryRoot = await createRealGitRepository(
+      tempDirs,
+      'belay-containment-metadata-main-',
+    )
+    const linkedRoot = `${repositoryRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, repositoryRoot, linkedRoot, 'metadata-linked')
+
+    const analysis = analyzePathTargets({
+      targets: [path.join(linkedRoot, '.git')],
+      cwd: repositoryRoot,
+      repoRoot: repositoryRoot,
+      trustedCwd: true,
+      sensitivePaths: [],
+    })
+
+    expect(analysis.location).toBe('repo_local')
+    expect(analysis.isHighStakes).toBe(true)
+  })
+
+  it('marks malformed root Git-control-like paths high stakes and non-local', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-containment-malformed-root-'))
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, '.git'), 'malformed\n')
+
+    const analysis = analyzePathTargets({
+      targets: [path.join(workspaceRoot, '.git', 'config')],
+      cwd: workspaceRoot,
+      repoRoot: workspaceRoot,
+      trustedCwd: true,
+      sensitivePaths: [],
+    })
+
+    expect(analysis.location).toBe('repo_outside')
+    expect(analysis.isHighStakes).toBe(true)
+  })
+
+  it('protects Git metadata in a separate nested repository', async () => {
+    const repositoryRoot = await createRealGitRepository(
+      tempDirs,
+      'belay-containment-separate-main-',
+    )
+    const separateRoot = path.join(repositoryRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+
+    const analysis = analyzePathTargets({
+      targets: [path.join(separateRoot, '.git', 'config')],
+      cwd: repositoryRoot,
+      repoRoot: repositoryRoot,
+      trustedCwd: true,
+      sensitivePaths: [],
+    })
+
+    expect(analysis.location).toBe('repo_outside')
+    expect(analysis.isHighStakes).toBe(true)
   })
 })

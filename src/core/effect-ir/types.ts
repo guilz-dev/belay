@@ -29,6 +29,16 @@ export type LauncherPhase =
 
 export type PackageExecLauncher = 'npx' | 'npm' | 'pnpm'
 
+export type EffectPlanDisposition = 'effects' | 'effect_free'
+
+export type AnalysisCompleteness = 'complete' | 'partial'
+
+export interface EffectPlanPolicyProjection {
+  permission: 'allow' | 'ask'
+  hookVerdict: 'allow' | 'allow_flagged' | 'deny_pending_approval'
+  reason: string
+}
+
 export interface EffectEvidence {
   level: CapabilityEvidenceLevel
   signals: readonly string[]
@@ -81,7 +91,7 @@ export interface EffectPlan {
   root: EffectNode
   inputFingerprint: string
   opacity: VerdictOpacity
-  disposition: 'effects' | 'effect_free'
-  completeness: 'complete' | 'partial'
+  disposition: EffectPlanDisposition
+  completeness: AnalysisCompleteness
   signals: readonly string[]
 }

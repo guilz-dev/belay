@@ -57,7 +57,7 @@ describe('egress proxy does not loosen the restorability floor', () => {
       },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('external_effect')
+    expect(result.reason).toBe('unknown_local_effect')
   })
 
   it('does not demote when egress is disabled in config', async () => {

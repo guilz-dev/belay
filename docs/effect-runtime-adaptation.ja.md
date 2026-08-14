@@ -13,6 +13,25 @@ Related: [effect-typed-capability-proposal.ja.md](./effect-typed-capability-prop
 | Handler swaps worlds | Boundary driver test harness: real container, record/replay, fake deny |
 | Kernel IR (27 forms) | `effect-ir` tree: launcher phases + exec leaves |
 
+## 一般 shell の判定 authority
+
+正規化できた一般 shell は
+`shell-lower.ts` → canonical `EffectPlan` → `policy.ts` の projection を唯一の判定根拠とする。
+旧 `VerdictEffect`、command head の集合、`overrides.allow` / `overrides.external`、
+corpus catalog、shell standing-allow は permission を変更しない。
+
+- payloadなしの外部readは `allow`
+- repo/workspace-localな可逆 mutation は `allow_flagged`
+- 外部 mutation、明示 payload/file/secret 送信、high-stakes、destructive Git、
+  partial/indeterminate は ask
+- `git fetch` / `git pull` は network read + local reversible update なので
+  `allow_flagged`
+- linked worktree は canonical Git common-dir が一致するときだけ同一repositoryとして扱う
+
+one-shot approval と resource-scoped grant は command allowlist ではない。exact
+fingerprint/resource/request と、存在する場合は EffectPlan/request hash、TTL、use count
+に束縛された承認artifactとして維持する。
+
 ## What we do not adopt
 
 - OCaml checker / evaluator as a runtime dependency
@@ -24,8 +43,10 @@ Related: [effect-typed-capability-proposal.ja.md](./effect-typed-capability-prop
 
 - `src/core/effect-ir/types.ts` — `EffectPlan`, `EffectRequirement`, `EffectNode`
 - `src/core/effect-ir/package-exec.ts` — `npx` / `npm exec` / `pnpm dlx` lowering
-- `src/core/effect-ir/build.ts` — construct IR from launcher resolution
-- `src/core/effect-ir/flatten-capability.ts` — IR → `CapabilityRequestV1[]`
+- `src/core/effect-ir/shell-lower.ts` — shell grammar / launcher / egress / Git を effect へ lower
+- `src/core/effect-ir/shell-build.ts` — shell segment から canonical plan を構築
+- `src/core/effect-ir/build.ts` — requirement 収集と `CapabilityRequestV1[]` への flatten
+- `src/core/effect-ir/policy.ts` — 全 requirement の policy conjunction と最悪値 projection
 - `src/core/effect-ir/audit.ts` — canonical hash for audit correlation
 
 ## Grant bundle migration (Gate B / E)

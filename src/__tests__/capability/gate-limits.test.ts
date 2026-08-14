@@ -5,8 +5,10 @@ import {
   MAX_TOOL_PAYLOAD_BYTES,
 } from '../../core/capability/limits.js'
 import { mergeConfig } from '../../core/config.js'
+import { evaluateEffectPlanPolicy } from '../../core/effect-ir/index.js'
 import { GATE_CONTRACT_VERSION } from '../../core/gate-contract.js'
 import { classifyGatedAction, normalizeGatedAction } from '../../core/gate-engine.js'
+import { buildVerdictContext } from '../../core/verdict/adapter.js'
 
 const config = mergeConfig({})
 
@@ -24,6 +26,22 @@ describe('gated action input limits', () => {
     const viaGate = await classifyGatedAction(action, config)
     expect(viaGate.reason).toBe('input_too_large')
     expect(viaGate.verdict).toBe('deny_pending_approval')
+    expect(viaGate.effectPlan).toBeDefined()
+    expect(viaGate.effectPlan?.completeness).toBe('partial')
+    if (!viaGate.effectPlan) {
+      throw new Error('oversized shell result must carry an EffectPlan')
+    }
+    const policy = evaluateEffectPlanPolicy(
+      viaGate.effectPlan,
+      buildVerdictContext({
+        cwd: action.cwd,
+        repoRoot: action.repoRoot,
+        config,
+      }),
+    )
+    expect(viaGate.effectPlanProjection).toEqual(policy.projection)
+    expect(viaGate.verdict).toBe(policy.projection.hookVerdict)
+    expect(viaGate.axes?.would).toBe(policy.projection.permission)
   })
 
   it('rejects oversized tool payloads', async () => {

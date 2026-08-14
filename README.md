@@ -86,7 +86,8 @@ npx @guilz-dev/belay status
 
 Fresh installs default to **fail-closed** shell policy: unknown or unparseable
 shell commands are denied until approved. Use `belay explain` to inspect a
-verdict and `overrides.allow` to whitelist commands you trust.
+verdict. Correct inaccurate EffectPlan semantics or resource scope; otherwise
+approve the exact request for one-shot, resource-scoped authorization.
 
 ## How it works
 
@@ -138,12 +139,12 @@ Belay is a layered hook gate, not a static denylist. Higher layers are opt-in.
 | **L3** Prediction | Policy rules + command heuristics | default |
 | **L4** Approval | Human one-shot / scoped approvals | default |
 
-- L3 command lists are **not security boundaries** by themselves — see
-  [docs/ops/semver-policy.md](./docs/ops/semver-policy.md) and
-  [docs/guarantee-table.md](./docs/guarantee-table.md).
-- At default L3, **local-recoverable mutations outside the repo** pass after Tier1
-  (e.g. IDE plan files). To deny repo-external writes at the OS boundary, enable L1-full
-  (`sandbox.runtime` ≠ `none`). Tier1 requires a working judge (local Ollama by default).
+- Normalized shell authorization uses only canonical `EffectPlan` requirements.
+  Command lists, legacy overrides, corpus labels, and shell standing allows are inert.
+- Payload-free reads are `allow`; reversible repository-local writes (including implicit
+  download output) are `allow_flagged`. Outside-repository writes, external mutation,
+  explicit payload/file/secret sends, high-stakes effects, and partial/indeterminate plans
+  require approval. See [ADR-004](./docs/adr/ADR-004-effectplan-shell-authority.md).
 - Adversarial resistance requires the full L1 stack:
   `belay init --preset l1-full-recommended`, verified with `belay sandbox status`.
 
@@ -188,18 +189,18 @@ npx @guilz-dev/belay dogfood            # mode: audit, unknownLocalEffect: deny
 # ...run normal agent work...
 npx @guilz-dev/belay metrics           # review what would have been blocked
 npx @guilz-dev/belay status            # check readiness
-# tune overrides.allow with `belay explain`, then:
+# inspect EffectPlan semantics and resource scope with `belay explain`, then:
 npx @guilz-dev/belay dogfood --enforce
 ```
 
 ## Configuration
 
-`belay.config.json` uses `version: 3`. v1/v2 configs migrate automatically on
+`belay.config.json` uses `version: 4`. v1/v2/v3 configs migrate automatically on
 load.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "mode": "enforce",
   "gates": {
     "shell": true,
@@ -213,10 +214,6 @@ load.
   },
   "policy": {
     "unknownLocalEffect": "allow_flagged"
-  },
-  "overrides": {
-    "allow": ["pnpm release:staging"],
-    "external": ["./scripts/release.sh"]
   },
   "redaction": {
     "maskApprovalIds": true,
@@ -238,12 +235,15 @@ load.
 
 Notable settings:
 
-- **`policy.unknownLocalEffect: "allow_flagged"`** (fresh default) — after Tier1
-  says recoverable, structurally unknown local commands run with an audit flag. Use
-  `"deny"` (via `belay dogfood`) to ask on those commands instead.
+- **`policy.unknownLocalEffect: "allow_flagged"`** (fresh default) — compatibility fallback
+  for legacy, non-EffectPlan classification paths. It cannot loosen a normalized shell
+  EffectPlan: partial/indeterminate plans and outside-repository writes still ask. Use
+  `"deny"` (via `belay dogfood`) for a stricter fallback.
 - **`classifier.strictChains: true`** (default) — scans every `&&`, `|`, and `;`
-  segment and keeps the strictest verdict. Override lists match exact command or
-  segment keys only.
+  segment into the EffectPlan and keeps the strictest policy projection. Legacy
+  `overrides.allow` / `overrides.external` lists are accepted only for config
+  compatibility; shell authorization ignores them and `belay doctor` warns when
+  either list is non-empty.
 - **`controlPlane.enabled: true`** — stores approval state under
   `~/.config/belay/` (or `XDG_CONFIG_HOME/belay`), shared across repos for the
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges

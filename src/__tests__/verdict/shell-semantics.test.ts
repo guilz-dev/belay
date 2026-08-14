@@ -98,12 +98,12 @@ describe('shell semantics integration', () => {
     expect(result.reason).toBe('local_mutation')
   })
 
-  it('requires approval for git fetch and pull', async () => {
+  it('flags git fetch and pull as network reads plus reversible local updates', async () => {
     const fetch = await classifyShell('git fetch origin', cwd, repoRoot, config)
-    expect(fetch.verdict).toBe('deny_pending_approval')
+    expect(fetch.verdict).toBe('allow_flagged')
 
     const pull = await classifyShell('git pull origin main', cwd, repoRoot, config)
-    expect(pull.verdict).toBe('deny_pending_approval')
+    expect(pull.verdict).toBe('allow_flagged')
   })
 
   it('allows git reset -h without destructive ask', async () => {

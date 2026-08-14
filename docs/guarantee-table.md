@@ -13,10 +13,10 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 
 | Configuration | Layers active | Cooperative agent | Adversarial same-OS-user | Tested scenarios |
 |---------------|---------------|-------------------|---------------------------|------------------|
-| Default (L3+L4) | Prediction + approval | Heuristic gates + human approval for high-risk actions; **repo-outside mutations require approval** at L3 (ADR-003 PolicyEngine; supersedes ADR-002 Tier1 path) | Not protected — control plane and hooks are detect-only | `l3-allow-readonly`, `l3-allow-read-egress` |
-| L1 partial (egress) | Egress proxy + L3+L4 | Read-only egress passes; mutate/exfil still requires approval | Not protected — proxy bypass / raw sockets remain | `l1p-allow-readonly`, `l1p-allow-read-egress`, `l1p-deny-write-egress` |
-| L2 (transactional) | Observed diff + L3+L4 | Low-confidence local mutations observed in git worktree before commit | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-read-egress` |
-| L1-full (sandbox + egress + isolation + signing) | Sandbox + egress broker + signed control plane + L3+L4 | Read-only egress passes; external sends and outside-repo writes require approval when the outer boundary can see them | Protected **only** when OS sandbox enforces FS/network deny-all and control plane is on a separate trust domain | `l1f-allow-readonly`, `l1f-allow-read-egress`, `l1f-deny-write-egress`, `l1f-deny-outside-repo` |
+| Default (L3+L4) | Prediction + approval | EffectPlan policy allows payload-free reads, flags reversible local mutation, and requires approval for payload sends and outside-repo mutation | Not protected — control plane and hooks are detect-only | `l3-allow-readonly`, `l3-allow-network-read`, `l3-allow-flagged-wget-output`, `l3-allow-flagged-git-fetch`, `l3-allow-flagged-git-pull`, `l3-deny-payload-send`, `l3-deny-secret-file-send`, `l3-deny-outside-repo` |
+| L1 partial (egress) | Egress proxy + L3+L4 | Same shell semantics as L3, with an additional egress boundary when traffic is brokered | Not protected — proxy bypass / raw sockets remain | `l1p-allow-readonly`, `l1p-allow-network-read`, `l1p-allow-flagged-wget-output`, `l1p-allow-flagged-git-fetch`, `l1p-allow-flagged-git-pull`, `l1p-deny-payload-send`, `l1p-deny-secret-file-send`, `l1p-deny-outside-repo` |
+| L2 (transactional) | Observed diff + L3+L4 | `allow_flagged` local mutations can be observed in a Git/file checkpoint before apply; remote and high-stakes effects remain ineligible | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-network-read`, `l2-allow-flagged-wget-output`, `l2-allow-flagged-git-fetch`, `l2-allow-flagged-git-pull`, `l2-allow-flagged-dirty-git-file-checkpoint`, `l2-deny-payload-send`, `l2-deny-secret-file-send`, `l2-deny-outside-repo` |
+| L1-full (sandbox + egress + isolation + signing) | Sandbox + egress broker + signed control plane + L3+L4 | Same shell semantics plus outer enforcement of network/filesystem scopes; external sends and outside-repo writes require approval | Protected **only** when OS sandbox enforces FS/network deny-all and control plane is on a separate trust domain | `l1f-allow-readonly`, `l1f-allow-network-read`, `l1f-allow-flagged-wget-output`, `l1f-allow-flagged-git-fetch`, `l1f-allow-flagged-git-pull`, `l1f-deny-payload-send`, `l1f-deny-secret-file-send`, `l1f-deny-outside-repo`, `l1f-deny-outside-repo-write` |
 
 ## L1-full prerequisites
 
@@ -29,22 +29,28 @@ All must be true for `belay sandbox status` to report `l1FullActive: true`:
 
 Recommended starting point: `belay init --preset l1-full-recommended`.
 
-## Capability broker surfaces
+## Capability broker resource scopes
 
-| Capability | Broker mechanism | Approval command |
-|------------|------------------|------------------|
-| Egress (HTTP/S) | Egress proxy + domain allowlist | `belay approve <id> --scope domain` |
-| FS outside repo | Sandbox + fs-scope allowlist (shell **and** file-mutation tools) | `belay approve <id> --scope path --path <abs-path>` |
+| Capability | Broker mechanism | Resource-scoped approval |
+|------------|------------------|--------------------------|
+| Egress (HTTP/S) | Egress proxy with an approved domain scope | `belay approve <id> --scope domain` |
+| FS outside repo | Sandbox/filesystem boundary with an approved path scope for brokered tool execution | `belay approve <id> --scope path --path <abs-path>` |
 
-## L3 classifier lists
+These persisted boundary scopes are resource grants, not command allowlists. They do not
+replace the EffectPlan decision for normalized shell actions.
 
-Command-name lists are **noise-reduction caches** for the prediction layer (L3), not
-security boundaries. See [semver-policy.md](./ops/semver-policy.md).
+## Shell authorization authority
 
-**Outside-repo FS (ADR-003):** at default L3, mutations outside the repository are
-`require_approval` via PolicyEngine (`outside_repo_mutation`). L1-full (`sandbox.runtime`
-engaged) adds container FS enforcement via `gate-engine` fs-scope boundary and attested
-boundary grants.
+Normalized shell authorization is `EffectPlan` → PolicyEngine → projection
+([ADR-004](./adr/ADR-004-effectplan-shell-authority.md)). Legacy command allow/deny lists,
+corpus catalogs, and shell standing-allow records cannot change that projection.
+
+Payload-free network reads with no other effects are `allow`; explicit payload/file/secret
+sends and remote mutation require approval. A bare `wget` is `allow_flagged` because its
+payload-free read also creates a local output file. `git fetch` and `git pull` are likewise
+`allow_flagged` because they combine a network read with reversible local updates.
+Outside-repository mutation requires approval. L1-full adds container filesystem/network
+enforcement and attested resource grants without changing those shell semantics.
 
 ## What is never guaranteed
 

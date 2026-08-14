@@ -3,7 +3,7 @@ import type { CapabilityGrantV1 } from './capability/grant.js'
 import type { PolicyDecision } from './capability/policy-types.js'
 import type { CapabilityRequestV1 } from './capability/request.js'
 import type { FsScopeAllowlistFile } from './capability/types.js'
-import type { EffectPlan } from './effect-ir/types.js'
+import type { EffectPlan, EffectPlanPolicyProjection } from './effect-ir/types.js'
 
 export type BelayMode = 'enforce' | 'audit'
 
@@ -49,6 +49,7 @@ export interface ClassifyResult {
   authorizationDecision?: PolicyDecision
   effectPlan?: EffectPlan
   effectPlanPolicyDecisions?: PolicyDecision[]
+  effectPlanProjection?: EffectPlanPolicyProjection
   boundaryProfile?: string
 }
 
@@ -73,7 +74,9 @@ export interface ConfidenceThresholds {
 
 export interface ClassifierOptions {
   strictChains?: boolean
+  /** @deprecated Accepted for API compatibility but ignored by shell EffectPlan authorization. */
   customExternalCommands?: string[]
+  /** @deprecated Accepted for API compatibility but ignored by shell EffectPlan authorization. */
   customAllowCommands?: string[]
   sensitivePaths?: string[]
   unknownLocalEffect?: UnknownLocalEffectPolicy

@@ -160,19 +160,19 @@ describe('classifyShell background segmentation', () => {
 
   it('treats input redirects as file targets only for read-only heads', async () => {
     const inputRedirect = await classifyShellCore('cat 3</tmp/in.txt', cwd, repoRoot)
-    expect(inputRedirect.verdict).toBe('deny_pending_approval')
-    expect(inputRedirect.reason).toBe('outside_repo_mutation')
+    expect(inputRedirect.verdict).toBe('allow')
+    expect(inputRedirect.reason).toBe('read_only')
 
     const multiDigitInput = await classifyShellCore('cat 12<foo', cwd, repoRoot)
-    expect(multiDigitInput.verdict).toBe('allow_flagged')
-    expect(multiDigitInput.reason).toBe('local_mutation')
+    expect(multiDigitInput.verdict).toBe('allow')
+    expect(multiDigitInput.reason).toBe('read_only')
 
     const plainInputRedirect = await classifyShellCore('cat < /tmp/in.txt', cwd, repoRoot)
-    expect(plainInputRedirect.verdict).toBe('deny_pending_approval')
-    expect(plainInputRedirect.reason).toBe('outside_repo_mutation')
+    expect(plainInputRedirect.verdict).toBe('allow')
+    expect(plainInputRedirect.reason).toBe('read_only')
 
     const echoInputRedirect = await classifyShellCore('echo 3</tmp/in.txt', cwd, repoRoot)
-    expect(echoInputRedirect.verdict).toBe('deny_pending_approval')
-    expect(echoInputRedirect.reason).toBe('outside_repo_mutation')
+    expect(echoInputRedirect.verdict).toBe('allow')
+    expect(echoInputRedirect.reason).toBe('read_only')
   })
 })

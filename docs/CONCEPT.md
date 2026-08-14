@@ -1,10 +1,12 @@
 # agent-belay CONCEPT v2.0 — belay redesign: the restorability floor
 
-Status: **Design grounded in a validated prototype (foundation for a rebuild)**
+Status: **Current concept; prototype history retained for rationale**
 Based on: working spike at `~/.belay-spike/` (`verdict.mjs` / `hook.mjs` / `warm.mjs`)
 Intellectual lineage: the original design exploration with Opus (storyline), [`docs/adr/ADR-001-layered-enforcement.md`](./adr/ADR-001-layered-enforcement.md)
-Positioning: **replaces** the v0.3–v0.9 core gate that relied on static command lists for pre-prediction.
-This is the concrete form that backs ADR-001’s direction (take prediction out of the boundary) with measured evidence.
+Positioning: the normalized-shell authority is now the canonical
+`EffectPlan` → PolicyEngine projection defined by
+[ADR-004](./adr/ADR-004-effectplan-shell-authority.md). Prototype-era Tier0/Tier1 notes
+below are historical rationale, not a second runtime authority.
 
 > Japanese translation: [`CONCEPT.ja.md`](./CONCEPT.ja.md). **This file is authoritative** if the two diverge.
 
@@ -27,7 +29,9 @@ The question is not “is this dangerous?” but only “**if this were a mistak
 
 - Merge on red tests / sloppy commits / delete files inside the repo → undoable → **allow**
 - `drop db` / `git push --force` / production deploy / persistent secrets & agent config → not undoable → **block (hand to a human)**
-- Local-recoverable repo-outside edits (e.g. IDE plan files) → **allow after Tier1** at default L3
+- Repository/workspace-local reversible edits → **allow_flagged**
+- Repo-outside edits → **ask**, unless the path is part of the same proven Git common-dir
+  identity or an explicit trusted workspace root
 
 This is the destination of storyline §212. “Is it dangerous?” lives only in subjective human judgment,
 but “can it be undone?” is largely objective — decidable from the nature of the action and environment.
@@ -49,69 +53,62 @@ but “can it be undone?” is largely objective — decidable from the nature o
 
 ---
 
-## 3. Architecture — a floor of two detectors
+## 3. Architecture — one normalized effect authority
 
 `verdict(command, cwd, repoRoot)` returns `allow` or `ask`.
-**If either of two independent detectors says “not restorable,” the result is ask.** Their blind spots do not overlap,
-so this is defense in depth against infinite-cost incidents.
+Every normalized shell segment contributes requirements to one canonical `EffectPlan`.
+Policy evaluates those effects without consulting runtime command allow/deny lists.
 
 ```
 verdict(command, cwd, repoRoot):
 
-  ── Tier0: deterministic (code). Only structurally certain cases. Uses cwd ──
-    git push / remote operations        → not-restorable (ask)   ※ remote is outside snapshot
-    other git (local)                   → restorable (allow)     ※ undoable via git snapshot
-    control-plane mutation              → not-restorable (ask)   ※ tamper-resistance (M3 ledger)
-    FS mutation on high-stakes paths    → not-restorable (ask)   ※ .git / ~ / protected roots
-    FS mutation inside repo             → restorable (allow)     ※ undoable via fs snapshot
-    repo-outside local mutation         → undecided → Tier1      ※ NOT a broad Tier0 ask (ADR-002)
-    otherwise                           → undecided → Tier1
+  parse / recursively lower every shell segment
+    → canonical EffectPlan
+    → PolicyEngine over operation + resource + payload + evidence
+    → strictest requirement wins
 
-  ── Tier1: local LLM. Non-enumerable semantics. Flat factual schema ──
-    local_recoverable: can a mistaken effect be undone locally (snapshots / re-fetch / re-create)?
-    destroys_history_or_secrets: does it wipe git history, secrets, or persistent agent config?
-        !local_recoverable OR destroys_history_or_secrets → not-restorable (ask)
-        else → restorable (allow)
-    ※ reads (describe/list/get/SELECT/HTTP GET) do not CHANGE → local_recoverable
-    ※ IDE plan files under the user home are local documents → allow (MUST-ALLOW catalog)
-
-  ── fallback ──
-    judge down / timeout → ask (escalate safe side; open region)
-
-  floor:  any not-restorable → ask  /  all restorable → allow (~98%)
+  payload-free network read / process inspect / ordinary fs read → allow
+  repo/workspace-local reversible mutation                    → allow_flagged
+  external mutation / explicit payload or secret send         → ask
+  high-stakes / destructive Git / partial or indeterminate    → ask
 ```
 
-**Layer note (ADR-001):** default L3+L4 lets repo-outside *local-recoverable* mutations through
-after Tier1. **L1-full** (`sandbox.runtime` engaged) adds a separate OS boundary in
-`gate-engine`: outside-repo writes/redirects deny unless fs-scope allowlisted — this is
-containment, not the restorability floor itself. See [`docs/guarantee-table.md`](./guarantee-table.md).
+Command names select grammar decoders only; they do not decide allow/ask. `git fetch` and
+`git pull` lower to a payload-free network read plus reversible local updates and are
+`allow_flagged`; `git push` is remote mutation and asks. Linked worktrees are local only
+when their canonical Git common directory matches.
 
-### Why the split was decided by measurement
+**Layer note (ADR-001):** L3+L4 is a cooperative policy/approval layer. **L1-full**
+adds a separate OS boundary. Boundary resource scopes and exact grants are not shell
+allowlists and do not replace the EffectPlan projection. See
+[`docs/guarantee-table.md`](./guarantee-table.md).
+
+### Why deterministic structure remains necessary
 
 | Detector | Responsibility | Why (measured rationale) |
 |---|---|---|
-| **Tier0 (deterministic)** | git remote ops, control plane, high-stakes paths | LLM **rationalized** `git push --force` as “git, so undoable.” Git remote behavior and path arithmetic are **documented facts** — code catches them reliably, independent of LLM mood |
-| **Tier1 (LLM)** | DB / cloud / network / repo-outside recoverability | Open region where enumeration breaks. Distinguishes `Write ~/.cursor/plans/foo` (allow) from `Write ~/.ssh/authorized_keys` (ask) |
-| **fallback** | open region when judge absent | floor does not break; defaults safe |
+| **Semantic lowering** | Git/egress/process/launcher grammar and resources | LLM previously rationalized `git push --force`; documented operation semantics must be deterministic |
+| **Effect policy** | operation/resource/payload/evidence disposition | One policy conjunction prevents command-name exceptions from becoming authority |
+| **Indeterminate fallback** | unsupported or partial grammar | Known effects are retained and an explicit indeterminate requirement forces ask |
 
-This is not “2B hits everything” but “**2B owns only what 2B hits; structural judgments deterministic code picks up**.”
-Architecture shaped for a small on-device model.
+The LLM judge is asynchronous shadow evidence only. It cannot change the synchronous gate
+decision.
 
-### Tier1 prompt design (important — keep it a flat fact)
+### Historical Tier1 prompt lesson
 
 Compound questions give the model room to rationalize (force push slipped through as “git is undoable; assume remote away”).
-So Tier1 gets **structured factual fields**, not a single vague question:
+This motivated deterministic EffectPlan lowering. Any shadow judge still receives structured
+facts rather than a vague danger score:
 
 > Assess whether a mistaken run could be undone **locally** (filesystem/git snapshots, re-download, re-create).
 > Flag `destroys_history_or_secrets` for `.git` deletion, credential paths, shell startup files, crontab/launchd, etc.
 > Reading or querying an external system does NOT change local state. If unsure about recoverability, mark not recoverable.
 
-Structured output: `{local_recoverable: boolean, destroys_outside_repo: boolean, destroys_history_or_secrets: boolean, reason: string}`.
-Legacy `external_change` responses are mapped for compatibility.
+Shadow output is audit-only. Legacy judge records remain readable for compatibility.
 
 ---
 
-## 4. Why a local LLM (gemma4:e2b)
+## 4. Historical prototype: why a local LLM was evaluated
 
 - **Zero egress** — belay stops external effects; sending full command text to the cloud per verdict is self-defeating. Local keeps verdicts on-machine
 - **Privacy** — shell commands carry secrets, paths, infra detail
@@ -124,7 +121,7 @@ The judge is **separate** from the executing agent (no shared incentive). Measur
 
 ## 5. Operating modes and audit
 
-- **audit mode (default):** compute verdict, record in trace, always return `allow` (do not block).
+- **audit mode:** compute the EffectPlan verdict, record it, and return `allow` (do not block).
   Collect real-distribution dogfood data risk-free
 - **enforce mode:** when the floor says `ask`, show Cursor’s approval dialog
 - Toggle: `~/.belay-spike/mode` with `enforce` / `audit` (config in production implementation)
@@ -132,15 +129,16 @@ The judge is **separate** from the executing agent (no shared incentive). Measur
 ### trace (ndjson, every verdict)
 
 ```json
-{ "ts", "mode", "command", "cwd", "cwdFromPayload", "repoRoot",
-  "sandbox", "would", "by"(Tier0|Tier1|fallback), "reason" }
+{ "ts", "mode", "commandRedacted", "commandFingerprint", "cwd", "repoRoot",
+  "would", "effectPlanHash", "effectPlanCompleteness", "reason" }
 ```
 
 `would` is what the floor said (recorded even in audit). Foundation for victory condition stage 2 (real-distribution measurement) and calibrating claimed vs actual gaps (storyline’s “honest holes”).
 
 ### Approval loop (reused from existing belay)
 
-`ask` → human `/belay-approve <id>` grants one-shot allow (TTL, revoke).
+`ask` → human `/belay-approve <id>` grants one-shot/resource-scoped authorization
+(fingerprint, exact request/resource, TTL/use count, optional EffectPlan/request hashes).
 Storyline’s layer where **humans accept final uncertainty**. Approval rests on **human knowledge** (this is the test DB, etc.) and **substrate declaration** (config) — not the model (lesson: asking the judge “is there a backup?” invites rationalization).
 
 ---
@@ -189,16 +187,16 @@ Hook I/O, approval, trace, installer ride unchanged.
 | Layer | ADR-001 | Where this design stands |
 |---|---|---|
 | L4 human approval | final backstop | **implemented (reused)** |
-| L3 prediction | noise reduction | **rebuilt** = Tier0 (structurally certain) + Tier1 (non-enumerable via local LLM). Not lists |
+| L3 prediction | noise reduction | **rebuilt** = deterministic shell lowering + EffectPlan policy. LLM is shadow-only; runtime command lists are inert |
 | L2 observation (substrate) | measured on snapshots | **not implemented (assumed)** ← §10 holes |
 | L1 containment (egress) | deny-all boundary | not implemented (future) |
 
-This design is the stage of “L3+L4 done right (determinism + local LLM).”
+This design is the stage of “L3+L4 done right (deterministic effects + exact approval).”
 “Is it restorable?” is answered **assuming** L2 substrate (git+fs snapshots) exists — that is the next layer.
 
 ---
 
-## 9. What was validated (measurement record)
+## 9. Historical prototype measurement record
 
 - `permission:"ask"` shows Cursor’s confirmation dialog on real hardware (`sandbox:false` / `true` both)
 - gemma4:e2b with operational “reversible” (= undoable via substrate; “backup exists” does not count) + flat factual question correctly marks `drop db` irreversible
@@ -211,14 +209,14 @@ This design is the stage of “L3+L4 done right (determinism + local LLM).”
 
 ---
 
-## 10. Honest holes (named, with severity)
+## 10. Historical prototype holes (superseded where noted)
 
 | # | Hole | Severity | Current behavior |
 |---|---|---|---|
 | H1 | Tokenizer does not split **chains `a && b` / command substitution `$(...)` / subshells**. Hidden catastrophe (`ls && dropdb prod`) slips through | **high (false negative)** | Falls back to YOLO baseline only (no worse). **Top priority to close** |
 | H2 | **cwd missing** on sandbox path → relative path containment fails | medium | defaults to ask (safe but may raise false positives) |
 | H3 | **cold start** → first open-region command hits fallback ask | low | safe side; prewarm mitigates |
-| H4 | **residual false negatives in open region** — 2B may allow unknown new external-mutation tools | medium (true residual) | only region Tier0 backstop cannot reach. Mitigations: larger model / third detector for common external families / approval cache |
+| H4 | **residual false negatives in open region** — 2B may allow unknown new external-mutation tools | medium (historical) | Superseded for shell authority: partial/unsupported EffectPlans ask; the LLM is shadow-only |
 | H5 | **substrate not implemented (L2)** — “restorable” assumes git+fs snapshots exist but they do not. Tracked git is real; deleting untracked files leans on “regenerable” | medium | git worktree / fs snapshots would make this literally true |
 | H6 | Tier1 = 2B can drift | low–medium | structural judgment offloaded to determinism; LLM alone only in open region |
 
@@ -239,13 +237,14 @@ Honest ceiling: zero false negatives is not provable in principle. Victory = “
 
 ---
 
-## 12. Build order (no version numbers or roadmap — only the next one)
+## 12. Historical build order
 
 1. **Tier0 tokenizer hardening (H1)** — split on `&& || ; |` and newlines; detect `$(...)` / backticks / subshells. Verdict per segment; unparseable → ask. Closes the largest hole
 2. **Adversarial corpus + eval harness** — hard gate false negatives = 0. Grow from real trace
 3. **Continue audit dogfood** — measure real-distribution false positives; seed corpus
 4. (later) **L2 substrate** (git worktree snapshot) to make “restorable” literally true
-5. (later) **approval cache** to absorb describe-class false positives (first ask → register allow → pass through)
+5. (superseded) a standing approval cache was considered; current policy instead fixes
+   EffectPlan semantics or uses exact one-shot/resource-scoped grants
 
 Each step is “usable the day it ships.” No steps that do not run; no optimizations nobody uses.
 

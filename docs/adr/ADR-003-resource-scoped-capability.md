@@ -1,6 +1,6 @@
 # ADR-003 — Resource-scoped capability authorization
 
-Status: Accepted  
+Status: Accepted; network-read consequence superseded by ADR-004
 Date: 2026-08-06  
 Context: capability migration plan (sync PolicyEngine + async shadow), [CONTEXT.md](../CONTEXT.md)
 
@@ -30,6 +30,9 @@ TypeScript `PolicyEngine` instead of effect-type languages or sync LLM Tier1 jud
 - Network read commands require approval at L3 (policy `builtin.network`). This supersedes
   ADR-002 §1 read-egress MUST-ALLOW examples for the hook gate path only; L1 egress proxy
   retains GET allow semantics (`docs/CONTEXT.md`).
+- **Superseded on 2026-08-13:** [ADR-004](./ADR-004-effectplan-shell-authority.md)
+  replaces the blanket rule above for normalized shell actions: payload-free network reads
+  allow, while payload-bearing, mutating, high-stakes, and indeterminate effects still ask.
 - Doctor reports judge health as **shadow advisory**, not gate failure.
 - Boundary drivers, approval v3, and container reference monitors are follow-on work; config
   strings alone do not attest L1.

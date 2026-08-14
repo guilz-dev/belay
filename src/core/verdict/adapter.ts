@@ -42,9 +42,6 @@ export function buildVerdictContext(params: {
     sensitivePaths: params.options?.sensitivePaths ?? params.config.classifier.sensitivePaths,
     protectedArtifactRoots:
       protectedArtifactRoots.length > 0 ? [...new Set(protectedArtifactRoots)] : undefined,
-    customAllowCommands: params.options?.customAllowCommands ?? params.config.overrides.allow,
-    customExternalCommands:
-      params.options?.customExternalCommands ?? params.config.overrides.external,
     mode: params.config.mode,
     unknownLocalEffect:
       params.options?.unknownLocalEffect ?? params.config.policy.unknownLocalEffect,
@@ -116,14 +113,15 @@ export function verdictToClassifyResult(
   const legacyReason = mapLegacyReason(result)
 
   const hookVerdict =
-    result.permission === 'ask'
+    result.effectPlanProjection?.hookVerdict ??
+    (result.permission === 'ask'
       ? 'deny_pending_approval'
       : legacyReason === 'command_substitution' ||
           legacyReason === 'unknown_local_effect' ||
           legacyReason === 'unparseable_shell' ||
           result.effect === 'local_mutation'
         ? 'allow_flagged'
-        : 'allow'
+        : 'allow')
 
   const assessment = {
     reversibility:
@@ -135,11 +133,11 @@ export function verdictToClassifyResult(
     external,
     blastRadius: result.location,
     confidence:
-      result.confidence === 'deterministic'
-        ? 0.95
-        : result.confidence === 'llm'
-          ? 0.75
-          : hookVerdict === 'allow_flagged'
+      hookVerdict === 'allow_flagged'
+        ? 0.75
+        : result.confidence === 'deterministic'
+          ? 0.95
+          : result.confidence === 'llm'
             ? 0.75
             : 0.7,
     signals: result.signals,
@@ -168,6 +166,7 @@ export function verdictToClassifyResult(
     authorizationDecision: result.authorizationDecision,
     effectPlan: result.effectPlan,
     effectPlanPolicyDecisions: result.effectPlanPolicyDecisions,
+    effectPlanProjection: result.effectPlanProjection,
     boundaryProfile:
       options.boundaryProfile ??
       (config

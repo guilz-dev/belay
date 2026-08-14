@@ -1,5 +1,7 @@
 import path from 'node:path'
 
+import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
+import { parseNetworkEndpoint } from '../network-endpoint.js'
 import { extractRedirectTargets } from '../shell-tokenizer.js'
 import type { VerdictEffect } from './types.js'
 
@@ -22,6 +24,13 @@ export interface GitCommandSemantics {
   gitWorkTree?: string
   normalizedKey: string
   isReadOnly: boolean
+}
+
+export interface DecodeGitEffectsParams {
+  tokens: string[]
+  cwd: string
+  repoRoot: string
+  segment: string
 }
 
 const GIT_BRANCH_MUTATION_FLAGS = new Set([
@@ -631,5 +640,505 @@ export function classifyGitCommand(tokens: string[], baseCwd: string): GitComman
     gitWorkTree,
     normalizedKey,
     isReadOnly: false,
+  }
+}
+
+/**
+ * Decode git CLI grammar to typed effects without making an authorization
+ * decision. Legacy classification remains separate until the authority cutover.
+ */
+export function decodeGitEffects(params: DecodeGitEffectsParams): ShellEffectRequirement[] | null {
+  const normalized = normalizeGitInvocation(params.tokens, params.cwd)
+  if (!normalized) {
+    return null
+  }
+
+  const { subcommand, args } = normalized
+  const signals = [
+    `git.${subcommand.replaceAll(' ', '.')}`,
+    ...(subcommand === 'push' ? ['tier0_external'] : []),
+  ]
+  const effectiveCwd = normalized.effectiveCwd ?? params.cwd
+  const workTreeRoot = normalized.workTree
+    ? path.resolve(normalized.effectiveCwd ?? params.cwd, normalized.workTree)
+    : (normalized.effectiveCwd ?? params.repoRoot)
+  const gitRefRoot = normalized.gitDir
+    ? path.resolve(effectiveCwd, normalized.gitDir)
+    : workTreeRoot
+  const gitControlRoot = normalized.gitDir ? gitRefRoot : path.join(gitRefRoot, '.git')
+  const requirements: ShellEffectRequirement[] = []
+
+  if (subcommand === 'fetch' || subcommand === 'pull') {
+    const positionals = gitRemotePositionals(args)
+    if (subcommand === 'fetch' && args.includes('--all')) {
+      return [
+        gitRequirement(
+          'network.connect',
+          'network.connect',
+          {
+            kind: 'network',
+            host: 'unknown',
+            protocol: 'git-remote',
+            mode: 'read',
+            payload: 'none',
+          },
+          params.segment,
+          [...signals, 'git.fetch_all_remotes_unknown'],
+        ),
+        gitRequirement(
+          'git.ref.write',
+          'git.ref.write',
+          { kind: 'git-ref', ref: 'refs/remotes/*', scope: 'local', repoPath: gitRefRoot },
+          params.segment,
+          [...signals, 'git.ref.local'],
+        ),
+        gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+          ...signals,
+          'git.fetch_all_remotes_unknown',
+        ]),
+      ]
+    }
+    const multiple = subcommand === 'fetch' && args.includes('--multiple')
+    const remoteTokens = multiple ? positionals : [positionals[0]]
+    for (const remoteToken of remoteTokens) {
+      const remote = gitRemoteResource(remoteToken)
+      requirements.push(
+        gitRequirement(
+          'network.connect',
+          'network.connect',
+          {
+            kind: 'network',
+            ...remote.endpoint,
+            mode: 'read',
+            payload: 'none',
+          },
+          params.segment,
+          [...signals, 'git.network.read'],
+        ),
+        gitRequirement(
+          'git.ref.write',
+          'git.ref.write',
+          {
+            kind: 'git-ref',
+            ref: remote.ref ? `refs/remotes/${remote.ref}/*` : 'refs/remotes/*',
+            scope: 'local',
+            repoPath: gitRefRoot,
+          },
+          params.segment,
+          [...signals, 'git.ref.local'],
+        ),
+      )
+    }
+    const hazardousFetchSignals = gitFetchControlSignals(params.tokens, args, remoteTokens)
+    if (hazardousFetchSignals.length > 0) {
+      requirements.push(
+        gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+          ...signals,
+          ...hazardousFetchSignals,
+        ]),
+      )
+    }
+    if (multiple && positionals.length === 0) {
+      requirements.push(
+        gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+          ...signals,
+          'git.fetch_multiple_remote_missing',
+        ]),
+      )
+    }
+    if (subcommand === 'pull') {
+      requirements.push(
+        gitRequirement(
+          'fs.write',
+          'fs.write',
+          { kind: 'path', path: workTreeRoot },
+          params.segment,
+          [...signals, 'git.worktree.update'],
+        ),
+      )
+    }
+    return requirements
+  }
+
+  if (subcommand === 'push') {
+    const positionals = gitRemotePositionals(args)
+    const repositoryOption = gitOptionValue(args, '--repo')
+    const remote = gitRemoteResource(repositoryOption.value ?? positionals[0])
+    const refs = repositoryOption.value ? positionals : positionals.slice(1)
+    const lowered = [
+      gitRequirement(
+        'network.connect',
+        'network.connect',
+        {
+          kind: 'network',
+          ...remote.endpoint,
+          mode: 'mutate',
+          payload: 'present',
+        },
+        params.segment,
+        [...signals, 'git.network.mutate'],
+      ),
+    ]
+    for (const ref of refs.length > 0 ? refs : ['*']) {
+      lowered.push(
+        gitRequirement(
+          'git.ref.write',
+          'git.ref.write',
+          {
+            kind: 'git-ref',
+            ref: ref.startsWith('refs/') ? ref : `refs/heads/${ref}`,
+            scope: 'remote',
+          },
+          params.segment,
+          [...signals, 'git.ref.remote'],
+        ),
+      )
+    }
+    if (repositoryOption.missing) {
+      lowered.push(
+        gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+          ...signals,
+          'git.push_repository_missing',
+        ]),
+      )
+    }
+    return lowered
+  }
+
+  if (subcommand === 'reflog') {
+    const operation = args[0]
+    const mutationFlags = [
+      '--expire',
+      '--expire-unreachable',
+      '--rewrite',
+      '--stale-fix',
+      '--updateref',
+    ]
+    const mutating =
+      operation === 'expire' ||
+      operation === 'delete' ||
+      operation === 'drop' ||
+      args.some((arg) => mutationFlags.some((flag) => arg === flag || arg.startsWith(`${flag}=`)))
+    if (mutating) {
+      return [
+        gitRequirement(
+          'process.exec',
+          'process.exec',
+          { kind: 'executable', command: 'git', operation: 'spawn' },
+          params.segment,
+          [...signals, 'git_history_destructive', 'git.reflog.mutate'],
+        ),
+        gitRequirement(
+          'control_plane.write',
+          'control_plane.write',
+          { kind: 'path', path: path.join(gitControlRoot, 'logs') },
+          params.segment,
+          [...signals, 'git_history_destructive', 'git.reflog.mutate'],
+        ),
+      ]
+    }
+    if (isReadOnlyReflogInvocation(args)) {
+      return [
+        gitRequirement(
+          'process.exec',
+          'process.exec',
+          { kind: 'executable', command: 'git', operation: 'inspect' },
+          params.segment,
+          [...signals, 'git.inspect'],
+        ),
+        gitRequirement('fs.read', 'fs.read', { kind: 'path', path: workTreeRoot }, params.segment, [
+          ...signals,
+          'git.repository.read',
+        ]),
+      ]
+    }
+    return [
+      gitRequirement(
+        'process.exec',
+        'process.exec',
+        { kind: 'executable', command: 'git', operation: 'spawn' },
+        params.segment,
+        signals,
+      ),
+      gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+        ...signals,
+        'git.reflog.grammar_incomplete',
+      ]),
+    ]
+  }
+
+  const semantics = classifyGitCommand(params.tokens, params.cwd)
+  if (!semantics) {
+    return null
+  }
+  if (semantics.isReadOnly) {
+    requirements.push(
+      gitRequirement(
+        'process.exec',
+        'process.exec',
+        { kind: 'executable', command: 'git', operation: 'inspect' },
+        params.segment,
+        [...signals, 'git.inspect'],
+      ),
+      gitRequirement('fs.read', 'fs.read', { kind: 'path', path: workTreeRoot }, params.segment, [
+        ...signals,
+        'git.repository.read',
+      ]),
+    )
+    for (const operand of semantics.pathTargets) {
+      requirements.push(
+        gitRequirement(
+          'fs.read',
+          'fs.read',
+          { kind: 'path', path: path.resolve(workTreeRoot, operand) },
+          params.segment,
+          [...signals, 'git.path.read'],
+        ),
+      )
+    }
+    return requirements
+  }
+
+  if (semantics.effect === 'local_mutation') {
+    requirements.push(
+      gitRequirement(
+        'process.exec',
+        'process.exec',
+        { kind: 'executable', command: 'git', operation: 'spawn' },
+        params.segment,
+        signals,
+      ),
+      gitRequirement(
+        'git.ref.write',
+        'git.ref.write',
+        {
+          kind: 'git-ref',
+          ref: localGitRef(subcommand, args),
+          scope: 'local',
+          repoPath: gitRefRoot,
+        },
+        params.segment,
+        [...signals, 'git.ref.local'],
+      ),
+    )
+    for (const operand of semantics.pathTargets) {
+      requirements.push(
+        gitRequirement(
+          'fs.write',
+          'fs.write',
+          { kind: 'path', path: path.resolve(workTreeRoot, operand) },
+          params.segment,
+          [...signals, 'git.path.write'],
+        ),
+      )
+    }
+    if (semantics.requiresAsk) {
+      requirements.push(
+        gitRequirement(
+          'fs.write',
+          'fs.write',
+          { kind: 'path', path: workTreeRoot },
+          params.segment,
+          [...signals, ...semantics.requiresAsk.signals, 'git.destructive_worktree_write'],
+        ),
+        gitRequirement(
+          'control_plane.write',
+          'control_plane.write',
+          { kind: 'path', path: gitControlRoot },
+          params.segment,
+          [...signals, ...semantics.requiresAsk.signals, 'git.destructive_history_write'],
+        ),
+      )
+    }
+    return requirements
+  }
+
+  return [
+    gitRequirement(
+      'process.exec',
+      'process.exec',
+      { kind: 'executable', command: 'git', operation: 'spawn' },
+      params.segment,
+      signals,
+    ),
+    gitRequirement('indeterminate', 'indeterminate', { kind: 'unknown' }, params.segment, [
+      ...signals,
+      'git.grammar_incomplete',
+    ]),
+  ]
+}
+
+function isReadOnlyReflogInvocation(args: string[]): boolean {
+  if (args[0] === 'exists') {
+    return args.length === 2 && Boolean(args[1]) && !(args[1] ?? '').startsWith('-')
+  }
+  let index = args[0] === 'show' || args[0] === 'list' ? 1 : 0
+  let positionalCount = 0
+  while (index < args.length) {
+    const arg = args[index] ?? ''
+    if (arg === '--all' || /^-\d+$/.test(arg)) {
+      index += 1
+      continue
+    }
+    if (arg === '-n' || arg === '--max-count') {
+      const count = args[index + 1]
+      if (!count || !/^\d+$/.test(count)) {
+        return false
+      }
+      index += 2
+      continue
+    }
+    if (/^-n\d+$/.test(arg) || /^--(?:max-count|date|format|pretty)=.+/.test(arg)) {
+      index += 1
+      continue
+    }
+    if (arg.startsWith('-')) {
+      return false
+    }
+    positionalCount += 1
+    if (args[0] !== 'show' && args[0] !== 'list') {
+      return false
+    }
+    if (positionalCount > 1) {
+      return false
+    }
+    index += 1
+  }
+  return true
+}
+
+const GIT_REMOTE_OPTIONS_WITH_VALUES = new Set([
+  '--depth',
+  '--exec',
+  '--filter',
+  '--jobs',
+  '--negotiation-tip',
+  '--push-option',
+  '--repo',
+  '--receive-pack',
+  '--recurse-submodules',
+  '--server-option',
+  '--shallow-exclude',
+  '--shallow-since',
+  '--upload-pack',
+  '-j',
+  '-o',
+])
+
+function gitFetchControlSignals(
+  tokens: string[],
+  args: string[],
+  remoteTokens: Array<string | undefined>,
+): string[] {
+  const signals: string[] = []
+  if (
+    tokens.some(
+      (token) =>
+        token === '-c' ||
+        (token.startsWith('-c') && token.length > 2) ||
+        token === '--config-env' ||
+        token.startsWith('--config-env=') ||
+        token === '--exec-path' ||
+        token.startsWith('--exec-path='),
+    )
+  ) {
+    signals.push('git.fetch.global_execution_override')
+  }
+  if (
+    args.some((arg) =>
+      ['--exec', '--server-option', '--upload-pack'].some(
+        (option) => arg === option || arg.startsWith(`${option}=`),
+      ),
+    )
+  ) {
+    signals.push('git.fetch.caller_controlled_execution_or_payload')
+  }
+  if (remoteTokens.some((remote) => remote?.startsWith('ext::'))) {
+    signals.push('git.fetch.external_remote_helper')
+  }
+  return signals
+}
+
+function gitOptionValue(args: string[], option: string): { value?: string; missing: boolean } {
+  const exactIndex = args.indexOf(option)
+  if (exactIndex >= 0) {
+    const value = args[exactIndex + 1]
+    return value && !value.startsWith('-') ? { value, missing: false } : { missing: true }
+  }
+  const prefix = `${option}=`
+  const inline = args.find((arg) => arg.startsWith(prefix))
+  if (inline !== undefined) {
+    const value = inline.slice(prefix.length)
+    return value ? { value, missing: false } : { missing: true }
+  }
+  return { missing: false }
+}
+
+function gitRemotePositionals(args: string[]): string[] {
+  const positionals: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? ''
+    if (arg === '--') {
+      positionals.push(...args.slice(index + 1))
+      break
+    }
+    if (arg.startsWith('-')) {
+      if (GIT_REMOTE_OPTIONS_WITH_VALUES.has(arg) && !arg.includes('=')) {
+        index += args[index + 1] ? 1 : 0
+      }
+      continue
+    }
+    positionals.push(arg)
+  }
+  return positionals
+}
+
+function gitRemoteResource(remoteToken: string | undefined): {
+  endpoint: { host: string; protocol: string; port?: number }
+  ref?: string
+} {
+  const token = remoteToken && !remoteToken.startsWith('-') ? remoteToken : undefined
+  const endpoint = token
+    ? parseNetworkEndpoint(token, { allowHostedGitShorthand: true, allowScpStyle: true })
+    : null
+  if (endpoint) {
+    return { endpoint }
+  }
+  const ref = token && !token.includes('/') ? token : undefined
+  return {
+    endpoint: { host: ref ?? 'origin', protocol: 'git-remote' },
+    ...(ref ? { ref } : {}),
+  }
+}
+
+function localGitRef(subcommand: string, args: string[]): string {
+  if (subcommand === 'branch') {
+    const name = args.find((arg) => arg && !arg.startsWith('-'))
+    return name ? `refs/heads/${name}` : 'refs/heads/*'
+  }
+  if (subcommand === 'tag') {
+    const name = args.find((arg) => arg && !arg.startsWith('-'))
+    return name ? `refs/tags/${name}` : 'refs/tags/*'
+  }
+  return 'refs/local/*'
+}
+
+function gitRequirement(
+  tag: ShellEffectRequirement['tag'],
+  action: ShellEffectRequirement['action'],
+  resource: ShellEffectRequirement['resource'],
+  segment: string,
+  signals: string[],
+): ShellEffectRequirement {
+  return {
+    tag,
+    action,
+    resource,
+    evidence: {
+      level: tag === 'indeterminate' ? 'indeterminate' : 'certain',
+      signals: [...new Set(signals)].sort(),
+      basis: ['git_grammar'],
+    },
+    provenance: { segment },
   }
 }

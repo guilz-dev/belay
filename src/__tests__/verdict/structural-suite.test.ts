@@ -87,10 +87,10 @@ describe('structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
-    it('denies substitution under fail-closed policy even when inner is read-only', async () => {
+    it('allows a completely lowered read-only substitution', async () => {
       const result = await verdict('echo $(git status)', context)
-      expect(result.permission).toBe('ask')
-      expect(result.reason).toBe('command_substitution')
+      expect(result.permission).toBe('allow')
+      expect(result.effectPlan?.completeness).toBe('complete')
     })
 
     it('npm install is ask under fail-closed defaults', async () => {
@@ -159,9 +159,9 @@ describe('structural suite', () => {
       expect(result.permission).toBe('ask')
     })
 
-    it('pnpm run build-evil resolves chained recipe and asks on egress', async () => {
+    it('pnpm run build-evil allows its payload-free network read', async () => {
       const result = await verdict('pnpm run build-evil', context)
-      expect(result.permission).toBe('ask')
+      expect(result.permission).toBe('allow')
     })
 
     it('requires approval for outside-repo mutation after resolved cd chain', async () => {
@@ -190,19 +190,28 @@ describe('structural suite', () => {
   })
 
   describe('egress read/mutate (SPEC R33)', () => {
-    const NETWORK_READ_REQUIRES_ASK = [
+    const PAYLOAD_FREE_NETWORK_READS = [
       'curl https://example.com',
       'wget https://example.com/file',
-      'aws s3 ls',
       'gh pr list',
+    ]
+
+    it.each(PAYLOAD_FREE_NETWORK_READS)('%s → allow (effect policy)', async (command) => {
+      const result = await verdict(command, context)
+      expect(result.permission, `payload-free network read must allow: ${command}`).toBe('allow')
+      expect(result.signals).not.toContain('tier0_external')
+    })
+
+    const OPAQUE_NETWORK_READS_REQUIRE_ASK = [
+      'aws s3 ls',
       'kubectl get pods',
       'gcloud compute instances list',
       'vercel ls',
     ]
 
-    it.each(NETWORK_READ_REQUIRES_ASK)('%s → ask (network policy)', async (command) => {
+    it.each(OPAQUE_NETWORK_READS_REQUIRE_ASK)('%s → ask (incomplete decoder)', async (command) => {
       const result = await verdict(command, context)
-      expect(result.permission, `network read egress must require approval: ${command}`).toBe('ask')
+      expect(result.permission, `opaque network read must require approval: ${command}`).toBe('ask')
       expect(result.signals).not.toContain('tier0_external')
     })
 

@@ -1,5 +1,6 @@
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
+import { inspectGitResourceIdentity } from './git-resource-identity.js'
 import { isFdDuplication, isRedirectOperator } from './shell-tokenizer.js'
 
 /**
@@ -85,9 +86,42 @@ export function resolveWorkspaceRootMatch(
   targetPath: string,
 ): WorkspaceRootMatch | null {
   const canonicalRepoRoot = canonicalPath(repoRoot)
-  const repoRelative = relativeWithinRoot(repoRoot, targetPath)
-  if (repoRelative !== null) {
-    return { kind: 'repo', root: canonicalRepoRoot, relativePath: repoRelative }
+  const repoInspection = inspectGitResourceIdentity(repoRoot)
+  const targetInspection = inspectGitResourceIdentity(targetPath)
+  if (repoInspection.status === 'resolved') {
+    if (targetInspection.status === 'resolved') {
+      if (repoInspection.identity.commonDir === targetInspection.identity.commonDir) {
+        const relativePath = relativeWithinRoot(
+          targetInspection.identity.repositoryRoot,
+          targetPath,
+        )
+        if (relativePath !== null) {
+          return {
+            kind: 'repo',
+            root: targetInspection.identity.repositoryRoot,
+            relativePath,
+          }
+        }
+      }
+      return null
+    }
+    if (targetInspection.status === 'invalid') {
+      return null
+    }
+    if (relativeWithinRoot(repoRoot, targetPath) !== null) {
+      return null
+    }
+  } else if (repoInspection.status === 'invalid') {
+    if (relativeWithinRoot(repoRoot, targetPath) !== null || targetInspection.status !== 'absent') {
+      return null
+    }
+  } else if (targetInspection.status === 'absent') {
+    const repoRelative = relativeWithinRoot(repoRoot, targetPath)
+    if (repoRelative !== null) {
+      return { kind: 'repo', root: canonicalRepoRoot, relativePath: repoRelative }
+    }
+  } else {
+    return null
   }
 
   const normalizedTrustedRoots = [...new Set(trustedRoots.map((root) => path.resolve(root)))]
@@ -165,24 +199,9 @@ export function hasOutsideRepoPath(tokens: string[], cwd: string, repoRoot: stri
 }
 
 export function containingGitRoot(targetPath: string): string | null {
-  const resolved = canonicalPath(targetPath)
-  let current = resolved
-  try {
-    if (!statSync(current).isDirectory()) {
-      current = path.dirname(current)
-    }
-  } catch {
-    current = path.dirname(current)
+  const inspection = inspectGitResourceIdentity(targetPath)
+  if (inspection.status === 'resolved') {
+    return inspection.identity.repositoryRoot
   }
-
-  while (true) {
-    if (existsSync(path.join(current, '.git'))) {
-      return current
-    }
-    const parent = path.dirname(current)
-    if (parent === current) {
-      return null
-    }
-    current = parent
-  }
+  return inspection.status === 'invalid' ? inspection.boundaryPath : null
 }

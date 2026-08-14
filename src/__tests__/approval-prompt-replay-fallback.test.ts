@@ -9,7 +9,7 @@ import { codexAdapter } from '../adapters/codex/adapter.js'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
   createDefaultGateRuntimeDeps,
-  evaluateGatedAction,
+  evaluateGatedAction as evaluateGatedActionRuntime,
   type GateRuntimeDeps,
   processApprovalPrompt,
 } from '../adapters/shared/gate-runtime.js'
@@ -19,6 +19,17 @@ import { BoundaryCleanupError } from '../core/capability/boundary-run.js'
 import { mergeConfig } from '../core/config.js'
 
 const tempDirs: string[] = []
+
+function evaluateGatedAction(
+  ...args: Parameters<typeof evaluateGatedActionRuntime>
+): ReturnType<typeof evaluateGatedActionRuntime> {
+  const [ctx, deps, action] = args
+  const replayAction =
+    action.kind === 'shell' && (action.command === 'true' || action.command === 'false')
+      ? { ...action, command: `sh -c 'exit ${action.command === 'true' ? '0' : '1'}'` }
+      : action
+  return evaluateGatedActionRuntime(ctx, deps, replayAction)
+}
 
 async function createTempRepo(adapter: BelayAdapter = cursorAdapter) {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-approval-replay-'))

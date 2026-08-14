@@ -14,6 +14,14 @@ export type CapabilityEvidenceLevel = 'certain' | 'possible' | 'indeterminate'
 
 export type CapabilityHookKind = 'shell' | 'tool' | 'subagent'
 
+export type NetworkMode = 'read' | 'mutate' | 'ambiguous'
+
+export type NetworkPayload = 'none' | 'present' | 'secret'
+
+export type ProcessOperation = 'inspect' | 'spawn' | 'signal'
+
+export type GitRefScope = 'local' | 'remote'
+
 export interface CapabilityPrincipal {
   adapter?: string
   repoRoot: string
@@ -22,10 +30,17 @@ export interface CapabilityPrincipal {
 
 export type CapabilityResource =
   | { kind: 'path'; path: string }
-  | { kind: 'network'; host: string; port?: number; protocol?: string }
-  | { kind: 'executable'; command: string }
+  | {
+      kind: 'network'
+      host: string
+      port?: number
+      protocol?: string
+      mode?: NetworkMode
+      payload?: NetworkPayload
+    }
+  | { kind: 'executable'; command: string; operation?: ProcessOperation }
   | { kind: 'package-cache'; manager: 'npm' | 'pnpm' }
-  | { kind: 'git-ref'; ref: string }
+  | { kind: 'git-ref'; ref: string; scope?: GitRefScope; repoPath?: string }
   | { kind: 'unknown' }
 
 export interface CapabilityRequestContext {

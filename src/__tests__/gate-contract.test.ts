@@ -68,7 +68,7 @@ describe('gate contract', () => {
     expect(assessment?.confidence).toBe(0.99)
   })
 
-  it('escalates when agent assessment mismatches independent judgment', async () => {
+  it('keeps the shell EffectPlan verdict authoritative on agent assessment mismatch', async () => {
     const action = normalizeGatedAction({
       kind: 'shell',
       repoRoot: '/repo',
@@ -84,7 +84,8 @@ describe('gate contract', () => {
     })
     const result = await classifyGatedAction(action, DEFAULT_CONFIG_V3)
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('agent_assessment_mismatch')
+    expect(result.reason).toBe('external_effect')
+    expect(result.assessment.signals).toContain('agent_assessment_mismatch')
   })
 
   it('maps unnormalized actions to deny verdicts', () => {

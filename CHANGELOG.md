@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Audit runtime provenance** — gate audit events now record the Belay runtime version, build stamp, and a stable configuration fingerprint; `belay metrics` groups gate events by recorded runtime build.
 
+### Changed
+
+- **EffectPlan shell authority** — normalized shell actions now authorize exclusively from canonical EffectPlan requirements; runtime command allow/deny lists, legacy overrides, corpus labels, and shell standing-allow records are inert.
+- **Network and Git policy** — payload-free network reads allow, reversible `git fetch` / `git pull` effects return `allow_flagged`, and external mutation, explicit payload/file/secret sends, high-stakes effects, and indeterminate plans require approval.
+- **Repository identity** — linked Git worktrees use the repository common-dir identity so reversible mutations in sibling worktrees remain local and separate repositories remain outside scope.
+- **Approval scope terminology** — exact one-shot approvals and resource-scoped grants remain supported, but no grant is treated as a command allowlist or as authority over EffectPlan policy.
+
 ## 0.7.0 — 2026-08-12
 
 ### Added

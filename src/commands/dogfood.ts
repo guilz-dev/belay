@@ -58,7 +58,7 @@ async function promoteDogfoodToEnforce(
       message: [
         'Dogfood metrics do not recommend enforce yet.',
         ...metrics.dogfood.notes,
-        'Re-run belay metrics, tune overrides.allow, or pass --force to override.',
+        'Re-run belay metrics, correct EffectPlan semantics or resource scope, or pass --force to override.',
       ].join(' '),
     }
   }

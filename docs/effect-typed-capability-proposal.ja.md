@@ -6,12 +6,15 @@
 
 ## TL;DR
 
-- **現状メモ（2026-08, PR #42 以降）**: Step 1（実境界 / `BoundaryDriver`）は `container` と `host-integration` で実装済み。Step 2（capability token）は未着手・任意。grant 消費経路は [grant-consumption-paths.md](./grant-consumption-paths.md) を参照。
+- **現状メモ（2026-08, ADR-004 以降）**: 一般 shell は canonical `EffectPlan` →
+  PolicyEngine が authority。payloadなし network read は allow、mutation / 明示
+  payload/file/secret / high-stakes / indeterminate は ask。runtime command list と
+  corpus catalog は permission を変更しない。
 - **Koka / Flix / Unison / Mercury / Jacquard を実装言語として採用するのは非現実的**。Belayは「Node組み込みのみ・ゼロ依存CLI」という設計方針で、かつ agent が渡してくる shell command / tool payload は実行前には静的に分からない**実行時文字列**であり、そもそも静的effect型の対象にならない。
 - ただし **Jacquard の設計思想（関数シグネチャに外界effectを列挙し、ランタイムは許可されていないeffectを拒否する）は、Belayの `gate-runtime` / `capability broker` がやろうとしていることとほぼ同型**。しかも Jacquard 自体が「AIが書き人間がレビューするコード」向けの研究言語であり、Belayの問題設定に驚くほど近い。
 - **前提更新（2026-08）**: `runTransactionalExecution` は [`BoundaryDriver`](../../src/core/transactional/runner.ts) 経由で実行する。`container` driver 選択時は Docker 隔離、`host-integration`（L3 editor hook 向けデフォルト）のみ [`runShellCommand`](../../src/core/transactional/git-worktree.ts) でホスト直 `spawn` が残る。git worktree はファイル変更の観測隔離。本提案の capability token は**隔離そのものではなく**、Belay 自身の副作用コードの誤用防止ガードレール（§5, §6）。
 - 実際に手を動かせる転用先は2つ：
-  1. **A. Effectタグの型的リファイン** — `VerdictResult.effect` を現状の4値（`read_only`/`local_mutation`/`remote_mutation`/`unknown`）から、Jacquard的なリソース別effect語彙（fs-write / network-egress / process-exec / git-history-rewrite 等）に拡張し、`corpus/gates.ts` のhard-gateと `capability-approval` のスコープをこの語彙で駆動する。
+  1. **A. Effectタグの型的リファイン** — `EffectPlan` / `EffectRequirement` として実装済み。corpus は hard-gate 期待値であり runtime authority ではない。
   2. **B. Capabilityトークン（object-capability）パターン** — Belay自身の副作用コード（`git-worktree.ts` の exec、egress proxy起動、control-plane書き込み）に対し、**誤用防止のガード**として broker/gate-runtime 経由でのみ得られるtokenを要求する関数へ変える。ただしbranded型はTypeScript側では偽造可能であり、これは「セキュリティ境界」ではなく「うっかり直接呼び出しを型検査で検出するガードレール」である点を明記する。
 - どちらもゼロ依存・TypeScriptの型システムのみで実装可能で、既存のNode CLIアーキテクチャを壊さない。ただし**実際のプロセス隔離（コンテナ/制限実行環境）は別途必要**であり、この提案はそれを代替しない。既存提案の Phase E0-E2（サンドボックス化された修正実行基盤）が実際に触ることになる `git-worktree.ts` / `broker.ts` を土台強化する形で接続できる。
 
@@ -32,7 +35,7 @@ Jacquardの核心アイデアを分解すると2層ある：
 1. **静的層**: 自分の書くコードの関数シグネチャにeffectを型として宣言する
 2. **実行時層**: 実行時に、宣言されていない／許可されていないeffectをランタイムが拒否する
 
-Belayに置き換えると、(1) はBelay自身の実装コード（TypeScript）に、(2) は agent が渡してくる未知のshell command / tool payloadに対応する。**(2) は原理的に静的型の対象にならない**（実行するまで何のコマンドか分からない）ため、ここは今まで通り `gate-engine.ts` の実行時分類器（heuristic + judge LLM）が担う。Jacquardの実行時effect拒否モデルに近いのは、むしろ既存の `evaluateGatedAction` → `GateVerdict.wouldBlock` のフローそのものである。
+Belayに置き換えると、(1) はBelay自身の実装コード（TypeScript）に、(2) は agent が渡してくる未知のshell command / tool payloadに対応する。**(2) は原理的に静的型の対象にならない**ため、一般 shell は実行時に grammar decoder で canonical `EffectPlan` へ lower し、PolicyEngine が operation/resource/payload/evidence を評価する。LLM judge は shadow-only で gate decision を変更しない。
 
 **転用の伸びしろがあるのは (1) の静的層**——つまりBelay自身の実装コードに対して、「このコードパスはfs-writeを行う／network-egressを行う」という宣言を型で強制することは、TypeScriptの範囲内で今すぐ着手できる。
 
@@ -118,8 +121,11 @@ export function normalizeEffectTags(tags: Iterable<EffectTag>): readonly EffectT
 
 `adapter.ts` 側（[adapter.ts:152](../src/core/verdict/adapter.ts#L152)）は `axes.effect: result.effect` を素通しで返しているため、`effectTags` 導入時も `readonly EffectTag[]`（配列）のままDTOへ渡す。`Set` を直接返すと `JSON.stringify` で `{}` になり外部hookプロトコルが壊れるため、Setは内部計算にのみ使い、公開型・DTOは常に正規化済み配列にする。
 
-- `corpus/gates.ts` の `isMustAskMiss` / `isProvablyBenignBlock` は現状 `HookVerdict` のみを見ているが、`effectTags` が入ることで「`network_egress` を含むケースは must-ask 固定」のようなタグ駆動のhard-gateを追加できる（現在バラバラに存在する `egressEnabled` / `brokerFsScope` / `trustedWorkspaceRoots` などの個別boolean設定を、タグに対する一貫したポリシーとして統合できる）
-- **effectTagはapprovalのスコープそのものにはしない。** `ApprovalRecord`（`fingerprint` / `cwd` / `toolName` / `payloadHash` / `scopeHint`）はすでにコマンド単位・入力ハッシュ単位で承認を束縛している。「`network_egress` を含む」は"must-askに固定する分類上の理由"であって、"何を承認したか"の代わりにはならない。もし `effectTags` を承認まわりに持ち込むなら、既存の `ApprovalRecord` に**追加のフィールド**として乗せる：`effectTags`（この承認がカバーする効果種別、監査用）、`resourceScope`（対象ホスト/パスなど、tagごとに意味が異なる）、`inputHash`（`payloadHash` を流用）、`expiresAt`（既存）、`maxUses`（新規、再実行回数の上限）。**「`network_egress` というtagだけを渡せば任意の外部送信が許可される」設計は最小権限に反するため明確に非採用とする。**
+- `corpus/gates.ts` の `isMustAskMiss` / `isProvablyBenignBlock` は
+  `HookVerdict` の期待値を検証する。`network.connect` は一律 must-ask ではなく、
+  payload-free read は allow、mutation / explicit payload / secret / ambiguous は ask。
+  corpus 自体は runtime authorization に使わない。
+- **effectTagはapprovalのスコープそのものにはしない。** `ApprovalRecord`（`fingerprint` / `cwd` / `toolName` / `payloadHash` / `scopeHint`）はすでにコマンド単位・入力ハッシュ単位で承認を束縛している。`network.connect` は host / mode / payload / evidence と組み合わせて判定し、payload-free read は allow、mutation・明示payload・secret・ambiguous は ask とする。`effectTags` を承認まわりに持ち込む場合も監査用の追加軸に限定し、承認範囲は `resourceScope`、入力hash、有効期限、使用回数で束縛する。**「`network.connect` というtagだけを渡せば任意の外部送信が許可される」設計は最小権限に反するため明確に非採用とする。**
 
 ### 効果
 
@@ -231,7 +237,7 @@ export function runShellCommand(
 | **Step 1** | Step 0で「実境界なし」と判明した経路（`runShellCommand` 等）について、`config.sandbox.runtime` に応じた実隔離（コンテナ／制限ユーザー等）への委譲を設計・実装する。**これが§9の成功指標達成に直接効く本丸**であり、既存提案 §12 の欠落要素1と同一 | `git-worktree.ts`, `capability/broker.ts`, sandbox runtime連携部 | 「サンドボックス外の破壊的操作 0件」を実際に満たす | 大 |
 | **Step 2** | Step 1で実境界ができた経路にのみ、案Bのtoken基盤（`capability/tokens.ts`）を適用し、「実境界を通ったことの型的な印」として機能させる | `capability/tokens.ts`（新規）, `git-worktree.ts` | 実境界のうっかりバイパスを型検査＋実行時レジストリで検出 | 小〜中 |
 | **Step 3** | 案Aの `EffectTag` 型を `verdict/types.ts` に追加し、既存の `effect: VerdictEffect` と並走させる（破壊的変更なし）。`normalizeEffectTags` で排他制約を強制 | `verdict/types.ts`, `verdict/verdict.ts` | 新しいeffect語彙を段階導入する土台 | 中 |
-| **Step 4** | `corpus/gates.ts` のhard-gateに `effectTags` ベースの判定を追加（`network_egress` を含むケースは must-ask 固定、等）。承認自体のスコープは既存の `ApprovalRecord.fingerprint`/`payloadHash` を維持し、`effectTags` はあくまで分類・監査用の追加軸とする | `corpus/gates.ts`, `capability-approval.ts` | 個別boolean設定の組み合わせ爆発を、タグ単位の一貫ポリシーに置換（最小権限は崩さない） | 中 |
+| **Step 4** | **superseded / 実装済み**: corpus は EffectPlan projection の期待値だけを検証し、network は mode/payload/resource に基づいて判定。承認は exact fingerprint/request/resource/hash を維持 | `effect-ir/policy.ts`, `corpus/gates.ts`, `capability-approval.ts` | runtime list authority を排除しつつ最小権限を維持 | 中 |
 | **Step 5**（任意） | `VerdictAxes.effect: string` を `readonly EffectTag[]` に置換し、DTO層まで型を閉じる | `core/types.ts`, `verdict/adapter.ts`, hookレスポンス整形箇所 | フルスタックでeffectの型が閉じる | 大（外部hookプロトコルとの互換性要検討） |
 
 **Step 0・3は既存コードを壊さない付加（ドキュメント／並走型）のみなので即着手可能。Step 1・2の順序は厳守する**——token（Step 2）を実境界（Step 1）より先に作ると、レビューで指摘された「保証していないものを保証したかのように見せる」問題を再現する。

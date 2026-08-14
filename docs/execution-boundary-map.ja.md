@@ -18,13 +18,15 @@ Every gated action follows one of three execution classes:
 ### prediction-only (default hook allow)
 
 - Cursor / Claude / Codex shell, tool, subagent hooks → `evaluateGatedAction` → `permission: allow` → **host executes**
-- Classification: `classifyShell` / `classifyToolUse` / `classifySubagent` → `PolicyEngine`
+- Classification: normalized shell は canonical `EffectPlan` → `PolicyEngine` projection。
+  tool/subagent は各 adapter → `PolicyEngine`
 - Grants consumed at gate-runtime (`approved_once`, `capability_grant`); not verified at `BoundaryDriver.run`
 
 ### mediated execution
 
 - Opt-in transactional shell: `runTransactionalExecution` → `runWithBoundaryRunnable` → `BoundaryDriver.run`
-- Clean Git worktree backend; dirty/non-Git fail closed unless file_checkpoint (not implemented)
+- Clean Git worktree backend; dirty Git can use the opt-in attested `file_checkpoint`
+  backend. Unsupported/non-attested substrates fail closed.
 - Success returns `TRANSACTIONAL_ALREADY_APPLIED` with `permission: deny` to prevent double execution
 - **Official mediated path** for shell commands in this foundation
 
@@ -48,7 +50,7 @@ Do not report host-integration paths as runtime-enforced sandboxing.
 | Stage | EffectPlan role |
 |-------|-----------------|
 | Build | `effect-ir` from shell parse + launcher decomposition |
-| Authorize | `PolicyEngine` over flattened `CapabilityRequestV1[]` |
+| Authorize | Effect requirements are evaluated directly and projected by strictest disposition; flattened `CapabilityRequestV1[]` binds exact grants |
 | Audit | `effectIRHash`, provenance, boundary enforcement status |
 | Materialize | Container driver only; all bundle grants must match |
 

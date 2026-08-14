@@ -1371,8 +1371,6 @@ export function scrubOptionsFromConfig(config: BelayConfigV4): ScrubOptions {
 export function classifierOptionsFromConfig(config: BelayConfigV4): ClassifierOptions {
   return {
     strictChains: config.classifier.strictChains,
-    customExternalCommands: config.overrides.external,
-    customAllowCommands: config.overrides.allow,
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
     unparseableShell: config.policy.unparseableShell,

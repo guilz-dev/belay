@@ -34,7 +34,7 @@ describe('adapter capability conformance', () => {
         const verdict = await evaluateGatedAction(ctx, deps, {
           kind: 'shell',
           cwd: repoRoot,
-          command: 'curl https://example.com',
+          command: 'curl -X POST -d payload https://example.com',
         })
         expect(verdict.permission).toBe('deny')
         expect(verdict.capabilityRequests?.[0]?.version).toBe(CAPABILITY_REQUEST_VERSION)

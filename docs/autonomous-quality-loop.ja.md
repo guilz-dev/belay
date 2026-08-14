@@ -53,13 +53,13 @@ Belay 自身の哲学（ROADMAP「2つのダイヤル」）をループにも適
 
 ### P2. ラベルの出所規律 — 自動付与できるラベルとできないラベル
 
-`provably-benign` は standing-allow カタログへ波及し、実行時の無音許可に繋がる。したがって:
+`provably-benign` は CI の hard false-positive boundary であり、runtime authority ではない。ただし誤った ground truth は Effect lowering / policy を誤修正させるため、次の規律を守る:
 
 | ラベル | 自動追加 | 根拠 |
 |---|---|---|
 | `must-ask` | **限定的に可** | 厳しめに倒す方向であり、過剰でも「聞くだけ」で済む |
 | `accepted-benign` | **不可** | 現在でも `harvest apply` による人手レビュー前提。ソフトゲートでも ground truth を自動注入しない |
-| `provably-benign` | **不可** | 無音許可の付与であり、ランタイム権限の拡大になる |
+| `provably-benign` | **不可** | Effect semantics の誤修正を誘発し、CI ground truth を汚染する |
 
 自動ラベル許可の対象は、「意味保存性を個別に説明できる must-ask 変異」に限る。`approve` はシグナルであって ground truth ではない、という既存 harvest 規律をそのまま守る。
 

@@ -197,7 +197,7 @@ export function computeAuditMetrics(
       }
     } else {
       notes.push(
-        `${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(classifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and add overrides.allow where appropriate.`,
+        `${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(classifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and correct EffectPlan semantics or resource scope; use exact approval only when the modeled effects are correct.`,
       )
       if (approvalRecordedCount > 0) {
         notes.push(
@@ -205,7 +205,7 @@ export function computeAuditMetrics(
         )
       } else {
         notes.push(
-          'Review top would-block summaries and add overrides.allow for legitimate commands before switching to enforce.',
+          'Review top would-block summaries and correct EffectPlan semantics or resource scope before switching to enforce.',
         )
       }
       if (classifierWouldBlockRate < 0.05 && gateEvents >= 20 && availabilityAsks.total === 0) {
@@ -224,14 +224,14 @@ export function computeAuditMetrics(
   if (availabilityAsks.total > 0) {
     readyForEnforce = false
     notes.push(
-      `${availabilityAsks.total} availability-caused ask(s) — tune infrastructure before corpus overrides.`,
+      `${availabilityAsks.total} availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
     )
     notes.push('Ready for enforce withheld while availability-caused asks are present.')
   }
 
   if (repeatedFingerprintAsks.length > 0) {
     notes.push(
-      `${repeatedFingerprintAsks.length} repeated fingerprint ask pattern(s) — review standing-allow / cache candidates.`,
+      `${repeatedFingerprintAsks.length} repeated fingerprint ask pattern(s) — review EffectPlan semantics and exact approval history.`,
     )
   }
 

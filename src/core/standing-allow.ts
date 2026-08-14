@@ -2,17 +2,12 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { STANDING_ALLOW_CATALOG } from '../corpus/standing-allow-catalog.generated.js'
 import type { BelayConfigV4 } from './config.js'
 import { belayStateDir } from './config.js'
 import type { GatedActionKind } from './gate-contract.js'
 import type { ClassifyResult } from './types.js'
 
-export type StandingAllowSource =
-  | 'provably-benign-corpus'
-  | 'must-allow-catalog'
-  | 'operator'
-  | 'availability-reconfirmed'
+export type StandingAllowSource = 'operator' | 'availability-reconfirmed'
 
 export interface StandingAllowEntry {
   kind: GatedActionKind
@@ -32,7 +27,6 @@ export interface StandingAllowFile {
 
 export interface StandingAllowMatch {
   source: StandingAllowSource
-  catalogCommand?: string
   entryId?: string
 }
 
@@ -43,14 +37,6 @@ const EMPTY_STANDING_ALLOW: StandingAllowFile = {
 
 /** Default TTL for operator / availability-reconfirmed standing-allow entries. */
 export const DEFAULT_STANDING_ALLOW_TTL_MS = 30 * 24 * 60 * 60 * 1000
-
-const PROVABLY_BENIGN_COMMANDS = new Set(
-  STANDING_ALLOW_CATALOG.shell.provablyBenign.map((entry) => entry.normalizedCommand),
-)
-
-const MUST_ALLOW_COMMANDS = new Set(
-  STANDING_ALLOW_CATALOG.shell.mustAllow.map((entry) => entry.normalizedCommand),
-)
 
 /** Reasons that must never be silenced via standing-allow (defense in depth with signal checks). */
 const STANDING_ALLOW_BLOCKED_REASONS = new Set([
@@ -149,22 +135,6 @@ export async function saveStandingAllow(filePath: string, state: StandingAllowFi
   await writeFile(filePath, `${JSON.stringify(compacted, null, 2)}\n`, 'utf8')
 }
 
-function matchBundledCatalog(
-  kind: GatedActionKind,
-  normalizedCommand: string,
-): StandingAllowMatch | null {
-  if (kind !== 'shell' || !normalizedCommand) {
-    return null
-  }
-  if (PROVABLY_BENIGN_COMMANDS.has(normalizedCommand)) {
-    return { source: 'provably-benign-corpus', catalogCommand: normalizedCommand }
-  }
-  if (MUST_ALLOW_COMMANDS.has(normalizedCommand)) {
-    return { source: 'must-allow-catalog', catalogCommand: normalizedCommand }
-  }
-  return null
-}
-
 function matchStateEntry(params: {
   kind: GatedActionKind
   fingerprint: string
@@ -193,17 +163,14 @@ export function resolveStandingAllowMatch(params: {
   state: StandingAllowFile
   now?: number
 }): StandingAllowMatch | null {
+  if (params.kind === 'shell') {
+    return null
+  }
   if (params.result.verdict !== 'deny_pending_approval') {
     return null
   }
   if (isTier0StandingAllowBlocked(params.result)) {
     return null
-  }
-
-  const normalizedCommand = params.result.normalizedCommand ?? params.result.summary ?? ''
-  const catalogMatch = matchBundledCatalog(params.kind, normalizedCommand)
-  if (catalogMatch) {
-    return catalogMatch
   }
 
   return matchStateEntry({

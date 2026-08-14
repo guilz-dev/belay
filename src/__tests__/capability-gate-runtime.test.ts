@@ -67,7 +67,7 @@ describe('capability gate runtime', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
-  it('allows allowlisted outside-repo redirects when the sandbox broker is active', async () => {
+  it('does not let a standing path allowlist override effect policy', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-'))
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
@@ -106,8 +106,8 @@ describe('capability gate runtime', () => {
       command: 'echo hi > ../outside.txt',
     })
 
-    expect(verdict.permission).toBe('allow')
-    expect(verdict.reason).toBe('capability_fs_hint')
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe('outside_repo_mutation')
   })
 
   it('does not let one-shot approval bypass outside-repo rules when the broker is active', async () => {
@@ -890,11 +890,11 @@ describe('capability gate runtime', () => {
     expect(replay.authorizationDecision?.matchedRule).toBe('grant.exact')
   })
 
-  it('denies a hashed approval when the current effect plan is missing', async () => {
+  it('denies a hashed approval when the authoritative effect plan hash differs', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-missing-effect-plan-'))
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
-    const command = 'false'
+    const command = 'unknown-command'
     const config = brokerInactiveConfig()
     const ctx = {
       layout: cursorAdapter.layout,
@@ -945,7 +945,7 @@ describe('capability gate runtime', () => {
     tempDirs.push(repoRoot)
     await mkdir(path.join(repoRoot, '.git'))
     const config = brokerInactiveConfig()
-    const predicted = await classifyShellGated('false', repoRoot, repoRoot, config)
+    const predicted = await classifyShellGated('unknown-command', repoRoot, repoRoot, config)
     expect(predicted.verdict).toBe('deny_pending_approval')
 
     const approval = createApprovalRecord({
@@ -953,7 +953,7 @@ describe('capability gate runtime', () => {
       fingerprint: predicted.fingerprint,
       repoRoot,
       reason: predicted.reason,
-      summary: predicted.normalizedCommand ?? 'false',
+      summary: predicted.normalizedCommand ?? 'unknown-command',
       approvalTtlMinutes: config.approvalTtlMinutes,
       approvalId: 'belay_approved_once_gate',
     })
@@ -976,7 +976,7 @@ describe('capability gate runtime', () => {
     const verdict = await evaluateGatedAction(ctx, deps, {
       kind: 'shell',
       cwd: repoRoot,
-      command: 'false',
+      command: 'unknown-command',
     })
 
     expect(verdict.permission).toBe('allow')

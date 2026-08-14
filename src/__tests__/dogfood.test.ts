@@ -102,6 +102,9 @@ describe('dogfood command', () => {
 
     const blocked = await dogfoodProject({ targetDir: repoRoot, enforce: true })
     expect(blocked.ok).toBe(false)
+    expect(blocked.message).toContain('EffectPlan semantics')
+    expect(blocked.message).toContain('resource scope')
+    expect(blocked.message).not.toContain('overrides.allow')
 
     const forced = await dogfoodProject({ targetDir: repoRoot, enforce: true, force: true })
     expect(forced.ok).toBe(true)

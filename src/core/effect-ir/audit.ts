@@ -17,6 +17,7 @@ function auditableResource(resource: ReturnType<typeof collectRequirements>[numb
     return {
       kind: 'executable',
       commandHash: hashValue(resource.command),
+      ...(resource.operation ? { operation: resource.operation } : {}),
     }
   }
   return resource
