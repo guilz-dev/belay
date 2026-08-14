@@ -12,6 +12,9 @@ export interface DogfoodStatus {
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
+  excludedGateEvents: number
+  runtimeBuildStamp?: string
+  configFingerprint?: string
   notes: string[]
 }
 
@@ -30,6 +33,7 @@ export async function loadOperationalInsights(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const metrics = await metricsProject({ targetDir: repoRoot })
+  const cohort = metrics.currentCohort
 
   return {
     repoRoot,
@@ -38,9 +42,12 @@ export async function loadOperationalInsights(
       mode: config.mode,
       unknownLocalEffect: config.policy.unknownLocalEffect,
       readyForEnforce: metrics.dogfood.readyForEnforce,
-      gateEvents: metrics.gateEvents,
-      wouldBlockCount: metrics.wouldBlockCount,
-      wouldBlockRate: metrics.wouldBlockRate,
+      gateEvents: cohort.gateEvents,
+      wouldBlockCount: cohort.wouldBlockCount,
+      wouldBlockRate: cohort.wouldBlockRate,
+      excludedGateEvents: cohort.excludedGateEvents,
+      runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
+      configFingerprint: cohort.identity?.configFingerprint,
       notes: metrics.dogfood.notes,
     },
   }

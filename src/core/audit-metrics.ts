@@ -26,6 +26,25 @@ import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 /** Minimum gate events before recommending enforce with zero would-block rate. */
 export const MIN_GATE_EVENTS_FOR_ENFORCE = 20
 
+export interface AuditCohortIdentity {
+  runtimeBuildStamp: string
+  configFingerprint: string
+}
+
+export interface AuditMetricsCohort {
+  identity: AuditCohortIdentity | null
+  gateEvents: number
+  excludedGateEvents: number
+  wouldBlockCount: number
+  wouldBlockRate: number
+  classifierWouldBlockCount: number
+  classifierWouldBlockRate: number
+  approvalRecordedCount: number
+  availabilityAsks: AvailabilityAskCounts
+  wouldBlockByReason: Record<string, number>
+  topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
+}
+
 export interface AuditMetricsReport {
   schemaVersion: number
   auditLogPath: string
@@ -48,6 +67,7 @@ export interface AuditMetricsReport {
   byEffect: Record<string, number>
   byConfidence: Record<string, number>
   gateEventsByRuntime: Record<string, number>
+  currentCohort: AuditMetricsCohort
   approvalRecordedCount: number
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
   approvalLatency: {
@@ -97,6 +117,7 @@ export function computeAuditMetrics(
     auditLogPath?: string
     mode?: string
     unknownLocalEffect?: string
+    activeCohort?: AuditCohortIdentity | null
   } = {},
 ): AuditMetricsReport {
   const auditRecords = records.map(toAuditRecord)
@@ -177,6 +198,65 @@ export function computeAuditMetrics(
     .sort((left, right) => right.count - left.count)
     .slice(0, 10)
 
+  const activeCohort = options.activeCohort ?? null
+  const cohortRecords = activeCohort
+    ? auditRecords.filter(
+        (record) =>
+          record.runtimeBuildStamp === activeCohort.runtimeBuildStamp &&
+          record.configFingerprint === activeCohort.configFingerprint,
+      )
+    : []
+  const cohortGateRecords = cohortRecords.filter((record) => {
+    const event = typeof record.event === 'string' ? record.event : ''
+    return GATE_EVENTS.has(event) && !isApprovalRecorded(record)
+  })
+  const cohortGateEvents = cohortGateRecords.length
+  const cohortWouldBlockCount = cohortGateRecords.filter(inferWouldBlock).length
+  const cohortWouldBlockRate = cohortGateEvents > 0 ? cohortWouldBlockCount / cohortGateEvents : 0
+  const cohortApprovalRecordedCount = cohortRecords.filter(isApprovalRecorded).length
+  const cohortAvailabilityAsks = computeAvailabilityAskCounts(cohortRecords)
+  const cohortClassifierWouldBlockCount = Math.max(
+    0,
+    cohortWouldBlockCount - cohortAvailabilityAsks.total,
+  )
+  const cohortClassifierWouldBlockRate =
+    cohortGateEvents > 0 ? cohortClassifierWouldBlockCount / cohortGateEvents : 0
+  const cohortRoundTrips = buildApprovalRoundTrips(cohortRecords)
+  const cohortRepeatedFingerprintAsks = computeRepeatedFingerprintAsks(cohortRecords)
+  const cohortNoisyRuleCandidates = detectNoisyRules(cohortRecords, cohortRoundTrips)
+  const cohortWouldBlockByReason = computeWouldBlockByReason(cohortRecords)
+  const cohortSummaryCounts = new Map<string, { summary: string; reason: string; count: number }>()
+  for (const record of cohortGateRecords) {
+    if (!inferWouldBlock(record)) {
+      continue
+    }
+    const reason = typeof record.reason === 'string' ? record.reason : 'unknown'
+    const summary = typeof record.summary === 'string' ? record.summary : ''
+    const key = `${reason}::${summary}`
+    const existing = cohortSummaryCounts.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      cohortSummaryCounts.set(key, { summary, reason, count: 1 })
+    }
+  }
+  const cohortTopWouldBlockSummaries = [...cohortSummaryCounts.values()]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 10)
+  const currentCohort: AuditMetricsCohort = {
+    identity: activeCohort,
+    gateEvents: cohortGateEvents,
+    excludedGateEvents: gateEvents - cohortGateEvents,
+    wouldBlockCount: cohortWouldBlockCount,
+    wouldBlockRate: cohortWouldBlockRate,
+    classifierWouldBlockCount: cohortClassifierWouldBlockCount,
+    classifierWouldBlockRate: cohortClassifierWouldBlockRate,
+    approvalRecordedCount: cohortApprovalRecordedCount,
+    availabilityAsks: cohortAvailabilityAsks,
+    wouldBlockByReason: cohortWouldBlockByReason,
+    topWouldBlockSummaries: cohortTopWouldBlockSummaries,
+  }
+
   const mode = options.mode ?? null
   const unknownLocalEffect = options.unknownLocalEffect ?? null
   const notes: string[] = []
@@ -184,31 +264,41 @@ export function computeAuditMetrics(
 
   if (mode === 'audit' && unknownLocalEffect === 'deny') {
     notes.push('Dogfood config detected: audit mode with fail-closed shell policy.')
-    if (gateEvents === 0) {
-      notes.push('No gate events yet — run normal agent work, then re-check metrics.')
-    } else if (wouldBlockRate === 0) {
-      if (gateEvents >= MIN_GATE_EVENTS_FOR_ENFORCE) {
+    if (!activeCohort) {
+      notes.push(
+        'Active runtime provenance is unavailable — readiness cannot use historical audit evidence.',
+      )
+    } else if (cohortGateEvents === 0) {
+      notes.push(
+        'No gate events for the active runtime/config cohort — run normal agent work, then re-check metrics.',
+      )
+    } else if (cohortWouldBlockRate === 0) {
+      if (cohortGateEvents >= MIN_GATE_EVENTS_FOR_ENFORCE) {
         readyForEnforce = true
         notes.push('No would-block events recorded — safe to try mode: "enforce".')
       } else {
         notes.push(
-          `Only ${gateEvents} gate event(s) recorded — collect at least ${MIN_GATE_EVENTS_FOR_ENFORCE} before enforce.`,
+          `Only ${cohortGateEvents} active-cohort gate event(s) recorded — collect at least ${MIN_GATE_EVENTS_FOR_ENFORCE} before enforce.`,
         )
       }
     } else {
       notes.push(
-        `${wouldBlockCount} would-block event(s) (${(wouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(classifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and correct EffectPlan semantics or resource scope; use exact approval only when the modeled effects are correct.`,
+        `${cohortWouldBlockCount} active-cohort would-block event(s) (${(cohortWouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(cohortClassifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and correct EffectPlan semantics or resource scope; use exact approval only when the modeled effects are correct.`,
       )
-      if (approvalRecordedCount > 0) {
+      if (cohortApprovalRecordedCount > 0) {
         notes.push(
-          `${approvalRecordedCount} approval(s) recorded — these likely indicate actions operators wanted.`,
+          `${cohortApprovalRecordedCount} active-cohort approval(s) recorded — these likely indicate actions operators wanted.`,
         )
       } else {
         notes.push(
           'Review top would-block summaries and correct EffectPlan semantics or resource scope before switching to enforce.',
         )
       }
-      if (classifierWouldBlockRate < 0.05 && gateEvents >= 20 && availabilityAsks.total === 0) {
+      if (
+        cohortClassifierWouldBlockRate < 0.05 &&
+        cohortGateEvents >= 20 &&
+        cohortAvailabilityAsks.total === 0
+      ) {
         readyForEnforce = true
         notes.push(
           'Classifier-quality would-block rate is below 5% with sufficient sample size — consider enforce mode.',
@@ -221,23 +311,23 @@ export function computeAuditMetrics(
     notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.')
   }
 
-  if (availabilityAsks.total > 0) {
+  if (cohortAvailabilityAsks.total > 0) {
     readyForEnforce = false
     notes.push(
-      `${availabilityAsks.total} availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
+      `${cohortAvailabilityAsks.total} active-cohort availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
     )
     notes.push('Ready for enforce withheld while availability-caused asks are present.')
   }
 
-  if (repeatedFingerprintAsks.length > 0) {
+  if (cohortRepeatedFingerprintAsks.length > 0) {
     notes.push(
-      `${repeatedFingerprintAsks.length} repeated fingerprint ask pattern(s) — review EffectPlan semantics and exact approval history.`,
+      `${cohortRepeatedFingerprintAsks.length} active-cohort repeated fingerprint ask pattern(s) — review EffectPlan semantics and exact approval history.`,
     )
   }
 
-  if (noisyRuleCandidates.length > 0) {
+  if (cohortNoisyRuleCandidates.length > 0) {
     notes.push(
-      `${noisyRuleCandidates.length} noisy rule candidate(s) — high deny-then-approve rate.`,
+      `${cohortNoisyRuleCandidates.length} active-cohort noisy rule candidate(s) — high deny-then-approve rate.`,
     )
   }
 
@@ -263,6 +353,7 @@ export function computeAuditMetrics(
     byEffect,
     byConfidence,
     gateEventsByRuntime,
+    currentCohort,
     approvalRecordedCount,
     topWouldBlockSummaries,
     approvalLatency,

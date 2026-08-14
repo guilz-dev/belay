@@ -35,6 +35,7 @@ import {
 import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
+import { readInstalledRuntimeProvenance } from '../runtime-provenance.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
@@ -42,20 +43,6 @@ import { PACKAGE_VERSION } from '../version.js'
 import { loadAuditRecords } from './audit.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
 import { metricsProject } from './metrics.js'
-
-async function readRuntimeVersion(corePath: string): Promise<{ stamp?: string; version?: string }> {
-  try {
-    const content = await readFile(corePath, 'utf8')
-    const stampMatch = content.match(/RUNTIME_BUILD_STAMP\s*=\s*"([^"]+)"/)
-    const versionMatch = content.match(/RUNTIME_PACKAGE_VERSION\s*=\s*"([^"]+)"/)
-    return {
-      stamp: stampMatch?.[1],
-      version: versionMatch?.[1],
-    }
-  } catch {
-    return {}
-  }
-}
 
 function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterName): AdapterName {
   if (options.adapter) {
@@ -287,7 +274,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   }
 
   if (existsSync(corePath)) {
-    const runtimeVersions = await readRuntimeVersion(corePath)
+    const runtimeVersions = await readInstalledRuntimeProvenance(corePath)
     if (runtimeVersions.stamp && !runtimeVersions.stamp.startsWith(`${PACKAGE_VERSION}@`)) {
       warnings.push(
         `Installed runtime stamp (${runtimeVersions.stamp}) differs from package (${PACKAGE_VERSION}). Run belay upgrade.`,
@@ -327,28 +314,40 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   let dogfood = null
   if (loadedConfig) {
     const auditRecords = await loadAuditRecords(repoRoot)
-    const auditVisibility = summarizeAuditVisibility(auditRecords)
+    const metrics = await metricsProject({ targetDir: repoRoot })
+    const cohortIdentity = metrics.currentCohort.identity
+    const cohortAuditRecords = cohortIdentity
+      ? auditRecords.filter(
+          (record) =>
+            record.runtimeBuildStamp === cohortIdentity.runtimeBuildStamp &&
+            record.configFingerprint === cohortIdentity.configFingerprint,
+        )
+      : []
+    const auditVisibility = summarizeAuditVisibility(cohortAuditRecords)
     const drift = detectFenceDrift(auditVisibility, {
       threshold: loadedConfig.policy.fenceWarnThreshold,
     })
     warnings.push(...drift.warnings)
     notes.push(...drift.notes)
 
-    const metrics = await metricsProject({ targetDir: repoRoot })
+    const cohort = metrics.currentCohort
     dogfood = {
       active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
       mode: loadedConfig.mode,
       unknownLocalEffect: loadedConfig.policy.unknownLocalEffect,
       readyForEnforce: metrics.dogfood.readyForEnforce,
-      gateEvents: metrics.gateEvents,
-      wouldBlockCount: metrics.wouldBlockCount,
-      wouldBlockRate: metrics.wouldBlockRate,
+      gateEvents: cohort.gateEvents,
+      wouldBlockCount: cohort.wouldBlockCount,
+      wouldBlockRate: cohort.wouldBlockRate,
+      excludedGateEvents: cohort.excludedGateEvents,
+      runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
+      configFingerprint: cohort.identity?.configFingerprint,
       notes: metrics.dogfood.notes,
     }
 
     if (dogfood.active) {
       notes.push(
-        `Dogfood active: ${dogfood.gateEvents} gate events, ${dogfood.wouldBlockCount} would-block (${(dogfood.wouldBlockRate * 100).toFixed(1)}%).`,
+        `Dogfood active cohort: ${dogfood.gateEvents} gate events, ${dogfood.wouldBlockCount} would-block (${(dogfood.wouldBlockRate * 100).toFixed(1)}%); ${dogfood.excludedGateEvents} historical/mismatched event(s) excluded.`,
       )
       if (dogfood.readyForEnforce) {
         notes.push('Dogfood metrics suggest enforce mode is ready (belay dogfood --enforce).')

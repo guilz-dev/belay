@@ -4,6 +4,7 @@ import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics, parseAuditNdjson } from '../core/audit-metrics.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 export interface MetricsOptions {
   targetDir?: string
@@ -28,10 +29,12 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Audi
     raw = ''
   }
   const records = parseAuditNdjson(raw)
+  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
   return computeAuditMetrics(records, {
     auditLogPath: config.audit.logPath,
     mode: config.mode,
     unknownLocalEffect: config.policy.unknownLocalEffect,
+    activeCohort,
   })
 }
 
@@ -39,11 +42,47 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
   const lines = [
     `belay metrics for ${report.auditLogPath}`,
     `Schema: v${report.schemaVersion}`,
-    `Gate events: ${report.gateEvents}`,
-    `Would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,
-    `Classifier-quality would-block: ${report.classifierWouldBlockCount} (${(report.classifierWouldBlockRate * 100).toFixed(1)}%)`,
-    `Approvals recorded during audit: ${report.approvalRecordedCount}`,
+    `All-time gate events: ${report.gateEvents}`,
+    `All-time would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,
+    `All-time classifier-quality would-block: ${report.classifierWouldBlockCount} (${(report.classifierWouldBlockRate * 100).toFixed(1)}%)`,
+    `All-time approvals recorded during audit: ${report.approvalRecordedCount}`,
   ]
+
+  lines.push('', 'Current readiness cohort:')
+  if (report.currentCohort.identity) {
+    lines.push(`- runtime build: ${report.currentCohort.identity.runtimeBuildStamp}`)
+    lines.push(
+      `- config fingerprint: ${formatFingerprintPreview(report.currentCohort.identity.configFingerprint)}`,
+    )
+  } else {
+    lines.push('- identity: unavailable')
+  }
+  lines.push(`- matching gate events: ${report.currentCohort.gateEvents}`)
+  lines.push(
+    `- excluded historical/mismatched gate events: ${report.currentCohort.excludedGateEvents}`,
+  )
+  lines.push(
+    `- would-block: ${report.currentCohort.wouldBlockCount} (${(report.currentCohort.wouldBlockRate * 100).toFixed(1)}%)`,
+  )
+  lines.push(
+    `- classifier-quality would-block: ${report.currentCohort.classifierWouldBlockCount} (${(report.currentCohort.classifierWouldBlockRate * 100).toFixed(1)}%)`,
+  )
+  lines.push(`- approvals recorded during audit: ${report.currentCohort.approvalRecordedCount}`)
+  lines.push(`- availability-caused asks: ${report.currentCohort.availabilityAsks.total}`)
+  if (Object.keys(report.currentCohort.wouldBlockByReason).length > 0) {
+    lines.push('', 'Current-cohort would-block by reason:')
+    for (const [reason, count] of Object.entries(report.currentCohort.wouldBlockByReason).sort(
+      (left, right) => right[1] - left[1],
+    )) {
+      lines.push(`- ${reason}: ${count}`)
+    }
+  }
+  if (report.currentCohort.topWouldBlockSummaries.length > 0) {
+    lines.push('', 'Current-cohort top would-block summaries:')
+    for (const entry of report.currentCohort.topWouldBlockSummaries) {
+      lines.push(`- [${entry.reason}] x${entry.count}: ${entry.summary}`)
+    }
+  }
 
   if (report.approvalLatency.count > 0) {
     lines.push(

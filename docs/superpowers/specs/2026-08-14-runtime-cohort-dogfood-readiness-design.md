@@ -83,9 +83,9 @@ confused. JSON output will expose both structures.
 - `belay dogfood --enforce` uses current-cohort readiness and refuses promotion
   when the cohort is missing, empty, undersampled, noisy, or has availability
   failures.
-- Existing general `belay report` history remains all-time. Its fence-drift
-  warning is not an enforce authorization signal and is outside this focused
-  fix.
+- Existing general `belay report` history and its fence-drift warning remain
+  all-time. `belay doctor` evaluates fence drift from the active cohort so its
+  dogfood diagnostics do not contradict readiness.
 
 ### Failure behavior
 
@@ -120,12 +120,16 @@ reason before production code changes are written.
 
 ## Scheduling-editor Cutover
 
-After the product fix is verified, preserve the existing scheduling-editor
-audit log by renaming it to `audit.pre-0.8.0.ndjson`. Do not delete it. The gate
-runtime recreates `audit.ndjson` on the next event. Confirm the new log begins
-with the installed 0.8.0 build stamp and current config fingerprint, then leave
-the repository in audit mode until representative current-cohort evidence has
-been collected. Do not use `--force`.
+After the product fix is verified, keep the existing scheduling-editor audit
+log in place. The active cohort selector excludes pre-0.8 and mismatched-config
+events without discarding history, so rotating the log would only split useful
+evidence. Confirm metrics report the installed 0.8.0 build stamp, the current
+config fingerprint, matching and excluded event counts, and current-cohort
+would-block reasons. Leave the repository in audit mode until the current
+cohort is representative and reviewed. Do not use `--force`.
+
+Archiving the active log is only a temporary workaround for an unpatched 0.8.0
+CLI that cannot select a cohort; it is not part of the patched cutover.
 
 ## Non-goals
 

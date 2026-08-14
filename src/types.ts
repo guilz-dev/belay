@@ -89,6 +89,9 @@ export interface DogfoodStatus {
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
+  excludedGateEvents: number
+  runtimeBuildStamp?: string
+  configFingerprint?: string
   notes: string[]
 }
 

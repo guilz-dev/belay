@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { formatReport, reportProject } from '../commands/report.js'
 import { formatStatusReport, statusProject } from '../commands/status.js'
+import { loadConfigFile } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-metrics.js'
 import {
   detectFenceDrift,
@@ -13,6 +14,15 @@ import {
   summarizeAuditVisibility,
 } from '../core/audit-summary.js'
 import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+async function activeAuditCohort(repoRoot: string) {
+  const cohort = await resolveActiveAuditCohort(repoRoot, await loadConfigFile(repoRoot))
+  if (!cohort) {
+    throw new Error('Expected initialized project to expose active audit cohort provenance')
+  }
+  return cohort
+}
 
 const VISIBILITY_FIXTURE = [
   {
@@ -228,9 +238,11 @@ describe('audit visibility (T-V1)', () => {
       }
       config.policy.fenceWarnThreshold = 0.7
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+      const cohort = await activeAuditCohort(tempDir)
 
       const auditLines = Array.from({ length: 25 }, (_, index) =>
         JSON.stringify({
+          ...cohort,
           timestamp: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
           event: 'beforeShellExecution',
           verdict: index < 10 ? 'deny_pending_approval' : 'allow',
@@ -291,8 +303,10 @@ describe('fence drift warnings (T-V2)', () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'belay-report-'))
     try {
       await initProject({ targetDir: tempDir })
+      const cohort = await activeAuditCohort(tempDir)
       const auditLines = Array.from({ length: 25 }, (_, index) =>
         JSON.stringify({
+          ...cohort,
           timestamp: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
           event: 'beforeShellExecution',
           verdict: index < 15 ? 'deny_pending_approval' : 'allow',
