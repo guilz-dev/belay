@@ -156,7 +156,7 @@ git diff --check
 
 Expected: every command exits 0 with no test failures.
 
-- [ ] **Step 3: Commit and push the implementation**
+- [x] **Step 3: Commit and push the implementation**
 
 Stage only the plan, source, tests, changelog, and any clarified design file.
 Commit with `fix: scope dogfood readiness to active runtime` and push the
@@ -169,7 +169,7 @@ the installed 0.8.0 build stamp and config fingerprint, while pre-0.8 events
 appear only in the excluded count. Preserve `audit.ndjson` in place so current
 0.8 evidence and historical auditability are not split.
 
-- [ ] **Step 5: Update draft PR #61**
+- [x] **Step 5: Update draft PR #61**
 
 Update the PR body with implementation details, the red-green regression
 evidence, full verification commands, and the non-destructive scheduling-editor
