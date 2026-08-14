@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Dogfood readiness cohorts** — `belay metrics`, `belay doctor`, and `belay dogfood --enforce` now evaluate readiness and dogfood diagnostics only from audit events matching the active installed runtime build and configuration fingerprint. Historical and mismatched events remain visible in all-time metrics but cannot authorize or indefinitely suppress an enforce recommendation; current-cohort reason and command summaries make remaining blockers explicit.
+
 ## 0.8.0 — 2026-08-14
 
 ### Added

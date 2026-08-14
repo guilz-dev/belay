@@ -1,12 +1,12 @@
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
-import { computeAuditMetrics } from '../core/audit-metrics.js'
 import { runCorpusEvaluation } from '../corpus/evaluate.js'
 import { passesHardGates } from '../corpus/gates.js'
 import type { CorpusCategory, CorpusProvenanceCounts } from '../corpus/types.js'
 import { loadAuditRecords } from './audit.js'
 import { harvestReportFromRecords } from './harvest.js'
+import { metricsProject } from './metrics.js'
 
 export const QUALITY_REPORT_SCHEMA_VERSION = 1
 
@@ -54,11 +54,7 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
   const corpusMetrics = await runCorpusEvaluation(corpusDir)
   const hardGatesOk = passesHardGates(corpusMetrics.gates)
   const auditRecords = await loadAuditRecords(repoRoot)
-  const metrics = computeAuditMetrics(auditRecords as Record<string, unknown>[], {
-    auditLogPath: config.audit.logPath,
-    mode: config.mode,
-    unknownLocalEffect: config.policy.unknownLocalEffect,
-  })
+  const metrics = await metricsProject({ targetDir: repoRoot })
   const harvest = harvestReportFromRecords(auditRecords)
 
   const notes: string[] = [

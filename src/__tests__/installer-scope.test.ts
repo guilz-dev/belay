@@ -10,6 +10,7 @@ import { codexAdapter } from '../adapters/codex/adapter.js'
 import { cursorLayout } from '../adapters/layouts/cursor.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { doctorProject } from '../commands/doctor.js'
+import { metricsProject } from '../commands/metrics.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { runtimeIntegrityFiles } from '../core/integrity.js'
 import { getManagedHookEntries } from '../defaults.js'
@@ -67,6 +68,8 @@ describe('installer scope (T29)', () => {
     const config = await loadConfigFile(repoRoot, 'cursor')
     expect(config.installScope).toBe('global')
     expect(existsSync(pendingApprovalsPath(repoRoot, config))).toBe(true)
+    const metrics = await metricsProject({ targetDir: repoRoot })
+    expect(metrics.currentCohort.identity?.runtimeBuildStamp).toMatch(/^0\.8\.0@/)
   })
 
   it('upgrade without --scope reuses persisted global scope', async () => {

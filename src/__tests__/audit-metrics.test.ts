@@ -15,6 +15,23 @@ import {
   toAuditRecord,
 } from '../core/audit-metrics.js'
 
+const ACTIVE_COHORT = {
+  runtimeBuildStamp: '0.8.0@2026-08-14T04:23:49.942Z',
+  configFingerprint: 'active-config-fingerprint',
+}
+
+function cohortGate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    reason: 'read_only',
+    wouldBlock: false,
+    ...ACTIVE_COHORT,
+    ...overrides,
+  }
+}
+
 describe('audit-metrics', () => {
   it('parses NDJSON audit lines', () => {
     const records = parseAuditNdjson(
@@ -62,6 +79,7 @@ describe('audit-metrics', () => {
           reason: 'unknown_local_effect',
           wouldBlock: true,
           summary: 'make build',
+          ...ACTIVE_COHORT,
         },
         {
           event: 'beforeShellExecution',
@@ -70,14 +88,16 @@ describe('audit-metrics', () => {
           reason: 'read_only',
           wouldBlock: false,
           summary: 'rg plan',
+          ...ACTIVE_COHORT,
         },
         {
           event: 'beforeSubmitPrompt',
           kind: 'approval',
           reason: 'approval_recorded',
+          ...ACTIVE_COHORT,
         },
       ],
-      { mode: 'audit', unknownLocalEffect: 'deny' },
+      { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: ACTIVE_COHORT },
     )
 
     expect(report.schemaVersion).toBe(3)
@@ -181,31 +201,180 @@ describe('audit-metrics', () => {
   })
 
   it('requires minimum gate events before readyForEnforce with zero would-block rate', () => {
-    const fewEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () => ({
-      event: 'beforeShellExecution',
-      kind: 'shell',
-      verdict: 'allow',
-      reason: 'read_only',
-      wouldBlock: false,
-    }))
+    const fewEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () => cohortGate())
     const notReady = computeAuditMetrics(fewEvents, {
       mode: 'audit',
       unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
     })
     expect(notReady.dogfood.readyForEnforce).toBe(false)
 
-    const enoughEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => ({
-      event: 'beforeShellExecution',
-      kind: 'shell',
-      verdict: 'allow',
-      reason: 'read_only',
-      wouldBlock: false,
-    }))
+    const enoughEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate())
     const ready = computeAuditMetrics(enoughEvents, {
       mode: 'audit',
       unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
     })
     expect(ready.dogfood.readyForEnforce).toBe(true)
+  })
+
+  it('does not reuse old clean events as active-cohort readiness evidence', () => {
+    const oldCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
+      cohortGate({
+        runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
+        configFingerprint: 'old-config-fingerprint',
+      }),
+    )
+
+    const report = computeAuditMetrics(oldCleanEvents, {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.gateEvents).toBe(0)
+    expect(report.currentCohort.excludedGateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.dogfood.readyForEnforce).toBe(false)
+    expect(report.dogfood.notes.join(' ')).toContain(
+      'No gate events for the active runtime/config cohort',
+    )
+  })
+
+  it('ignores old noisy events when the active cohort is clean', () => {
+    const oldNoisyEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
+      cohortGate({
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        wouldBlock: true,
+        runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
+        configFingerprint: 'old-config-fingerprint',
+      }),
+    )
+    const currentCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
+      cohortGate(),
+    )
+
+    const report = computeAuditMetrics([...oldNoisyEvents, ...currentCleanEvents], {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE * 2)
+    expect(report.wouldBlockCount).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.wouldBlockCount).toBe(0)
+    expect(report.currentCohort.excludedGateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.dogfood.readyForEnforce).toBe(true)
+  })
+
+  it('labels all-time history separately from the current readiness cohort', () => {
+    const oldEvent = cohortGate({
+      runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
+      configFingerprint: 'old-config-fingerprint',
+    })
+    const currentEvent = cohortGate()
+
+    const formatted = formatMetricsReport(
+      computeAuditMetrics([oldEvent, currentEvent], {
+        mode: 'audit',
+        unknownLocalEffect: 'deny',
+        activeCohort: ACTIVE_COHORT,
+      }),
+    )
+
+    expect(formatted).toContain('All-time gate events: 2')
+    expect(formatted).toContain('Current readiness cohort:')
+    expect(formatted).toContain(`- runtime build: ${ACTIVE_COHORT.runtimeBuildStamp}`)
+    expect(formatted).toContain('- matching gate events: 1')
+    expect(formatted).toContain('- excluded historical/mismatched gate events: 1')
+  })
+
+  it('keeps active-cohort remediation reasons separate from historical asks', () => {
+    const oldAsk = cohortGate({
+      verdict: 'deny_pending_approval',
+      reason: 'old_unknown',
+      summary: 'old command',
+      wouldBlock: true,
+      runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
+      configFingerprint: 'old-config-fingerprint',
+    })
+    const currentAsk = cohortGate({
+      verdict: 'deny_pending_approval',
+      reason: 'unknown_local_effect',
+      summary: 'current command',
+      wouldBlock: true,
+    })
+
+    const report = computeAuditMetrics([oldAsk, currentAsk], {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+    const formatted = formatMetricsReport(report)
+
+    expect(report.currentCohort.wouldBlockByReason).toEqual({ unknown_local_effect: 1 })
+    expect(report.currentCohort.topWouldBlockSummaries).toEqual([
+      { reason: 'unknown_local_effect', summary: 'current command', count: 1 },
+    ])
+    expect(formatted).toContain('Current-cohort would-block by reason:')
+    expect(formatted).toContain('- unknown_local_effect: 1')
+    expect(formatted).toContain('Current-cohort top would-block summaries:')
+    expect(formatted).toContain('[unknown_local_effect] x1: current command')
+  })
+
+  it('excludes a matching runtime build with a different config fingerprint', () => {
+    const currentEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () =>
+      cohortGate(),
+    )
+    const mismatchedConfigEvent = cohortGate({ configFingerprint: 'different-config' })
+
+    const report = computeAuditMetrics([...currentEvents, mismatchedConfigEvent], {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE - 1)
+    expect(report.currentCohort.excludedGateEvents).toBe(1)
+    expect(report.dogfood.readyForEnforce).toBe(false)
+  })
+
+  it('withholds readiness for an active-cohort availability ask', () => {
+    const currentCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () =>
+      cohortGate(),
+    )
+    const availabilityAsk = cohortGate({
+      verdict: 'deny_pending_approval',
+      reason: 'unknown_local_effect',
+      wouldBlock: true,
+      judgeFallbackReason: 'eval_timeout',
+    })
+
+    const report = computeAuditMetrics([...currentCleanEvents, availabilityAsk], {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.availabilityAsks.total).toBe(1)
+    expect(report.currentCohort.classifierWouldBlockRate).toBe(0)
+    expect(report.dogfood.readyForEnforce).toBe(false)
+    expect(report.dogfood.notes.join(' ')).toContain('Ready for enforce withheld')
+  })
+
+  it('fails closed when the active cohort identity is unavailable', () => {
+    const report = computeAuditMetrics(
+      Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate()),
+      { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: null },
+    )
+
+    expect(report.currentCohort.identity).toBeNull()
+    expect(report.currentCohort.gateEvents).toBe(0)
+    expect(report.dogfood.readyForEnforce).toBe(false)
+    expect(report.dogfood.notes.join(' ')).toContain('Active runtime provenance is unavailable')
   })
 
   it('summarizes would-block reasons and approval ratios separately from all gate reasons', () => {
@@ -380,8 +549,9 @@ describe('audit-metrics', () => {
         reason: 'unknown_local_effect',
         wouldBlock: true,
         judgeFallbackReason: 'eval_timeout',
+        ...ACTIVE_COHORT,
       })),
-      { mode: 'audit', unknownLocalEffect: 'deny' },
+      { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: ACTIVE_COHORT },
     )
 
     expect(report.availabilityAsks.total).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
@@ -430,6 +600,7 @@ describe('audit-metrics', () => {
           wouldBlock: true,
           fingerprint: 'fp-repeat',
           summary: 'make build',
+          ...ACTIVE_COHORT,
         },
         {
           event: 'beforeShellExecution',
@@ -439,9 +610,10 @@ describe('audit-metrics', () => {
           wouldBlock: true,
           fingerprint: 'fp-repeat',
           summary: 'make build',
+          ...ACTIVE_COHORT,
         },
       ],
-      { mode: 'audit', unknownLocalEffect: 'deny' },
+      { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: ACTIVE_COHORT },
     )
     const guidance = report.dogfood.notes.join(' ')
 
