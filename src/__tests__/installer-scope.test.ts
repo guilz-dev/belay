@@ -15,6 +15,7 @@ import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { runtimeIntegrityFiles } from '../core/integrity.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { initProject, upgradeProject } from '../installer.js'
+import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
@@ -69,7 +70,9 @@ describe('installer scope (T29)', () => {
     expect(config.installScope).toBe('global')
     expect(existsSync(pendingApprovalsPath(repoRoot, config))).toBe(true)
     const metrics = await metricsProject({ targetDir: repoRoot })
-    expect(metrics.currentCohort.identity?.runtimeBuildStamp).toMatch(/^0\.8\.0@/)
+    expect(metrics.currentCohort.identity?.runtimeBuildStamp).toMatch(
+      new RegExp(`^${PACKAGE_VERSION.replace(/\./g, '\\.')}@`),
+    )
   })
 
   it('upgrade without --scope reuses persisted global scope', async () => {
