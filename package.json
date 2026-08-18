@@ -60,6 +60,8 @@
     "test:stable": "pnpm build && vitest run && vitest run && vitest run",
     "corpus": "pnpm build && node scripts/corpus.mjs",
     "probe:adversarial": "pnpm build && node scripts/adversarial-probe.mjs",
+    "probe:coverage": "pnpm build && node scripts/coverage-probe.mjs",
+    "probe:coverage:repeat": "pnpm build && node scripts/coverage-probe.mjs --repeat 3",
     "corpus:ratchet": "pnpm build && node scripts/corpus-ratchet.mjs"
   },
   "devDependencies": {

@@ -18,6 +18,9 @@ corpus:
 probe-adversarial:
 	pnpm probe:adversarial
 
+probe-coverage:
+	pnpm probe:coverage
+
 corpus-ratchet:
 	pnpm corpus:ratchet
 

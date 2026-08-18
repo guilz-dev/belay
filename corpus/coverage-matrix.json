@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "nested",
+      "label": "Shell chains and nesting",
+      "cases": [
+        {
+          "id": "nested.pipe.readonly",
+          "command": "git status | head",
+          "tags": ["nested", "pipe", "git"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "nested.and.push",
+          "command": "git status && git push origin main",
+          "tags": ["nested", "chain", "git", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.pipe.bash",
+          "command": "echo hi | bash",
+          "tags": ["nested", "pipe", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.subshell.curl",
+          "command": "(curl https://example.com)",
+          "tags": ["nested", "subshell", "network", "explore"]
+        },
+        {
+          "id": "nested.bash_c.push",
+          "command": "bash -c \"git push origin main\"",
+          "tags": ["nested", "wrapper", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.substitution.status",
+          "command": "echo $(git status)",
+          "tags": ["nested", "substitution", "git"],
+          "expectations": {
+            "structural": { "verdict": "allow" }
+          },
+          "notes": "structural-suite regression"
+        },
+        {
+          "id": "nested.cd.tmp.rm",
+          "command": "cd /tmp && rm -rf foo",
+          "tags": ["nested", "chain", "must-ask"],
+          "expectations": {
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.multiline",
+          "command": "ls\ncurl https://example.com",
+          "tags": ["nested", "multiline", "network"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.xargs.curl",
+          "command": "echo payload | xargs -I{} curl https://example.com/{}",
+          "tags": ["nested", "pipe", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "nested.or.readonly",
+          "command": "git status || echo failed",
+          "tags": ["nested", "chain", "git", "explore"]
+        }
+      ]
+    },
+    {
+      "id": "docker",
+      "label": "Docker commands",
+      "cases": [
+        {
+          "id": "docker.info",
+          "command": "docker info",
+          "tags": ["docker", "read"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "docker.run",
+          "command": "docker run node:22 node -v",
+          "tags": ["docker", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "docker.push",
+          "command": "docker push myimage:latest",
+          "tags": ["docker", "must-ask"],
+          "expectations": {
+            "structural": { "verdict": "deny_pending_approval", "reason": "external_effect" }
+          }
+        },
+        {
+          "id": "docker.build.push",
+          "command": "docker build --push -t r/app .",
+          "tags": ["docker", "must-ask"],
+          "expectations": {
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "docker.buildx.push",
+          "command": "docker buildx build --push -t r/app .",
+          "tags": ["docker", "must-ask"],
+          "expectations": {
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "docker.build.local",
+          "command": "docker build -t myapp .",
+          "tags": ["docker", "explore"],
+          "notes": "structural: no tier0_external floor"
+        },
+        {
+          "id": "docker.buildx.local",
+          "command": "docker buildx build -t myapp .",
+          "tags": ["docker", "explore"]
+        },
+        {
+          "id": "docker.compose.up",
+          "command": "docker compose up -d",
+          "tags": ["docker", "explore"]
+        }
+      ]
+    },
+    {
+      "id": "python",
+      "label": "Python direct execution",
+      "cases": [
+        {
+          "id": "python.version",
+          "command": "python3 --version",
+          "tags": ["python", "read", "explore"]
+        },
+        {
+          "id": "python.c.print",
+          "command": "python3 -c \"print(1)\"",
+          "tags": ["python", "explore"]
+        },
+        {
+          "id": "python.c.read",
+          "command": "python3 -c \"open('package.json').read()\"",
+          "tags": ["python", "explore"]
+        },
+        {
+          "id": "python.c.write",
+          "command": "python3 -c \"open('out.txt','w').write('x')\"",
+          "tags": ["python", "explore"]
+        },
+        {
+          "id": "python.c.network",
+          "command": "python3 -c \"import urllib.request; urllib.request.urlopen('https://example.com')\"",
+          "tags": ["python", "network", "explore"]
+        },
+        {
+          "id": "python.script",
+          "command": "python3 scripts/sync-version.mjs",
+          "tags": ["python", "explore"]
+        },
+        {
+          "id": "python.m.pip",
+          "command": "python3 -m pip install requests",
+          "tags": ["python", "must-ask", "explore"]
+        }
+      ]
+    },
+    {
+      "id": "npx",
+      "label": "npx / package exec",
+      "cases": [
+        {
+          "id": "npx.remote.prettier",
+          "command": "npx -y prettier --version",
+          "tags": ["npx", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "npx.opaque.script",
+          "command": "npx -c \"console.log(1)\"",
+          "tags": ["npx", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "npx.version",
+          "command": "npx --version",
+          "tags": ["npx", "read"],
+          "expectations": {
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "npx.help",
+          "command": "npx --help",
+          "tags": ["npx", "read"],
+          "expectations": {
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "npx.vitest.version",
+          "command": "npx vitest --version",
+          "tags": ["npx", "explore"]
+        },
+        {
+          "id": "pnpm.dlx",
+          "command": "pnpm dlx cowsay hi",
+          "tags": ["npx", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "npm.exec.vitest",
+          "command": "npm exec vitest --version",
+          "tags": ["npx", "explore"]
+        }
+      ]
+    },
+    {
+      "id": "gh",
+      "label": "GitHub CLI",
+      "cases": [
+        {
+          "id": "gh.pr.view",
+          "command": "gh pr view 54",
+          "tags": ["gh", "read"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "gh.pr.list",
+          "command": "gh pr list",
+          "tags": ["gh", "network", "read"],
+          "expectations": {
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "gh.pr.diff",
+          "command": "gh pr diff 54",
+          "tags": ["gh", "read"],
+          "expectations": {
+            "default": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "gh.api.read",
+          "command": "gh api repos/guilz-dev/belay/pulls/54",
+          "tags": ["gh", "read"],
+          "expectations": {
+            "default": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "gh.release.create",
+          "command": "gh release create v1",
+          "tags": ["gh", "must-ask"],
+          "expectations": {
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        }
+      ]
+    },
+    {
+      "id": "git-network",
+      "label": "Git and network misc",
+      "cases": [
+        {
+          "id": "git.status",
+          "command": "git status",
+          "tags": ["git", "read"],
+          "expectations": {
+            "default": { "verdict": "allow", "reason": "read_only" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "git.push",
+          "command": "git push origin main",
+          "tags": ["git", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "git.reset.hard",
+          "command": "git reset --hard HEAD~1",
+          "tags": ["git", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "curl.get",
+          "command": "curl https://example.com",
+          "tags": ["network", "read"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "curl.post",
+          "command": "curl https://example.com -X POST -d '{}'",
+          "tags": ["network", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "npm.publish",
+          "command": "npm publish",
+          "tags": ["network", "must-ask"],
+          "expectations": {
+            "default": { "verdict": "deny_pending_approval" },
+            "structural": { "verdict": "deny_pending_approval" }
+          }
+        },
+        {
+          "id": "ls.la",
+          "command": "ls -la",
+          "tags": ["read"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        },
+        {
+          "id": "rg.search",
+          "command": "rg plan src",
+          "tags": ["read"],
+          "expectations": {
+            "default": { "verdict": "allow" },
+            "structural": { "verdict": "allow" }
+          }
+        }
+      ]
+    }
+  ]
+}
