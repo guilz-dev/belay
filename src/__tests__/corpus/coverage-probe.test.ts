@@ -13,8 +13,12 @@ import {
   parseCoverageMatrix,
 } from '../../corpus/coverage-matrix.js'
 import {
+  compareBaselineWarnings,
   compareCoverageReports,
+  CoverageCompareError,
+  parseCoverageProbeReportForCompare,
 } from '../../corpus/coverage-compare.js'
+import { hashStableJson, stableJsonStringify } from '../../corpus/coverage-contexts.js'
 import {
   type ClassifyFn,
   type CoverageProbeReport,
@@ -342,6 +346,105 @@ describe('coverage compare', () => {
     const compareReport = compareCoverageReports(baseline, current)
     expect(compareReport.configDrift).toHaveLength(1)
     expect(compareReport.entries).toHaveLength(0)
+  })
+
+  it('detects classifier drift when only fingerprint changes', () => {
+    const baseline = minimalReport()
+    const current = minimalReport({
+      results: [
+        {
+          ...baseline.results[0]!,
+          actual: { verdict: 'allow', reason: 'read_only', fingerprint: 'fp-changed' },
+        },
+      ],
+    })
+    expect(compareCoverageReports(baseline, current).entries[0]?.kind).toBe('classifier_drift')
+  })
+
+  it('normalizes schema v1 baseline without expectationHash', () => {
+    const raw = {
+      reportSchemaVersion: 1,
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      matrixHash: 'matrix-a',
+      contexts: [{ id: 'default', cwd: '/x', repoRoot: '/x', resolvedConfigHash: 'cfg-a' }],
+      results: [
+        {
+          caseId: 'sample.allow',
+          context: 'default',
+          commandHash: 'cmd-a',
+          actual: { verdict: 'allow', reason: 'read_only', fingerprint: 'fp' },
+        },
+      ],
+    }
+    const parsed = parseCoverageProbeReportForCompare(raw)
+    expect(parsed.results[0]?.expectationHash).toBeNull()
+    expect(parsed.results[0]?.actual.fingerprint).toBe('fp')
+  })
+
+  it('warns when compare context sets differ', () => {
+    const baseline = minimalReport()
+    const current = minimalReport({
+      contexts: [
+        ...baseline.contexts,
+        {
+          id: 'structural',
+          cwd: '/fixtures',
+          repoRoot: '/fixtures',
+          resolvedConfigHash: 'cfg-s',
+        },
+      ],
+    })
+    const warnings = compareBaselineWarnings(baseline, current)
+    expect(warnings.some((warning) => warning.includes('context set differs'))).toBe(true)
+  })
+
+  it('rejects invalid compare baseline', () => {
+    expect(() => parseCoverageProbeReportForCompare({ nope: true })).toThrow(CoverageCompareError)
+  })
+})
+
+describe('stable json hashing', () => {
+  it('hashes objects with stable key order', () => {
+    expect(hashStableJson({ b: 1, a: 2 })).toBe(hashStableJson({ a: 2, b: 1 }))
+    expect(stableJsonStringify({ b: 1, a: 2 })).toBe('{"a":2,"b":1}')
+  })
+})
+
+describe('coverage probe repeat semantics', () => {
+  it('keeps first run results when repeat detects drift', async () => {
+    let callsForTarget = 0
+    const classifyFn: ClassifyFn = async (command, evalContext) => {
+      if (command === 'git status | head' && evalContext.id === 'default') {
+        callsForTarget += 1
+        const verdict = callsForTarget === 1 ? 'allow' : 'deny_pending_approval'
+        return {
+          verdict,
+          reason: verdict === 'allow' ? 'read_only' : 'external_effect',
+          fingerprint: `fp-${callsForTarget}`,
+          assessment: {
+            reversibility: 'reversible',
+            external: false,
+            blastRadius: 'repo_local',
+            confidence: 0.95,
+            signals: [],
+          },
+        }
+      }
+      return defaultClassifyFn(command, evalContext)
+    }
+
+    const report = await runCoverageProbe({
+      repoRoot,
+      contextIds: ['default'],
+      filters: ['nested.pipe.readonly'],
+      repeat: 2,
+      classifyFn,
+    })
+
+    expect(report.driftRuns).toBe(1)
+    expect(report.results).toHaveLength(1)
+    expect(report.results[0]?.actual.verdict).toBe('allow')
+    expect(report.summary.matched).toBe(1)
   })
 })
 

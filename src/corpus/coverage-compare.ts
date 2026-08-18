@@ -1,5 +1,15 @@
 import type { CoverageContextId } from './coverage-matrix.js'
-import type { CoverageProbeReport } from './coverage-probe.js'
+import type { HookVerdict } from '../core/types.js'
+import type { CoverageCaseResult, CoverageProbeReport } from './coverage-probe.js'
+
+const SUPPORTED_COMPARE_REPORT_SCHEMA_VERSIONS = [1, 2] as const
+
+export class CoverageCompareError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CoverageCompareError'
+  }
+}
 
 export type CoverageCompareKind =
   | 'fixture_change'
@@ -40,12 +50,104 @@ function resultKey(caseId: string, context: CoverageContextId): string {
   return `${caseId}::${context}`
 }
 
-function indexResults(report: CoverageProbeReport): Map<string, CoverageProbeReport['results'][number]> {
-  const map = new Map<string, CoverageProbeReport['results'][number]>()
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function normalizeCaseResult(raw: unknown): CoverageCaseResult {
+  if (!isRecord(raw)) {
+    throw new CoverageCompareError('--compare baseline result row is invalid')
+  }
+  if (typeof raw.caseId !== 'string' || typeof raw.context !== 'string') {
+    throw new CoverageCompareError('--compare baseline result row is missing caseId or context')
+  }
+  if (!isRecord(raw.actual)) {
+    throw new CoverageCompareError('--compare baseline result row is missing actual verdict')
+  }
+  const expectationHash =
+    raw.expectationHash === undefined || raw.expectationHash === null
+      ? null
+      : String(raw.expectationHash)
+  const verdict = String(raw.actual.verdict) as HookVerdict
+
+  return {
+    ...(raw as unknown as CoverageCaseResult),
+    expectationHash,
+    actual: {
+      verdict,
+      reason: String(raw.actual.reason ?? ''),
+      fingerprint: String(raw.actual.fingerprint ?? ''),
+    },
+  }
+}
+
+export function parseCoverageProbeReportForCompare(raw: unknown): CoverageProbeReport {
+  if (!isRecord(raw)) {
+    throw new CoverageCompareError('--compare baseline must be a JSON object')
+  }
+  if (!Array.isArray(raw.results)) {
+    throw new CoverageCompareError('--compare baseline is missing results[]')
+  }
+  const schemaVersion = raw.reportSchemaVersion ?? 1
+  if (
+    typeof schemaVersion !== 'number' ||
+    !SUPPORTED_COMPARE_REPORT_SCHEMA_VERSIONS.includes(
+      schemaVersion as (typeof SUPPORTED_COMPARE_REPORT_SCHEMA_VERSIONS)[number],
+    )
+  ) {
+    throw new CoverageCompareError(
+      `--compare baseline reportSchemaVersion is unsupported: ${JSON.stringify(raw.reportSchemaVersion)}`,
+    )
+  }
+  if (!Array.isArray(raw.contexts)) {
+    throw new CoverageCompareError('--compare baseline is missing contexts[]')
+  }
+
+  return {
+    ...(raw as unknown as CoverageProbeReport),
+    reportSchemaVersion: schemaVersion as CoverageProbeReport['reportSchemaVersion'],
+    results: raw.results.map(normalizeCaseResult),
+  }
+}
+
+export function compareBaselineWarnings(
+  baseline: CoverageProbeReport,
+  current: CoverageProbeReport,
+): string[] {
+  const warnings: string[] = []
+  if (baseline.reportSchemaVersion !== current.reportSchemaVersion) {
+    warnings.push(
+      `baseline schema v${baseline.reportSchemaVersion} differs from current v${current.reportSchemaVersion}`,
+    )
+  }
+
+  const baselineContexts = new Set(baseline.contexts.map((context) => context.id))
+  const currentContexts = new Set(current.contexts.map((context) => context.id))
+  const onlyBaseline = [...baselineContexts].filter((context) => !currentContexts.has(context))
+  const onlyCurrent = [...currentContexts].filter((context) => !baselineContexts.has(context))
+  if (onlyBaseline.length > 0 || onlyCurrent.length > 0) {
+    warnings.push(
+      `context set differs (baseline-only: ${onlyBaseline.join(', ') || '-'}; current-only: ${onlyCurrent.join(', ') || '-'})`,
+    )
+  }
+
+  return warnings
+}
+
+function indexResults(report: CoverageProbeReport): Map<string, CoverageCaseResult> {
+  const map = new Map<string, CoverageCaseResult>()
   for (const result of report.results) {
     map.set(resultKey(result.caseId, result.context), result)
   }
   return map
+}
+
+function classifierOutputChanged(before: CoverageCaseResult, after: CoverageCaseResult): boolean {
+  return (
+    before.actual.verdict !== after.actual.verdict ||
+    before.actual.reason !== after.actual.reason ||
+    before.actual.fingerprint !== after.actual.fingerprint
+  )
 }
 
 export function compareCoverageReports(
@@ -64,9 +166,11 @@ export function compareCoverageReports(
   )
 
   const configDrift: CoverageContextConfigDrift[] = []
-  for (const [context, afterHash] of afterContextHashes) {
+  const sharedContexts = new Set([...beforeContextHashes.keys(), ...afterContextHashes.keys()])
+  for (const context of sharedContexts) {
     const beforeHash = beforeContextHashes.get(context)
-    if (beforeHash !== undefined && beforeHash !== afterHash) {
+    const afterHash = afterContextHashes.get(context)
+    if (beforeHash !== undefined && afterHash !== undefined && beforeHash !== afterHash) {
       configDrift.push({ context, beforeHash, afterHash })
     }
   }
@@ -110,9 +214,7 @@ export function compareCoverageReports(
     const fixtureChanged =
       before.commandHash !== after.commandHash ||
       (before.expectationHash ?? null) !== (after.expectationHash ?? null)
-    const classifierChanged =
-      before.actual.verdict !== after.actual.verdict ||
-      before.actual.reason !== after.actual.reason
+    const classifierChanged = classifierOutputChanged(before, after)
 
     if (fixtureChanged) {
       entries.push({

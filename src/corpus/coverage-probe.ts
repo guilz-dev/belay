@@ -6,8 +6,11 @@ import { classifierOptionsFromConfig } from '../core/config.js'
 import type { ClassifyResult, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import {
+  compareBaselineWarnings,
   compareCoverageReports,
+  CoverageCompareError,
   formatCoverageCompareReport,
+  parseCoverageProbeReportForCompare,
 } from './coverage-compare.js'
 import {
   buildCoverageEvalContexts,
@@ -51,6 +54,7 @@ export interface CoverageProbeOptions {
   outputDir?: string
   json?: boolean
   classifyFn?: ClassifyFn
+  evalContexts?: CoverageEvalContext[]
 }
 
 export interface CoverageCaseResult {
@@ -187,7 +191,8 @@ export async function evaluateCoverageMatrix(
   const contextIds = options.contextIds ?? [...DEFAULT_PROBE_CONTEXT_IDS]
   const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot())
   const filters = options.filters ?? []
-  const contexts = await buildCoverageEvalContexts(contextIds, repoRoot)
+  const contexts =
+    options.evalContexts ?? (await buildCoverageEvalContexts(contextIds, repoRoot))
   const cases = flattenCoverageCases(matrix).filter((testCase) =>
     caseMatchesFilter(testCase, filters),
   )
@@ -286,18 +291,21 @@ export async function runCoverageProbe(
   const contexts = await buildCoverageEvalContexts(contextIds, repoRoot)
   const repeat = Math.max(1, options.repeat ?? 1)
   const filters = options.filters ?? []
+  const probeOptions = { ...options, evalContexts: contexts }
 
-  let results = await evaluateCoverageMatrix(matrix, options)
+  let results = await evaluateCoverageMatrix(matrix, probeOptions)
   let driftRuns = 0
+  const firstResults = results
   const firstSignature = resultsSignature(results)
 
   for (let run = 2; run <= repeat; run += 1) {
-    const nextResults = await evaluateCoverageMatrix(matrix, options)
+    const nextResults = await evaluateCoverageMatrix(matrix, probeOptions)
     if (resultsSignature(nextResults) !== firstSignature) {
       driftRuns += 1
     }
-    results = nextResults
   }
+
+  results = firstResults
 
   const mismatches = results.filter((result) => !result.observeOnly && result.match === false)
 
@@ -448,8 +456,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
 
     if (parsed.comparePath) {
-      const baselineRaw = JSON.parse(await readFile(path.resolve(parsed.comparePath), 'utf8')) as CoverageProbeReport
-      const compareReport = compareCoverageReports(baselineRaw, report)
+      let baselineRaw: unknown
+      try {
+        baselineRaw = JSON.parse(await readFile(path.resolve(parsed.comparePath), 'utf8'))
+      } catch {
+        throw new CoverageCompareError(`--compare baseline is not valid JSON: ${parsed.comparePath}`)
+      }
+      const baseline = parseCoverageProbeReportForCompare(baselineRaw)
+      const compareReport = compareCoverageReports(baseline, report)
+      for (const warning of compareBaselineWarnings(baseline, report)) {
+        console.warn(`\nWARNING: compare baseline mismatch: ${warning}`)
+      }
       if (!parsed.json) {
         console.log(`\n${formatCoverageCompareReport(compareReport)}`)
       }
@@ -462,7 +479,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (report.driftRuns > 0 && !parsed.json) {
       console.warn(
-        `\nWARNING: classifier drift detected in ${report.driftRuns}/${report.repeat} repeats`,
+        `\nWARNING: classifier drift detected in ${report.driftRuns}/${report.repeat} repeats; report uses first run results`,
       )
     }
 
@@ -476,7 +493,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
     return 0
   } catch (error) {
-    if (error instanceof CoverageProbeCliError || error instanceof CoverageMatrixSchemaError) {
+    if (
+      error instanceof CoverageProbeCliError ||
+      error instanceof CoverageMatrixSchemaError ||
+      error instanceof CoverageCompareError
+    ) {
       console.error(error.message)
       return 1
     }

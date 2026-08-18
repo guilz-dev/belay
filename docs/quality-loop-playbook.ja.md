@@ -11,9 +11,9 @@
 
 `belay simulate` は **トリアージ専用**。merge 可否の最終判定は `pnpm corpus` のハードゲートとする。
 
-## 評価コンテキスト（3 系統）
+## 評価コンテキスト（4 系統）
 
-品質ループでは意図的に **3 つの評価コンテキスト** を使い分ける。混同すると「structural は緑なのに probe が赤」などの見かけの矛盾が起きる。
+品質ループでは意図的に **4 つの評価コンテキスト** を使い分ける。混同すると「structural は緑なのに probe が赤」などの見かけの矛盾が起きる。
 
 | 経路 | cwd | policy | 用途 |
 |------|-----|--------|------|
@@ -24,6 +24,7 @@
 
 - **probe / corpus** はサブディレクトリ cwd でネスト `.git` 解決を検証する（`eval-context.test.ts`）。
 - **structural-suite** は repoRoot cwd + deny でより厳格。`npm install` などは structural では ask、DEFAULT では allow になり得る。
+- **`probe:coverage` の `audit`** は `loadLayeredConfig()` を使うため team/repo config（ローカル `~/.config/agent-belay/` 含む）に依存する。CI とローカルで `--compare` 結果が揺れる場合がある。
 - `quality-loop-session.sh --full` は両方走らせ、コンテキスト差による見逃しを減らす。
 
 ## 不変条件

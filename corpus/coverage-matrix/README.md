@@ -36,6 +36,12 @@ Default run uses `default` + `structural` only. Compare prior artifacts with:
 pnpm probe:coverage -- --output-dir artifacts/coverage-probe --compare artifacts/coverage-probe/run-<stamp>.json
 ```
 
+`--compare` classifies differences as fixture change vs classifier drift (verdict, reason, fingerprint).
+Baseline schema v1 is supported; context-set mismatches emit warnings only.
+
+`audit` context reads layered config including team config on the local machine — compare results may
+differ between CI and developer laptops.
+
 ## Case shape
 
 ```json
