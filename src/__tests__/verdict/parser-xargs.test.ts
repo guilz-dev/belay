@@ -16,6 +16,18 @@ describe('parser xargs', () => {
     expect(tokens).toEqual([])
   })
 
+  it('does not drop xargs options without proving their operand grammar', () => {
+    const peeled = peelTransparentWrappers(['xargs', '-n', '1', 'curl'])
+
+    expect(peeled.opaque).toBe(true)
+  })
+
+  it('peels the xargs replacement option after consuming its operand', () => {
+    const peeled = peelTransparentWrappers(['xargs', '-I{}', 'curl'])
+
+    expect(peeled).toMatchObject({ tokens: ['curl'], opaque: false })
+  })
+
   it('escalates piped xargs curl with data upload on legacy allow_flagged policy', async () => {
     const result = await verdict('printf @.env | xargs curl -d @-', {
       ...verdictTestContext(),

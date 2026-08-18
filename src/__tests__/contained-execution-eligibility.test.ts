@@ -81,6 +81,15 @@ describe('contained unknown execution eligibility', () => {
     'builtin -- eval fictional-runner verify',
     "exec -- sh -c 'fictional-runner verify'",
     "exec -a contained-runner sh -c 'fictional-runner verify'",
+    "time sh -c 'fictional-runner verify'",
+    "time -p sh -c 'fictional-runner verify'",
+    "nice sh -c 'fictional-runner verify'",
+    "nice -n 1 sh -c 'fictional-runner verify'",
+    'env -u HOME command eval fictional-runner verify',
+    "ionice sh -c 'fictional-runner verify'",
+    "stdbuf sh -c 'fictional-runner verify'",
+    "setsid sh -c 'fictional-runner verify'",
+    "nohup sh -c 'fictional-runner verify'",
   ])('rejects dynamically evaluated recursive shell grammar: %s', async (command) => {
     const result = await classifyShellCore(command, cwd, repoRoot)
 
@@ -98,6 +107,22 @@ describe('contained unknown execution eligibility', () => {
         }),
       ]),
     )
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it.each([
+    "env -S 'sh -c fictional-runner verify'",
+    "ionice -c 2 sh -c 'fictional-runner verify'",
+    "stdbuf -o 0 sh -c 'fictional-runner verify'",
+    "setsid -f sh -c 'fictional-runner verify'",
+    "nohup -- sh -c 'fictional-runner verify'",
+    "xargs -n 1 sh -c 'fictional-runner verify'",
+  ])('fails closed when a wrapper option does not prove its target: %s', async (command) => {
+    const result = await classifyShellCore(command, cwd, repoRoot)
+
+    expect(result.effectPlan?.opacity).toBe('opaque')
     expect(
       isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
     ).toBe(false)

@@ -10,18 +10,6 @@ import type { VerdictOpacity } from './types.js'
 const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
 const MAX_WRAPPER_PEEL_DEPTH = 32
 
-const TRANSPARENT_WRAPPERS = new Set([
-  'sudo',
-  'env',
-  'nohup',
-  'time',
-  'nice',
-  'ionice',
-  'stdbuf',
-  'setsid',
-  'xargs',
-])
-
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])
 const CODE_INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'osascript'])
 const SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval'])
@@ -73,58 +61,26 @@ export function peelTransparentWrappers(tokens: string[]): {
     }
 
     const head = normalizeHead(current[0] ?? '')
-    if (head === 'sudo') {
-      const wrapper = peelSudoWrapper(current)
+    if (head === 'xargs') {
+      const wrapper = peelXargsWrapper(current)
       if (wrapper.kind === 'opaque') {
-        return { tokens: current, xargsStdinOpaque: false, opaque: true }
+        xargsStdinOpaque = current.length === 1
+        return { tokens: xargsStdinOpaque ? [] : current, xargsStdinOpaque, opaque: true }
       }
       current = wrapper.tokens
       continue
     }
-    if (head === 'command' || head === 'builtin' || head === 'exec') {
-      const wrapper = peelShellInvocationWrapper(head, current)
-      if (wrapper.kind === 'opaque') {
-        return { tokens: current, xargsStdinOpaque: false, opaque: true }
-      }
-      if (wrapper.kind === 'preserve') {
-        return { tokens: current, xargsStdinOpaque: false, opaque: false }
-      }
-      current = wrapper.tokens
-      continue
-    }
-    if (!TRANSPARENT_WRAPPERS.has(head)) {
+    const wrapper = peelTransparentWrapper(head, current)
+    if (!wrapper) {
       break
     }
-
-    if (head === 'xargs') {
-      let index = 1
-      while (index < current.length && current[index]?.startsWith('-')) {
-        index += 1
-      }
-      const rest = current.slice(index)
-      if (rest.length === 0) {
-        xargsStdinOpaque = true
-        return { tokens: [], xargsStdinOpaque: true, opaque: true }
-      }
-      current = rest
-      continue
+    if (wrapper.kind === 'opaque') {
+      return { tokens: current, xargsStdinOpaque: false, opaque: true }
     }
-
-    if (head === 'env') {
-      let index = 1
-      while (index < current.length) {
-        const token = current[index] ?? ''
-        if (ENV_PREFIX_PATTERN.test(token) || token.startsWith('-')) {
-          index += 1
-          continue
-        }
-        break
-      }
-      current = current.slice(index)
-      continue
+    if (wrapper.kind === 'preserve') {
+      return { tokens: current, xargsStdinOpaque: false, opaque: false }
     }
-
-    current = current.slice(1)
+    current = wrapper.tokens
   }
 
   return { tokens: current, xargsStdinOpaque, opaque: false }
@@ -134,6 +90,130 @@ type ShellInvocationWrapperResult =
   | { kind: 'peeled'; tokens: string[] }
   | { kind: 'preserve' }
   | { kind: 'opaque' }
+
+function peelTransparentWrapper(
+  head: string,
+  tokens: string[],
+): ShellInvocationWrapperResult | null {
+  switch (head) {
+    case 'sudo':
+      return peelSudoWrapper(tokens)
+    case 'command':
+    case 'builtin':
+    case 'exec':
+      return peelShellInvocationWrapper(head, tokens)
+    case 'env':
+      return peelEnvWrapper(tokens)
+    case 'time':
+      return peelTimeWrapper(tokens)
+    case 'nice':
+      return peelNiceWrapper(tokens)
+    case 'ionice':
+    case 'stdbuf':
+    case 'setsid':
+    case 'nohup':
+      return peelNoOptionWrapper(tokens)
+    default:
+      return null
+  }
+}
+
+function peelXargsWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  const option = tokens[1] ?? ''
+  if (!option) {
+    return { kind: 'opaque' }
+  }
+  if (option === '-I') {
+    return isWrapperOperand(tokens[2]) ? targetFrom(tokens, 3) : { kind: 'opaque' }
+  }
+  if (option.startsWith('-I') && option.length > 2) {
+    return targetFrom(tokens, 2)
+  }
+  if (option.startsWith('-')) {
+    return { kind: 'opaque' }
+  }
+  return { kind: 'peeled', tokens: tokens.slice(1) }
+}
+
+function peelEnvWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  let index = 1
+  while (index < tokens.length) {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
+      index += 1
+      break
+    }
+    if (ENV_PREFIX_PATTERN.test(token)) {
+      index += 1
+      continue
+    }
+    if (token === '-i' || token === '--ignore-environment') {
+      index += 1
+      continue
+    }
+    if (token === '-u' || token === '--unset') {
+      if (!isWrapperOperand(tokens[index + 1])) {
+        return { kind: 'opaque' }
+      }
+      index += 2
+      continue
+    }
+    if (token.startsWith('--unset=') && token.length > '--unset='.length) {
+      index += 1
+      continue
+    }
+    if (token.startsWith('-')) {
+      return { kind: 'opaque' }
+    }
+    break
+  }
+  return targetFrom(tokens, index)
+}
+
+function peelTimeWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  if (tokens[1] === '-p') {
+    return targetFrom(tokens, 2)
+  }
+  return targetFrom(tokens, 1)
+}
+
+function peelNiceWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  if (tokens[1] === '-n') {
+    return isNiceAdjustment(tokens[2]) ? targetFrom(tokens, 3) : { kind: 'opaque' }
+  }
+  return targetFrom(tokens, 1)
+}
+
+function peelNoOptionWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  return targetFrom(tokens, 1)
+}
+
+function targetFrom(
+  tokens: string[],
+  index: number,
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  return isWrapperOperand(tokens[index])
+    ? { kind: 'peeled', tokens: tokens.slice(index) }
+    : { kind: 'opaque' }
+}
+
+function isWrapperOperand(token: string | undefined): token is string {
+  return Boolean(token && token !== '--' && !token.startsWith('-'))
+}
+
+function isNiceAdjustment(token: string | undefined): boolean {
+  return Boolean(token && /^[+-]?\d+$/.test(token))
+}
 
 function peelSudoWrapper(
   tokens: string[],
