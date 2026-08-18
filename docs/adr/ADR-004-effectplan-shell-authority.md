@@ -2,7 +2,8 @@
 
 Status: Accepted  
 Date: 2026-08-13  
-Supersedes: ADR-003's blanket L3 network-read approval requirement
+Supersedes: ADR-003's blanket L3 network-read approval requirement  
+Related: [ADR-005](./ADR-005-command-allowlist-prohibition.md)
 
 ## Decision
 
@@ -52,7 +53,7 @@ mutations remain approval-worthy because they can exfiltrate data or change exte
   normalized shell actions. Its resource-scoped authorization and exact-grant decisions
   remain in force.
 - Legacy list-shaped configuration remains parse-compatible but inert for shell
-  authorization and is reported as deprecated.
+  authorization and is reported as forbidden ([ADR-005](./ADR-005-command-allowlist-prohibition.md)).
 - Corpus labels are test expectations only; they never grant runtime authority.
 - Tool/subagent adapters and L1 broker boundaries retain their own resource enforcement.
 - Historical approvals and audit records remain readable under their existing compatibility

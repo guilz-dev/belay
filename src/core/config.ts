@@ -1288,6 +1288,23 @@ export function isFreshConfigInput(loaded: unknown): boolean {
   return Object.keys(loaded as Record<string, unknown>).length === 0
 }
 
+export function hasForbiddenShellOverrideLists(config: BelayConfigV4): boolean {
+  return config.overrides.allow.length > 0 || config.overrides.external.length > 0
+}
+
+export function stripForbiddenShellOverrideLists(config: BelayConfigV4): BelayConfigV4 {
+  if (!hasForbiddenShellOverrideLists(config)) {
+    return config
+  }
+  return {
+    ...config,
+    overrides: {
+      allow: [],
+      external: [],
+    },
+  }
+}
+
 export function mergeConfig(
   existing: unknown,
   defaults: BelayConfigV4 = DEFAULT_CONFIG_V4,

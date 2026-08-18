@@ -126,8 +126,8 @@ export function formatExplainReport(report: ExplainReport): string {
     report.policy.transactional.enabled
       ? `Transactional band: [${report.policy.transactional.minConfidence}, ${report.policy.transactional.maxConfidence})`
       : 'Transactional band: not configured',
-    `Legacy overrides allow (deprecated, ignored): ${report.overrides.allow.join(', ') || '(none)'}`,
-    `Legacy overrides external (deprecated, ignored): ${report.overrides.external.join(', ') || '(none)'}`,
+    `Legacy overrides allow (forbidden, ignored): ${report.overrides.allow.join(', ') || '(none)'}`,
+    `Legacy overrides external (forbidden, ignored): ${report.overrides.external.join(', ') || '(none)'}`,
     '',
     `Verdict: ${result.verdict}`,
     `Reason: ${result.reason}`,

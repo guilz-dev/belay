@@ -208,7 +208,7 @@ Use `belay init --preset <name>` or the team config `preset` field:
 | From | Behavior |
 |------|----------|
 | v1 / v2 / v3 | Automatic merge to v4 on load (`migrateConfig`) |
-| v0.x command lists | `overrides.allow` / `overrides.external` remain parse-compatible but are deprecated and ignored by shell authorization; `belay doctor` warns when either list is non-empty |
+| v0.x command lists | `overrides.allow` / `overrides.external` remain parse-compatible but are forbidden for use; shell authorization ignores them; `belay doctor` **fails** when either list is non-empty ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)) |
 
 Versioning follows [semver-policy.md](./ops/semver-policy.md). The restorability floor and its
 rules are described in [CONCEPT.md](./CONCEPT.md) / [adr/ADR-002-concept-conformance.md](./adr/ADR-002-concept-conformance.md).

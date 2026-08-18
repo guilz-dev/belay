@@ -11,4 +11,10 @@ export const MUST_ALLOW_SHELL_COMMANDS = [
   'pnpm vitest run src/example.test.ts',
   "bash -lc 'git status'",
   'belay approve belay_deadbeef1234',
+  'bundle -v',
+  'ruby -v',
+  'yarn --version',
+  'make -n test',
+  'bin/rails routes',
+  'bundle exec rubocop --version',
 ] as const

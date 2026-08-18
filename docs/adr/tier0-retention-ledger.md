@@ -28,6 +28,9 @@ Each retained Tier0 rule has a one-line justification and paired MUST-ALLOW / MU
 | case | why allow |
 |---|---|
 | `Write ~/.cursor/plans/foo.plan.md` | local IDE document, not catastrophic |
+| `bundle -v` / `ruby -v` / `yarn --version` | runtime metadata via EffectPlan `process.exec` inspect |
+| `make -n <target>` | dry-run prints recipes only (`process.inspect.make_dry_run`) |
+| `bin/rails routes` | read-only Rails introspection (`process.inspect.rails_read_only`) |
 | `Write /tmp/benign.txt` | ephemeral local file |
 | `cd /tmp && rm -rf foo` | /tmp deletion is recoverable / low stakes |
 | control-plane read | no change |

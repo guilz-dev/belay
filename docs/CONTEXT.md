@@ -2,8 +2,9 @@
 
 This document records the normative terms for Belay's resource-scoped capability
 authorization model. It complements
-[ADR-003](./adr/ADR-003-resource-scoped-capability.md) and
-[ADR-004](./adr/ADR-004-effectplan-shell-authority.md).
+[ADR-003](./adr/ADR-003-resource-scoped-capability.md),
+[ADR-004](./adr/ADR-004-effectplan-shell-authority.md), and
+[ADR-005](./adr/ADR-005-command-allowlist-prohibition.md).
 
 ## Core objects
 
@@ -23,7 +24,8 @@ authorization model. It complements
 1. Hook gate decisions are **deterministic**. Sync LLM judge is not on the gate path.
 2. **EffectPlan authority**: normalized shell actions are authorized only from their
    canonical effects. Legacy command lists, overrides, corpus entries, and shell
-   standing-allow state are inert.
+   standing-allow state are inert. Command allowlists are product-incompatible
+   ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)).
 3. **Network**: payload-free reads allow. External mutation, explicit payload/file/secret
    sends, and ambiguous network effects require approval.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.

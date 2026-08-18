@@ -307,6 +307,40 @@ describe('migrateV2ToV3', () => {
   })
 })
 
+describe('stripForbiddenShellOverrideLists', () => {
+  it('clears legacy override lists for persisted config writes', async () => {
+    const { mergeConfig, stripForbiddenShellOverrideLists } = await import('../core/config.js')
+    const config = mergeConfig({
+      overrides: { allow: ['pnpm release:staging'], external: ['make deploy'] },
+    })
+    expect(config.overrides.allow).toEqual(['pnpm release:staging'])
+    const stripped = stripForbiddenShellOverrideLists(config)
+    expect(stripped.overrides.allow).toEqual([])
+    expect(stripped.overrides.external).toEqual([])
+  })
+})
+
+describe('writeConfigFile', () => {
+  it('strips forbidden legacy override lists when persisting config (ADR-005)', async () => {
+    const { mkdtemp, readFile } = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const { writeConfigFile } = await import('../config-io.js')
+    const { mergeConfig } = await import('../core/config.js')
+
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-config-write-'))
+    const config = mergeConfig({
+      overrides: { allow: ['pnpm release:staging'], external: ['make deploy'] },
+    })
+    await writeConfigFile(repoRoot, config)
+    const saved = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
+    )
+    expect(saved.overrides.allow).toEqual([])
+    expect(saved.overrides.external).toEqual([])
+  })
+})
+
 describe('policy defaults', () => {
   it('keeps fenceWarnThreshold aligned with audit-summary default', async () => {
     const { DEFAULT_SILENT_PASS_THRESHOLD } = await import('../core/audit-summary.js')

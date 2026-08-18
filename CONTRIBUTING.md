@@ -4,11 +4,13 @@ belay is a **restorability floor** for AI coding agents: it lets an agent work f
 only asks a human when an action is **irreversible × catastrophic**. It is *not* a denylist
 or a permission fence.
 
-Before contributing, read the two documents that govern every change:
+Before contributing, read the documents that govern every change:
 
 - [docs/CONCEPT.md](docs/CONCEPT.md) — what belay is (the restorability floor).
 - [docs/adr/ADR-002-concept-conformance.md](docs/adr/ADR-002-concept-conformance.md) — the rule
   every contribution must satisfy.
+- [docs/adr/ADR-005-command-allowlist-prohibition.md](docs/adr/ADR-005-command-allowlist-prohibition.md) —
+  command allowlists (including `overrides.allow`) are product-incompatible.
 - [docs/adr/tier0-retention-ledger.md](docs/adr/tier0-retention-ledger.md) — Tier0/MUST-ASK/MUST-ALLOW
   catalog (M3).
 
@@ -28,6 +30,10 @@ belay's entire value is the **narrowness** of what it stops. A change is wrong i
 If you cannot justify a rule with *"this stops an irreversible × catastrophic action"*, it
 does not belong in belay. We **stop actions, not tools / categories / intent**: `aws s3 ls`
 and a bare `curl https://example.com` must pass; `aws s3 rm` and `curl -d @.env …` must ask.
+
+**Never use command allowlists** (`overrides.allow`, standing shell lists, or “add this command
+to a whitelist”) to fix false positives. Improve EffectPlan semantics, use one-shot approval,
+or approve an exact resource scope instead ([ADR-005](docs/adr/ADR-005-command-allowlist-prohibition.md)).
 
 ## Two invariants we never break
 
@@ -121,6 +127,8 @@ Any change that makes belay **ask** or **allow** must answer:
 - [ ] Do ambiguous cases fall to Tier1 (fail-closed = ask)?
 - [ ] Did you add **both** a `MUST-ALLOW` test (it does not over-block) **and** a `MUST-ASK`
       test (it catches the catastrophe)?
+- [ ] Did you avoid command allowlists (`overrides.allow`, standing shell lists) as the fix
+      ([ADR-005](docs/adr/ADR-005-command-allowlist-prohibition.md))?
 - [ ] Are the FN=0 structural suite and the guarantee-table still green?
 
 Every deterministic (Tier0) rule should carry a one-line justification and a paired

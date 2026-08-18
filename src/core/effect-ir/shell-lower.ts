@@ -535,6 +535,71 @@ function packageExecInnerIsMetadata(
   )
 }
 
+const METADATA_ONLY_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h'])
+
+function isMetadataOnlyArgv(argv: string[]): boolean {
+  return argv.length > 0 && argv.every((token) => METADATA_ONLY_FLAGS.has(token))
+}
+
+function executableBaseName(head: string): string {
+  return path.basename(head)
+}
+
+const RAILS_READ_ONLY_SUBCOMMANDS = new Set(['routes', 'middleware', 'stats', 'about', 'version'])
+
+function railsReadOnlySubcommand(args: string[]): boolean {
+  const subcommand = args[0]
+  if (!subcommand || subcommand.startsWith('-')) {
+    return false
+  }
+  return RAILS_READ_ONLY_SUBCOMMANDS.has(subcommand)
+}
+
+function decodeRuntimeMetadataProcess(
+  head: string,
+  args: string[],
+  segment: string,
+): ShellEffectRequirement[] | null {
+  if (head === 'bundle') {
+    if (args.length === 1 && isMetadataOnlyArgv(args)) {
+      return [processRequirement(head, 'inspect', segment, ['process.inspect.runtime_metadata'])]
+    }
+    if (args[0] === 'exec' && args.length >= 2) {
+      const innerHead = args[1] ?? ''
+      const innerArgs = args.slice(2)
+      const innerBase = executableBaseName(innerHead)
+      if ((innerBase === 'rails' || innerBase === 'rake') && railsReadOnlySubcommand(innerArgs)) {
+        return [
+          processRequirement(innerHead, 'inspect', segment, ['process.inspect.rails_read_only']),
+        ]
+      }
+      if (isMetadataOnlyArgv(innerArgs)) {
+        return [
+          processRequirement(innerHead, 'inspect', segment, [
+            'process.inspect.bundle_exec_metadata',
+          ]),
+        ]
+      }
+    }
+    return null
+  }
+
+  if ((head === 'ruby' || head === 'yarn') && args.length >= 1 && isMetadataOnlyArgv(args)) {
+    return [processRequirement(head, 'inspect', segment, ['process.inspect.runtime_metadata'])]
+  }
+
+  if (head === 'make' && args.includes('-n')) {
+    return [processRequirement(head, 'inspect', segment, ['process.inspect.make_dry_run'])]
+  }
+
+  const base = executableBaseName(head)
+  if ((base === 'rails' || base === 'rake') && railsReadOnlySubcommand(args)) {
+    return [processRequirement(head, 'inspect', segment, ['process.inspect.rails_read_only'])]
+  }
+
+  return null
+}
+
 function decodeProcessOrFilesystem(params: {
   tokens: string[]
   head: string
@@ -645,7 +710,11 @@ function decodeProcessOrFilesystem(params: {
   if (head === 'prisma') {
     return decodePrisma(args, env, repoRoot, segment)
   }
-  if ((head === 'npm' || head === 'pnpm') && args.length === 1 && args[0] === '--version') {
+  const runtimeMetadata = decodeRuntimeMetadataProcess(head, args, segment)
+  if (runtimeMetadata) {
+    return runtimeMetadata
+  }
+  if ((head === 'npm' || head === 'pnpm') && args.length === 1 && isMetadataOnlyArgv(args)) {
     return [processRequirement(head, 'inspect', segment, ['process.inspect.package_manager'])]
   }
   if (head === 'belay') {

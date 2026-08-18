@@ -27,7 +27,8 @@ PolicyEngine projection. Command-name allow/deny lists, legacy overrides, corpus
 and shell standing-allow records are forbidden as runtime authority. Payload-free network
 reads allow; external mutation, explicit payload/file/secret sends, high-stakes effects,
 and partial/indeterminate plans require approval. See
-[ADR-004](docs/adr/ADR-004-effectplan-shell-authority.md).
+[ADR-004](docs/adr/ADR-004-effectplan-shell-authority.md) and
+[ADR-005](docs/adr/ADR-005-command-allowlist-prohibition.md).
 
 ## Recommended adversarial configuration (v1.0)
 
@@ -80,7 +81,7 @@ Requires external OS sandbox runtime + running egress proxy. See
 ### Mitigations in v0.4
 
 - **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` only as a compatibility fallback for non-EffectPlan paths, while normalized partial/indeterminate shell plans still ask. `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and the stricter fallback `unknownLocalEffect: deny`. Control plane defaults to enabled.
-- **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but ignored by shell authorization.
+- **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but forbidden for use and ignored by shell authorization; `belay doctor` fails when either list is non-empty.
 - **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, unresolved/dynamic substitutions, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools. Statically recoverable nested effects are retained before the partial plan asks.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
 - **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records runtime hashes; `doctor` verifies them.
