@@ -29,6 +29,7 @@ export interface ParsedSegment {
   head: string
   key: string
   normalized: string
+  encounteredXargs: boolean
 }
 
 export function normalizeHead(token: string): string {
@@ -42,15 +43,17 @@ export function normalizeHead(token: string): string {
 export function peelTransparentWrappers(tokens: string[]): {
   tokens: string[]
   xargsStdinOpaque: boolean
+  encounteredXargs: boolean
   opaque: boolean
 } {
   let current = [...tokens]
   let xargsStdinOpaque = false
+  let encounteredXargs = false
   let peelDepth = 0
 
   while (current.length > 0) {
     if (peelDepth >= MAX_WRAPPER_PEEL_DEPTH) {
-      return { tokens: current, xargsStdinOpaque: false, opaque: true }
+      return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
     }
     peelDepth += 1
     while (current.length > 0 && ENV_PREFIX_PATTERN.test(current[0] ?? '')) {
@@ -62,10 +65,16 @@ export function peelTransparentWrappers(tokens: string[]): {
 
     const head = normalizeHead(current[0] ?? '')
     if (head === 'xargs') {
+      encounteredXargs = true
       const wrapper = peelXargsWrapper(current)
       if (wrapper.kind === 'opaque') {
         xargsStdinOpaque = current.length === 1
-        return { tokens: xargsStdinOpaque ? [] : current, xargsStdinOpaque, opaque: true }
+        return {
+          tokens: xargsStdinOpaque ? [] : current,
+          xargsStdinOpaque,
+          encounteredXargs,
+          opaque: true,
+        }
       }
       current = wrapper.tokens
       continue
@@ -75,15 +84,15 @@ export function peelTransparentWrappers(tokens: string[]): {
       break
     }
     if (wrapper.kind === 'opaque') {
-      return { tokens: current, xargsStdinOpaque: false, opaque: true }
+      return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
     }
     if (wrapper.kind === 'preserve') {
-      return { tokens: current, xargsStdinOpaque: false, opaque: false }
+      return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: false }
     }
     current = wrapper.tokens
   }
 
-  return { tokens: current, xargsStdinOpaque, opaque: false }
+  return { tokens: current, xargsStdinOpaque, encounteredXargs, opaque: false }
 }
 
 type ShellInvocationWrapperResult =
@@ -584,7 +593,8 @@ export function splitStructuralShellSegments(command: string): string[] {
 
 export function parseSegment(command: string): ParsedSegment {
   const tokens = tokenizeShell(command)
-  const { tokens: peeled } = peelTransparentWrappers(tokens)
+  const peeledWrapper = peelTransparentWrappers(tokens)
+  const { tokens: peeled } = peeledWrapper
   const normalizedTokens = peeled.map((token) => normalizeHead(token))
   const key = commandKey(peeled.map((token, index) => (index === 0 ? normalizeHead(token) : token)))
   return {
@@ -592,6 +602,7 @@ export function parseSegment(command: string): ParsedSegment {
     head: normalizeHead(peeled[0] ?? ''),
     key,
     normalized: normalizedTokens.join(' ').trim(),
+    encounteredXargs: peeledWrapper.encounteredXargs,
   }
 }
 

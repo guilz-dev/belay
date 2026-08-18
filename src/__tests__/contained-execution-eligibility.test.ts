@@ -129,6 +129,35 @@ describe('contained unknown execution eligibility', () => {
   })
 
   it.each([
+    'xargs fictional-runner verify',
+    'command xargs fictional-runner verify',
+    'time xargs fictional-runner verify',
+    'env sudo xargs fictional-runner verify',
+    'sudo command xargs -I{} fictional-runner verify',
+  ])('rejects stdin-dynamic xargs through transparent wrappers: %s', async (command) => {
+    const result = await classifyShellCore(command, cwd, repoRoot)
+
+    expect(result.effectPlan?.opacity).toBe('opaque')
+    expect(result.effectPlan?.signals).toContain('shell.xargs_stdin_dynamic')
+    if (!result.effectPlan) {
+      throw new Error('expected an xargs EffectPlan')
+    }
+    expect(collectRequirements(result.effectPlan.root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'indeterminate',
+          evidence: expect.objectContaining({
+            signals: expect.arrayContaining(['shell.xargs_stdin_dynamic']),
+          }),
+        }),
+      ]),
+    )
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it.each([
     'command -v eval',
     'command -V eval',
   ])('keeps command inspection distinct from dynamic evaluation: %s', async (command) => {

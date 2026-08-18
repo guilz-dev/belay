@@ -220,7 +220,7 @@ function lowerSegment(
     )
     opacity = 'opaque'
   }
-  if (path.basename((environment.commandTokens ?? rawTokens)[0] ?? '') === 'xargs') {
+  if (parsed.encounteredXargs) {
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
         'shell.xargs_stdin_dynamic',

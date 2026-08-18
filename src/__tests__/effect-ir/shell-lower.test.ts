@@ -171,6 +171,29 @@ describe('general shell semantic lowering', () => {
     )
   })
 
+  it('retains xargs stdin-dynamic semantics through transparent wrappers', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'sudo command xargs -I{} curl https://example.com/{}',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:wrapped-xargs-stdin',
+    })
+
+    expect(plan.opacity).toBe('opaque')
+    expect(plan.signals).toContain('shell.xargs_stdin_dynamic')
+    expect(collectRequirements(plan.root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: 'network.connect' }),
+        expect.objectContaining({
+          action: 'indeterminate',
+          evidence: expect.objectContaining({
+            signals: expect.arrayContaining(['shell.xargs_stdin_dynamic']),
+          }),
+        }),
+      ]),
+    )
+  })
+
   it('keeps multi-line network chains partial alongside known effects', () => {
     const plan = lowerShellEffectPlan({
       command: 'ls\ncurl https://example.com',
