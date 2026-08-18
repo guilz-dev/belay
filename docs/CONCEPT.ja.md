@@ -40,6 +40,8 @@ storyline 212 の到達点。「危険か」は主観で人の頭の中にしか
 - 敵対的エージェントの封じ込め(OS サンドボックスの領分。ADR-001 の L1 完全版 / 将来)
 - 網羅的な安全境界(予測で全コマンドを正しく判定することは原理的に不可能 = Rice)
 - 静的 denylist / whitelist を安全境界にすること(リストは破綻する、が出発点)
+- **コマンド allowlist による回避** — legacy `overrides.allow` / `overrides.external` を含む。
+  「リストに足す」が答えなら設計が間違い。[ADR-005](./adr/ADR-005-command-allowlist-prohibition.ja.md) を参照。
 
 ---
 

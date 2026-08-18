@@ -12,6 +12,7 @@ import {
   configuredControlPlaneDir,
   mergeConfig,
   pendingApprovalsFile,
+  stripForbiddenShellOverrideLists,
 } from './core/config.js'
 import {
   type LayeredConfigResult,
@@ -271,7 +272,11 @@ export async function writeConfigFile(
 ): Promise<void> {
   const configPath = configPathFor(repoRoot, adapter)
   await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  await writeFile(
+    configPath,
+    `${JSON.stringify(stripForbiddenShellOverrideLists(config), null, 2)}\n`,
+    'utf8',
+  )
 }
 
 export async function mergeAndWriteConfig(

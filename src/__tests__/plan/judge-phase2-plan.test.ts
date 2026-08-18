@@ -181,6 +181,30 @@ describe('Phase 2 plan — Config UX', () => {
       expect(result.permission).not.toBe('allow')
     })
 
+    it('rejects belay config set overrides.allow (ADR-005)', async () => {
+      const result = await verdict('belay config set overrides.allow "git status"', context)
+      expect(result.permission).not.toBe('allow')
+    })
+
+    it('rejects belay config set overrides.external (ADR-005)', async () => {
+      const result = await verdict('belay config set overrides.external "make deploy"', context)
+      expect(result.permission).not.toBe('allow')
+    })
+
+    it('runBelayConfig rejects overrides.allow path (ADR-005)', async () => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: 'cursor' })
+      const mod = await importConfigModule()
+      await expect(
+        mod.runBelayConfig({
+          targetDir: dir,
+          subcommand: 'set',
+          path: 'overrides.allow',
+          value: 'git status',
+        }),
+      ).rejects.toThrow(/judge\.\*/)
+    })
+
     it('credential subcommand exposed', async () => {
       const mod = await importConfigModule()
       expect(typeof mod.runBelayConfigCredential).toBe('function')

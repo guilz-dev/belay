@@ -32,7 +32,7 @@ describe('doctorProject', () => {
   it.each([
     ['allow', ['pnpm release:staging']],
     ['external', ['make deploy']],
-  ] as const)('warns that a non-empty legacy overrides.%s list is deprecated and ignored', async (listName, commands) => {
+  ] as const)('reports a non-empty legacy overrides.%s list as a doctor issue (ADR-005)', async (listName, commands) => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-overrides-'))
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
@@ -52,13 +52,48 @@ describe('doctorProject', () => {
 
     const report = await doctorProject({ targetDir: repoRoot })
     expect(
-      report.warnings.some(
-        (warning) =>
-          warning.includes(`overrides.${listName}`) &&
-          warning.includes('deprecated') &&
-          warning.includes('ignored'),
+      report.issues.some(
+        (issue) =>
+          issue.includes(`overrides.${listName}`) &&
+          issue.includes('forbidden') &&
+          issue.includes('ADR-005'),
       ),
     ).toBe(true)
+    expect(report.ok).toBe(false)
+  })
+
+  it('removes forbidden legacy override lists with doctor --fix', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-fix-overrides-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        overrides: {
+          ...config.overrides,
+          allow: ['pnpm release:staging'],
+          external: ['make deploy'],
+        },
+      })}\n`,
+    )
+
+    const before = await doctorProject({ targetDir: repoRoot })
+    expect(before.ok).toBe(false)
+
+    const after = await doctorProject({ targetDir: repoRoot, fix: true })
+    expect(
+      after.notes.some((note) => note.includes('Removed forbidden legacy shell override lists')),
+    ).toBe(true)
+    expect(after.issues.some((issue) => issue.includes('overrides.allow'))).toBe(false)
+    expect(after.issues.some((issue) => issue.includes('overrides.external'))).toBe(false)
+
+    const saved = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(saved.overrides.allow).toEqual([])
+    expect(saved.overrides.external).toEqual([])
   })
 
   it('warns when repo-local approval files remain with control plane enabled', async () => {

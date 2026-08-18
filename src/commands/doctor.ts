@@ -13,6 +13,7 @@ import {
   loadLayeredConfig,
   pendingApprovalsPath,
   repoLocalStateDirFor,
+  writeConfigFile,
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
@@ -21,7 +22,11 @@ import {
   boundaryAttestationPath,
   boundarySessionStatus,
 } from '../core/capability/boundary-session.js'
-import { defaultControlPlaneDir } from '../core/config.js'
+import {
+  defaultControlPlaneDir,
+  hasForbiddenShellOverrideLists,
+  stripForbiddenShellOverrideLists,
+} from '../core/config.js'
 import { verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
@@ -101,10 +106,10 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         ...(loadedConfig.overrides.external.length > 0 ? ['overrides.external'] : []),
       ]
       if (ignoredShellOverrideLists.length > 0) {
-        warnings.push(
+        issues.push(
           `Legacy shell ${ignoredShellOverrideLists.join(' and ')} ${
             ignoredShellOverrideLists.length === 1 ? 'is' : 'are'
-          } deprecated and ignored. Remove the command list; inspect the EffectPlan and correct effect semantics or resource scope instead.`,
+          } forbidden (ADR-005). Remove the command list (or run belay doctor --fix); improve EffectPlan semantics, use one-shot approval, or approve an exact resource scope instead.`,
         )
       }
       if (loadedConfig.version !== 4) {
@@ -291,6 +296,25 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   }
 
   if (options.fix && loadedConfig) {
+    if (hasForbiddenShellOverrideLists(loadedConfig)) {
+      if (options.dryRun !== true) {
+        const stripped = stripForbiddenShellOverrideLists(loadedConfig)
+        await writeConfigFile(repoRoot, stripped, adapterName)
+        loadedConfig = stripped
+        notes.push(
+          'Removed forbidden legacy shell override lists (overrides.allow / overrides.external).',
+        )
+        for (let index = issues.length - 1; index >= 0; index -= 1) {
+          const issue = issues[index] ?? ''
+          if (issue.includes('overrides.allow') || issue.includes('overrides.external')) {
+            issues.splice(index, 1)
+          }
+        }
+      } else {
+        notes.push('Dry run: would remove forbidden legacy shell override lists.')
+      }
+    }
+
     const cleanup = await cleanupOrphanApprovalState(repoRoot, loadedConfig, {
       dryRun: options.dryRun === true,
     })

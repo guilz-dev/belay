@@ -311,6 +311,12 @@ describe('general shell semantic lowering', () => {
     ['pwd', 'pwd'],
     ['which node', 'which'],
     ['whoami', 'whoami'],
+    ['bundle -v', 'bundle'],
+    ['ruby -v', 'ruby'],
+    ['yarn --version', 'yarn'],
+    ['make -n test', 'make'],
+    ['bin/rails routes', 'rails'],
+    ['bundle exec rubocop --version', 'rubocop'],
   ])('lowers pure shell/process inspection without indeterminate effects: %s', (command, executable) => {
     const plan = lowerShellEffectPlan({
       command,
@@ -455,6 +461,12 @@ describe('general shell semantic lowering', () => {
     ['node --help', 'allow'],
     ['node --check scripts/dev.js', 'allow'],
     ["node -e 'process.exit(0)'", 'deny_pending_approval'],
+    ['bundle -v', 'allow'],
+    ['ruby -v', 'allow'],
+    ['yarn --version', 'allow'],
+    ['make -n test', 'allow'],
+    ['bin/rails routes', 'allow'],
+    ['bundle exec rubocop --version', 'allow'],
   ])('projects structural local operation semantics: %s', async (command, expected) => {
     const { classifyShell } = await import('../../core/verdict/adapter.js')
     const { mergeConfig } = await import('../../core/config.js')

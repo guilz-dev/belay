@@ -73,6 +73,7 @@ npx skills add guilz-dev/belay --skill belay -a codex -y
 | [CONCEPT.md](./CONCEPT.md) | プロダクトの中心概念（正本・英語） |
 | [CONCEPT.ja.md](./CONCEPT.ja.md) | 上記の日本語訳 |
 | [adr/ADR-002-concept-conformance.ja.md](./adr/ADR-002-concept-conformance.ja.md) | すべてのルールがコンセプトに奉仕する運用規律（貢献時必読） |
+| [adr/ADR-005-command-allowlist-prohibition.ja.md](./adr/ADR-005-command-allowlist-prohibition.ja.md) | コマンド allowlist 禁止（`overrides.allow` 含む） |
 | [guarantee-table.md](./guarantee-table.md) | 設定ごとの保証表（L1〜L4、機械可読ソースは `src/conformance/`） |
 
 ---
@@ -131,6 +132,7 @@ npx skills add guilz-dev/belay --skill belay -a codex -y
 
 1. [CONTRIBUTING.md](../CONTRIBUTING.md) の「一つのルール」を読む
 2. ゲート変更は [ADR-002](./adr/ADR-002-concept-conformance.ja.md) に沿って **MUST-ALLOW** と **MUST-ASK** の両方をテストに足す
-3. 公開挙動の変更は [guarantee-table.md](./guarantee-table.md) と [README](../README.md) を同期する
+3. コマンド allowlist（`overrides.allow` 等）で偽陽性を直さない — [ADR-005](./adr/ADR-005-command-allowlist-prohibition.ja.md)
+4. 公開挙動の変更は [guarantee-table.md](./guarantee-table.md) と [README](../README.md) を同期する
 
 コンセプトの正本は英語の [CONCEPT.md](./CONCEPT.md)（日本語は [CONCEPT.ja.md](./CONCEPT.ja.md)）。ADR の `.ja.md` は日本語が正本です。

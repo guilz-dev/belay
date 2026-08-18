@@ -41,6 +41,9 @@ but “can it be undone?” is largely objective — decidable from the nature o
 - Containing adversarial agents (OS sandbox territory; ADR-001 L1 full version / future)
 - A comprehensive safety boundary (correctly predicting every command is impossible in principle = Rice)
 - Making static denylists / whitelists the safety boundary (lists break; they are a starting point, not the wall)
+- **Command allowlists as remediation** — including legacy `overrides.allow` / `overrides.external`.
+  If the fix is “add it to a list,” the fix is wrong. See
+  [ADR-005](./adr/ADR-005-command-allowlist-prohibition.md).
 
 ---
 

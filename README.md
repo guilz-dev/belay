@@ -242,8 +242,9 @@ Notable settings:
 - **`classifier.strictChains: true`** (default) — scans every `&&`, `|`, and `;`
   segment into the EffectPlan and keeps the strictest policy projection. Legacy
   `overrides.allow` / `overrides.external` lists are accepted only for config
-  compatibility; shell authorization ignores them and `belay doctor` warns when
-  either list is non-empty.
+  compatibility; shell authorization ignores them. **`belay doctor` fails** when either
+  list is non-empty (ADR-005). Remove legacy lists; improve EffectPlan semantics or use
+  one-shot approval instead.
 - **`controlPlane.enabled: true`** — stores approval state under
   `~/.config/belay/` (or `XDG_CONFIG_HOME/belay`), shared across repos for the
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges

@@ -27,6 +27,15 @@ describe('SKILL.md quality (T20/T23)', () => {
     expect(content).toContain('does not classify commands itself')
   })
 
+  it('T20b: skill does not recommend command allowlists as remediation (ADR-005)', async () => {
+    const content = await readFile(skillPath, 'utf8')
+    expect(content).toContain('Do not use command allowlists')
+    expect(content).not.toMatch(/add.*overrides\.allow/i)
+    expect(content).not.toMatch(/config set overrides\.(?:allow|external)/i)
+    expect(content).not.toMatch(/standing allow.*fix/i)
+    expect(content).not.toMatch(/command list.*workaround/i)
+  })
+
   it('T23: frontmatter and description include trigger vocabulary', async () => {
     const content = await readFile(skillPath, 'utf8')
     expect(content).toMatch(/^---\n/)
