@@ -367,6 +367,7 @@ describe('contained unknown execution contracts', () => {
           stdoutTruncated: false,
           stderrTruncated: false,
           receiptHash: 'receipt',
+          workspaceChangesDiscarded: true,
         },
       },
       mode: 'audit',

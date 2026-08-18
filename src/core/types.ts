@@ -14,6 +14,7 @@ export interface MediatedExecutionResult {
   stdoutTruncated: boolean
   stderrTruncated: boolean
   receiptHash: string
+  workspaceChangesDiscarded: true
 }
 
 export type BelayMode = 'enforce' | 'audit'

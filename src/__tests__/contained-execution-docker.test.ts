@@ -385,6 +385,7 @@ function executionParams(value: Fixture, signedAttestation: unknown) {
     mirror: value.mirror,
     guestCwd: value.repoRoot,
     command: 'fictional-runner check',
+    inputFingerprint: 'f'.repeat(64),
     signedAttestation,
   }
 }
@@ -598,6 +599,7 @@ describe('contained Docker execution hardening', () => {
         mirror,
         guestCwd: repoRoot,
         command: 'fictional-runner check',
+        inputFingerprint: 'f'.repeat(64),
         signedAttestation,
         dependencies,
       }),
@@ -897,6 +899,7 @@ describe('contained Docker execution hardening', () => {
     })
     expect(first.receiptHash).not.toBe(second.receiptHash)
     expect(first.receipt).toMatchObject({
+      inputFingerprint: 'f'.repeat(64),
       actionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       attestationDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       executionStarted: true,

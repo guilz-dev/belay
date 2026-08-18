@@ -123,6 +123,7 @@ export function formatExplainReport(report: ExplainReport): string {
       : 'Egress proxy: not configured',
     `Sandbox (L1 broker): ${report.sandbox.enabled ? 'enabled' : 'disabled'} (runtime=${report.sandbox.runtime}, fs broker active=${report.sandboxBrokerActive}, L1-full=${report.l1FullActive})`,
     `Transactional (L2): ${report.policy.transactional.enabled ? 'enabled' : 'disabled'} (eligible for this command=${report.transactionalEligible})`,
+    `Contained unknown execution: ${result.wouldMediate ? 'would mediate' : 'not eligible'}`,
     report.policy.transactional.enabled
       ? `Transactional band: [${report.policy.transactional.minConfidence}, ${report.policy.transactional.maxConfidence})`
       : 'Transactional band: not configured',

@@ -46,6 +46,7 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `All-time would-block: ${report.wouldBlockCount} (${(report.wouldBlockRate * 100).toFixed(1)}%)`,
     `All-time classifier-quality would-block: ${report.classifierWouldBlockCount} (${(report.classifierWouldBlockRate * 100).toFixed(1)}%)`,
     `All-time approvals recorded during audit: ${report.approvalRecordedCount}`,
+    `Contained execution: would mediate ${report.containedExecution.wouldMediate}; complete ${report.containedExecution.complete}; failed ${report.containedExecution.failed}; timed out ${report.containedExecution.timedOut}`,
   ]
 
   lines.push('', 'Current readiness cohort:')
@@ -68,6 +69,9 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `- classifier-quality would-block: ${report.currentCohort.classifierWouldBlockCount} (${(report.currentCohort.classifierWouldBlockRate * 100).toFixed(1)}%)`,
   )
   lines.push(`- approvals recorded during audit: ${report.currentCohort.approvalRecordedCount}`)
+  lines.push(
+    `- contained execution: would mediate ${report.currentCohort.containedExecution.wouldMediate}; complete ${report.currentCohort.containedExecution.complete}; failed ${report.currentCohort.containedExecution.failed}; timed out ${report.currentCohort.containedExecution.timedOut}`,
+  )
   lines.push(`- availability-caused asks: ${report.currentCohort.availabilityAsks.total}`)
   if (Object.keys(report.currentCohort.wouldBlockByReason).length > 0) {
     lines.push('', 'Current-cohort would-block by reason:')

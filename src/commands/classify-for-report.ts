@@ -4,6 +4,7 @@ import { getAdapter } from '../adapters/registry.js'
 import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { detectAdapterName, loadConfigFile } from '../config-io.js'
 import { isCapabilityBrokerDemotionActive } from '../core/capability/broker.js'
+import { isContainedUnknownExecutionEligible } from '../core/contained-execution/eligibility.js'
 import { classifySubagent, classifyToolUse } from '../core/index.js'
 import { isTransactionalEligible } from '../core/transactional/index.js'
 import type { ClassifyResult } from '../core/types.js'
@@ -39,6 +40,14 @@ export async function classifyForReport(params: {
       throw new Error('classify-for-report requires a command for shell classification.')
     }
     result = await classifyShell(params.command, cwd, repoRoot, config, classifierOptions)
+    result = {
+      ...result,
+      wouldMediate: isContainedUnknownExecutionEligible(
+        config,
+        { kind: 'shell', repoRoot },
+        result,
+      ),
+    }
     input = params.command
   } else if (kind === 'subagent') {
     const payload = params.payload ?? {

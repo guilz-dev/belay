@@ -870,6 +870,7 @@ async function validatedGuestCwd(params: {
 
 export interface ContainedExecutionReceipt {
   version: 1
+  inputFingerprint: string
   actionFingerprint: string
   attestationDigest: string
   executionStarted: true
@@ -944,6 +945,7 @@ export interface ExecuteContainedDockerParams {
   mirror: ContainedExecutionMirrorHandle
   guestCwd: string
   command: string
+  inputFingerprint: string
   signedAttestation: unknown
   dependencies?: ContainedDockerDependencies
 }
@@ -977,6 +979,7 @@ export async function executeContainedDocker(
       'mirror',
       'guestCwd',
       'command',
+      'inputFingerprint',
       'signedAttestation',
       'dependencies',
     ]) ||
@@ -996,6 +999,8 @@ export async function executeContainedDocker(
   }
   if (!params.config.enabled || !params.config.image)
     throw new Error('contained_execution_disabled')
+  if (!/^[a-f0-9]{64}$/.test(params.inputFingerprint))
+    throw new Error('contained_execution_input_fingerprint_invalid')
   const dependencies = params.dependencies ?? productionDependencies
   const limits = limitsFromConfig(params.config)
   assertResourceLimits(limits)
@@ -1121,8 +1126,14 @@ export async function executeContainedDocker(
 
   const receipt: ContainedExecutionReceipt = {
     version: 1,
+    inputFingerprint: params.inputFingerprint,
     actionFingerprint: hashValue(
-      canonicalStringify({ version: 1, command: params.command, guestCwd }),
+      canonicalStringify({
+        version: 1,
+        inputFingerprint: params.inputFingerprint,
+        command: params.command,
+        guestCwd,
+      }),
     ),
     attestationDigest: hashValue(canonicalStringify(params.signedAttestation)),
     executionStarted: true,
