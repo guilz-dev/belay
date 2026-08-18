@@ -673,8 +673,6 @@ const MEDIATED_OUTPUT_LIMIT_BYTES = 16_384
 const CONTAINED_FALLBACK_REASONS = new Set([
   'contained_execution_docker_substrate_unavailable',
   'contained_execution_docker_daemon_unavailable',
-  'contained_execution_create_failed',
-  'contained_execution_inspect_failed',
 ])
 
 function utf8Tail(value: string): { value: string; truncated: boolean } {
@@ -826,6 +824,7 @@ async function mediateContainedUnknownExecution(params: {
           guestCwd: action.cwd,
           command,
           inputFingerprint: result.fingerprint,
+          outputScrubOptions: scrubOptionsFromConfig(ctx.config),
           signedAttestation,
         })
       },

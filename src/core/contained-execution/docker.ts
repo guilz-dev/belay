@@ -15,7 +15,12 @@ import { verifySignedBoundaryAttestation } from '../capability/boundary-attestat
 import type { BelayContainedExecutionConfig } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
 import { canonicalPath, pathWithinRoot } from '../path-utils.js'
-import { runProcessWithBoundedOutput, type ShellRunResult } from '../process-runner.js'
+import {
+  type ProcessOutputPolicy,
+  runProcessWithBoundedOutput,
+  type ShellRunResult,
+} from '../process-runner.js'
+import type { ScrubOptions } from '../types.js'
 import {
   type ContainedExecutionMirrorBackend,
   type ContainedExecutionMirrorHandle,
@@ -198,6 +203,7 @@ export interface ContainedDockerDependencies {
     args: string[],
     env: Record<string, string>,
     timeoutMs: number,
+    outputPolicy?: ProcessOutputPolicy,
   ): Promise<ShellRunResult>
   now(): number
   randomUUID(): string
@@ -284,8 +290,8 @@ async function resolveConfiguredDockerSubstrate(params: {
 
 const productionDependencies: ContainedDockerDependencies = {
   resolveSubstrate: resolveConfiguredDockerSubstrate,
-  runProcess: (file, args, env, timeoutMs) =>
-    runProcessWithBoundedOutput(file, args, { env, argv0: 'docker' }, timeoutMs),
+  runProcess: (file, args, env, timeoutMs, outputPolicy) =>
+    runProcessWithBoundedOutput(file, args, { env, argv0: 'docker' }, timeoutMs, outputPolicy),
   now: () => Date.now(),
   randomUUID,
   uid: () => {
@@ -303,12 +309,14 @@ function dockerCall(
   substrate: DockerSubstrateIdentity,
   args: string[],
   timeoutMs: number,
+  outputPolicy?: ProcessOutputPolicy,
 ): Promise<ShellRunResult> {
   return dependencies.runProcess(
     substrate.binaryPath,
     ['--host', substrate.endpoint, ...args],
     { ...MINIMAL_DOCKER_ENV },
     timeoutMs,
+    outputPolicy,
   )
 }
 
@@ -946,6 +954,7 @@ export interface ExecuteContainedDockerParams {
   guestCwd: string
   command: string
   inputFingerprint: string
+  outputScrubOptions: ScrubOptions
   signedAttestation: unknown
   dependencies?: ContainedDockerDependencies
 }
@@ -980,6 +989,7 @@ export async function executeContainedDocker(
       'guestCwd',
       'command',
       'inputFingerprint',
+      'outputScrubOptions',
       'signedAttestation',
       'dependencies',
     ]) ||
@@ -1113,6 +1123,7 @@ export async function executeContainedDocker(
         substrate,
         ['start', '--attach', identity],
         limits.timeoutMs,
+        { scrubOptions: params.outputScrubOptions },
       )
     } catch (error) {
       throw new ContainedDockerStartAttemptError({ cause: error })

@@ -25,7 +25,7 @@ import {
   type ContainedExecutionMirrorHandle,
   prepareContainedExecutionMirror,
 } from '../core/contained-execution/mirror.js'
-import type { ShellRunResult } from '../core/process-runner.js'
+import type { ProcessOutputPolicy, ShellRunResult } from '../core/process-runner.js'
 
 const imageId = `sha256:${'a'.repeat(64)}`
 const otherImageId = `sha256:${'b'.repeat(64)}`
@@ -52,6 +52,13 @@ const minimalEnv = {
   HOME: '/var/empty',
   LC_ALL: 'C',
   PATH: '/usr/bin:/bin',
+}
+const outputScrubOptions = {
+  maskApprovalIds: true,
+  maskBearerTokens: true,
+  maskAuthHeaders: true,
+  maskKeyValueSecrets: true,
+  maskHighEntropyStrings: true,
 }
 
 function result(overrides: Partial<ShellRunResult> = {}): ShellRunResult {
@@ -195,6 +202,7 @@ interface Call {
   args: string[]
   env: Record<string, string>
   timeoutMs: number
+  outputPolicy?: ProcessOutputPolicy
 }
 
 function fakeDependencies(
@@ -226,8 +234,8 @@ function fakeDependencies(
     async resolveSubstrate() {
       return options.substrate ?? substrate
     },
-    async runProcess(file, args, env, timeoutMs) {
-      calls.push({ file, args, env, timeoutMs })
+    async runProcess(file, args, env, timeoutMs, outputPolicy) {
+      calls.push({ file, args, env, timeoutMs, outputPolicy })
       const dockerArgs = args.slice(2)
       if (dockerArgs[0] === 'image') {
         if (options.imageMissing) return result({ exitCode: 1, stderr: 'missing' })
@@ -386,6 +394,7 @@ function executionParams(value: Fixture, signedAttestation: unknown) {
     guestCwd: value.repoRoot,
     command: 'fictional-runner check',
     inputFingerprint: 'f'.repeat(64),
+    outputScrubOptions,
     signedAttestation,
   }
 }
@@ -600,6 +609,7 @@ describe('contained Docker execution hardening', () => {
         guestCwd: repoRoot,
         command: 'fictional-runner check',
         inputFingerprint: 'f'.repeat(64),
+        outputScrubOptions,
         signedAttestation,
         dependencies,
       }),
@@ -689,6 +699,14 @@ describe('contained Docker execution hardening', () => {
       '--attach',
       containerId,
     ])
+    expect(dependencies.calls.find((call) => call.args[2] === 'start')?.outputPolicy).toEqual({
+      scrubOptions: outputScrubOptions,
+    })
+    expect(
+      dependencies.calls
+        .filter((call) => call.args[2] !== 'start')
+        .every((call) => call.outputPolicy === undefined),
+    ).toBe(true)
     expect(executed).toMatchObject({ exitCode: 7, executionStarted: true })
   })
 

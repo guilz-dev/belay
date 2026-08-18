@@ -17,7 +17,7 @@ import { auditProject } from '../commands/audit.js'
 import { formatExplainReport } from '../commands/explain.js'
 import { formatMetricsReport, metricsProject } from '../commands/metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
-import { type BelayConfigV3, mergeConfig } from '../core/config.js'
+import { type BelayConfigV3, mergeConfig, scrubOptionsFromConfig } from '../core/config.js'
 import {
   ContainedDockerBoundaryUnavailableError,
   ContainedDockerCleanupUnconfirmedError,
@@ -31,6 +31,7 @@ import {
 } from '../core/contained-execution/mirror.js'
 import type { GateVerdict } from '../core/gate-contract.js'
 import * as gateEngine from '../core/gate-engine.js'
+import { runProcessWithBoundedOutput } from '../core/process-runner.js'
 import type { ClassifyResult } from '../core/types.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -105,6 +106,7 @@ function patchedDeps(params: {
   onExecute?: GateRuntimeDeps['executeContainedDocker']
   onReplay?: GateRuntimeDeps['replayApprovedShell']
   onReadAttestation?: GateRuntimeDeps['readSignedAttestation']
+  onApprovalWrite?: () => void
   persistAudit?: boolean
 }): GateRuntimeDeps {
   const base = createDefaultGateRuntimeDeps()
@@ -125,6 +127,7 @@ function patchedDeps(params: {
       }
     },
     writeApprovals: async (filePath, state) => {
+      params.onApprovalWrite?.()
       approvalStates.set(filePath, state as { version: 3; approvals: never[] })
     },
     readSignedAttestation: params.onReadAttestation ?? (async () => ({ signed: true })),
@@ -255,6 +258,7 @@ describe('contained unknown execution gate integration', () => {
       guestCwd: path.join(repoRoot, 'app'),
       command,
       inputFingerprint: result.fingerprint,
+      outputScrubOptions: scrubOptionsFromConfig(config),
       signedAttestation: { signed: true },
     })
     expect(executions[0]?.mirror.guestWorkspacePath).toBe(repoRoot)
@@ -342,6 +346,73 @@ describe('contained unknown execution gate integration', () => {
     expect(persisted).not.toContain(repoRoot)
   })
 
+  it('scrubs a credential before its marker falls outside the process output tail', async () => {
+    const { repoRoot, config, ctx } = await fixture()
+    const command = 'fictional-runner verify'
+    const result = await eligibleResult(command, repoRoot)
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
+    const stdoutFragment = 'abcdefghij.'
+    const stderrFragment = 'jihgfedcba.'
+    const captured = await runProcessWithBoundedOutput(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write('visible stdout ' + 'Authorization: Bearer ' + '${stdoutFragment}'.repeat(2000) + ' 終了'); process.stderr.write('visible stderr ' + 'X-Api-Key: ' + '${stderrFragment}'.repeat(2000) + ' 完了')`,
+      ],
+      {},
+      5_000,
+      { scrubOptions: scrubOptionsFromConfig(config) },
+    )
+
+    expect(captured.stdoutTruncated).toBe(true)
+    expect(Buffer.byteLength(captured.stdout)).toBeLessThanOrEqual(16_384)
+    expect(Buffer.from(captured.stdout).toString('utf8')).toBe(captured.stdout)
+    expect(captured.stdout).not.toContain('\uFFFD')
+    expect(captured.stdout).toContain('visible stdout')
+    expect(captured.stdout).toContain('終了')
+    expect(captured.stdout).toContain('Authorization: <redacted>')
+    expect(captured.stdout).not.toContain(stdoutFragment)
+    expect(captured.stderrTruncated).toBe(true)
+    expect(Buffer.byteLength(captured.stderr)).toBeLessThanOrEqual(16_384)
+    expect(captured.stderr).not.toContain('\uFFFD')
+    expect(captured.stderr).toContain('visible stderr')
+    expect(captured.stderr).toContain('完了')
+    expect(captured.stderr).toContain('X-Api-Key: <redacted>')
+    expect(captured.stderr).not.toContain(stderrFragment)
+
+    const auditEvents: Record<string, unknown>[] = []
+    const verdict = await evaluateGatedAction(
+      ctx,
+      patchedDeps({
+        auditEvents,
+        onExecute: async () => ({
+          ...captured,
+          executionStarted: true,
+          receipt: { imageId: `sha256:${'b'.repeat(64)}` } as never,
+          receiptHash: 'boundary-redaction-receipt',
+        }),
+      }),
+      { kind: 'shell', cwd: path.join(repoRoot, 'app'), command },
+    )
+
+    const fragments = [stdoutFragment, stderrFragment]
+    expect(verdict.mediatedExecution).toMatchObject({
+      stdoutTruncated: true,
+      stderrTruncated: true,
+    })
+    expect(Buffer.byteLength(verdict.mediatedExecution?.stdout ?? '')).toBeLessThanOrEqual(16_384)
+    expect(Buffer.byteLength(verdict.mediatedExecution?.stderr ?? '')).toBeLessThanOrEqual(16_384)
+    for (const fragment of fragments) {
+      expect(JSON.stringify(verdict.mediatedExecution)).not.toContain(fragment)
+      expect(verdict.user_message).not.toContain(fragment)
+      expect(verdict.agent_message).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToCursorResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToClaudePreToolUseResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToCodexPreToolUseResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(auditEvents)).not.toContain(fragment)
+    }
+  })
+
   it.each([
     [
       'definite daemon unavailability',
@@ -368,12 +439,52 @@ describe('contained unknown execution gate integration', () => {
     [
       'container create failure',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_failed'),
-      true,
+      false,
+    ],
+    [
+      'container create timeout',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_create_timeout'),
+      false,
+    ],
+    [
+      'container create truncation',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_create_truncated'),
+      false,
+    ],
+    [
+      'container create invalidity',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_create_invalid'),
+      false,
+    ],
+    [
+      'container create mismatch',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_create_mismatch'),
+      false,
     ],
     [
       'container inspect failure',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_failed'),
-      true,
+      false,
+    ],
+    [
+      'container inspect timeout',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_timeout'),
+      false,
+    ],
+    [
+      'container inspect truncation',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_truncated'),
+      false,
+    ],
+    [
+      'container inspect invalidity',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_invalid'),
+      false,
+    ],
+    [
+      'container inspect mismatch',
+      new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_mismatch'),
+      false,
     ],
     ['invalid contained config', new Error('contained_execution_resource_limits_invalid'), false],
   ] as const)('%s follows the required approval fallback taxonomy', async (_name, failure, fallback) => {
@@ -381,10 +492,14 @@ describe('contained unknown execution gate integration', () => {
     const result = await eligibleResult('fictional-runner verify', repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
     const auditEvents: Record<string, unknown>[] = []
+    let approvalWrites = 0
     const verdict = await evaluateGatedAction(
       ctx,
       patchedDeps({
         auditEvents,
+        onApprovalWrite: () => {
+          approvalWrites += 1
+        },
         onExecute: async () => {
           throw failure
         },
@@ -394,6 +509,11 @@ describe('contained unknown execution gate integration', () => {
 
     expect(Boolean(verdict.approvalId)).toBe(fallback)
     expect(verdict.permission).toBe('deny')
+    if (fallback) {
+      expect(approvalWrites).toBeGreaterThan(0)
+    } else {
+      expect(approvalWrites).toBe(0)
+    }
     if (!fallback && /capability|image/.test(String((failure as Error).message))) {
       expect(verdict.user_message).toContain('belay session start')
     }
