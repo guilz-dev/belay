@@ -81,11 +81,13 @@ export { isContainedUnknownExecutionEligible } from './contained-execution/eligi
 export type {
   ContainedExecutionMirrorBackend,
   ContainedExecutionMirrorHandle,
+  ContainedExecutionMirrorLimits,
   ContainedExecutionMirrorOptions,
 } from './contained-execution/mirror.js'
 export {
   CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED,
   CONTAINED_EXECUTION_SOURCE_CHANGED,
+  CONTAINED_EXECUTION_UNSAFE_SYMLINK,
   ContainedExecutionCleanupUnconfirmedError,
   prepareContainedExecutionMirror,
   withContainedExecutionMirror,
