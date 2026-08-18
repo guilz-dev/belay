@@ -77,6 +77,22 @@ export {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
 } from './config.js'
+export type {
+  BuildContainedDockerArgsParams,
+  ContainedDockerDependencies,
+  ContainedDockerExecutionResult,
+  ContainedDockerInspect,
+  ContainedExecutionReceipt,
+  ExecuteContainedDockerParams,
+} from './contained-execution/docker.js'
+export {
+  buildContainedDockerArgs,
+  CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED,
+  ContainedDockerCleanupUnconfirmedError,
+  executeContainedDocker,
+  probeContainedDockerBoundary,
+  probeContainedDockerForSession,
+} from './contained-execution/docker.js'
 export { isContainedUnknownExecutionEligible } from './contained-execution/eligibility.js'
 export type {
   ContainedExecutionMirrorBackend,

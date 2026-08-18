@@ -3,6 +3,10 @@ import path from 'node:path'
 import { egressStatus } from '../../services/egress-service.js'
 import type { BelayConfigV4 } from '../config.js'
 import { configuredControlPlaneDir } from '../config.js'
+import {
+  type ContainedDockerDependencies,
+  probeContainedDockerForSession,
+} from '../contained-execution/docker.js'
 import type { BoundaryAttestation, BoundaryDriverId } from './attestation.js'
 import { isAttestationFresh } from './attestation.js'
 import {
@@ -167,7 +171,24 @@ export async function startBoundarySession(params: {
   config: BelayConfigV4
   driverId?: BoundaryDriverId
   egressProxyRunning?: boolean
+  containedDockerDependencies?: ContainedDockerDependencies
 }): Promise<{ attestation: BoundaryAttestation; attestationPath: string }> {
+  const contained = params.config.sandbox.containedExecution
+  if (contained?.enabled === true) {
+    const attestation = await probeContainedDockerForSession({
+      repoRoot: params.repoRoot,
+      config: contained,
+      dependencies: params.containedDockerDependencies,
+    })
+    const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
+    await saveBoundaryAttestation(
+      attestationPath,
+      attestation,
+      params.repoRoot,
+      configuredControlPlaneDir(params.config),
+    )
+    return { attestation, attestationPath }
+  }
   const resolved = await resolveBoundaryDriverContext(params)
   const attestation = await resolved.driver.probe()
   if (resolved.driver.prepare) {

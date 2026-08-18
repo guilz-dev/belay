@@ -23,6 +23,19 @@ export interface ContainedExecutionAttestation {
   isolatesWorkspaceMirror: true
   readOnlyRoot: true
   sanitizedEnvironment: true
+  user: string
+  entrypoint: '/bin/sh'
+  capDropAll: true
+  noNewPrivileges: true
+  proxyEnvironment: 'neutralized-empty'
+  tmpfs: {
+    path: '/tmp'
+    sizeBytes: number
+    mode: 0o1777
+    exec: false
+    nosuid: true
+    nodev: true
+  }
   resourceLimits: ContainedExecutionResourceLimits
   probedAt: string
   expiresAt: string
@@ -126,6 +139,12 @@ export function validateContainedExecutionAttestation(
     record.isolatesWorkspaceMirror !== true ||
     record.readOnlyRoot !== true ||
     record.sanitizedEnvironment !== true ||
+    typeof record.user !== 'string' ||
+    !/^\d+:\d+$/.test(record.user) ||
+    record.entrypoint !== '/bin/sh' ||
+    record.capDropAll !== true ||
+    record.noNewPrivileges !== true ||
+    record.proxyEnvironment !== 'neutralized-empty' ||
     typeof record.probedAt !== 'string' ||
     typeof record.expiresAt !== 'string'
   ) {
@@ -137,7 +156,15 @@ export function validateContainedExecutionAttestation(
     return false
   }
   const limits = record.resourceLimits
+  const tmpfs = record.tmpfs
   return (
+    Boolean(tmpfs) &&
+    tmpfs.path === '/tmp' &&
+    hasPositiveIntegerLimit(tmpfs.sizeBytes) &&
+    tmpfs.mode === 0o1777 &&
+    tmpfs.exec === false &&
+    tmpfs.nosuid === true &&
+    tmpfs.nodev === true &&
     Boolean(limits) &&
     hasPositiveIntegerLimit(limits.timeoutMs) &&
     hasPositiveIntegerLimit(limits.memoryMiB) &&
