@@ -157,6 +157,7 @@ function fakeDependencies(
     start?: ShellRunResult
     mutate?: (value: ContainedDockerInspect) => void
     cleanupPresent?: boolean
+    cleanupThrow?: 'rm' | 'inspect'
   } = {},
 ): ContainedDockerDependencies & { calls: Call[] } {
   const calls: Call[] = []
@@ -198,11 +199,13 @@ function fakeDependencies(
           options.mutate?.(value)
           return result({ stdout: JSON.stringify([value]) })
         }
+        if (options.cleanupThrow === 'inspect') throw new Error('inspect transport failed')
         if (options.cleanupPresent) return result({ stdout: JSON.stringify([{ Id: containerId }]) })
         return result({ exitCode: 1, stderr: `No such container: ${containerId}` })
       }
       if (dockerArgs[0] === 'start') return options.start ?? result({ stdout: 'guest tail' })
       if (dockerArgs[0] === 'rm') {
+        if (options.cleanupThrow === 'rm') throw new Error('rm transport failed')
         if (!options.cleanupPresent) present = false
         return result()
       }
@@ -523,6 +526,19 @@ describe('contained Docker execution hardening', () => {
       expect(failure).toBeInstanceOf(ContainedDockerCleanupUnconfirmedError)
       expect(failure).toMatchObject({ executionStarted })
     }
+  })
+
+  it.each([
+    'rm',
+    'inspect',
+  ] as const)('types a cleanup %s transport exception as cleanup-unconfirmed', async (cleanupThrow) => {
+    const value = await fixture()
+    const failure = await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies: fakeDependencies({ cleanupThrow }),
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ContainedDockerCleanupUnconfirmedError)
+    expect(failure).toMatchObject({ executionStarted: true })
   })
 
   const mutations: Array<[string, (value: ContainedDockerInspect) => void]> = [

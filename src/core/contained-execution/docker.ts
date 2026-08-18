@@ -82,8 +82,9 @@ export class ContainedDockerCleanupUnconfirmedError extends Error {
   constructor(
     readonly containerName: string,
     readonly executionStarted: boolean,
+    options?: ErrorOptions,
   ) {
-    super(`${CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED}: ${containerName}`)
+    super(`${CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED}: ${containerName}`, options)
     this.name = 'ContainedDockerCleanupUnconfirmedError'
   }
 }
@@ -535,15 +536,20 @@ async function cleanupContainer(
   dependencies: ContainedDockerDependencies,
   substrate: DockerSubstrateIdentity,
 ): Promise<void> {
-  await dockerCall(dependencies, substrate, ['rm', '-f', identity], DOCKER_CONTROL_TIMEOUT_MS)
-  const inspected = await dockerCall(
-    dependencies,
-    substrate,
-    ['inspect', '--type', 'container', identity],
-    DOCKER_CONTROL_TIMEOUT_MS,
-  )
-  if (inspected.timedOut || inspected.exitCode === 0 || !containerMissing(inspected)) {
-    throw new ContainedDockerCleanupUnconfirmedError(identity, executionStarted)
+  try {
+    await dockerCall(dependencies, substrate, ['rm', '-f', identity], DOCKER_CONTROL_TIMEOUT_MS)
+    const inspected = await dockerCall(
+      dependencies,
+      substrate,
+      ['inspect', '--type', 'container', identity],
+      DOCKER_CONTROL_TIMEOUT_MS,
+    )
+    if (inspected.timedOut || inspected.exitCode === 0 || !containerMissing(inspected)) {
+      throw new ContainedDockerCleanupUnconfirmedError(identity, executionStarted)
+    }
+  } catch (error) {
+    if (error instanceof ContainedDockerCleanupUnconfirmedError) throw error
+    throw new ContainedDockerCleanupUnconfirmedError(identity, executionStarted, { cause: error })
   }
 }
 
