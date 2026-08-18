@@ -44,9 +44,22 @@ export interface ResolvedBoundaryDriverContext {
 
 function containedExecutionFresh(
   attestation: BoundaryAttestation | null,
+  config: BelayConfigV4,
   now = Date.now(),
 ): boolean | undefined {
   if (attestation?.driver !== 'container' || !attestation.containedExecution) return undefined
+  const current = config.sandbox.containedExecution
+  const capability = attestation.containedExecution
+  const configCompatible = Boolean(
+    current?.enabled &&
+      current.image === capability.imageReference &&
+      current.dockerExecutable === capability.dockerConfiguration.executable &&
+      current.dockerHost === capability.dockerConfiguration.host &&
+      current.timeoutMs === capability.resourceLimits.timeoutMs &&
+      current.memoryMiB === capability.resourceLimits.memoryMiB &&
+      current.cpus === capability.resourceLimits.cpus &&
+      current.pids === capability.resourceLimits.pids,
+  )
   const probedAt = Date.parse(attestation.probedAt)
   const expiresAt = Date.parse(attestation.expiresAt)
   return (
@@ -54,7 +67,8 @@ function containedExecutionFresh(
     Number.isFinite(expiresAt) &&
     probedAt <= now &&
     expiresAt > now &&
-    isContainedExecutionAttestationFresh(attestation.containedExecution, now)
+    configCompatible &&
+    isContainedExecutionAttestationFresh(capability, now)
   )
 }
 
@@ -164,7 +178,7 @@ export async function resolveBoundaryDriverContext(params: {
     attestationPath,
     attestation,
     attestationFresh: attestation ? isAttestationFresh(attestation) : false,
-    containedExecutionFresh: containedExecutionFresh(attestation),
+    containedExecutionFresh: containedExecutionFresh(attestation, params.config),
   }
 }
 
@@ -243,7 +257,7 @@ export async function boundarySessionStatus(params: {
     attestationPath,
     attestation,
     fresh: attestation ? isAttestationFresh(attestation) : false,
-    containedExecutionFresh: containedExecutionFresh(attestation, params.now),
+    containedExecutionFresh: containedExecutionFresh(attestation, params.config, params.now),
   }
 }
 

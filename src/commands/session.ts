@@ -55,12 +55,19 @@ export async function sessionStatusProject(params: {
   const config = await loadConfigFile(repoRoot)
   const status = await boundarySessionStatus({ repoRoot, config })
   return {
-    ok: status.fresh || status.containedExecutionFresh === true,
+    ok: sessionStatusOk(status),
     attestationPath: status.attestationPath,
     fresh: status.fresh,
     containedExecutionFresh: status.containedExecutionFresh,
     attestation: status.attestation,
   }
+}
+
+export function sessionStatusOk(status: {
+  fresh: boolean
+  containedExecutionFresh?: boolean
+}): boolean {
+  return status.fresh || status.containedExecutionFresh === true
 }
 
 export function formatSessionStatusReport(

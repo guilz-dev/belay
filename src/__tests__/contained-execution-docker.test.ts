@@ -17,6 +17,7 @@ import {
   ContainedDockerCleanupUnconfirmedError,
   type ContainedDockerDependencies,
   type ContainedDockerInspect,
+  ContainedDockerStartAttemptError,
   executeContainedDocker,
   probeContainedDockerBoundary,
 } from '../core/contained-execution/docker.js'
@@ -100,6 +101,7 @@ function inspectFor(createArgs: string[]): ContainedDockerInspect {
       CapAdd: [],
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges'],
+      LogConfig: { Type: 'none', Config: {} },
       Devices: [],
       DeviceRequests: [],
       DeviceCgroupRules: [],
@@ -140,6 +142,54 @@ function inspectFor(createArgs: string[]): ContainedDockerInspect {
   }
 }
 
+function formattedInspect(value: ContainedDockerInspect): string {
+  return JSON.stringify([
+    value.Id,
+    value.Image,
+    value.Config.User,
+    value.Config.Env,
+    value.Config.Entrypoint,
+    value.Config.Cmd,
+    value.Config.WorkingDir,
+    value.Config.Healthcheck,
+    value.HostConfig.AutoRemove,
+    value.HostConfig.Privileged,
+    value.HostConfig.CapAdd,
+    value.HostConfig.CapDrop,
+    value.HostConfig.SecurityOpt,
+    value.HostConfig.LogConfig,
+    value.HostConfig.Devices,
+    value.HostConfig.DeviceRequests,
+    value.HostConfig.DeviceCgroupRules,
+    value.HostConfig.GroupAdd,
+    value.HostConfig.VolumesFrom,
+    value.HostConfig.Binds,
+    value.HostConfig.PortBindings,
+    value.HostConfig.PublishAllPorts,
+    value.HostConfig.Links,
+    value.HostConfig.ExtraHosts,
+    value.HostConfig.Dns,
+    value.HostConfig.DnsOptions,
+    value.HostConfig.DnsSearch,
+    value.HostConfig.NetworkMode,
+    value.HostConfig.ReadonlyRootfs,
+    value.HostConfig.Tmpfs,
+    value.HostConfig.Memory,
+    value.HostConfig.MemorySwap,
+    value.HostConfig.ShmSize,
+    value.HostConfig.NanoCpus,
+    value.HostConfig.PidsLimit,
+    value.HostConfig.RestartPolicy,
+    value.HostConfig.IpcMode,
+    value.HostConfig.PidMode,
+    value.HostConfig.UTSMode,
+    value.HostConfig.UsernsMode,
+    value.HostConfig.CgroupnsMode,
+    value.NetworkSettings.Ports,
+    value.Mounts,
+  ])
+}
+
 interface Call {
   file: string
   args: string[]
@@ -155,9 +205,13 @@ function fakeDependencies(
     create?: ShellRunResult
     inspect?: ShellRunResult
     start?: ShellRunResult
+    startThrow?: boolean
     mutate?: (value: ContainedDockerInspect) => void
     cleanupPresent?: boolean
     cleanupThrow?: 'rm' | 'inspect'
+    inspectTruncated?: boolean
+    imageTruncated?: boolean
+    oversizedMetadata?: boolean
   } = {},
 ): ContainedDockerDependencies & { calls: Call[] } {
   const calls: Call[] = []
@@ -177,13 +231,10 @@ function fakeDependencies(
       const dockerArgs = args.slice(2)
       if (dockerArgs[0] === 'image') {
         if (options.imageMissing) return result({ exitCode: 1, stderr: 'missing' })
+        const environment = ['PATH=/usr/bin', 'IMAGE_DEFINED=yes']
         return result({
-          stdout: JSON.stringify([
-            {
-              Id: options.imageId ?? imageId,
-              Config: { Env: ['PATH=/usr/bin', 'IMAGE_DEFINED=yes'] },
-            },
-          ]),
+          stdout: JSON.stringify([options.imageId ?? imageId, environment]),
+          stdoutTruncated: options.imageTruncated === true,
         })
       }
       if (dockerArgs[0] === 'create') {
@@ -196,14 +247,25 @@ function fakeDependencies(
         if (present) {
           if (options.inspect) return options.inspect
           const value = inspectFor(createArgs)
+          if (options.oversizedMetadata) {
+            ;(value.Config as typeof value.Config & { Labels: Record<string, string> }).Labels = {
+              oversized: 'x'.repeat(64 * 1024),
+            }
+          }
           options.mutate?.(value)
-          return result({ stdout: JSON.stringify([value]) })
+          return result({
+            stdout: formattedInspect(value),
+            stdoutTruncated: options.inspectTruncated === true,
+          })
         }
         if (options.cleanupThrow === 'inspect') throw new Error('inspect transport failed')
         if (options.cleanupPresent) return result({ stdout: JSON.stringify([{ Id: containerId }]) })
         return result({ exitCode: 1, stderr: `No such container: ${containerId}` })
       }
-      if (dockerArgs[0] === 'start') return options.start ?? result({ stdout: 'guest tail' })
+      if (dockerArgs[0] === 'start') {
+        if (options.startThrow) throw new Error('start transport failed')
+        return options.start ?? result({ stdout: 'guest tail' })
+      }
       if (dockerArgs[0] === 'rm') {
         if (options.cleanupThrow === 'rm') throw new Error('rm transport failed')
         if (!options.cleanupPresent) present = false
@@ -263,15 +325,21 @@ function capability(overrides: Partial<BoundaryAttestation> = {}): BoundaryAttes
     containedExecution: {
       version: 1,
       imageId,
+      imageReference: config.image ?? '',
       networkNone: true,
       isolatesWorkspaceMirror: true,
       readOnlyRoot: true,
       sanitizedEnvironment: true,
       dockerSubstrate: substrate,
+      dockerConfiguration: {
+        executable: config.dockerExecutable ?? '',
+        host: config.dockerHost ?? '',
+      },
       user: '501:20',
       entrypoint: '/bin/sh',
       capDropAll: true,
       noNewPrivileges: true,
+      logDriver: 'none',
       proxyEnvironment: 'neutralized-empty',
       tmpfs: {
         path: '/tmp',
@@ -347,6 +415,8 @@ describe('contained Docker execution hardening', () => {
       'ALL',
       '--security-opt',
       'no-new-privileges',
+      '--log-driver',
+      'none',
       '--privileged=false',
       '--publish-all=false',
       '--restart',
@@ -412,6 +482,40 @@ describe('contained Docker execution hardening', () => {
     }
   })
 
+  it('types a thrown probe start transport after recording the start attempt', async () => {
+    const value = await fixture()
+    const failure = await probeContainedDockerBoundary({
+      repoRoot: value.repoRoot,
+      protectedRoots: value.protectedRoots,
+      imageReference: config.image ?? '',
+      dockerExecutable: config.dockerExecutable ?? '',
+      dockerHost: config.dockerHost ?? '',
+      hostProbeRoot: value.mirror.hostMirrorRoot,
+      guestWorkspacePath: value.repoRoot,
+      resourceLimits: config,
+      dependencies: fakeDependencies({ startThrow: true }),
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ContainedDockerStartAttemptError)
+    expect(failure).toMatchObject({ executionStarted: true })
+  })
+
+  it('reports probe cleanup uncertainty after a successful start as executionStarted', async () => {
+    const value = await fixture()
+    const failure = await probeContainedDockerBoundary({
+      repoRoot: value.repoRoot,
+      protectedRoots: value.protectedRoots,
+      imageReference: config.image ?? '',
+      dockerExecutable: config.dockerExecutable ?? '',
+      dockerHost: config.dockerHost ?? '',
+      hostProbeRoot: value.mirror.hostMirrorRoot,
+      guestWorkspacePath: value.repoRoot,
+      resourceLimits: config,
+      dependencies: fakeDependencies({ cleanupPresent: true }),
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ContainedDockerCleanupUnconfirmedError)
+    expect(failure).toMatchObject({ executionStarted: true })
+  })
+
   it.each([
     ['path', { binaryPath: '/other/docker' }],
     ['digest', { binarySha256: 'e'.repeat(64) }],
@@ -439,10 +543,12 @@ describe('contained Docker execution hardening', () => {
         dependencies: fakeDependencies(),
       }),
     ).rejects.toThrow('contained_execution_invalid_mirror_lease')
+    const omittedAdapterRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-adapter-'))
+    roots.push(omittedAdapterRoot)
     await expect(
       executeContainedDocker({
         ...executionParams(value, signedAttestation),
-        protectedRoots: [],
+        protectedRoots: [...value.protectedRoots, omittedAdapterRoot],
         dependencies: fakeDependencies(),
       }),
     ).rejects.toThrow('contained_execution_invalid_mirror_lease')
@@ -460,6 +566,45 @@ describe('contained Docker execution hardening', () => {
     ).rejects.toThrow('contained_execution_protected_root_overlap')
   })
 
+  it('rejects a genuine lease that omitted a repo-local control-plane exclusion', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-local-control-'))
+    roots.push(repoRoot)
+    const controlPlaneDir = path.join(repoRoot, '.belay-control')
+    await mkdir(controlPlaneDir)
+    await writeFile(path.join(controlPlaneDir, 'attestation-signing-key.json'), 'secret\n')
+    const mirror = await prepareContainedExecutionMirror({
+      sourceRoot: repoRoot,
+      controlPlaneRoots: [],
+      limits: {
+        maxFiles: 100,
+        maxSourceBytes: 1024 * 1024,
+        maxWorkspaceBytes: 1024 * 1024,
+        prepareTimeoutMs: 10_000,
+      },
+    })
+    mirrors.push(mirror)
+    const dependencies = fakeDependencies()
+    const signedAttestation = await signBoundaryAttestation({
+      repoRoot,
+      attestation: capability(),
+      controlPlaneDir,
+    })
+    await expect(
+      executeContainedDocker({
+        repoRoot,
+        controlPlaneDir,
+        protectedRoots: [],
+        config,
+        mirror,
+        guestCwd: repoRoot,
+        command: 'fictional-runner check',
+        signedAttestation,
+        dependencies,
+      }),
+    ).rejects.toThrow('contained_execution_invalid_mirror_lease')
+    expect(dependencies.calls).toEqual([])
+  })
+
   it.each([
     ['create failure', { create: result({ exitCode: 125 }) }],
     ['create timeout', { create: result({ exitCode: null, timedOut: true }) }],
@@ -474,6 +619,50 @@ describe('contained Docker execution hardening', () => {
     expect(failure).toBeInstanceOf(ContainedDockerBoundaryUnavailableError)
     expect(failure).toMatchObject({ executionStarted: false, receipt: undefined })
     expect(dependencies.calls.filter((call) => call.args[2] === 'start')).toHaveLength(0)
+  })
+
+  it('uses a narrow formatted inspect that excludes oversized unselected metadata', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ oversizedMetadata: true })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies,
+      }),
+    ).resolves.toMatchObject({ executionStarted: true })
+    const inspectCall = dependencies.calls.find((call) => call.args[2] === 'inspect')
+    expect(inspectCall?.args).toContain('--format')
+    expect(inspectCall?.args.join(' ')).not.toContain('Labels')
+  })
+
+  it('fails explicitly before start when selected inspect control output is truncated', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ inspectTruncated: true })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies,
+      }),
+    ).rejects.toMatchObject({
+      executionStarted: false,
+      reason: 'contained_execution_inspect_truncated',
+    })
+    expect(dependencies.calls.filter((call) => call.args[2] === 'start')).toHaveLength(0)
+  })
+
+  it('fails explicitly before create when selected image control output is truncated', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ imageTruncated: true })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies,
+      }),
+    ).rejects.toMatchObject({
+      executionStarted: false,
+      reason: 'contained_execution_image_inspect_truncated',
+    })
+    expect(dependencies.calls.filter((call) => call.args[2] === 'create')).toHaveLength(0)
   })
 
   it('creates, validates, starts exactly once by captured ID, and confirms cleanup', async () => {
@@ -554,6 +743,10 @@ describe('contained Docker execution hardening', () => {
     ['cap add', (v) => (v.HostConfig.CapAdd = ['SYS_ADMIN'])],
     ['cap drop', (v) => (v.HostConfig.CapDrop = [])],
     ['security opt', (v) => (v.HostConfig.SecurityOpt = [])],
+    ['default log driver', (v) => (v.HostConfig.LogConfig = { Type: 'json-file', Config: {} })],
+    ['remote log driver', (v) => (v.HostConfig.LogConfig = { Type: 'fluentd', Config: {} })],
+    ['log options', (v) => (v.HostConfig.LogConfig = { Type: 'none', Config: { tag: 'x' } })],
+    ['null log config', (v) => (v.HostConfig.LogConfig = null)],
     ['device', (v) => (v.HostConfig.Devices = [{}])],
     ['device request', (v) => (v.HostConfig.DeviceRequests = [{}])],
     ['device rule', (v) => (v.HostConfig.DeviceCgroupRules = ['a'])],
@@ -676,7 +869,14 @@ describe('contained Docker execution hardening', () => {
       timeoutMs: 30_000,
       dockerSubstrate: substrate,
       imageId,
-      mirror: { backend: 'file_copy', cardinality: 1, readWrite: true },
+      mirror: {
+        backend: 'file_copy',
+        cardinality: 1,
+        readWrite: true,
+        guestWorkspacePathFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        guestCwdFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+      logging: { driver: 'none', config: {} },
       tmpfs: { mode: 0o1777, nosuid: true, nodev: true, exec: false },
       environment: { hostForwarded: false, proxyEnvironment: 'neutralized-empty' },
       privilege: { privileged: false, capAdd: [], capDrop: ['ALL'] },
@@ -686,6 +886,9 @@ describe('contained Docker execution hardening', () => {
     expect(first.receipt).not.toHaveProperty('command')
     expect(first.receipt).not.toHaveProperty('stdout')
     expect(first.receipt).not.toHaveProperty('stderr')
+    const serialized = JSON.stringify(first.receipt)
+    expect(serialized).not.toContain(value.repoRoot)
+    expect(serialized).not.toContain(value.mirror.hostMirrorRoot)
   })
 
   it('signs and reports fresh contained execution without upgrading generic freshness', async () => {
@@ -717,5 +920,24 @@ describe('contained Docker execution hardening', () => {
     const status = await boundarySessionStatus({ repoRoot, config: fullConfig, now })
     expect(status.fresh).toBe(false)
     expect(status.containedExecutionFresh).toBe(true)
+
+    for (const containedExecution of [
+      { ...config, enabled: false },
+      { ...config, image: 'local/runner:other' },
+      { ...config, timeoutMs: config.timeoutMs + 1 },
+      { ...config, memoryMiB: config.memoryMiB + 1 },
+      { ...config, cpus: config.cpus + 0.5 },
+      { ...config, pids: config.pids + 1 },
+      { ...config, dockerExecutable: '/other/docker' },
+      { ...config, dockerHost: 'unix:///other/docker.sock' },
+    ]) {
+      const drifted = {
+        ...fullConfig,
+        sandbox: { ...fullConfig.sandbox, containedExecution },
+      }
+      const driftedStatus = await boundarySessionStatus({ repoRoot, config: drifted, now })
+      expect(driftedStatus.fresh).toBe(false)
+      expect(driftedStatus.containedExecutionFresh).toBe(false)
+    }
   })
 })

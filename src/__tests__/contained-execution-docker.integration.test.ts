@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,10 @@ import { promisify } from 'node:util'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { probeContainedDockerBoundary } from '../core/contained-execution/docker.js'
+import {
+  buildContainedDockerCreateArgs,
+  probeContainedDockerBoundary,
+} from '../core/contained-execution/docker.js'
 
 const execFileAsync = promisify(execFile)
 const imageReference = 'alpine:3.20'
@@ -72,6 +76,73 @@ describe('contained Docker inspect integration', () => {
         proxyEnvironment: 'neutralized-empty',
         tmpfs: { exec: false, mode: 0o1777, sizeBytes: 67_108_864 },
       })
+    },
+    60_000,
+  )
+
+  it.skipIf(!localImageAvailable)(
+    'captures attached output while disabling persistent daemon logging',
+    async () => {
+      const parent = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-log-integration-'))
+      roots.push(parent)
+      const mirror = path.join(parent, 'mirror')
+      await mkdir(mirror)
+      const image = await execFileAsync(
+        dockerExecutable,
+        ['--host', dockerHost, 'image', 'inspect', '--format', '{{.Id}}', imageReference],
+        { env: dockerEnvironment },
+      )
+      const containerName = `belay-contained-${randomUUID()}`
+      let containerId = containerName
+      try {
+        const created = await execFileAsync(
+          dockerExecutable,
+          [
+            '--host',
+            dockerHost,
+            ...buildContainedDockerCreateArgs({
+              containerName,
+              imageId: image.stdout.trim(),
+              command: 'printf attached-output',
+              hostMirrorRoot: mirror,
+              guestWorkspacePath: '/workspace/belay-contained-log-probe',
+              guestCwd: '/workspace/belay-contained-log-probe',
+              resourceLimits: { timeoutMs: 10_000, memoryMiB: 128, cpus: 0.5, pids: 32 },
+              user: `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
+            }),
+          ],
+          { env: dockerEnvironment },
+        )
+        containerId = created.stdout.trim()
+        const started = await execFileAsync(
+          dockerExecutable,
+          ['--host', dockerHost, 'start', '--attach', containerId],
+          { env: dockerEnvironment },
+        )
+        expect(started.stdout).toBe('attached-output')
+        const logging = await execFileAsync(
+          dockerExecutable,
+          [
+            '--host',
+            dockerHost,
+            'inspect',
+            '--format',
+            '[{{json .HostConfig.LogConfig}},{{json .LogPath}}]',
+            containerId,
+          ],
+          { env: dockerEnvironment },
+        )
+        expect(JSON.parse(logging.stdout)).toEqual([{ Type: 'none', Config: {} }, ''])
+        await expect(
+          execFileAsync(dockerExecutable, ['--host', dockerHost, 'logs', containerId], {
+            env: dockerEnvironment,
+          }),
+        ).rejects.toThrow()
+      } finally {
+        await execFileAsync(dockerExecutable, ['--host', dockerHost, 'rm', '-f', containerId], {
+          env: dockerEnvironment,
+        }).catch(() => undefined)
+      }
     },
     60_000,
   )

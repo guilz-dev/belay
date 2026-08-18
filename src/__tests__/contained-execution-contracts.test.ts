@@ -27,6 +27,7 @@ const past = '2000-01-01T00:00:00.000Z'
 const containedCapability = {
   version: 1 as const,
   imageId: `sha256:${'a'.repeat(64)}`,
+  imageReference: 'local/runner:task4',
   networkNone: true,
   isolatesWorkspaceMirror: true,
   readOnlyRoot: true,
@@ -37,10 +38,15 @@ const containedCapability = {
     endpoint: 'unix:///var/run/docker.sock',
     daemonId: 'local-daemon',
   },
+  dockerConfiguration: {
+    executable: '/usr/local/bin/docker',
+    host: 'unix:///var/run/docker.sock',
+  },
   user: '501:20',
   entrypoint: '/bin/sh',
   capDropAll: true,
   noNewPrivileges: true,
+  logDriver: 'none',
   proxyEnvironment: 'neutralized-empty',
   tmpfs: {
     path: '/tmp',

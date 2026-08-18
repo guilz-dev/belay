@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatSessionStatusReport } from '../commands/session.js'
+import { formatSessionStatusReport, sessionStatusOk } from '../commands/session.js'
 
 describe('contained session status display', () => {
+  it('accepts either generic freshness or compatible contained freshness', () => {
+    expect(sessionStatusOk({ fresh: true })).toBe(true)
+    expect(sessionStatusOk({ fresh: false, containedExecutionFresh: true })).toBe(true)
+    expect(sessionStatusOk({ fresh: false, containedExecutionFresh: false })).toBe(false)
+    expect(sessionStatusOk({ fresh: false })).toBe(false)
+  })
+
   it('shows contained freshness separately from generic L1 freshness', () => {
     const report = formatSessionStatusReport({
       ok: true,

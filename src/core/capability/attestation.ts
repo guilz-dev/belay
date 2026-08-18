@@ -28,15 +28,18 @@ export interface DockerSubstrateIdentity {
 export interface ContainedExecutionAttestation {
   version: typeof CONTAINED_EXECUTION_ATTESTATION_VERSION
   imageId: string
+  imageReference: string
   networkNone: true
   isolatesWorkspaceMirror: true
   readOnlyRoot: true
   sanitizedEnvironment: true
   dockerSubstrate: DockerSubstrateIdentity
+  dockerConfiguration: { executable: string; host: string }
   user: string
   entrypoint: '/bin/sh'
   capDropAll: true
   noNewPrivileges: true
+  logDriver: 'none'
   proxyEnvironment: 'neutralized-empty'
   tmpfs: {
     path: '/tmp'
@@ -151,6 +154,9 @@ export function validateContainedExecutionAttestation(
     record.version !== CONTAINED_EXECUTION_ATTESTATION_VERSION ||
     typeof record.imageId !== 'string' ||
     !/^sha256:[a-f0-9]{64}$/i.test(record.imageId) ||
+    typeof record.imageReference !== 'string' ||
+    !record.imageReference ||
+    /[\0\n\r]/.test(record.imageReference) ||
     record.networkNone !== true ||
     record.isolatesWorkspaceMirror !== true ||
     record.readOnlyRoot !== true ||
@@ -165,11 +171,18 @@ export function validateContainedExecutionAttestation(
     typeof record.dockerSubstrate.daemonId !== 'string' ||
     !record.dockerSubstrate.daemonId ||
     /[\0\n\r]/.test(record.dockerSubstrate.daemonId) ||
+    !record.dockerConfiguration ||
+    !path.isAbsolute(record.dockerConfiguration.executable) ||
+    /[\0\n\r]/.test(record.dockerConfiguration.executable) ||
+    !record.dockerConfiguration.host.startsWith('unix:///') ||
+    !path.isAbsolute(record.dockerConfiguration.host.slice('unix://'.length)) ||
+    /[\0\n\r]/.test(record.dockerConfiguration.host) ||
     typeof record.user !== 'string' ||
     !/^\d+:\d+$/.test(record.user) ||
     record.entrypoint !== '/bin/sh' ||
     record.capDropAll !== true ||
     record.noNewPrivileges !== true ||
+    record.logDriver !== 'none' ||
     record.proxyEnvironment !== 'neutralized-empty' ||
     typeof record.probedAt !== 'string' ||
     typeof record.expiresAt !== 'string'

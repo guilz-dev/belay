@@ -84,6 +84,10 @@ interface ContainedExecutionMirrorLease {
   live: boolean
 }
 
+function canonicalRootSet(roots: readonly string[]): string[] {
+  return [...new Set(roots.map(canonicalPath))].sort()
+}
+
 const mirrorLeases = new WeakMap<ContainedExecutionMirrorHandle, ContainedExecutionMirrorLease>()
 
 /** Internal execution-boundary check; the public core index deliberately does not re-export it. */
@@ -92,7 +96,7 @@ export function validateContainedExecutionMirrorLease(
   expected: { sourceRoot: string; protectedRoots: readonly string[] },
 ): boolean {
   const lease = mirrorLeases.get(handle)
-  const protectedRoots = expected.protectedRoots.map(canonicalPath)
+  const protectedRoots = canonicalRootSet(expected.protectedRoots)
   return Boolean(
     lease?.live &&
       lease.sourceRoot === canonicalPath(expected.sourceRoot) &&
@@ -811,7 +815,7 @@ async function prepareWithDependencies(
       hostMirrorRoot: guestRoot,
       guestWorkspacePath,
       backend: 'file_copy',
-      protectedRoots,
+      protectedRoots: canonicalRootSet(protectedRoots),
       live: true,
     }
     const handle: ContainedExecutionMirrorHandle = {
