@@ -47,7 +47,7 @@ function percentile(sorted: number[], p: number): number | null {
 }
 
 export function sanitizeRecoveryFailureReason(record: AuditRecord): string {
-  const reason = record.transactionalSkipReason
+  const reason = record.transactionalSkipReason ?? record.reason
   if (typeof reason === 'string' && STABLE_FAILURE_REASON.test(reason)) {
     return reason
   }
@@ -104,7 +104,9 @@ function emptyRestoreMetrics(): RecoveryRestoreMetrics {
 function isRecoverySnapshotApplied(record: AuditRecord): boolean {
   return (
     record.transactional === true &&
-    (typeof record.recoveryCheckpointId === 'string' || record.recoveryState === 'applied')
+    (record.reason === 'transactional_already_applied' ||
+      typeof record.recoveryCheckpointId === 'string' ||
+      record.recoveryState === 'applied')
   )
 }
 
@@ -126,7 +128,7 @@ function computeSnapshotMetrics(records: AuditRecord[]): RecoverySnapshotMetrics
       metrics.applied += 1
     } else {
       metrics.skipped += 1
-      if (record.transactional === true) {
+      if (record.transactionalReason === 'transactional_observed_risk') {
         increment(metrics.failuresByReason, 'transactional_observed_risk')
       } else {
         increment(metrics.failuresByReason, sanitizeRecoveryFailureReason(record))

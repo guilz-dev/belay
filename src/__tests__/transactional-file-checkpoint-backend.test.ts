@@ -613,7 +613,10 @@ describe('non-git file checkpoint backend', () => {
     const snapshot = await fileCheckpointBackend.prepare(nonGitBackendContext(workspaceRoot))
     tempDirs.push(snapshot.executionRoot)
     await mkdir(path.join(snapshot.executionRoot, '.git'), { recursive: true })
-    await writeFile(path.join(snapshot.executionRoot, '.git', 'config'), '[core]\nrepositoryformatversion = 0\n')
+    await writeFile(
+      path.join(snapshot.executionRoot, '.git', 'config'),
+      '[core]\nrepositoryformatversion = 0\n',
+    )
 
     await expect(snapshot.collectChanges()).rejects.toThrow(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
     await snapshot.cleanup()

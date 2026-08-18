@@ -782,4 +782,45 @@ describe('audit-metrics', () => {
       transactional_observed_risk: 1,
     })
   })
+
+  it('counts observed-safe snapshots as applied without requiring a durable checkpoint', () => {
+    const report = computeAuditMetrics(
+      [
+        cohortGate({
+          transactional: true,
+          reason: 'transactional_already_applied',
+          transactionalBackend: 'git_worktree',
+          resourceKind: 'git_repository',
+          transactionalReason: 'transactional_observed_safe',
+        }),
+      ],
+      { activeCohort: ACTIVE_COHORT },
+    )
+
+    expect(report.recovery.snapshot.applied).toBe(1)
+    expect(report.recovery.snapshot.skipped).toBe(0)
+    expect(report.recovery.snapshot.failuresByReason).toEqual({})
+  })
+
+  it('counts an observed-safe snapshot with a failed real apply as skipped', () => {
+    const report = computeAuditMetrics(
+      [
+        cohortGate({
+          transactional: true,
+          verdict: 'deny_pending_approval',
+          reason: 'transactional_apply_failed',
+          transactionalBackend: 'file_checkpoint',
+          resourceKind: 'directory',
+          transactionalReason: 'transactional_observed_safe',
+        }),
+      ],
+      { activeCohort: ACTIVE_COHORT },
+    )
+
+    expect(report.recovery.snapshot.applied).toBe(0)
+    expect(report.recovery.snapshot.skipped).toBe(1)
+    expect(report.recovery.snapshot.failuresByReason).toEqual({
+      transactional_apply_failed: 1,
+    })
+  })
 })

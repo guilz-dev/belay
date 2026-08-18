@@ -16,11 +16,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { approvePending } from '../commands/approve.js'
 import { recoveryCheckpointCommand } from '../commands/recovery-checkpoints.js'
 import { loadApprovalState, writeConfigFile } from '../config-io.js'
 import { issueApprovalToken } from '../core/approval-token.js'
+import * as boundarySession from '../core/capability/boundary-session.js'
 import {
   configuredControlPlaneDir,
   DEFAULT_CONFIG_V3,
@@ -162,6 +163,7 @@ async function rewriteArtifactBindings(
 
 describe('recovery checkpoints', () => {
   afterEach(async () => {
+    vi.restoreAllMocks()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -416,6 +418,48 @@ describe('recovery checkpoints', () => {
     expect(status.fileCheckpoint).toBeDefined()
     if (!status.fileCheckpoint) throw new Error('missing fileCheckpoint status')
     expect(['clonefile', 'reflink', 'copy']).toContain(status.fileCheckpoint.copyStrategy)
+  })
+
+  it('reports file-checkpoint unavailable when the attestation driver mismatches config', async () => {
+    const repoRoot = await createGitRepo()
+    await writeConfigFile(repoRoot, {
+      ...DEFAULT_CONFIG_V3,
+      capability: {
+        ...DEFAULT_CONFIG_V3.capability,
+        boundaryDriver: 'host-integration',
+      },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          enabled: true,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: true,
+          },
+          checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        },
+      },
+    })
+    vi.spyOn(boundarySession, 'boundarySessionStatus').mockResolvedValue({
+      attestationPath: '',
+      attestation: {
+        version: 1,
+        driver: 'container',
+        probedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        deniesUngrantedEffects: true,
+        materializesGrants: true,
+        isolatesWorkspaceMounts: true,
+        probeSignals: ['docker', 'workspace-mount-isolation'],
+      },
+      fresh: true,
+    })
+
+    const status = await recoveryCheckpointCommand({ targetDir: repoRoot, subcommand: 'status' })
+
+    expect(status.fileCheckpoint?.probe).toBe('unavailable')
+    expect(status.fileCheckpoint?.isolation).toBeNull()
   })
 
   it('skips clone probe when file checkpoint is disabled in recover status', async () => {

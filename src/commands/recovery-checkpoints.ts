@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
+import { getAdapterLayout } from '../adapters/layouts/index.js'
+import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { ensureBelayStateDir, loadConfigFile } from '../config-io.js'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../core/approval.js'
 import { createGateApprovalStore } from '../core/approval-service.js'
@@ -27,8 +29,9 @@ import {
   recoveryNotificationSetupWarning,
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
+import { probeFileCheckpointBackend } from '../core/transactional/backend-selector.js'
+import { fileCheckpointIsolationReason } from '../core/transactional/file-checkpoint-isolation.js'
 import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
-import { isGitWorktreeAvailable } from '../core/transactional/git-worktree.js'
 import type { ApprovalRecord } from '../core/types.js'
 
 export type RecoveryCheckpointSubcommand = 'status' | 'list' | 'show' | 'apply'
@@ -190,27 +193,37 @@ export async function recoveryCheckpointCommand(options: {
     const configuredBoundary =
       config.capability?.boundaryDriver ??
       (config.sandbox.runtime === 'container' ? 'container' : null)
-    let isolation: string | null = configuredBoundary
-    let isolationAvailable = false
+    let attestation = null
     if (configuredBoundary) {
       try {
         const session = await boundarySessionStatus({ repoRoot, config })
-        isolationAvailable =
-          session.fresh === true && session.attestation?.isolatesWorkspaceMounts === true
-        isolation = isolationAvailable ? (session.attestation?.driver ?? configuredBoundary) : null
+        attestation = session.attestation
       } catch {
-        isolation = null
+        attestation = null
       }
     }
     const copyStrategy = fileCheckpointConfig.enabled ? await probeFileCloneStrategy() : null
-    const gitAvailable = await isGitWorktreeAvailable(repoRoot)
-    const workspaceEligibleForFileCheckpoint = gitAvailable || fileCheckpointConfig.allowNonGit
+    const adapterLayout = getAdapterLayout(config.adapter)
+    const backendContext = {
+      repoRoot,
+      stateDir,
+      cwd: repoRoot,
+      dirtyIgnoreRoots: protectedArtifactRoots(
+        adapterLayout,
+        repoRoot,
+        config.controlPlane.enabled ? configuredControlPlaneDir(config) : null,
+      ),
+      fileCheckpoint: fileCheckpointConfig,
+      durableCheckpointEnabled: checkpointConfig.enabled,
+      boundaryAttestation: attestation,
+      boundaryAttestationFresh: false,
+      boundaryDriverId: configuredBoundary ?? undefined,
+    }
+    const isolationAvailable = fileCheckpointIsolationReason(backendContext) === null
+    const fileCheckpointProbe = await probeFileCheckpointBackend(backendContext)
     const fileCheckpointAvailable =
-      fileCheckpointConfig.enabled &&
-      config.policy.transactional.enabled &&
-      checkpointConfig.enabled &&
-      isolationAvailable &&
-      workspaceEligibleForFileCheckpoint
+      config.policy.transactional.enabled && fileCheckpointProbe.eligible
+    const isolation = isolationAvailable ? (attestation?.driver ?? configuredBoundary) : null
     return {
       ok: true,
       subcommand: 'status',

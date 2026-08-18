@@ -4,6 +4,7 @@ import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
+import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { cleanupOrphanApprovalState } from '../cleanup-orphans.js'
 import {
@@ -23,6 +24,7 @@ import {
   boundarySessionStatus,
 } from '../core/capability/boundary-session.js'
 import {
+  configuredControlPlaneDir,
   defaultControlPlaneDir,
   hasForbiddenShellOverrideLists,
   stripForbiddenShellOverrideLists,
@@ -37,6 +39,8 @@ import {
   recoveryNotificationSetupWarning,
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
+import { probeFileCheckpointBackend } from '../core/transactional/backend-selector.js'
+import { fileCheckpointIsolationReason } from '../core/transactional/file-checkpoint-isolation.js'
 import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import { isGitWorktreeAvailable } from '../core/transactional/git-worktree.js'
 import { getManagedHookEntries } from '../defaults.js'
@@ -439,25 +443,37 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       const configuredBoundary =
         loadedConfig.capability?.boundaryDriver ??
         (loadedConfig.sandbox.runtime === 'container' ? 'container' : null)
-      let isolationAvailable = false
+      let attestation = null
       if (configuredBoundary) {
         try {
           const session = await boundarySessionStatus({ repoRoot, config: loadedConfig })
-          isolationAvailable =
-            session.fresh === true && session.attestation?.isolatesWorkspaceMounts === true
+          attestation = session.attestation
         } catch {
-          isolationAvailable = false
+          attestation = null
         }
       }
       const gitAvailable = await isGitWorktreeAvailable(repoRoot)
-      const workspaceEligible = gitAvailable || fileCheckpoint.allowNonGit
-      const probeAvailable =
-        loadedConfig.policy.transactional.enabled &&
-        checkpointConfig?.enabled === true &&
-        isolationAvailable &&
-        workspaceEligible
+      const backendContext = {
+        repoRoot,
+        stateDir: belayStateDir(loadedConfig, repoLocalDir),
+        cwd: repoRoot,
+        dirtyIgnoreRoots: protectedArtifactRoots(
+          activeLayout,
+          repoRoot,
+          loadedConfig.controlPlane.enabled ? configuredControlPlaneDir(loadedConfig) : null,
+        ),
+        fileCheckpoint,
+        durableCheckpointEnabled: checkpointConfig?.enabled === true,
+        boundaryAttestation: attestation,
+        boundaryAttestationFresh: false,
+        boundaryDriverId: configuredBoundary ?? undefined,
+      }
+      const isolationAvailable = fileCheckpointIsolationReason(backendContext) === null
+      const fileCheckpointProbe = await probeFileCheckpointBackend(backendContext)
+      const fileCheckpointAvailable =
+        loadedConfig.policy.transactional.enabled && fileCheckpointProbe.eligible
       notes.push(
-        `File checkpoint eligibility: probe=${probeAvailable ? 'available' : 'unavailable'}, workspace=${gitAvailable ? 'git' : 'non-git'}, isolation=${isolationAvailable ? (configuredBoundary ?? 'attested') : 'unavailable'}.`,
+        `File checkpoint eligibility: probe=${fileCheckpointAvailable ? 'available' : 'unavailable'}, workspace=${gitAvailable ? 'git' : 'non-git'}, isolation=${isolationAvailable ? (configuredBoundary ?? 'attested') : 'unavailable'}.`,
       )
     }
 

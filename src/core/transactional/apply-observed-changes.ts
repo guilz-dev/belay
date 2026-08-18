@@ -22,6 +22,7 @@ export interface ApplyObservedChangesParams {
   sourceRoot: string
   targetRoot: string
   changes: ObservedFileChange[]
+  beforeMutation?: () => Promise<void>
   afterApply?: () => Promise<void>
 }
 
@@ -250,6 +251,7 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
   const backupRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-rollback-'))
   const rollbackActions: ApplyRollbackAction[] = []
   let mutationAttempted = false
+  let resourceIdentityChanged = false
 
   try {
     for (const change of sortedChanges(changes)) {
@@ -286,6 +288,12 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
         rollbackActions.push({ type: 'remove', target, relativePath: change.relativePath })
       }
 
+      try {
+        await params.beforeMutation?.()
+      } catch (error) {
+        resourceIdentityChanged = true
+        throw error
+      }
       mutationAttempted = true
       await applySingleChange(sourceRoot, targetRoot, change)
     }
@@ -301,6 +309,9 @@ export async function applyObservedChanges(params: ApplyObservedChangesParams): 
     }
   } catch (error) {
     if (!mutationAttempted) throw error
+    if (resourceIdentityChanged) {
+      throw new Error(TRANSACTIONAL_APPLY_ROLLBACK_FAILED, { cause: error })
+    }
     const rollbackOk = await rollbackAppliedChanges(
       rollbackActions,
       changes,

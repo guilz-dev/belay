@@ -2,7 +2,6 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promi
 import os from 'node:os'
 import path from 'node:path'
 
-import { attestsWorkspaceMountIsolation } from '../capability/attestation.js'
 import { currentRecoveryResourceIdentity } from '../recovery/resource-identity.js'
 import type {
   TransactionalBackend,
@@ -13,7 +12,6 @@ import type {
 import {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
-  FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   FILE_CHECKPOINT_NON_GIT_DISABLED,
 } from './backend-selector.js'
 import {
@@ -29,6 +27,7 @@ import {
   resolveExecutionCwdRelative,
   rethrowStableFileCheckpointError,
 } from './file-checkpoint-git.js'
+import { fileCheckpointIsolationReason } from './file-checkpoint-isolation.js'
 import { removeDeadOwnerStaging, writeOwnerMarker } from './file-checkpoint-staging.js'
 import { cloneDirectoryTree, probeFileCloneStrategy } from './file-clone.js'
 import {
@@ -45,22 +44,6 @@ import type { TransactionalFileChange } from './types.js'
 
 export const FILE_CHECKPOINT_PROTECTED_PATH_CHANGED = 'file_checkpoint_protected_path_changed'
 
-function fileCheckpointIsolationReason(context: TransactionalBackendContext): string | null {
-  const attestation = context.boundaryAttestation
-  const fresh = context.boundaryAttestationFresh === true
-  const driverId = context.boundaryDriverId
-  if (!attestation || !fresh || !driverId) {
-    return FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
-  }
-  if (attestation.driver !== driverId) {
-    return FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
-  }
-  if (!attestsWorkspaceMountIsolation(attestation)) {
-    return FILE_CHECKPOINT_ISOLATION_UNAVAILABLE
-  }
-  return null
-}
-
 async function probeDirtyGitFileCheckpoint(
   context: TransactionalBackendContext,
 ): Promise<TransactionalBackendProbe> {
@@ -69,6 +52,7 @@ async function probeDirtyGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
       reason: 'git_worktree_unavailable',
       signals: ['git_repository'],
     }
@@ -77,6 +61,7 @@ async function probeDirtyGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
       reason: 'clean_git_worktree',
       signals: ['git_repository', 'clean_git_worktree'],
     }
@@ -85,6 +70,7 @@ async function probeDirtyGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
       reason: FILE_CHECKPOINT_DISABLED,
       signals,
     }
@@ -93,6 +79,7 @@ async function probeDirtyGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
       reason: FILE_CHECKPOINT_DURABLE_REQUIRED,
       signals,
     }
@@ -102,6 +89,7 @@ async function probeDirtyGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'git_repository',
       reason: isolationReason,
       signals: [...signals, 'isolation_unavailable'],
     }
@@ -111,6 +99,7 @@ async function probeDirtyGitFileCheckpoint(
   return {
     eligible: true,
     backend: 'file_checkpoint',
+    resourceKind: 'git_repository',
     signals: [...signals, 'dirty_git_file_checkpoint', copyStrategy],
   }
 }
@@ -123,6 +112,7 @@ async function probeNonGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'directory',
       reason: 'git_worktree_available',
       signals: ['git_repository'],
     }
@@ -131,6 +121,7 @@ async function probeNonGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'directory',
       reason: FILE_CHECKPOINT_DISABLED,
       signals,
     }
@@ -139,6 +130,7 @@ async function probeNonGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'directory',
       reason: FILE_CHECKPOINT_NON_GIT_DISABLED,
       signals,
     }
@@ -147,6 +139,7 @@ async function probeNonGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'directory',
       reason: FILE_CHECKPOINT_DURABLE_REQUIRED,
       signals,
     }
@@ -156,6 +149,7 @@ async function probeNonGitFileCheckpoint(
     return {
       eligible: false,
       backend: 'file_checkpoint',
+      resourceKind: 'directory',
       reason: isolationReason,
       signals: [...signals, 'isolation_unavailable'],
     }
@@ -165,6 +159,7 @@ async function probeNonGitFileCheckpoint(
   return {
     eligible: true,
     backend: 'file_checkpoint',
+    resourceKind: 'directory',
     signals: [...signals, 'non_git_file_checkpoint', copyStrategy],
   }
 }
@@ -578,6 +573,14 @@ export const fileCheckpointBackend: TransactionalBackend = {
 
     const prepared = await prepareNonGitSnapshot(context)
     const executionCwdRelative = resolveExecutionCwdRelative(context.repoRoot, context.cwd)
+    const validateResourceIdentity = async () => {
+      if (
+        (await currentRecoveryResourceIdentity(context.repoRoot, 'directory')) !==
+        prepared.resourceIdentity
+      ) {
+        throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+      }
+    }
 
     return {
       backend: 'file_checkpoint',
@@ -600,14 +603,12 @@ export const fileCheckpointBackend: TransactionalBackend = {
           excludedRoots: context.dirtyIgnoreRoots ?? [],
           quotas: context.fileCheckpoint,
         })
-        if (
-          sourceIndex.treeHash !== prepared.baselineIndex.treeHash ||
-          (await currentRecoveryResourceIdentity(context.repoRoot, 'directory')) !==
-            prepared.resourceIdentity
-        ) {
+        if (sourceIndex.treeHash !== prepared.baselineIndex.treeHash) {
           throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
         }
+        await validateResourceIdentity()
       },
+      validateResourceIdentity,
       collectChanges: async () => {
         await assertRootGitMetadataUnchanged(prepared.baselineRoot, prepared.executionRoot)
         return collectObservedChanges(prepared, context)()

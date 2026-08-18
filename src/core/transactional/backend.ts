@@ -7,6 +7,7 @@ export type TransactionalBackendId = 'git_worktree' | 'file_checkpoint'
 export interface TransactionalBackendProbe {
   eligible: boolean
   backend: TransactionalBackendId
+  resourceKind: 'git_repository' | 'directory'
   reason?: string
   signals: string[]
 }
@@ -29,6 +30,8 @@ export interface TransactionalSnapshot {
   executionCwdRelative?: string
   /** Revalidates the source tree and metadata immediately before apply. */
   validateSourceState?(): Promise<void>
+  /** Revalidates resource identity immediately before each real mutation. */
+  validateResourceIdentity?(): Promise<void>
   collectChanges(): Promise<TransactionalFileChange[]>
   cleanup(): Promise<void>
 }

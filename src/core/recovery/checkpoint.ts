@@ -254,6 +254,15 @@ export async function discardPreparedRecoveryCheckpoint(
   return true
 }
 
+export async function markRecoveryCheckpointNeedsManualRepair(
+  stateDir: string,
+  checkpointId: string,
+  detail: string,
+): Promise<void> {
+  const loaded = await readRecoveryArtifact(stateDir, checkpointId)
+  await writeRecoveryState(loaded.artifactDir, 'needs_manual_repair', loaded.manifestHash, detail)
+}
+
 export async function listRecoveryCheckpoints(
   stateDir: string,
   repoRoot?: string,

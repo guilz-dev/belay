@@ -8,6 +8,7 @@ import {
   applyObservedChanges,
   buildObservedChangesFromTransactional,
   TRANSACTIONAL_APPLY_CONFLICT,
+  TRANSACTIONAL_APPLY_ROLLBACK_FAILED,
   TRANSACTIONAL_APPLY_TOCTOU,
 } from '../core/transactional/apply-observed-changes.js'
 
@@ -62,6 +63,41 @@ describe('apply observed changes', () => {
     ).rejects.toThrow()
     await expect(readFile(path.join(targetRoot, 'keep.txt'), 'utf8')).resolves.toBe('stay\n')
     await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
+  })
+
+  it('does not roll back through a root whose identity guard failed after an earlier write', async () => {
+    const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-root-drift-'))
+    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-apply-root-drift-src-'))
+    const displacedRoot = `${targetRoot}-displaced`
+    tempDirs.push(targetRoot, sourceRoot, displacedRoot)
+    await writeFile(path.join(targetRoot, 'a.txt'), 'original-a\n')
+    await writeFile(path.join(targetRoot, 'b.txt'), 'original-b\n')
+    await writeFile(path.join(sourceRoot, 'a.txt'), 'changed-a\n')
+    await writeFile(path.join(sourceRoot, 'b.txt'), 'changed-b\n')
+    const observed = await buildObservedChangesFromTransactional(targetRoot, sourceRoot, [
+      { relativePath: 'a.txt', kind: 'modified' },
+      { relativePath: 'b.txt', kind: 'modified' },
+    ])
+    let identityChecks = 0
+
+    await expect(
+      applyObservedChanges({
+        sourceRoot,
+        targetRoot,
+        changes: observed,
+        beforeMutation: async () => {
+          identityChecks += 1
+          if (identityChecks !== 2) return
+          renameSync(targetRoot, displacedRoot)
+          await mkdir(targetRoot)
+          await writeFile(path.join(targetRoot, 'a.txt'), 'replacement-a\n')
+          await writeFile(path.join(targetRoot, 'b.txt'), 'replacement-b\n')
+          throw new Error('resource identity changed')
+        },
+      }),
+    ).rejects.toThrow(TRANSACTIONAL_APPLY_ROLLBACK_FAILED)
+    await expect(readFile(path.join(targetRoot, 'a.txt'), 'utf8')).resolves.toBe('replacement-a\n')
+    await expect(readFile(path.join(targetRoot, 'b.txt'), 'utf8')).resolves.toBe('replacement-b\n')
   })
 
   it('fails closed on concurrent target edits before the first write', async () => {
