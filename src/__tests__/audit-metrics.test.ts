@@ -14,6 +14,10 @@ import {
   parseAuditNdjson,
   toAuditRecord,
 } from '../core/audit-metrics.js'
+import {
+  computeRecoveryMetrics,
+  sanitizeRecoveryFailureReason,
+} from '../core/audit-recovery-metrics.js'
 
 const ACTIVE_COHORT = {
   runtimeBuildStamp: '0.8.0@2026-08-14T04:23:49.942Z',
@@ -100,7 +104,7 @@ describe('audit-metrics', () => {
       { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: ACTIVE_COHORT },
     )
 
-    expect(report.schemaVersion).toBe(3)
+    expect(report.schemaVersion).toBe(4)
     expect(report.gateEvents).toBe(2)
     expect(report.wouldBlockCount).toBe(1)
     expect(report.wouldBlockRate).toBe(0.5)
@@ -621,5 +625,138 @@ describe('audit-metrics', () => {
     expect(guidance).toContain('exact approval')
     expect(guidance).not.toContain('overrides.allow')
     expect(guidance).not.toContain('standing-allow')
+  })
+
+  it('aggregates recovery snapshot and restore metrics without affecting dogfood readiness', () => {
+    const records = [
+      cohortGate({
+        transactional: true,
+        transactionalBackend: 'git_worktree',
+        resourceKind: 'git_repository',
+        snapshotPrepareMs: 100,
+      }),
+      cohortGate({
+        transactional: false,
+        transactionalBackend: 'file_checkpoint',
+        resourceKind: 'directory',
+        transactionalSkipReason: 'file_checkpoint_isolation_unavailable',
+        recoveryFailClosed: true,
+      }),
+      {
+        event: 'recoveryApplied',
+        recoveryCheckpointId: 'cp_test',
+        ...ACTIVE_COHORT,
+      },
+      {
+        event: 'recoveryConflict',
+        recoveryCheckpointId: 'cp_conflict',
+        ...ACTIVE_COHORT,
+      },
+    ]
+
+    const report = computeAuditMetrics(records, {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.recovery.snapshot.attempts).toBe(2)
+    expect(report.recovery.snapshot.applied).toBe(1)
+    expect(report.recovery.snapshot.skipped).toBe(1)
+    expect(report.recovery.snapshot.byBackend).toEqual({
+      git_worktree: 1,
+      file_checkpoint: 1,
+    })
+    expect(report.recovery.snapshot.byResourceKind).toEqual({
+      git_repository: 1,
+      directory: 1,
+    })
+    expect(report.recovery.snapshot.prepareSampleCount).toBe(1)
+    expect(report.recovery.snapshot.prepareMsP50).toBe(100)
+    expect(report.recovery.restore).toEqual({ applied: 1, conflict: 1, rejected: 0 })
+    expect(report.currentCohortRecovery.snapshot.attempts).toBe(2)
+    expect(report.currentCohortRecovery.excludedSnapshotAttempts).toBe(0)
+    expect(formatMetricsReport(report)).toContain('All-time recovery metrics:')
+    expect(formatMetricsReport(report)).toContain('file_checkpoint_isolation_unavailable: 1')
+  })
+
+  it('reads historical audit records without recovery fields', () => {
+    const report = computeAuditMetrics(
+      [
+        {
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'allow',
+          reason: 'read_only',
+        },
+      ],
+      { activeCohort: ACTIVE_COHORT },
+    )
+
+    expect(report.recovery.snapshot.attempts).toBe(0)
+    expect(report.recovery.restore.applied).toBe(0)
+    expect(report.dogfood.readyForEnforce).toBe(false)
+  })
+
+  it('sanitizes unstable recovery failure reasons', () => {
+    expect(
+      sanitizeRecoveryFailureReason({
+        transactionalSkipReason: '/tmp/secret/path changed',
+      }),
+    ).toBe('transactional_execution_failed')
+    expect(
+      sanitizeRecoveryFailureReason({
+        transactionalSkipReason: 'file_checkpoint_quota_exceeded',
+      }),
+    ).toBe('file_checkpoint_quota_exceeded')
+  })
+
+  it('does not let recovery metrics change readyForEnforce', () => {
+    const records = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate())
+    records.push({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      transactional: false,
+      transactionalSkipReason: 'dirty_worktree',
+      recoveryFailClosed: true,
+      ...ACTIVE_COHORT,
+    })
+
+    const report = computeAuditMetrics(records, {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: ACTIVE_COHORT,
+    })
+
+    expect(report.recovery.snapshot.skipped).toBe(1)
+    expect(report.dogfood.readyForEnforce).toBe(true)
+    expect(
+      computeRecoveryMetrics(records.map(toAuditRecord), { activeCohort: ACTIVE_COHORT })
+        .currentCohort.snapshot.failuresByReason,
+    ).toEqual({ dirty_worktree: 1 })
+  })
+
+  it('includes CLI restore events in the active cohort when provenance is stamped', () => {
+    const report = computeAuditMetrics(
+      [
+        {
+          event: 'recoveryApplied',
+          recoveryCheckpointId: 'cp_cli',
+          ...ACTIVE_COHORT,
+        },
+        {
+          event: 'recoveryApplied',
+          recoveryCheckpointId: 'cp_old',
+          runtimeBuildStamp: '0.7.0@old',
+          configFingerprint: 'old-config',
+        },
+      ],
+      { activeCohort: ACTIVE_COHORT },
+    )
+
+    expect(report.recovery.restore.applied).toBe(2)
+    expect(report.currentCohortRecovery.restore.applied).toBe(1)
+    expect(report.currentCohortRecovery.excludedRestoreEvents).toBe(1)
   })
 })

@@ -783,9 +783,11 @@ Acceptance scenarios:
 
 ### PR 8 — Dogfood, performance, and documentation
 
+**Status: delivered.**
+
 Work:
 
-- Add performance counters and report aggregation.
+- Add performance counters and report aggregation (`belay metrics` schema v4 recovery section).
 - Update README, SECURITY, ROADMAP, CONTEXT, config schema, and guarantee table.
 - Mark the already-implemented approval cache/standing-allow item as delivered in
   ROADMAP while updating Horizon 1 backend status.
@@ -861,6 +863,8 @@ migration is needed. Configuration normalization must make old config files equi
 to both new flags being disabled.
 
 ## 9. Definition of done
+
+**Status: complete (Recovery v2, 2026-08).** CoW snapshot backends remain explicitly out of scope.
 
 Recovery v2 is complete when all of the following are true:
 

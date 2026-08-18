@@ -107,6 +107,7 @@ export interface RecoveryCheckpointSummary {
   /** Operator-facing detail from durable checkpoint state (e.g. mixed-state reason). */
   stateDetail?: string
   backend: RecoveryBackend
+  resourceKind: 'git_repository' | 'directory'
   repoRoot: string
   commandFingerprint: string
   createdAt: string

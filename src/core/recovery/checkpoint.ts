@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { BelayTransactionalConfig } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
 import { canonicalPath } from '../path-utils.js'
+import { isGitWorktreeAvailable } from '../transactional/git-worktree.js'
 import type { TransactionalFileChange } from '../transactional/types.js'
 import {
   artifactRepoRoot,
@@ -25,7 +26,7 @@ import {
   writeRecoveryState,
 } from './artifact-store.js'
 import { matchRecoverySide, reconcileRecoveryCheckpoint } from './reconcile.js'
-import { currentRecoveryResourceIdentity } from './resource-identity.js'
+import { currentRecoveryResourceIdentity, type RecoveryResourceKind } from './resource-identity.js'
 import {
   RECOVERY_RESTORE_CONFLICT,
   RECOVERY_RESTORE_REASON,
@@ -46,8 +47,32 @@ import type {
   RecoveryProofV1,
 } from './types.js'
 
-function recoveryProofProbeSignals(backend: RecoveryBackend): string[] {
+async function resolveRecoveryResourceKind(
+  backend: RecoveryBackend,
+  repoRoot: string,
+): Promise<RecoveryResourceKind> {
+  if (backend === 'git_worktree') {
+    return 'git_repository'
+  }
+  if (await isGitWorktreeAvailable(repoRoot)) {
+    return 'git_repository'
+  }
+  return 'directory'
+}
+
+function recoveryProofProbeSignals(
+  backend: RecoveryBackend,
+  resourceKind: RecoveryResourceKind,
+): string[] {
   if (backend === 'file_checkpoint') {
+    if (resourceKind === 'directory') {
+      return [
+        'non_git_workspace',
+        'non_git_file_checkpoint',
+        'file_checkpoint',
+        'observed_repo_local_diff',
+      ]
+    }
     return ['dirty_git_worktree', 'file_checkpoint', 'observed_repo_local_diff']
   }
   return ['clean_git_worktree', 'observed_repo_local_diff']
@@ -106,6 +131,7 @@ export async function prepareRecoveryCheckpoint(params: {
   backend?: RecoveryBackend
 }): Promise<PreparedRecoveryCheckpoint> {
   const backend = params.backend ?? 'git_worktree'
+  const resourceKind = await resolveRecoveryResourceKind(backend, params.repoRoot)
   await mkdir(checkpointsRoot(params.stateDir), { recursive: true, mode: 0o700 })
   await cleanupOrphanedStaging(params.stateDir)
   await garbageCollect(params.stateDir, params.config, params.repoRoot)
@@ -172,15 +198,15 @@ export async function prepareRecoveryCheckpoint(params: {
       expiresAt: new Date(
         Date.now() + params.config.appliedRetentionHours * 60 * 60 * 1000,
       ).toISOString(),
-      probeSignals: recoveryProofProbeSignals(backend),
+      probeSignals: recoveryProofProbeSignals(backend, resourceKind),
     }
     const manifest: RecoveryCheckpointManifest = {
       version: 2,
       checkpointId,
       backend,
       repoRoot: canonicalPath(params.repoRoot),
-      resourceKind: 'git_repository',
-      repoIdentity: await currentRecoveryResourceIdentity(params.repoRoot, 'git_repository'),
+      resourceKind,
+      repoIdentity: await currentRecoveryResourceIdentity(params.repoRoot, resourceKind),
       commandFingerprint: params.commandFingerprint,
       createdAt,
       expiresAt: proof.expiresAt,
@@ -255,6 +281,8 @@ export async function listRecoveryCheckpoints(
         state,
         ...(loaded.state.detail ? { stateDetail: loaded.state.detail } : {}),
         backend: loaded.manifest.backend,
+        resourceKind:
+          loaded.manifest.version === 2 ? loaded.manifest.resourceKind : 'git_repository',
         repoRoot: loaded.manifest.repoRoot,
         commandFingerprint: loaded.manifest.commandFingerprint,
         createdAt: loaded.manifest.createdAt,
@@ -280,6 +308,7 @@ export async function listRecoveryCheckpoints(
           checkpointId: id,
           state: 'corrupt',
           backend: manifest.backend,
+          resourceKind: manifest.version === 2 ? manifest.resourceKind : 'git_repository',
           repoRoot: manifest.repoRoot,
           commandFingerprint: manifest.commandFingerprint,
           createdAt: manifest.createdAt,

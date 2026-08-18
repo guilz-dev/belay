@@ -248,4 +248,44 @@ describe('doctorProject', () => {
       report.warnings.some((warning) => warning.includes('workspace-isolating boundary driver')),
     ).toBe(true)
   })
+
+  it('does not warn about missing git when non-Git file checkpoint is enabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-nongit-'))
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, 'README.md'), '# plain\n')
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        version: 4,
+        adapter: 'cursor',
+        installScope: 'project',
+        mode: 'enforce',
+        policy: {
+          unknownLocalEffect: 'allow_flagged',
+          transactional: {
+            enabled: true,
+            fileCheckpoint: { enabled: true, allowNonGit: true },
+            checkpoint: { enabled: true },
+          },
+        },
+        audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: false },
+        judge: { provider: 'ollama', providerId: 'ollama', model: 'llama3.2', endpoint: null },
+        classifier: { sensitivePaths: [], strictChains: true },
+        overrides: { allow: [], external: [] },
+        sandbox: { enabled: false, runtime: 'none', denyNetworkByDefault: true },
+        egress: { enabled: false },
+        controlPlane: { enabled: false },
+        approvalSigning: { required: false },
+        capability: {},
+        approval: { flow: 'one_step' },
+      })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(report.warnings.some((warning) => warning.includes('not a git repository'))).toBe(false)
+    expect(report.notes.some((note) => note.includes('file-checkpoint mirror'))).toBe(true)
+    expect(report.notes.some((note) => note.includes('File checkpoint eligibility:'))).toBe(true)
+  })
 })

@@ -134,6 +134,44 @@ describe('container workspace mount isolation', () => {
     DOCKER_TEST_TIMEOUT_MS,
   )
 
+  it.skipIf(!dockerAvailable)(
+    'keeps the host workspace unchanged when OLDPWD resolves inside the mirror',
+    async () => {
+      const hostRoot = canonicalPath(await mkdtemp(path.join(os.tmpdir(), 'belay-host-oldpwd-')))
+      const mirrorRoot = canonicalPath(
+        await mkdtemp(path.join(os.tmpdir(), 'belay-mirror-oldpwd-')),
+      )
+      await mkdir(path.join(hostRoot, 'src'), { recursive: true })
+      await mkdir(path.join(mirrorRoot, 'src'), { recursive: true })
+      await writeFile(path.join(hostRoot, 'src', 'file.txt'), 'host\n')
+      await writeFile(path.join(mirrorRoot, 'src', 'file.txt'), 'mirror\n')
+
+      const workspaceMount = {
+        hostSourceRoot: mirrorRoot,
+        guestTargetRoot: hostRoot,
+        cwdRelative: 'src',
+        writable: true,
+        hideHostSourcePath: true,
+      }
+      const driver = createContainerBoundaryDriver({ repoRoot: hostRoot })
+      const workdir = resolveGuestWorkdir(workspaceMount)
+      const result = await driver.run(
+        'printf oldpwd > "$OLDPWD/marker-oldpwd.txt"',
+        workdir,
+        30_000,
+        { workspaceMount },
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(await readFile(path.join(hostRoot, 'src', 'file.txt'), 'utf8')).toBe('host\n')
+      expect(await pathExists(path.join(hostRoot, 'marker-oldpwd.txt'))).toBe(false)
+      expect(await readFile(path.join(mirrorRoot, 'src', 'marker-oldpwd.txt'), 'utf8')).toBe(
+        'oldpwd',
+      )
+    },
+    DOCKER_TEST_TIMEOUT_MS,
+  )
+
   it('attests workspace mount isolation on probe', async () => {
     if (!dockerAvailable) {
       return

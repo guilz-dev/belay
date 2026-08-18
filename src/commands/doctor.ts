@@ -38,6 +38,7 @@ import {
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
 import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
+import { isGitWorktreeAvailable } from '../core/transactional/git-worktree.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
 import { readInstalledRuntimeProvenance } from '../runtime-provenance.js'
@@ -380,13 +381,40 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       notes.push('Fail-closed policy is enabled in enforce mode.')
     }
 
+    const recoveryCohort = metrics.currentCohortRecovery
+    const restoreTotal =
+      recoveryCohort.restore.applied +
+      recoveryCohort.restore.conflict +
+      recoveryCohort.restore.rejected
+    if (recoveryCohort.snapshot.attempts > 0 || restoreTotal > 0) {
+      notes.push(
+        `Recovery cohort metrics: ${recoveryCohort.snapshot.attempts} snapshot attempt(s) (${recoveryCohort.snapshot.applied} applied, ${recoveryCohort.snapshot.skipped} skipped); restore outcomes ${recoveryCohort.restore.applied} applied / ${recoveryCohort.restore.conflict} conflict / ${recoveryCohort.restore.rejected} rejected.`,
+      )
+      if (recoveryCohort.snapshot.prepareSampleCount > 0) {
+        notes.push(
+          `Recovery snapshot prepare latency (cohort): p50 ${recoveryCohort.snapshot.prepareMsP50 ?? 0}ms, p95 ${recoveryCohort.snapshot.prepareMsP95 ?? 0}ms (${recoveryCohort.snapshot.prepareSampleCount} samples).`,
+        )
+      }
+      if (Object.keys(recoveryCohort.snapshot.failuresByReason).length > 0) {
+        notes.push(
+          `Recovery snapshot failures (cohort): ${Object.entries(
+            recoveryCohort.snapshot.failuresByReason,
+          )
+            .map(([reason, count]) => `${reason}=${count}`)
+            .join(', ')}.`,
+        )
+      }
+    }
+
     if (loadedConfig.policy.transactional.enabled) {
       notes.push(
-        'Transactional execution: enabled — low-confidence shell mutations run in an isolated git worktree; observed-safe effects are applied once and the hook denies re-execution.',
+        'Transactional execution: enabled — low-confidence shell mutations run in an isolated git worktree or file-checkpoint mirror; observed-safe effects are applied once and the hook denies re-execution.',
       )
-      if (!existsSync(path.join(repoRoot, '.git'))) {
+      const fileCheckpointEnabled = loadedConfig.policy.transactional.fileCheckpoint.enabled
+      const allowNonGit = loadedConfig.policy.transactional.fileCheckpoint.allowNonGit
+      if (!existsSync(path.join(repoRoot, '.git')) && !(fileCheckpointEnabled && allowNonGit)) {
         warnings.push(
-          'Transactional execution is enabled but this directory is not a git repository. Transactional worktrees will be skipped until git is available.',
+          'Transactional execution is enabled but this directory is not a git repository. Enable file checkpoint with allowNonGit or initialize git before transactional recovery can run.',
         )
       }
     }
@@ -407,6 +435,30 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           'File checkpoint is enabled but durable Recovery checkpointing is disabled; backend selection will fail closed.',
         )
       }
+      const checkpointConfig = loadedConfig.policy.transactional.checkpoint
+      const configuredBoundary =
+        loadedConfig.capability?.boundaryDriver ??
+        (loadedConfig.sandbox.runtime === 'container' ? 'container' : null)
+      let isolationAvailable = false
+      if (configuredBoundary) {
+        try {
+          const session = await boundarySessionStatus({ repoRoot, config: loadedConfig })
+          isolationAvailable =
+            session.fresh === true && session.attestation?.isolatesWorkspaceMounts === true
+        } catch {
+          isolationAvailable = false
+        }
+      }
+      const gitAvailable = await isGitWorktreeAvailable(repoRoot)
+      const workspaceEligible = gitAvailable || fileCheckpoint.allowNonGit
+      const probeAvailable =
+        loadedConfig.policy.transactional.enabled &&
+        checkpointConfig?.enabled === true &&
+        isolationAvailable &&
+        workspaceEligible
+      notes.push(
+        `File checkpoint eligibility: probe=${probeAvailable ? 'available' : 'unavailable'}, workspace=${gitAvailable ? 'git' : 'non-git'}, isolation=${isolationAvailable ? (configuredBoundary ?? 'attested') : 'unavailable'}.`,
+      )
     }
 
     if (loadedConfig.policy.transactional.checkpoint?.enabled) {

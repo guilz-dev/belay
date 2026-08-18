@@ -1,4 +1,4 @@
-import { cp, lstat, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -14,6 +14,7 @@ import {
   FILE_CHECKPOINT_DISABLED,
   FILE_CHECKPOINT_DURABLE_REQUIRED,
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
+  FILE_CHECKPOINT_NON_GIT_DISABLED,
 } from './backend-selector.js'
 import {
   cloneBareWorktreeCopy,
@@ -113,6 +114,60 @@ async function probeDirtyGitFileCheckpoint(
   }
 }
 
+async function probeNonGitFileCheckpoint(
+  context: TransactionalBackendContext,
+): Promise<TransactionalBackendProbe> {
+  const signals = ['non_git_workspace']
+  if (await isGitWorktreeAvailable(context.repoRoot)) {
+    return {
+      eligible: false,
+      backend: 'file_checkpoint',
+      reason: 'git_worktree_available',
+      signals: ['git_repository'],
+    }
+  }
+  if (!context.fileCheckpoint.enabled) {
+    return {
+      eligible: false,
+      backend: 'file_checkpoint',
+      reason: FILE_CHECKPOINT_DISABLED,
+      signals,
+    }
+  }
+  if (!context.fileCheckpoint.allowNonGit) {
+    return {
+      eligible: false,
+      backend: 'file_checkpoint',
+      reason: FILE_CHECKPOINT_NON_GIT_DISABLED,
+      signals,
+    }
+  }
+  if (!context.durableCheckpointEnabled) {
+    return {
+      eligible: false,
+      backend: 'file_checkpoint',
+      reason: FILE_CHECKPOINT_DURABLE_REQUIRED,
+      signals,
+    }
+  }
+  const isolationReason = fileCheckpointIsolationReason(context)
+  if (isolationReason) {
+    return {
+      eligible: false,
+      backend: 'file_checkpoint',
+      reason: isolationReason,
+      signals: [...signals, 'isolation_unavailable'],
+    }
+  }
+
+  const copyStrategy = await probeFileCloneStrategy()
+  return {
+    eligible: true,
+    backend: 'file_checkpoint',
+    signals: [...signals, 'non_git_file_checkpoint', copyStrategy],
+  }
+}
+
 interface PreparedFileCheckpointState {
   stagingRoot: string
   baselineRoot: string
@@ -120,6 +175,18 @@ interface PreparedFileCheckpointState {
   baselineIndex: FileTreeIndex
   sourceGitMetadataFingerprint: string
   gitMetadataFingerprint: string
+  copyStrategy: 'clonefile' | 'reflink' | 'copy'
+  workspaceBytes: number
+  prepareMs: number
+  protectedRootStates: Map<string, string>
+}
+
+interface PreparedNonGitSnapshotState {
+  stagingRoot: string
+  baselineRoot: string
+  executionRoot: string
+  baselineIndex: FileTreeIndex
+  resourceIdentity: string
   copyStrategy: 'clonefile' | 'reflink' | 'copy'
   workspaceBytes: number
   prepareMs: number
@@ -302,31 +369,232 @@ async function prepareDirtyGitSnapshot(
   }
 }
 
+async function prepareNonGitSnapshot(
+  context: TransactionalBackendContext,
+): Promise<PreparedNonGitSnapshotState> {
+  const prepareStartedAt = Date.now()
+  const excludedRoots = context.dirtyIgnoreRoots ?? []
+  const quotas = context.fileCheckpoint
+  const deadlineMs = Date.now() + quotas.prepareTimeoutMs
+
+  await removeDeadOwnerStaging(os.tmpdir())
+  const stagingRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-file-checkpoint-'))
+  await writeOwnerMarker(stagingRoot, {
+    version: 1,
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+    resourceRoot: context.repoRoot,
+    backend: 'file_checkpoint',
+  })
+
+  const baselineRoot = path.join(stagingRoot, 'baseline')
+  const executionRoot = path.join(stagingRoot, 'execution')
+
+  try {
+    resolveExecutionCwdRelative(context.repoRoot, context.cwd)
+    const resourceIdentity = await currentRecoveryResourceIdentity(context.repoRoot, 'directory')
+
+    const baselineCopy = await cloneDirectoryTree(context.repoRoot, baselineRoot, {
+      excludedRoots,
+      quotas,
+      deadlineMs,
+    })
+    await mkdir(baselineRoot, { recursive: true })
+
+    const baselineIndex = await buildFileTreeIndex({
+      resourceRoot: baselineRoot,
+      excludedRoots,
+      quotas,
+      deadlineMs,
+    })
+    const sourceIndex = await buildFileTreeIndex({
+      resourceRoot: context.repoRoot,
+      excludedRoots,
+      quotas,
+      deadlineMs,
+    })
+    if (sourceIndex.treeHash !== baselineIndex.treeHash) {
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+    }
+
+    await writeFile(
+      path.join(stagingRoot, 'baseline-index.json'),
+      `${JSON.stringify(baselineIndex)}\n`,
+      'utf8',
+    )
+
+    const executionCopy = await cloneDirectoryTree(baselineRoot, executionRoot, {
+      excludedRoots,
+      quotas,
+      deadlineMs,
+    })
+    await mkdir(executionRoot, { recursive: true })
+    const finalSourceIndex = await buildFileTreeIndex({
+      resourceRoot: context.repoRoot,
+      excludedRoots,
+      quotas,
+      deadlineMs,
+    })
+    if (finalSourceIndex.treeHash !== baselineIndex.treeHash) {
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+    }
+    if (
+      (await currentRecoveryResourceIdentity(context.repoRoot, 'directory')) !== resourceIdentity
+    ) {
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+    }
+    const protectedRootStates = await captureProtectedRootStates(
+      context.repoRoot,
+      executionRoot,
+      excludedRoots,
+    )
+    const workspaceBytes = await directoryByteSize(stagingRoot, deadlineMs)
+    if (workspaceBytes > quotas.maxWorkspaceBytes) {
+      throw new FileCheckpointDiagnosticError(
+        FILE_CHECKPOINT_QUOTA_EXCEEDED,
+        `snapshot workspaceBytes=${workspaceBytes} exceeds maxWorkspaceBytes=${quotas.maxWorkspaceBytes}`,
+      )
+    }
+
+    return {
+      stagingRoot,
+      baselineRoot,
+      executionRoot,
+      baselineIndex,
+      resourceIdentity,
+      copyStrategy:
+        executionCopy.strategy === baselineCopy.strategy ? executionCopy.strategy : 'copy',
+      workspaceBytes,
+      prepareMs: Date.now() - prepareStartedAt,
+      protectedRootStates,
+    }
+  } catch (error) {
+    await rm(stagingRoot, { recursive: true, force: true })
+    if (error instanceof FileCheckpointDiagnosticError) {
+      throw error
+    }
+    if (error instanceof Error && error.message === FILE_CHECKPOINT_CWD_OUTSIDE_ROOT) {
+      throw error
+    }
+    if (error instanceof Error && error.message === FILE_CHECKPOINT_SOURCE_CHANGED) {
+      throw error
+    }
+    throw new Error(error instanceof Error ? error.message : FILE_CHECKPOINT_PREPARE_FAILED, {
+      cause: error,
+    })
+  }
+}
+
+function collectObservedChanges(
+  prepared: Pick<
+    PreparedFileCheckpointState | PreparedNonGitSnapshotState,
+    'baselineIndex' | 'executionRoot' | 'protectedRootStates'
+  >,
+  context: TransactionalBackendContext,
+): () => Promise<TransactionalFileChange[]> {
+  return async () => {
+    for (const [protectedRoot, before] of prepared.protectedRootStates) {
+      if ((await protectedRootState(protectedRoot)) !== before) {
+        throw new Error(FILE_CHECKPOINT_PROTECTED_PATH_CHANGED)
+      }
+    }
+
+    const executionIndex = await buildFileTreeIndex({
+      resourceRoot: prepared.executionRoot,
+      excludedRoots: context.dirtyIgnoreRoots ?? [],
+      quotas: context.fileCheckpoint,
+    })
+    const observed = diffFileTreeIndices(prepared.baselineIndex, executionIndex)
+    return observed.map(
+      (change): TransactionalFileChange => ({
+        relativePath: change.relativePath,
+        kind: change.kind,
+      }),
+    )
+  }
+}
+
 export const fileCheckpointBackend: TransactionalBackend = {
   id: 'file_checkpoint',
 
-  probe: probeDirtyGitFileCheckpoint,
+  async probe(context: TransactionalBackendContext): Promise<TransactionalBackendProbe> {
+    if (await isGitWorktreeAvailable(context.repoRoot)) {
+      return probeDirtyGitFileCheckpoint(context)
+    }
+    return probeNonGitFileCheckpoint(context)
+  },
 
   async prepare(context: TransactionalBackendContext): Promise<TransactionalSnapshot> {
-    const probe = await probeDirtyGitFileCheckpoint(context)
+    if (await isGitWorktreeAvailable(context.repoRoot)) {
+      const probe = await probeDirtyGitFileCheckpoint(context)
+      if (!probe.eligible) {
+        throw new Error(probe.reason ?? FILE_CHECKPOINT_PREPARE_FAILED)
+      }
+
+      const prepared = await prepareDirtyGitSnapshot(context)
+      const executionCwdRelative = resolveExecutionCwdRelative(context.repoRoot, context.cwd)
+      const resourceIdentity = await currentRecoveryResourceIdentity(
+        context.repoRoot,
+        'git_repository',
+      )
+
+      return {
+        backend: 'file_checkpoint',
+        resourceRoot: context.repoRoot,
+        executionRoot: prepared.executionRoot,
+        baselineRoot: prepared.baselineRoot,
+        resourceKind: 'git_repository',
+        resourceIdentity,
+        baselineTreeHash: prepared.baselineIndex.treeHash,
+        excludedRoots: context.dirtyIgnoreRoots ?? [],
+        copyStrategy: prepared.copyStrategy,
+        snapshotFileCount: prepared.baselineIndex.fileCount,
+        snapshotSourceBytes: prepared.baselineIndex.totalFileBytes,
+        snapshotWorkspaceBytes: prepared.workspaceBytes,
+        snapshotPrepareMs: prepared.prepareMs,
+        executionCwdRelative,
+        async validateSourceState() {
+          const sourceIndex = await buildFileTreeIndex({
+            resourceRoot: context.repoRoot,
+            excludedRoots: context.dirtyIgnoreRoots ?? [],
+            quotas: context.fileCheckpoint,
+          })
+          if (
+            sourceIndex.treeHash !== prepared.baselineIndex.treeHash ||
+            (await computeGitMetadataFingerprint(context.repoRoot)) !==
+              prepared.sourceGitMetadataFingerprint
+          ) {
+            throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+          }
+        },
+        async collectChanges() {
+          const afterFingerprint = await computeGitMetadataFingerprint(prepared.executionRoot)
+          if (afterFingerprint !== prepared.gitMetadataFingerprint) {
+            throw new Error(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
+          }
+          return collectObservedChanges(prepared, context)()
+        },
+        async cleanup() {
+          await rm(prepared.stagingRoot, { recursive: true, force: true })
+        },
+      }
+    }
+
+    const probe = await probeNonGitFileCheckpoint(context)
     if (!probe.eligible) {
       throw new Error(probe.reason ?? FILE_CHECKPOINT_PREPARE_FAILED)
     }
 
-    const prepared = await prepareDirtyGitSnapshot(context)
+    const prepared = await prepareNonGitSnapshot(context)
     const executionCwdRelative = resolveExecutionCwdRelative(context.repoRoot, context.cwd)
-    const resourceIdentity = await currentRecoveryResourceIdentity(
-      context.repoRoot,
-      'git_repository',
-    )
 
     return {
       backend: 'file_checkpoint',
       resourceRoot: context.repoRoot,
       executionRoot: prepared.executionRoot,
       baselineRoot: prepared.baselineRoot,
-      resourceKind: 'git_repository',
-      resourceIdentity,
+      resourceKind: 'directory',
+      resourceIdentity: prepared.resourceIdentity,
       baselineTreeHash: prepared.baselineIndex.treeHash,
       excludedRoots: context.dirtyIgnoreRoots ?? [],
       copyStrategy: prepared.copyStrategy,
@@ -343,36 +611,13 @@ export const fileCheckpointBackend: TransactionalBackend = {
         })
         if (
           sourceIndex.treeHash !== prepared.baselineIndex.treeHash ||
-          (await computeGitMetadataFingerprint(context.repoRoot)) !==
-            prepared.sourceGitMetadataFingerprint
+          (await currentRecoveryResourceIdentity(context.repoRoot, 'directory')) !==
+            prepared.resourceIdentity
         ) {
           throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
         }
       },
-      async collectChanges() {
-        const afterFingerprint = await computeGitMetadataFingerprint(prepared.executionRoot)
-        if (afterFingerprint !== prepared.gitMetadataFingerprint) {
-          throw new Error(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
-        }
-        for (const [protectedRoot, before] of prepared.protectedRootStates) {
-          if ((await protectedRootState(protectedRoot)) !== before) {
-            throw new Error(FILE_CHECKPOINT_PROTECTED_PATH_CHANGED)
-          }
-        }
-
-        const executionIndex = await buildFileTreeIndex({
-          resourceRoot: prepared.executionRoot,
-          excludedRoots: context.dirtyIgnoreRoots ?? [],
-          quotas: context.fileCheckpoint,
-        })
-        const observed = diffFileTreeIndices(prepared.baselineIndex, executionIndex)
-        return observed.map(
-          (change): TransactionalFileChange => ({
-            relativePath: change.relativePath,
-            kind: change.kind,
-          }),
-        )
-      },
+      collectChanges: collectObservedChanges(prepared, context),
       async cleanup() {
         await rm(prepared.stagingRoot, { recursive: true, force: true })
       },

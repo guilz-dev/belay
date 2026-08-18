@@ -227,6 +227,47 @@ describe('transactional backend selector', () => {
     expect(selection.probe.reason).toBe(FILE_CHECKPOINT_NON_GIT_DISABLED)
   })
 
+  it('selects file_checkpoint when non-Git prerequisites are met', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-nogit-'))
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, 'README.md'), '# plain\n')
+
+    const selection = await selectTransactionalBackend(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true, allowNonGit: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'container',
+      }),
+    )
+
+    expect(selection.backend?.id).toBe('file_checkpoint')
+    expect(selection.probe.eligible).toBe(true)
+    expect(selection.probe.signals).toContain('non_git_file_checkpoint')
+    expect(selection.skipReason).toBeUndefined()
+  })
+
+  it('returns non-git probes from file_checkpoint backend when enabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-nogit-'))
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, 'README.md'), '# plain\n')
+
+    const probes = await probeTransactionalBackends(
+      backendContext(repoRoot, {
+        fileCheckpoint: { enabled: true, allowNonGit: true },
+        durableCheckpointEnabled: true,
+        boundaryAttestation: containerIsolationAttestation(),
+        boundaryAttestationFresh: true,
+        boundaryDriverId: 'container',
+      }),
+    )
+
+    expect(probes[1]?.eligible).toBe(true)
+    expect(probes[1]?.signals).toContain('non_git_workspace')
+    expect(probes[1]?.signals).toContain('non_git_file_checkpoint')
+  })
+
   it('treats belay init artifacts as clean when dirtyIgnoreRoots is provided', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })

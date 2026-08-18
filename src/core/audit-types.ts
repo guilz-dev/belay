@@ -3,7 +3,7 @@ import type { Assessment } from './types.js'
 
 export type { AuditActionSnapshot, AuditReplayContext } from './audit-replay-context.js'
 
-export const AUDIT_METRICS_SCHEMA_VERSION = 3
+export const AUDIT_METRICS_SCHEMA_VERSION = 4
 
 export const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
 

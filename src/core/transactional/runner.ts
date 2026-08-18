@@ -14,6 +14,7 @@ import {
 } from '../recovery/checkpoint.js'
 import type { ClassifyResult } from '../types.js'
 import { buildObservedChangesFromTransactional } from './apply-observed-changes.js'
+import type { TransactionalBackendProbe } from './backend.js'
 import { selectTransactionalBackend } from './backend-selector.js'
 import { evaluateTransactionalDiff } from './diff-evaluator.js'
 import { FileCheckpointDiagnosticError } from './file-tree.js'
@@ -29,6 +30,10 @@ import {
   TRANSACTIONAL_OBSERVED_RISK,
 } from './reasons.js'
 import type { TransactionalExecutionResult, TransactionalRunnerParams } from './types.js'
+
+function resourceKindFromProbe(probe: TransactionalBackendProbe): 'git_repository' | 'directory' {
+  return probe.signals.includes('non_git_workspace') ? 'directory' : 'git_repository'
+}
 
 export async function runTransactionalExecution(
   params: TransactionalRunnerParams,
@@ -57,6 +62,8 @@ export async function runTransactionalExecution(
       skipReason: skipReason ?? 'transactional_execution_failed',
       predicted,
       result: predicted,
+      transactionalBackend: selection.probe.backend,
+      resourceKind: resourceKindFromProbe(selection.probe),
     }
   }
 
@@ -70,6 +77,8 @@ export async function runTransactionalExecution(
         skipReason: error instanceof Error ? error.message : 'recovery_checkpoint_reconcile_failed',
         predicted,
         result: predicted,
+        transactionalBackend: selection.probe.backend,
+        resourceKind: resourceKindFromProbe(selection.probe),
       }
     }
   }

@@ -101,9 +101,13 @@ async function probeFileCheckpointForNonGit(
   if (isolationReason) {
     return fileCheckpointProbe(isolationReason, ['non_git_workspace', 'isolation_unavailable'])
   }
-  return fileCheckpointProbe(FILE_CHECKPOINT_NOT_IMPLEMENTED, [
+  const backendProbe = await fileCheckpointBackend.probe(context)
+  if (backendProbe.eligible) {
+    return backendProbe
+  }
+  return fileCheckpointProbe(backendProbe.reason ?? FILE_CHECKPOINT_NOT_IMPLEMENTED, [
     'non_git_workspace',
-    'not_implemented',
+    ...(backendProbe.reason === FILE_CHECKPOINT_NOT_IMPLEMENTED ? ['not_implemented'] : []),
   ])
 }
 
@@ -134,6 +138,12 @@ export async function selectTransactionalBackend(
   }
 
   const fileProbe = await probeFileCheckpointForNonGit(context)
+  if (fileProbe.eligible) {
+    return {
+      backend: fileCheckpointBackend,
+      probe: fileProbe,
+    }
+  }
   return {
     backend: null,
     probe: fileProbe,

@@ -577,4 +577,112 @@ describe('transactional runner', () => {
     expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).resolves.toBeDefined()
   })
+
+  it('applies safe non-git mutations through file_checkpoint mirrors', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-nongit-'))
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, 'README.md'), '# plain\n')
+    const predicted = await classifyShellCore(
+      'touch safe-plain.txt',
+      workspaceRoot,
+      workspaceRoot,
+      {
+        unknownLocalEffect: 'allow_flagged',
+      },
+    )
+    const stateDir = path.join(workspaceRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      const hostCwd = mount
+        ? mount.cwdRelative
+          ? path.join(mount.hostSourceRoot, mount.cwdRelative)
+          : mount.hostSourceRoot
+        : params.cwd
+      return runShellCommand(params.command, hostCwd, params.timeoutMs)
+    })
+
+    const params = runnerParams({
+      command: 'touch safe-plain.txt',
+      cwd: workspaceRoot,
+      repoRoot: workspaceRoot,
+      stateDir,
+      predicted,
+      dirtyIgnoreRoots: cursorDirtyIgnoreRoots(workspaceRoot),
+    })
+
+    const result = await runTransactionalExecution({
+      ...params,
+      fileCheckpoint: { ...params.fileCheckpoint, enabled: true, allowNonGit: true },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(workspaceRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.result.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    expect(result.recoveryBackend).toBe('file_checkpoint')
+    expect(result.resourceKind).toBe('directory')
+    await expect(
+      readFile(path.join(workspaceRoot, 'safe-plain.txt'), 'utf8'),
+    ).resolves.toBeDefined()
+    await expect(readFile(path.join(workspaceRoot, 'README.md'), 'utf8')).resolves.toBe('# plain\n')
+  })
+
+  it('restores a non-git directory checkpoint to its pre-command bytes', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-nongit-restore-'))
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, 'README.md'), '# plain baseline\n')
+    const predicted = await classifyShellCore(
+      'printf changed > README.md',
+      workspaceRoot,
+      workspaceRoot,
+      {
+        unknownLocalEffect: 'allow_flagged',
+      },
+    )
+    const stateDir = path.join(workspaceRoot, '.cursor', 'belay', 'transactional')
+    vi.spyOn(boundaryRun, 'runWithBoundaryRunnable').mockImplementation(async (_target, params) => {
+      const mount = params.runOptions?.workspaceMount
+      const hostCwd = mount
+        ? mount.cwdRelative
+          ? path.join(mount.hostSourceRoot, mount.cwdRelative)
+          : mount.hostSourceRoot
+        : params.cwd
+      return runShellCommand(params.command, hostCwd, params.timeoutMs)
+    })
+
+    const result = await runTransactionalExecution({
+      ...runnerParams({
+        command: 'printf changed > README.md',
+        cwd: workspaceRoot,
+        repoRoot: workspaceRoot,
+        stateDir,
+        predicted,
+        dirtyIgnoreRoots: cursorDirtyIgnoreRoots(workspaceRoot),
+      }),
+      fileCheckpoint: {
+        ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+        enabled: true,
+        allowNonGit: true,
+      },
+      checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      boundaryContext: {
+        ...hostIntegrationBoundaryContext(workspaceRoot),
+        driverId: 'container',
+        attestation: containerIsolationAttestation(),
+        attestationFresh: true,
+      },
+    })
+
+    expect(result.resourceKind).toBe('directory')
+    await expect(readFile(path.join(workspaceRoot, 'README.md'), 'utf8')).resolves.toBe('changed')
+    await restoreRecoveryCheckpoint(stateDir, result.recoveryCheckpointId ?? '')
+    await expect(readFile(path.join(workspaceRoot, 'README.md'), 'utf8')).resolves.toBe(
+      '# plain baseline\n',
+    )
+  })
 })

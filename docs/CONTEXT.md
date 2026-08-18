@@ -31,13 +31,16 @@ authorization model. It complements
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
 5. `deny_pending_approval` is never auto-approved; human escalation is mandatory.
 6. **Recovery execution** (transactional; durable checkpoint backend is opt-in): when enabled,
-   local mutations run only after an observed-safe git worktree proof. With
-   `policy.transactional.checkpoint.enabled`, Belay persists repo-local pre-images before apply
-   and exposes exact one-shot-approved restore through `belay recover apply`. Substrate,
-   checkpoint, or observation failure
-   maps to `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or
-   `recovery_execution_failed` — the host must not fall back to unproven execution. Belay-managed
-   init artifacts under adapter state paths are excluded from dirty-worktree gating.
+   local mutations run only after an observed-safe proof in a git worktree or file-checkpoint
+   mirror. Clean Git uses `git_worktree`; dirty Git and non-Git directories use
+   `file_checkpoint` when separately enabled (`policy.transactional.fileCheckpoint.enabled` and,
+   for non-Git roots, `allowNonGit: true`) with durable checkpointing and an attested
+   workspace-isolating boundary. With `policy.transactional.checkpoint.enabled`, Belay persists
+   repo-local pre-images before apply and exposes exact one-shot-approved restore through
+   `belay recover apply`. Substrate, checkpoint, or observation failure maps to
+   `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or `recovery_execution_failed`
+   — the host must not fall back to unproven execution. `belay metrics` schema v4 aggregates
+   snapshot and restore outcomes for operational evidence without affecting authorization.
 7. Linked worktrees are repository-local only when their canonical Git common directory
    matches the primary repository. Separate and malformed repositories fail closed.
 
