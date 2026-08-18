@@ -117,17 +117,19 @@ interface Marker {
 
 type StreamState =
   | { kind: 'approval_wait' }
-  | { kind: 'approval_value' }
+  | { kind: 'approval_id_value' }
   | {
       kind: 'authorization_value'
       phase: 'leading' | 'first_word' | 'after_scheme' | 'credential'
       firstWord: string
     }
   | { kind: 'bearer_wait' }
+  | { kind: 'bearer_value'; phase: 'leading' | 'value' }
   | { kind: 'high_entropy_value' }
   | { kind: 'key_separator' }
+  | { kind: 'key_value'; phase: 'leading' | 'unquoted' }
+  | { kind: 'non_whitespace_value'; phase: 'leading' | 'value' }
   | { kind: 'quoted_value'; quote: '"' | "'" }
-  | { kind: 'simple_value'; phase: 'leading' | 'credential' }
   | { kind: 'timestamp_fraction' }
   | { kind: 'timestamp_suffix' }
   | { kind: 'url_authority' }
@@ -353,7 +355,7 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
         }
         if (character === ':' || character === '=') {
           output += `${consumeRaw(1)}<redacted>`
-          state = { kind: 'simple_value', phase: 'leading' }
+          state = { kind: 'key_value', phase: 'leading' }
           continue
         }
         state = undefined
@@ -367,15 +369,15 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
           output += state.kind === 'bearer_wait' ? ' <redacted>' : ' <approval-id>'
           state =
             state.kind === 'bearer_wait'
-              ? { kind: 'simple_value', phase: 'leading' }
-              : { kind: 'approval_value' }
+              ? { kind: 'bearer_value', phase: 'leading' }
+              : { kind: 'non_whitespace_value', phase: 'leading' }
           continue
         }
         state = undefined
         continue
       }
 
-      if (state?.kind === 'simple_value') {
+      if (state?.kind === 'key_value') {
         const character = pending[0] ?? ''
         if (state.phase === 'leading') {
           if (/\s/.test(character)) {
@@ -387,11 +389,52 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
             state = { kind: 'quoted_value', quote: character }
             continue
           }
-          state = { kind: 'simple_value', phase: 'credential' }
+          state = { kind: 'key_value', phase: 'unquoted' }
           continue
         }
         if (/[\s'"]/.test(character)) {
           output += consumeRaw(1)
+          state = undefined
+          continue
+        }
+        consumeRaw(1)
+        continue
+      }
+
+      if (state?.kind === 'non_whitespace_value') {
+        const character = pending[0] ?? ''
+        if (state.phase === 'leading') {
+          if (/\s/.test(character)) {
+            consumeRaw(1)
+            continue
+          }
+          state = { kind: 'non_whitespace_value', phase: 'value' }
+          continue
+        }
+        if (/\s/.test(character)) {
+          output += consumeRaw(1)
+          state = undefined
+          continue
+        }
+        consumeRaw(1)
+        continue
+      }
+
+      if (state?.kind === 'bearer_value') {
+        const character = pending[0] ?? ''
+        if (state.phase === 'leading') {
+          if (/\s/.test(character)) {
+            consumeRaw(1)
+            continue
+          }
+          if (!/[A-Za-z0-9._~+/=-]/.test(character)) {
+            state = undefined
+            continue
+          }
+          state = { kind: 'bearer_value', phase: 'value' }
+          continue
+        }
+        if (!/[A-Za-z0-9._~+/=-]/.test(character)) {
           state = undefined
           continue
         }
@@ -404,11 +447,6 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
         if (state.phase === 'leading' || state.phase === 'after_scheme') {
           if (/\s/.test(character)) {
             consumeRaw(1)
-            continue
-          }
-          if (character === '"' || character === "'") {
-            output += consumeRaw(1)
-            state = undefined
             continue
           }
           state =
@@ -431,11 +469,6 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
             }
             continue
           }
-          if (character === '"' || character === "'") {
-            output += consumeRaw(1)
-            state = undefined
-            continue
-          }
           const firstWord = `${state.firstWord}${character}`.slice(0, 7)
           consumeRaw(1)
           const couldBeScheme = AUTHORIZATION_SCHEMES.some((scheme) =>
@@ -446,7 +479,7 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
             : { kind: 'authorization_value', phase: 'credential', firstWord: '' }
           continue
         }
-        if (/[\s'"]/.test(character)) {
+        if (/\s/.test(character)) {
           output += consumeRaw(1)
           state = undefined
           continue
@@ -455,13 +488,13 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
         continue
       }
 
-      if (state?.kind === 'approval_value') {
+      if (state?.kind === 'approval_id_value') {
         const character = pending[0] ?? ''
-        if (/\s/.test(character)) {
+        if (/[A-Za-z0-9]/.test(character)) {
           consumeRaw(1)
           continue
         }
-        state = { kind: 'simple_value', phase: 'credential' }
+        state = undefined
         continue
       }
 
@@ -540,7 +573,7 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
             break
           case 'generic_header':
             output += `${rawMarker} <redacted>`
-            state = { kind: 'simple_value', phase: 'leading' }
+            state = { kind: 'non_whitespace_value', phase: 'leading' }
             break
           case 'key_name':
             output += rawMarker
@@ -556,11 +589,11 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
             break
           case 'approval_id':
             output += '<approval-id>'
-            state = { kind: 'approval_value' }
+            state = { kind: 'approval_id_value' }
             break
           case 'mysql_password':
             output += `${rawMarker}<redacted>`
-            state = { kind: 'simple_value', phase: 'credential' }
+            state = { kind: 'non_whitespace_value', phase: 'value' }
             break
           case 'url_authority':
             output += `${rawMarker}<redacted>`

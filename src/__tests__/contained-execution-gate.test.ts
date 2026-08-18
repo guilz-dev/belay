@@ -415,6 +415,61 @@ describe('contained unknown execution gate integration', () => {
     }
   })
 
+  it('keeps quote punctuation inside non-whitespace values before every adapter mapping', async () => {
+    const { repoRoot, config, ctx } = await fixture()
+    const command = 'fictional-runner verify'
+    const result = await eligibleResult(command, repoRoot)
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
+    const stdoutFragment = 'AUTH.QUOTE.LEAK.'
+    const stderrFragment = 'MYSQL.QUOTE.LEAK.'
+    const captured = await runProcessWithBoundedOutput(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write('visible stdout Authorization: abc"' + 'AUTH.QUOTE.LEAK.'.repeat(2000) + ' END 終了'); process.stderr.write("visible stderr mysql -pabc'" + 'MYSQL.QUOTE.LEAK.'.repeat(2000) + ' END 完了')`,
+      ],
+      {},
+      5_000,
+      { scrubOptions: scrubOptionsFromConfig(config) },
+    )
+
+    for (const [output, fragment] of [
+      [captured.stdout, stdoutFragment],
+      [captured.stderr, stderrFragment],
+    ] as const) {
+      expect(Buffer.byteLength(output)).toBeLessThanOrEqual(16_384)
+      expect(output).not.toContain('\uFFFD')
+      expect(output).not.toContain(fragment)
+    }
+    expect(captured.stdoutTruncated).toBe(true)
+    expect(captured.stderrTruncated).toBe(true)
+
+    const auditEvents: Record<string, unknown>[] = []
+    const verdict = await evaluateGatedAction(
+      ctx,
+      patchedDeps({
+        auditEvents,
+        onExecute: async () => ({
+          ...captured,
+          executionStarted: true,
+          receipt: { imageId: `sha256:${'b'.repeat(64)}` } as never,
+          receiptHash: 'quote-redaction-receipt',
+        }),
+      }),
+      { kind: 'shell', cwd: path.join(repoRoot, 'app'), command },
+    )
+
+    for (const fragment of [stdoutFragment, stderrFragment]) {
+      expect(JSON.stringify(verdict.mediatedExecution)).not.toContain(fragment)
+      expect(verdict.user_message).not.toContain(fragment)
+      expect(verdict.agent_message).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToCursorResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToClaudePreToolUseResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(gateVerdictToCodexPreToolUseResponse(verdict))).not.toContain(fragment)
+      expect(JSON.stringify(auditEvents)).not.toContain(fragment)
+    }
+  })
+
   it.each([
     [
       'definite daemon unavailability',

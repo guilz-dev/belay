@@ -508,4 +508,45 @@ describe('contained unknown execution contracts', () => {
       for (const secret of forbidden) expect(captured).not.toContain(secret)
     }
   })
+
+  it.each(
+    ['"', "'"].flatMap((quote) => {
+      const quoteName = quote === '"' ? 'double-quoted' : 'single-quoted'
+      return [
+        [`${quoteName} authorization`, `Authorization: abc${quote}`, 'AUTH.QUOTE.LEAK.'],
+        [`${quoteName} generic header`, `X-Api-Key: abc${quote}`, 'HEADER.QUOTE.LEAK.'],
+        [`${quoteName} approval command`, `/belay-approve abc${quote}`, 'APPROVAL.QUOTE.LEAK.'],
+        [`${quoteName} mysql password`, `mysql -pabc${quote}`, 'MYSQL.QUOTE.LEAK.'],
+      ]
+    }),
+  )('keeps an embedded quote inside real-child %s values until whitespace', async (_name, prefix, sentinel) => {
+    const output = `${prefix}${sentinel.repeat(2_000)} END 終端`
+    const result = await runProcessWithBoundedOutput(
+      process.execPath,
+      [
+        '-e',
+        `const value = Buffer.from(process.argv[1]); const sizes = [1, 7, 2, 31, 3, 64, 11, 127, 4, 19]; let offset = 0; let index = 0; while (offset < value.length) { const end = Math.min(offset + sizes[index % sizes.length], value.length); const chunk = value.subarray(offset, end); process.stdout.write(chunk); process.stderr.write(chunk); offset = end; index += 1 }`,
+        output,
+      ],
+      {},
+      5_000,
+      {
+        scrubOptions: {
+          maskApprovalIds: true,
+          maskBearerTokens: true,
+          maskAuthHeaders: true,
+          maskKeyValueSecrets: true,
+          maskHighEntropyStrings: true,
+        },
+      },
+    )
+    expect(result.stdoutTruncated).toBe(true)
+    expect(result.stderrTruncated).toBe(true)
+    for (const captured of [result.stdout, result.stderr]) {
+      expect(Buffer.byteLength(captured)).toBeLessThanOrEqual(16_384)
+      expect(captured).not.toContain('\uFFFD')
+      expect(captured).not.toContain(sentinel)
+      expect(captured).toContain('END 終端')
+    }
+  })
 })

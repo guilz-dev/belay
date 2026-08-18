@@ -210,4 +210,186 @@ describe('streaming scrubber', () => {
       expect(result.maxBufferedBytes).toBeLessThanOrEqual(STREAMING_SCRUBBER_MAX_BUFFER_BYTES)
     }
   })
+
+  const quoteSensitiveCases = [
+    ...['"', "'"].flatMap((quote) => [
+      {
+        name: `unquoted authorization with ${quote}`,
+        input: `SAFE Authorization: abc${quote}AUTH.QUOTE.LEAK END 終端`,
+        sentinel: 'AUTH.QUOTE.LEAK',
+      },
+      {
+        name: `unquoted generic header with ${quote}`,
+        input: `SAFE X-Api-Key: abc${quote}HEADER.QUOTE.LEAK END 終端`,
+        sentinel: 'HEADER.QUOTE.LEAK',
+      },
+      {
+        name: `approval command with ${quote}`,
+        input: `SAFE /belay-approve abc${quote}APPROVAL.QUOTE.LEAK END 終端`,
+        sentinel: 'APPROVAL.QUOTE.LEAK',
+      },
+      {
+        name: `mysql password with ${quote}`,
+        input: `SAFE mysql -pabc${quote}MYSQL.QUOTE.LEAK END 終端`,
+        sentinel: 'MYSQL.QUOTE.LEAK',
+      },
+    ]),
+  ]
+
+  it.each(quoteSensitiveCases)('does not end the batch non-whitespace grammar early for $name', ({
+    input,
+    sentinel,
+  }) => {
+    expect(scrubString(input)).not.toContain(sentinel)
+    for (const chunking of ['whole', 'bytewise', 'varied'] as const) {
+      expect(streamScrub(input, chunking).output).not.toContain(sentinel)
+    }
+  })
+
+  const punctuation = ['.', ':', '@', '/', '=', '+', '_', '-', '?', '#']
+  const differentialCases = [
+    ...punctuation.flatMap((mark) => [
+      {
+        name: `authorization punctuation ${mark}`,
+        input: `SAFE Authorization: pre${mark}AUTH.SENTINEL${mark}post END 終端`,
+        sentinel: 'AUTH.SENTINEL',
+      },
+      {
+        name: `generic-header punctuation ${mark}`,
+        input: `SAFE Private-Token: pre${mark}HEADER.SENTINEL${mark}post END 終端`,
+        sentinel: 'HEADER.SENTINEL',
+      },
+      {
+        name: `approval-command punctuation ${mark}`,
+        input: `SAFE /belay-approve pre${mark}APPROVAL.SENTINEL${mark}post END 終端`,
+        sentinel: 'APPROVAL.SENTINEL',
+      },
+      {
+        name: `mysql punctuation ${mark}`,
+        input: `SAFE mysql -ppre${mark}MYSQL.SENTINEL${mark}post END 終端`,
+        sentinel: 'MYSQL.SENTINEL',
+      },
+      {
+        name: `key/value punctuation ${mark}`,
+        input: `SAFE credential=pre${mark}KEY.SENTINEL${mark}post END 終端`,
+        sentinel: 'KEY.SENTINEL',
+      },
+    ]),
+    {
+      name: 'double-quoted authorization grammar',
+      input: 'SAFE "Authorization: pre.AUTH.SENTINEL/post" END 終端',
+      sentinel: 'AUTH.SENTINEL',
+    },
+    {
+      name: 'single-quoted generic-header grammar',
+      input: "SAFE 'X-Auth-Token: pre.HEADER.SENTINEL/post' END 終端",
+      sentinel: 'HEADER.SENTINEL',
+    },
+    {
+      name: 'double-quoted key/value grammar',
+      input: 'SAFE api_key="pre.KEY.SENTINEL/post" END 終端',
+      sentinel: 'KEY.SENTINEL',
+    },
+    {
+      name: 'single-quoted key/value grammar',
+      input: "SAFE token='pre.KEY.SENTINEL/post' END 終端",
+      sentinel: 'KEY.SENTINEL',
+    },
+    {
+      name: 'Bearer alphabet grammar',
+      input: 'SAFE Bearer abc.BEARERSENTINEL123_~+/=- END 終端',
+      sentinel: 'BEARERSENTINEL123',
+    },
+    {
+      name: 'approval ID alphabet grammar',
+      input: 'SAFE belay_abcdefghapprovalsentinel123 END 終端',
+      sentinel: 'approvalsentinel123',
+    },
+    {
+      name: 'URL credential grammar',
+      input: 'SAFE https://user.part:URL.SENTINEL@host/path END 終端',
+      sentinel: 'URL.SENTINEL',
+    },
+    {
+      name: 'high-entropy grammar and key-marker overlap',
+      input: `SAFE token${'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'.repeat(2)} END 終端`,
+      sentinel: 'tokenABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    },
+    {
+      name: 'UUID grammar',
+      input: 'SAFE 123e4567-e89b-42d3-a456-426614174000 END 終端',
+      sentinel: '123e4567-e89b-42d3-a456-426614174000',
+    },
+    {
+      name: 'timestamp grammar',
+      input: 'SAFE 2026-08-18T12:34:56.789Z END 終端',
+      sentinel: '2026-08-18T12:34:56.789Z',
+    },
+    {
+      name: 'authorization long-gap grammar',
+      input: `SAFE Authorization:${' '.repeat(40_000)}AUTH.LONG.GAP.SENTINEL END 終端`,
+      sentinel: 'AUTH.LONG.GAP.SENTINEL',
+    },
+    {
+      name: 'URL long-authority grammar',
+      input: `SAFE https://${'user.part.'.repeat(3_000)}:URL.LONG.SENTINEL@host/path END 終端`,
+      sentinel: 'URL.LONG.SENTINEL',
+    },
+    ...[
+      ['authorization at end-of-stream', 'SAFE Authorization: eof.AUTH.SENTINEL', 'AUTH.SENTINEL'],
+      ['generic header at end-of-stream', 'SAFE X-Api-Key: eof.HEADER.SENTINEL', 'HEADER.SENTINEL'],
+      [
+        'approval command at end-of-stream',
+        'SAFE /belay-approve eof.APPROVAL.SENTINEL',
+        'APPROVAL.SENTINEL',
+      ],
+      ['mysql password at end-of-stream', 'SAFE mysql -peof.MYSQL.SENTINEL', 'MYSQL.SENTINEL'],
+      ['key/value at end-of-stream', 'SAFE token=eof.KEY.SENTINEL', 'KEY.SENTINEL'],
+      ['Bearer at end-of-stream', 'SAFE Bearer eof.BEARERSENTINEL123', 'BEARERSENTINEL123'],
+      [
+        'approval ID at end-of-stream',
+        'SAFE belay_abcdefghapprovalsentinel123',
+        'approvalsentinel123',
+      ],
+      ['URL credentials at end-of-stream', 'SAFE https://user:URL.SENTINEL@host', 'URL.SENTINEL'],
+      [
+        'quoted authorization at end-of-stream',
+        'SAFE "Authorization: eof.AUTH.SENTINEL"',
+        'AUTH.SENTINEL',
+      ],
+      [
+        'quoted generic header at end-of-stream',
+        "SAFE 'Private-Token: eof.HEADER.SENTINEL'",
+        'HEADER.SENTINEL',
+      ],
+      ['quoted key/value at end-of-stream', 'SAFE password="eof.KEY.SENTINEL"', 'KEY.SENTINEL'],
+      ['high entropy at end-of-stream', `SAFE ${'A'.repeat(48)}`, 'A'.repeat(48)],
+      [
+        'UUID at end-of-stream',
+        'SAFE 123e4567-e89b-42d3-a456-426614174000',
+        '123e4567-e89b-42d3-a456-426614174000',
+      ],
+      ['timestamp at end-of-stream', 'SAFE 2026-08-18T12:34:56.789Z', '2026-08-18T12:34:56.789Z'],
+    ].map(([name, input, sentinel]) => ({ name, input, sentinel })),
+  ]
+
+  it.each(differentialCases)('never exposes $name sentinels removed by the batch scrubber', ({
+    input,
+    sentinel,
+  }) => {
+    expect(
+      scrubString(input, {
+        maskApprovalIds: true,
+        maskBearerTokens: true,
+        maskAuthHeaders: true,
+        maskKeyValueSecrets: true,
+        maskHighEntropyStrings: true,
+      }),
+    ).not.toContain(sentinel)
+    for (const chunking of ['whole', 'bytewise', 'varied'] as const) {
+      const streamed = streamScrub(input, chunking)
+      expect(streamed.output).not.toContain(sentinel)
+      expect(streamed.maxBufferedBytes).toBeLessThanOrEqual(STREAMING_SCRUBBER_MAX_BUFFER_BYTES)
+    }
+  })
 })
