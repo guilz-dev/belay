@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
@@ -117,15 +118,51 @@ describe('contained unknown execution eligibility', () => {
     ).toBe(true)
   })
 
-  it('keeps ecosystem-specific decoders, command authority, and corpus data out of eligibility', async () => {
+  it('uses only gate and EffectPlan architecture, never command or corpus authority', async () => {
     const source = await readFile(
       new URL('../core/contained-execution/eligibility.ts', import.meta.url),
       'utf8',
     )
+    const sourceFile = ts.createSourceFile('eligibility.ts', source, ts.ScriptTarget.Latest, true)
+    const imports = sourceFile.statements.flatMap((statement) => {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+        return []
+      }
+      return [statement.moduleSpecifier.text]
+    })
+    const forbiddenProperties = new Set([
+      'command',
+      'commandRedacted',
+      'commandFingerprint',
+      'fingerprint',
+      'innerArgv',
+      'normalizedCommand',
+      'segmentHead',
+      'summary',
+    ])
+    const inspectedProperties: string[] = []
+    const stringLiterals: string[] = []
+    const visit = (node: ts.Node) => {
+      if (ts.isPropertyAccessExpression(node) && forbiddenProperties.has(node.name.text)) {
+        inspectedProperties.push(node.name.text)
+      }
+      if (ts.isStringLiteral(node)) {
+        stringLiterals.push(node.text.toLowerCase())
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sourceFile)
 
-    expect(source).not.toMatch(/\b(?:rails|rspec|ruby|bundler)\b/i)
-    expect(source).not.toMatch(
-      /\b(?:allowlist|commandRedacted|corpus|decode|decoder|fingerprint|normalizedCommand|segmentHead)\b/,
+    expect(imports).toEqual([
+      '../config.js',
+      '../effect-ir/build.js',
+      '../effect-ir/types.js',
+      '../gate-contract.js',
+      '../types.js',
+    ])
+    expect(inspectedProperties).toEqual([])
+    expect(stringLiterals).not.toEqual(
+      expect.arrayContaining(['rails', 'rspec', 'ruby', 'bundler']),
     )
   })
 })
