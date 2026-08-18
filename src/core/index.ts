@@ -78,6 +78,18 @@ export {
   scrubOptionsFromConfig,
 } from './config.js'
 export { isContainedUnknownExecutionEligible } from './contained-execution/eligibility.js'
+export type {
+  ContainedExecutionMirrorBackend,
+  ContainedExecutionMirrorHandle,
+  ContainedExecutionMirrorOptions,
+} from './contained-execution/mirror.js'
+export {
+  CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED,
+  CONTAINED_EXECUTION_SOURCE_CHANGED,
+  ContainedExecutionCleanupUnconfirmedError,
+  prepareContainedExecutionMirror,
+  withContainedExecutionMirror,
+} from './contained-execution/mirror.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,
