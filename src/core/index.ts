@@ -77,6 +77,7 @@ export {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
 } from './config.js'
+export { isContainedUnknownExecutionEligible } from './contained-execution/eligibility.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,
