@@ -346,18 +346,19 @@ describe('contained unknown execution gate integration', () => {
     expect(persisted).not.toContain(repoRoot)
   })
 
-  it('scrubs a credential before its marker falls outside the process output tail', async () => {
+  it('scrubs undecided credential prefixes before adapter messages and audit persistence', async () => {
     const { repoRoot, config, ctx } = await fixture()
     const command = 'fictional-runner verify'
     const result = await eligibleResult(command, repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
-    const stdoutFragment = 'abcdefghij.'
-    const stderrFragment = 'jihgfedcba.'
+    const stdoutFragment = 'AUTH.LEAK.VALUE.'
+    const stderrUsernameFragment = 'user.part.'
+    const stderrPasswordFragment = 'PASS.LEAK.VALUE.'
     const captured = await runProcessWithBoundedOutput(
       process.execPath,
       [
         '-e',
-        `process.stdout.write('visible stdout ' + 'Authorization: Bearer ' + '${stdoutFragment}'.repeat(2000) + ' 終了'); process.stderr.write('visible stderr ' + 'X-Api-Key: ' + '${stderrFragment}'.repeat(2000) + ' 完了')`,
+        `process.stdout.write('visible stdout Authorization:' + ' '.repeat(40000) + 'AUTH.LEAK.VALUE. END 終了'); process.stderr.write('visible stderr https://' + 'user.part.'.repeat(3000) + ':PASS.LEAK.VALUE.@host/path END 完了')`,
       ],
       {},
       5_000,
@@ -377,8 +378,9 @@ describe('contained unknown execution gate integration', () => {
     expect(captured.stderr).not.toContain('\uFFFD')
     expect(captured.stderr).toContain('visible stderr')
     expect(captured.stderr).toContain('完了')
-    expect(captured.stderr).toContain('X-Api-Key: <redacted>')
-    expect(captured.stderr).not.toContain(stderrFragment)
+    expect(captured.stderr).toContain('https://<redacted>/path')
+    expect(captured.stderr).not.toContain(stderrUsernameFragment)
+    expect(captured.stderr).not.toContain(stderrPasswordFragment)
 
     const auditEvents: Record<string, unknown>[] = []
     const verdict = await evaluateGatedAction(
@@ -395,7 +397,7 @@ describe('contained unknown execution gate integration', () => {
       { kind: 'shell', cwd: path.join(repoRoot, 'app'), command },
     )
 
-    const fragments = [stdoutFragment, stderrFragment]
+    const fragments = [stdoutFragment, stderrUsernameFragment, stderrPasswordFragment]
     expect(verdict.mediatedExecution).toMatchObject({
       stdoutTruncated: true,
       stderrTruncated: true,

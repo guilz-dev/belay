@@ -1,6 +1,55 @@
 import { describe, expect, it } from 'vitest'
 
-import { scrubString } from '../core/scrub.js'
+import {
+  createStreamingScrubber,
+  STREAMING_SCRUBBER_MAX_BUFFER_BYTES,
+  scrubString,
+} from '../core/scrub.js'
+
+function configuredStreamingScrubber() {
+  return createStreamingScrubber({
+    maskApprovalIds: true,
+    maskBearerTokens: true,
+    maskAuthHeaders: true,
+    maskKeyValueSecrets: true,
+    maskHighEntropyStrings: true,
+  })
+}
+
+function chunkSizes(kind: 'whole' | 'bytewise' | 'varied', byteLength: number): number[] {
+  if (kind === 'whole') return [byteLength]
+  if (kind === 'bytewise') return Array.from({ length: byteLength }, () => 1)
+  const pattern = [1, 7, 2, 31, 3, 5, 64, 11, 127, 4, 19]
+  const sizes: number[] = []
+  let consumed = 0
+  let index = 0
+  while (consumed < byteLength) {
+    const size = Math.min(pattern[index % pattern.length] ?? 1, byteLength - consumed)
+    sizes.push(size)
+    consumed += size
+    index += 1
+  }
+  return sizes
+}
+
+function streamScrub(
+  input: string,
+  chunking: 'whole' | 'bytewise' | 'varied',
+): { output: string; maxBufferedBytes: number } {
+  const scrubber = configuredStreamingScrubber()
+  const bytes = Buffer.from(input)
+  let offset = 0
+  let output = ''
+  let maxBufferedBytes = 0
+  for (const size of chunkSizes(chunking, bytes.length)) {
+    output += scrubber.write(bytes.subarray(offset, offset + size))
+    offset += size
+    maxBufferedBytes = Math.max(maxBufferedBytes, scrubber.bufferedBytes)
+  }
+  output += scrubber.end()
+  maxBufferedBytes = Math.max(maxBufferedBytes, scrubber.bufferedBytes)
+  return { output, maxBufferedBytes }
+}
 
 describe('scrubString', () => {
   it('masks bearer tokens when enabled', () => {
@@ -39,5 +88,126 @@ describe('scrubString', () => {
     const scrubbed = scrubString(input)
     expect(scrubbed).toContain('Authorization: <redacted>')
     expect(scrubbed).toContain('X-Api-Key: <redacted>')
+  })
+})
+
+describe('streaming scrubber', () => {
+  const whitespace = ' '.repeat(40_000)
+  const longUsername = 'user.part.'.repeat(3_000)
+  const cases = [
+    {
+      name: 'authorization header',
+      input: `SAFE Authorization:${whitespace}AUTH.LEAK.VALUE. END 終端`,
+      forbidden: ['AUTH.LEAK.VALUE.'],
+    },
+    {
+      name: 'authorization scheme with whitespace before its value',
+      input: `SAFE Authorization:${whitespace}Basic${whitespace}BASIC.AUTH.LEAK. END 終端`,
+      forbidden: ['BASIC.AUTH.LEAK.'],
+    },
+    {
+      name: 'double-quoted authorization header',
+      input: `SAFE "Authorization:${whitespace}QUOTED.AUTH.LEAK." END 終端`,
+      forbidden: ['QUOTED.AUTH.LEAK.'],
+    },
+    {
+      name: 'single-quoted authorization header',
+      input: `SAFE 'Authorization:${whitespace}SINGLE.AUTH.LEAK.' END 終端`,
+      forbidden: ['SINGLE.AUTH.LEAK.'],
+    },
+    {
+      name: 'bearer token',
+      input: `SAFE Bearer${whitespace}BEAR.LEAK.VALUE. END 終端`,
+      forbidden: ['BEAR.LEAK.VALUE.'],
+    },
+    {
+      name: 'generic auth header',
+      input: `SAFE X-Api-Key:${whitespace}HEADER.LEAK.VALUE. END 終端`,
+      forbidden: ['HEADER.LEAK.VALUE.'],
+    },
+    {
+      name: 'alternate generic auth header',
+      input: `SAFE X-Auth-Token:${whitespace}ALTERNATE.HEADER.LEAK. END 終端`,
+      forbidden: ['ALTERNATE.HEADER.LEAK.'],
+    },
+    {
+      name: 'quoted generic auth header',
+      input: `SAFE "Private-Token:${whitespace}QUOTED.HEADER.LEAK." END 終端`,
+      forbidden: ['QUOTED.HEADER.LEAK.'],
+    },
+    ...['api_key', 'token', 'secret', 'password', 'passwd', 'credential'].map((name) => ({
+      name: `${name} key/value`,
+      input: `SAFE ${name}${whitespace}=${whitespace}${name}.LEAK.VALUE. END 終端`,
+      forbidden: [`${name}.LEAK.VALUE.`],
+    })),
+    {
+      name: 'quoted key/value secret',
+      input: `SAFE credential${whitespace}=${whitespace}'QUOTED.KEY.LEAK.' END 終端`,
+      forbidden: ['QUOTED.KEY.LEAK.'],
+    },
+    {
+      name: 'URL credentials with a long username',
+      input: `SAFE https://${longUsername}:PASS.LEAK.VALUE.@host/path END 終端`,
+      forbidden: ['user.part.', 'PASS.LEAK.VALUE.'],
+    },
+    {
+      name: 'mysql inline password',
+      input: 'SAFE mysql -pMYSQL.LEAK.VALUE. database END 終端',
+      forbidden: ['MYSQL.LEAK.VALUE.'],
+    },
+    {
+      name: 'approval command',
+      input: `SAFE /belay-approve${whitespace}APPROVAL.LEAK.VALUE. END 終端`,
+      forbidden: ['APPROVAL.LEAK.VALUE.'],
+    },
+    {
+      name: 'approval id',
+      input: `SAFE belay_approvalleakvalue123456789 END 終端`,
+      forbidden: ['belay_approvalleakvalue123456789'],
+    },
+    {
+      name: 'high entropy value',
+      input: `SAFE ${'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'.repeat(2)} END 終端`,
+      forbidden: ['ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'],
+    },
+    {
+      name: 'high entropy value beginning with a key-name marker',
+      input: `SAFE token${'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'.repeat(2)} END 終端`,
+      forbidden: ['tokenABCDEFGHIJKLMNOPQRSTUVWXYZ'],
+    },
+    {
+      name: 'UUID',
+      input: 'SAFE 123e4567-e89b-42d3-a456-426614174000 END 終端',
+      forbidden: ['123e4567-e89b-42d3-a456-426614174000'],
+    },
+    {
+      name: 'timestamp',
+      input: 'SAFE 2026-08-18T12:34:56.789Z END 終端',
+      forbidden: ['2026-08-18T12:34:56.789Z'],
+    },
+  ]
+
+  it.each(cases)('redacts $name across whole, bytewise, and varied chunks', ({
+    input,
+    forbidden,
+  }) => {
+    const completeStringResult = scrubString(input, {
+      maskApprovalIds: true,
+      maskBearerTokens: true,
+      maskAuthHeaders: true,
+      maskKeyValueSecrets: true,
+      maskHighEntropyStrings: true,
+    })
+    for (const chunking of ['whole', 'bytewise', 'varied'] as const) {
+      const result = streamScrub(input, chunking)
+      expect(result.output).toContain('SAFE')
+      expect(result.output).toContain('END 終端')
+      expect(result.output).not.toContain('\uFFFD')
+      for (const secret of forbidden) {
+        expect(completeStringResult).not.toContain(secret)
+        expect(result.output).not.toContain(secret)
+      }
+      expect(result.maxBufferedBytes).toBeLessThanOrEqual(STREAMING_SCRUBBER_MAX_BUFFER_BYTES)
+    }
   })
 })

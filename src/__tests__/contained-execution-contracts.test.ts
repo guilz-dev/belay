@@ -418,4 +418,94 @@ describe('contained unknown execution contracts', () => {
     expect(result.stdoutTruncated).toBe(true)
     expect(result.stderrTruncated).toBe(true)
   })
+
+  it.each([
+    [
+      'authorization whitespace',
+      `Authorization:${' '.repeat(40_000)}AUTH.LEAK.VALUE. END 終端`,
+      ['AUTH.LEAK.VALUE.'],
+    ],
+    [
+      'quoted authorization whitespace',
+      `"Authorization:${' '.repeat(40_000)}QUOTED.AUTH.LEAK." END 終端`,
+      ['QUOTED.AUTH.LEAK.'],
+    ],
+    [
+      'bearer whitespace',
+      `Bearer${' '.repeat(40_000)}BEAR.LEAK.VALUE. END 終端`,
+      ['BEAR.LEAK.VALUE.'],
+    ],
+    [
+      'generic-header whitespace',
+      `X-Api-Key:${' '.repeat(40_000)}HEADER.LEAK.VALUE. END 終端`,
+      ['HEADER.LEAK.VALUE.'],
+    ],
+    [
+      'quoted generic-header whitespace',
+      `'Private-Token:${' '.repeat(40_000)}QUOTED.HEADER.LEAK.' END 終端`,
+      ['QUOTED.HEADER.LEAK.'],
+    ],
+    [
+      'key/value whitespace',
+      `token=${' '.repeat(40_000)}TOKEN.LEAK.VALUE. END 終端`,
+      ['TOKEN.LEAK.VALUE.'],
+    ],
+    [
+      'approval whitespace',
+      `/belay-approve${' '.repeat(40_000)}APPROVAL.LEAK.VALUE. END 終端`,
+      ['APPROVAL.LEAK.VALUE.'],
+    ],
+    [
+      'long URL username',
+      `https://${'user.part.'.repeat(3_000)}:PASS.LEAK.VALUE.@host/path END 終端`,
+      ['user.part.', 'PASS.LEAK.VALUE.'],
+    ],
+    ['mysql inline password', 'mysql -pMYSQL.LEAK.VALUE. database END 終端', ['MYSQL.LEAK.VALUE.']],
+    [
+      'approval ID',
+      'belay_approvalleakvalue123456789 END 終端',
+      ['belay_approvalleakvalue123456789'],
+    ],
+    [
+      'high entropy value',
+      `${'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'.repeat(2)} END 終端`,
+      ['ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef'],
+    ],
+    [
+      'UUID',
+      '123e4567-e89b-42d3-a456-426614174000 END 終端',
+      ['123e4567-e89b-42d3-a456-426614174000'],
+    ],
+    ['timestamp', '2026-08-18T12:34:56.789Z END 終端', ['2026-08-18T12:34:56.789Z']],
+  ] as const)('scrubs real child stdout and stderr with an undecided %s prefix before tailing', async (_name, output, forbidden) => {
+    const result = await runProcessWithBoundedOutput(
+      process.execPath,
+      [
+        '-e',
+        `const value = Buffer.from(process.argv[1]); const sizes = [1, 7, 2, 31, 3, 64, 11, 127, 4, 19]; let offset = 0; let index = 0; while (offset < value.length) { const end = Math.min(offset + sizes[index % sizes.length], value.length); const chunk = value.subarray(offset, end); process.stdout.write(chunk); process.stderr.write(chunk); offset = end; index += 1 }`,
+        output,
+      ],
+      {},
+      5_000,
+      {
+        scrubOptions: {
+          maskApprovalIds: true,
+          maskBearerTokens: true,
+          maskAuthHeaders: true,
+          maskKeyValueSecrets: true,
+          maskHighEntropyStrings: true,
+        },
+      },
+    )
+    const expectedTruncated = Buffer.byteLength(output) > 16_384
+    expect(result.stdoutTruncated).toBe(expectedTruncated)
+    expect(result.stderrTruncated).toBe(expectedTruncated)
+    for (const captured of [result.stdout, result.stderr]) {
+      expect(Buffer.byteLength(captured)).toBeLessThanOrEqual(16_384)
+      expect(Buffer.from(captured).toString('utf8')).toBe(captured)
+      expect(captured).not.toContain('\uFFFD')
+      expect(captured).toContain('END 終端')
+      for (const secret of forbidden) expect(captured).not.toContain(secret)
+    }
+  })
 })
