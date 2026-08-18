@@ -18,6 +18,41 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 | L2 (transactional) | Observed diff + L3+L4 | `allow_flagged` local mutations can be observed in a Git/file checkpoint before apply; remote and high-stakes effects remain ineligible | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-network-read`, `l2-allow-flagged-wget-output`, `l2-allow-flagged-git-fetch`, `l2-allow-flagged-git-pull`, `l2-allow-flagged-dirty-git-file-checkpoint`, `l2-deny-payload-send`, `l2-deny-secret-file-send`, `l2-deny-outside-repo` |
 | L1-full (sandbox + egress + isolation + signing) | Sandbox + egress broker + signed control plane + L3+L4 | Same shell semantics plus outer enforcement of network/filesystem scopes; external sends and outside-repo writes require approval | Protected **only** when OS sandbox enforces FS/network deny-all and control plane is on a separate trust domain | `l1f-allow-readonly`, `l1f-allow-network-read`, `l1f-allow-flagged-wget-output`, `l1f-allow-flagged-git-fetch`, `l1f-allow-flagged-git-pull`, `l1f-deny-payload-send`, `l1f-deny-secret-file-send`, `l1f-deny-outside-repo`, `l1f-deny-outside-repo-write` |
 
+## Contained unknown execution (opt-in)
+
+Contained unknown execution is a separate execution capability, not a fifth layer profile and
+not an L1-full claim. The machine-readable profile table deliberately remains limited to the
+four general configurations above; the contained route applies only to one eligible
+`unknown_local_effect` after canonical EffectPlan classification.
+
+When `sandbox.containedExecution.enabled` is configured and `belay session start` has produced a
+fresh signed compatible capability, Belay guarantees for that one mediated run:
+
+- Docker executes by an explicit absolute executable and local Unix socket, bound to the attested
+  Docker binary hash, daemon identity, configured image reference, and immutable image ID.
+- Network is always `none` in v1: there are no egress grants. The root filesystem is read-only;
+  only bounded writable `/tmp` and the disposable mirror are available. CPU, memory, PID, and
+  timeout limits are enforced; Linux capabilities are dropped, no-new-privileges is set, host
+  environment/proxy variables are sanitized, and the log driver is `none`.
+- The current state is copied to a metadata-free bounded `file_copy` mirror. Docker receives only
+  this mirror at the original absolute guest workspace path. The declared mounts make the host
+  source workspace, Git metadata/common directory, Belay control plane, Docker socket, devices,
+  and unrelated host paths inaccessible through the contained command.
+- The command starts at most once, its output is scrubbed and capped to 16 KiB tails, and both
+  zero and nonzero exits discard mirror changes. Successful cleanup is confirmed before the route
+  completes; cleanup uncertainty fails closed.
+
+Audit mode records `wouldMediate` but does not prepare a mirror or execute a container. In enforce
+mode, only typed pre-execution Docker substrate/daemon unavailability falls back to the existing
+approval path. Missing/stale/tampered capability, image mismatch or absence, mirror/lease failure,
+create/inspect/start failure, timeout, and cleanup failure deny without approval. A nonzero guest
+exit is a contained failure, not an approval.
+
+This does not protect against a hostile same-OS-user process racing observed paths, nested mounts,
+network filesystem semantics, Docker/kernel vulnerabilities, or crash-orphan residuals. It does
+not assert filesystem/network deny-all for arbitrary host execution and therefore must not be read
+as an adversarial L1-full guarantee.
+
 ## L1-full prerequisites
 
 All must be true for `belay sandbox status` to report `l1FullActive: true`:

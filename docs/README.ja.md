@@ -74,6 +74,7 @@ npx skills add guilz-dev/belay --skill belay -a codex -y
 | [CONCEPT.ja.md](./CONCEPT.ja.md) | 上記の日本語訳 |
 | [adr/ADR-002-concept-conformance.ja.md](./adr/ADR-002-concept-conformance.ja.md) | すべてのルールがコンセプトに奉仕する運用規律（貢献時必読） |
 | [adr/ADR-005-command-allowlist-prohibition.ja.md](./adr/ADR-005-command-allowlist-prohibition.ja.md) | コマンド allowlist 禁止（`overrides.allow` 含む） |
+| [adr/ADR-006-contained-unknown-execution.md](./adr/ADR-006-contained-unknown-execution.md) | unknown local effect の Docker contained execution（英語正本） |
 | [guarantee-table.md](./guarantee-table.md) | 設定ごとの保証表（L1〜L4、機械可読ソースは `src/conformance/`） |
 
 ---

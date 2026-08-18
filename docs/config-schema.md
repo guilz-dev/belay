@@ -169,6 +169,51 @@ filesystem resource scopes for brokered file-mutation tools. A persisted `--scop
 resource exception is not a shell command allowlist and does not override the normalized
 shell EffectPlan: repo-outside shell mutations still require approval. See ADR-004.
 
+### `sandbox.containedExecution` (opt-in Docker-only unknown mediation)
+
+This is a distinct execution-only capability, not a general L1-full setting. Defaults are safe
+and disabled:
+
+| Field | Type | Default | Enabled-mode contract |
+|-------|------|---------|-----------------------|
+| `enabled` | boolean | `false` | Requires `sandbox.enabled: true` and `sandbox.runtime: "container"` |
+| `image` | string \| `null` | `null` | Explicit user-provisioned image reference; no automatic image build or pull |
+| `dockerExecutable` | string \| `null` | `null` | Explicit absolute executable path |
+| `dockerHost` | string \| `null` | `null` | Explicit local Unix socket (`unix:///absolute/path`) only |
+| `timeoutMs` | positive integer | `30000` | Per-command limit |
+| `memoryMiB` | positive integer | `2048` | Container memory limit |
+| `cpus` | positive number | `2` | Container CPU limit (fractions allowed) |
+| `pids` | positive integer | `256` | Container PID limit |
+
+For example:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "runtime": "container",
+    "containedExecution": {
+      "enabled": true,
+      "image": "registry.example/contained-runner:2026-08-18",
+      "dockerExecutable": "/usr/local/bin/docker",
+      "dockerHost": "unix:///var/run/docker.sock",
+      "timeoutMs": 30000,
+      "memoryMiB": 2048,
+      "cpus": 2,
+      "pids": 256
+    }
+  }
+}
+```
+
+`belay session start` resolves the configured Docker binary, daemon, and image reference to a
+signed capability that includes the immutable image ID. Tag drift, binary/socket/daemon tampering,
+stale proof, and configuration mismatch require a session restart; execution rechecks the image
+identity. Runtime networking is always `none` and v1 has no egress grants. This configuration
+only mediates eligible `unknown_local_effect` shell plans; it does not make an executable, prefix,
+fingerprint, corpus entry, or framework name eligible, and it does not imply grant materialization
+or L1-full.
+
 ## `approval`
 
 Controls post-approval UX. Existing configs migrate to `one_step` on load.

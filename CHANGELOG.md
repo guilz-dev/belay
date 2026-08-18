@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Contained unknown execution (opt-in)** — eligible repository-local `unknown_local_effect`
+  commands can run once in a fresh signed, immutable-image Docker boundary with network disabled,
+  a copy-only workspace mirror, scrubbed bounded output, and discarded changes. This is not a
+  command allowlist or L1-full claim: EffectPlan remains the sole shell authority, the original
+  host command is denied, and only pre-execution Docker substrate/daemon unavailability falls
+  back to ordinary approval. All other attestation/capability/image/mirror/lease/create/inspect/
+  start/timeout/cleanup failures fail closed.
+
 ## 0.8.1 — 2026-08-14
 
 ### Fixed

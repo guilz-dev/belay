@@ -148,6 +148,49 @@ Belay is a layered hook gate, not a static denylist. Higher layers are opt-in.
 - Adversarial resistance requires the full L1 stack:
   `belay init --preset l1-full-recommended`, verified with `belay sandbox status`.
 
+### Contained unknown execution (opt-in)
+
+For an eligible repository-local `unknown_local_effect`, an operator may opt into one disposable
+Docker run instead of taking the ordinary approval path. No command allowlist is involved:
+EffectPlan remains the shell authority, and executable names, prefixes, fingerprints, corpus
+membership, Rails, RSpec, and fictional command names all use the same effect-based eligibility
+route. The original host command is blocked after mediation.
+
+Enable it only with an operator-provisioned image and explicit local Docker substrate:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "runtime": "container",
+    "containedExecution": {
+      "enabled": true,
+      "image": "registry.example/contained-runner:2026-08-18",
+      "dockerExecutable": "/usr/local/bin/docker",
+      "dockerHost": "unix:///var/run/docker.sock"
+    }
+  }
+}
+```
+
+Run `belay session start` after changing this configuration. It binds a fresh signed capability to
+the configured Docker executable, local Unix daemon, and immutable image ID; image-tag drift,
+tampering, stale proof, or config changes require another session start. v1 never builds or pulls
+an image automatically and always uses network `none`.
+
+Belay copies the current workspace to a bounded metadata-free mirror, mounts only that mirror in
+the container at the original guest path, and discards it after one run. Workspace changes are
+discarded; there is no diff/apply or host replay. Guest output is scrubbed and retained only as
+16 KiB tails. A nonzero guest exit is reported as contained failure and does not create an
+approval.
+
+In audit mode the contained route reports `wouldMediate` and runs neither a mirror nor a container.
+In enforce mode, only pre-execution Docker substrate or daemon unavailability returns to the normal
+approval path. Missing, stale, or tampered attestation/capability; missing or mismatched image;
+mirror/lease failure; create/inspect/start failure; timeout; and cleanup uncertainty fail closed
+without approval. This route is not L1-full;
+see the [guarantee table](./docs/guarantee-table.md) for its exact boundary and residual risks.
+
 ## Install options
 
 ```bash

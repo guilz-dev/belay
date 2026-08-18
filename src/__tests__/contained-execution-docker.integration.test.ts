@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -21,6 +21,10 @@ const dockerEnvironment = {
   HOME: '/var/empty',
   LC_ALL: 'C',
   PATH: '/usr/bin:/bin',
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
 }
 let localImageAvailable = false
 if (dockerHost.startsWith('unix:///')) {
@@ -76,6 +80,78 @@ describe('contained Docker inspect integration', () => {
         proxyEnvironment: 'neutralized-empty',
         tmpfs: { exec: false, mode: 0o1777, sizeBytes: 67_108_864 },
       })
+    },
+    60_000,
+  )
+
+  it.skipIf(!localImageAvailable)(
+    'gives the guest no network or host paths beyond its declared mirror mount',
+    async () => {
+      const parent = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-isolation-'))
+      roots.push(parent)
+      const mirror = path.join(parent, 'mirror')
+      const sourceWorkspace = path.join(parent, 'source-workspace')
+      const controlPlane = path.join(parent, 'control-plane')
+      const unrelatedHostPath = path.join(parent, 'unrelated-host-path')
+      const guestWorkspacePath = '/workspace/belay-contained-isolation-probe'
+      await Promise.all([
+        mkdir(mirror),
+        mkdir(sourceWorkspace),
+        mkdir(controlPlane),
+        mkdir(unrelatedHostPath),
+      ])
+      await Promise.all([
+        writeFile(path.join(mirror, 'mirror-visible'), 'mirror-only'),
+        writeFile(path.join(sourceWorkspace, 'host-source-secret'), 'source-only'),
+        writeFile(path.join(controlPlane, 'control-plane-secret'), 'control-only'),
+        writeFile(path.join(unrelatedHostPath, 'unrelated-secret'), 'unrelated-only'),
+      ])
+      const image = await execFileAsync(
+        dockerExecutable,
+        ['--host', dockerHost, 'image', 'inspect', '--format', '{{.Id}}', imageReference],
+        { env: dockerEnvironment },
+      )
+      const containerName = `belay-contained-${randomUUID()}`
+      let containerId = containerName
+      const command = [
+        `test -f ${shellQuote(path.join(guestWorkspacePath, 'mirror-visible'))}`,
+        `test ! -e ${shellQuote(path.join(sourceWorkspace, 'host-source-secret'))}`,
+        `test ! -e ${shellQuote(path.join(controlPlane, 'control-plane-secret'))}`,
+        `test ! -e ${shellQuote(path.join(unrelatedHostPath, 'unrelated-secret'))}`,
+        '! wget -q -T 2 -O - http://1.1.1.1',
+        'printf isolated',
+      ].join(' && ')
+      try {
+        const created = await execFileAsync(
+          dockerExecutable,
+          [
+            '--host',
+            dockerHost,
+            ...buildContainedDockerCreateArgs({
+              containerName,
+              imageId: image.stdout.trim(),
+              command,
+              hostMirrorRoot: mirror,
+              guestWorkspacePath,
+              guestCwd: guestWorkspacePath,
+              resourceLimits: { timeoutMs: 10_000, memoryMiB: 128, cpus: 0.5, pids: 32 },
+              user: `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
+            }),
+          ],
+          { env: dockerEnvironment },
+        )
+        containerId = created.stdout.trim()
+        const started = await execFileAsync(
+          dockerExecutable,
+          ['--host', dockerHost, 'start', '--attach', containerId],
+          { env: dockerEnvironment },
+        )
+        expect(started.stdout).toBe('isolated')
+      } finally {
+        await execFileAsync(dockerExecutable, ['--host', dockerHost, 'rm', '-f', containerId], {
+          env: dockerEnvironment,
+        }).catch(() => undefined)
+      }
     },
     60_000,
   )

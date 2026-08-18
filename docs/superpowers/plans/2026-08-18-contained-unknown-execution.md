@@ -24,7 +24,21 @@ Use TDD to add `isContainedUnknownExecutionEligible`. It must require a shell ga
 
 ### Task 3: Build a disposable non-applying workspace mirror
 
-Use TDD to implement a contained-execution mirror abstraction. For a clean Git repository, use a detached worktree but ensure Git metadata/common-directory paths are not exposed to the guest. For dirty Git or non-Git repositories, copy the current working state into a temporary mirror using existing transactional filesystem primitives where possible. Exclude `.git`, the configured Belay control plane, and symlinks escaping the repository. Mount only the mirror at the original absolute guest workspace path. Provide deterministic cleanup on success, nonzero exit, timeout, and setup failure; expose a dedicated cleanup-unconfirmed error. Never diff or apply mirror changes. Test dirty content visibility, source immutability, exclusions, outside symlinks, and every cleanup path.
+> **Superseded backend decision (reviewed after Task 3):** The initial detached-worktree design
+> below was replaced by a copy-only `file_copy` mirror for every workspace state. This is a
+> security-positive change, not a silent rewrite: it supports clean, dirty, and non-Git current
+> state without exposing host Git hooks, filters, fsmonitor, common-directory metadata, or source
+> paths to the guest. The historical text remains for traceability.
+
+Historical plan: use TDD to implement a contained-execution mirror abstraction. For a clean Git
+repository, use a detached worktree but ensure Git metadata/common-directory paths are not exposed
+to the guest. For dirty Git or non-Git repositories, copy the current working state into a temporary
+mirror using existing transactional filesystem primitives where possible. Exclude `.git`, the
+configured Belay control plane, and symlinks escaping the repository. Mount only the mirror at the
+original absolute guest workspace path. Provide deterministic cleanup on success, nonzero exit,
+timeout, and setup failure; expose a dedicated cleanup-unconfirmed error. Never diff or apply mirror
+changes. Test dirty content visibility, source immutability, exclusions, outside symlinks, and every
+cleanup path.
 
 ### Task 4: Add hardened contained Docker execution and attestation
 
