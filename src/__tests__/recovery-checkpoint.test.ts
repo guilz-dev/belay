@@ -250,6 +250,35 @@ describe('recovery checkpoints', () => {
     )
   })
 
+  it('rejects checkpoint preparation when expected resource identity drifted', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-identity-'))
+    tempDirs.push(workspaceRoot)
+    const executionRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-recovery-nongit-identity-exec-'),
+    )
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(workspaceRoot, '.recovery-state')
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'plain.txt'), 'after\n')
+    const expectedIdentity = await currentRecoveryResourceIdentity(workspaceRoot, 'directory')
+    await rm(workspaceRoot, { recursive: true, force: true })
+    await mkdir(workspaceRoot, { recursive: true })
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+
+    await expect(
+      prepareRecoveryCheckpoint({
+        stateDir,
+        repoRoot: workspaceRoot,
+        worktreePath: executionRoot,
+        commandFingerprint: 'identity-drift',
+        changes: [{ relativePath: 'plain.txt', kind: 'modified' }],
+        config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        backend: 'file_checkpoint',
+        expectedResourceIdentity: expectedIdentity,
+      }),
+    ).rejects.toThrow('recovery_checkpoint_repo_mismatch')
+  })
+
   it('derives git_repository for file_checkpoint checkpoints in Git workspaces', async () => {
     const repoRoot = await createGitRepo()
     const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-fcp-derived-'))

@@ -1,6 +1,6 @@
 # Recovery v2: file-checkpoint backend implementation plan
 
-Status: **Proposed**  
+Status: **Complete (Recovery v2, 2026-08)** — CoW snapshot backends remain future work.  
 Scope: dirty Git worktrees first, non-Git workspace roots second  
 Depends on: Recovery v1 checkpoint/receipt/restore path, transactional diff evaluator,
 attested isolated workspace-mount boundary

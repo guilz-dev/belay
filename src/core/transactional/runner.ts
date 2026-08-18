@@ -174,6 +174,7 @@ export async function runTransactionalExecution(
               protectedRoots: diffContext.protectedRoots,
               config: params.checkpoint,
               backend: snapshot.backend,
+              expectedResourceIdentity: snapshot.resourceIdentity,
             })
           : null
       try {
@@ -294,7 +295,10 @@ export async function runTransactionalExecution(
             snapshotCopyStrategy: snapshot.copyStrategy,
             snapshotPrepareMs: snapshot.snapshotPrepareMs,
           }
-        : {}),
+        : {
+            transactionalBackend: selection.probe.backend,
+            resourceKind: resourceKindFromProbe(selection.probe),
+          }),
     }
   } finally {
     if (snapshot) {

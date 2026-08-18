@@ -634,6 +634,8 @@ describe('audit-metrics', () => {
         transactionalBackend: 'git_worktree',
         resourceKind: 'git_repository',
         snapshotPrepareMs: 100,
+        recoveryCheckpointId: 'cp_applied',
+        recoveryState: 'applied',
       }),
       cohortGate({
         transactional: false,
@@ -758,5 +760,26 @@ describe('audit-metrics', () => {
     expect(report.recovery.restore.applied).toBe(2)
     expect(report.currentCohortRecovery.restore.applied).toBe(1)
     expect(report.currentCohortRecovery.excludedRestoreEvents).toBe(1)
+  })
+
+  it('counts observed-risk transactional runs as skipped snapshot outcomes', () => {
+    const report = computeAuditMetrics(
+      [
+        cohortGate({
+          transactional: true,
+          transactionalBackend: 'file_checkpoint',
+          resourceKind: 'directory',
+          transactionalReason: 'transactional_observed_risk',
+        }),
+      ],
+      { activeCohort: ACTIVE_COHORT },
+    )
+
+    expect(report.recovery.snapshot.attempts).toBe(1)
+    expect(report.recovery.snapshot.applied).toBe(0)
+    expect(report.recovery.snapshot.skipped).toBe(1)
+    expect(report.recovery.snapshot.failuresByReason).toEqual({
+      transactional_observed_risk: 1,
+    })
   })
 })

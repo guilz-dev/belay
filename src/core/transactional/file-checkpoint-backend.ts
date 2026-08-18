@@ -17,6 +17,7 @@ import {
   FILE_CHECKPOINT_NON_GIT_DISABLED,
 } from './backend-selector.js'
 import {
+  assertRootGitMetadataUnchanged,
   cloneBareWorktreeCopy,
   computeGitMetadataFingerprint,
   copyGitIndexState,
@@ -27,6 +28,7 @@ import {
   FILE_CHECKPOINT_SOURCE_CHANGED,
   removeAllGitRemotes,
   resolveExecutionCwdRelative,
+  rethrowStableFileCheckpointError,
 } from './file-checkpoint-git.js'
 import { removeDeadOwnerStaging, writeOwnerMarker } from './file-checkpoint-staging.js'
 import { cloneDirectoryTree, probeFileCloneStrategy } from './file-clone.js'
@@ -306,6 +308,9 @@ async function prepareDirtyGitSnapshot(
       quotas,
       deadlineMs,
     })
+    if (sourceIndex.treeHash !== baselineCopy.sourceIndex.treeHash) {
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+    }
     if (sourceIndex.treeHash !== baselineIndex.treeHash) {
       throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
     }
@@ -357,15 +362,7 @@ async function prepareDirtyGitSnapshot(
     if (error instanceof FileCheckpointDiagnosticError) {
       throw error
     }
-    if (error instanceof Error && error.message === FILE_CHECKPOINT_CWD_OUTSIDE_ROOT) {
-      throw error
-    }
-    if (error instanceof Error && error.message === FILE_CHECKPOINT_SOURCE_CHANGED) {
-      throw error
-    }
-    throw new Error(error instanceof Error ? error.message : FILE_CHECKPOINT_PREPARE_FAILED, {
-      cause: error,
-    })
+    rethrowStableFileCheckpointError(error)
   }
 }
 
@@ -413,6 +410,9 @@ async function prepareNonGitSnapshot(
       quotas,
       deadlineMs,
     })
+    if (sourceIndex.treeHash !== baselineCopy.sourceIndex.treeHash) {
+      throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
+    }
     if (sourceIndex.treeHash !== baselineIndex.treeHash) {
       throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
     }
@@ -473,15 +473,7 @@ async function prepareNonGitSnapshot(
     if (error instanceof FileCheckpointDiagnosticError) {
       throw error
     }
-    if (error instanceof Error && error.message === FILE_CHECKPOINT_CWD_OUTSIDE_ROOT) {
-      throw error
-    }
-    if (error instanceof Error && error.message === FILE_CHECKPOINT_SOURCE_CHANGED) {
-      throw error
-    }
-    throw new Error(error instanceof Error ? error.message : FILE_CHECKPOINT_PREPARE_FAILED, {
-      cause: error,
-    })
+    rethrowStableFileCheckpointError(error)
   }
 }
 
@@ -617,7 +609,10 @@ export const fileCheckpointBackend: TransactionalBackend = {
           throw new Error(FILE_CHECKPOINT_SOURCE_CHANGED)
         }
       },
-      collectChanges: collectObservedChanges(prepared, context),
+      collectChanges: async () => {
+        await assertRootGitMetadataUnchanged(prepared.baselineRoot, prepared.executionRoot)
+        return collectObservedChanges(prepared, context)()
+      },
       async cleanup() {
         await rm(prepared.stagingRoot, { recursive: true, force: true })
       },

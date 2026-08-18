@@ -606,4 +606,16 @@ describe('non-git file checkpoint backend', () => {
     expect(enabled.eligible).toBe(true)
     expect(enabled.signals).toContain('non_git_file_checkpoint')
   })
+
+  it('rejects root .git creation in a non-git execution mirror', async () => {
+    const workspaceRoot = await createPlainWorkspace()
+    await writeFile(path.join(workspaceRoot, 'README.md'), '# plain\n')
+    const snapshot = await fileCheckpointBackend.prepare(nonGitBackendContext(workspaceRoot))
+    tempDirs.push(snapshot.executionRoot)
+    await mkdir(path.join(snapshot.executionRoot, '.git'), { recursive: true })
+    await writeFile(path.join(snapshot.executionRoot, '.git', 'config'), '[core]\nrepositoryformatversion = 0\n')
+
+    await expect(snapshot.collectChanges()).rejects.toThrow(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
+    await snapshot.cleanup()
+  })
 })

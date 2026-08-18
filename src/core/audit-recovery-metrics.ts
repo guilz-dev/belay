@@ -101,6 +101,13 @@ function emptyRestoreMetrics(): RecoveryRestoreMetrics {
   }
 }
 
+function isRecoverySnapshotApplied(record: AuditRecord): boolean {
+  return (
+    record.transactional === true &&
+    (typeof record.recoveryCheckpointId === 'string' || record.recoveryState === 'applied')
+  )
+}
+
 function computeSnapshotMetrics(records: AuditRecord[]): RecoverySnapshotMetrics {
   const metrics = emptySnapshotMetrics()
   const prepareSamples: number[] = []
@@ -115,11 +122,15 @@ function computeSnapshotMetrics(records: AuditRecord[]): RecoverySnapshotMetrics
     }
 
     metrics.attempts += 1
-    if (record.transactional === true) {
+    if (isRecoverySnapshotApplied(record)) {
       metrics.applied += 1
     } else {
       metrics.skipped += 1
-      increment(metrics.failuresByReason, sanitizeRecoveryFailureReason(record))
+      if (record.transactional === true) {
+        increment(metrics.failuresByReason, 'transactional_observed_risk')
+      } else {
+        increment(metrics.failuresByReason, sanitizeRecoveryFailureReason(record))
+      }
     }
 
     const backend =

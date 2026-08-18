@@ -129,6 +129,8 @@ export async function prepareRecoveryCheckpoint(params: {
   protectedRoots?: string[]
   config: CheckpointConfig
   backend?: RecoveryBackend
+  /** Snapshot-time resource identity; re-validated before manifest commit. */
+  expectedResourceIdentity?: string
 }): Promise<PreparedRecoveryCheckpoint> {
   const backend = params.backend ?? 'git_worktree'
   const resourceKind = await resolveRecoveryResourceKind(backend, params.repoRoot)
@@ -187,6 +189,10 @@ export async function prepareRecoveryCheckpoint(params: {
     }
 
     const createdAt = new Date().toISOString()
+    const repoIdentity = await currentRecoveryResourceIdentity(params.repoRoot, resourceKind)
+    if (params.expectedResourceIdentity && repoIdentity !== params.expectedResourceIdentity) {
+      throw new Error('recovery_checkpoint_repo_mismatch')
+    }
     const proof: RecoveryProofV1 = {
       version: 1,
       backend,
@@ -206,7 +212,7 @@ export async function prepareRecoveryCheckpoint(params: {
       backend,
       repoRoot: canonicalPath(params.repoRoot),
       resourceKind,
-      repoIdentity: await currentRecoveryResourceIdentity(params.repoRoot, resourceKind),
+      repoIdentity,
       commandFingerprint: params.commandFingerprint,
       createdAt,
       expiresAt: proof.expiresAt,

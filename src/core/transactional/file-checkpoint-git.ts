@@ -11,6 +11,65 @@ export const FILE_CHECKPOINT_CWD_OUTSIDE_ROOT = 'file_checkpoint_cwd_outside_roo
 export const FILE_CHECKPOINT_PREPARE_FAILED = 'file_checkpoint_prepare_failed'
 export const FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED = 'file_checkpoint_split_index_unsupported'
 
+const STABLE_FILE_CHECKPOINT_ERRORS = new Set([
+  FILE_CHECKPOINT_GIT_METADATA_CHANGED,
+  FILE_CHECKPOINT_SOURCE_CHANGED,
+  FILE_CHECKPOINT_CWD_OUTSIDE_ROOT,
+  FILE_CHECKPOINT_PREPARE_FAILED,
+  FILE_CHECKPOINT_SPLIT_INDEX_UNSUPPORTED,
+  'file_checkpoint_disabled',
+  'file_checkpoint_non_git_disabled',
+  'file_checkpoint_durable_checkpoint_required',
+  'file_checkpoint_isolation_unavailable',
+  'file_checkpoint_not_implemented',
+  'file_checkpoint_nested_repository',
+  'file_checkpoint_unsupported_node',
+  'file_checkpoint_hardlink_unsupported',
+  'file_checkpoint_quota_exceeded',
+  'file_checkpoint_prepare_timeout',
+  'file_checkpoint_copy_failed',
+  'file_checkpoint_protected_path_changed',
+  'file_checkpoint_path_escape',
+])
+
+export function rethrowStableFileCheckpointError(error: unknown): never {
+  if (error instanceof Error && STABLE_FILE_CHECKPOINT_ERRORS.has(error.message)) {
+    throw error
+  }
+  throw new Error(FILE_CHECKPOINT_PREPARE_FAILED, { cause: error })
+}
+
+export async function rootGitMetadataPresent(repoRoot: string): Promise<boolean> {
+  try {
+    await lstat(path.join(repoRoot, '.git'))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function assertRootGitMetadataUnchanged(
+  baselineRoot: string,
+  executionRoot: string,
+): Promise<void> {
+  const [baselinePresent, executionPresent] = await Promise.all([
+    rootGitMetadataPresent(baselineRoot),
+    rootGitMetadataPresent(executionRoot),
+  ])
+  if (baselinePresent !== executionPresent) {
+    throw new Error(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
+  }
+  if (executionPresent) {
+    const [baselineFingerprint, executionFingerprint] = await Promise.all([
+      computeGitMetadataFingerprint(baselineRoot),
+      computeGitMetadataFingerprint(executionRoot),
+    ])
+    if (baselineFingerprint !== executionFingerprint) {
+      throw new Error(FILE_CHECKPOINT_GIT_METADATA_CHANGED)
+    }
+  }
+}
+
 export function execGit(repoRoot: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['-C', repoRoot, ...args], {
