@@ -16,6 +16,7 @@ import {
   splitStructuralShellSegments,
   structuralSubstitutionInners,
 } from '../verdict/parser.js'
+import { joinEffectOpacity } from './normalize.js'
 import {
   classifyPackageAcquisitionSpec,
   innerRecipeFromPeel,
@@ -105,8 +106,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
         ...(requiresCwd
           ? {
               completeness: 'partial' as const,
-              opacity:
-                result.opacity === 'unparseable' ? ('unparseable' as const) : ('opaque' as const),
+              opacity: joinEffectOpacity(result.opacity, 'opaque'),
             }
           : {}),
         signals: [...new Set([...result.signals, 'shell.cwd_unknown'])],
@@ -193,6 +193,17 @@ function requiresKnownCwd(requirementValue: ShellEffectRequirement): boolean {
   )
 }
 
+function joinNestedOpacity(
+  outer: EffectPlan['opacity'],
+  nested: ShellEffectSegment,
+): EffectPlan['opacity'] {
+  const nestedOpacity =
+    nested.completeness === 'partial' && nested.opacity === 'transparent'
+      ? 'recursive'
+      : nested.opacity
+  return joinEffectOpacity(outer, nestedOpacity)
+}
+
 function lowerSegment(
   command: string,
   context: LowerContext & { pipeToShellSegment?: boolean },
@@ -218,7 +229,7 @@ function lowerSegment(
         'shell.env_wrapper_incomplete',
       ]),
     )
-    opacity = 'opaque'
+    opacity = joinEffectOpacity(opacity, 'opaque')
   }
   if (parsed.encounteredXargs) {
     requirements.push(
@@ -227,7 +238,7 @@ function lowerSegment(
       ]),
     )
     signals.add('shell.xargs_stdin_dynamic')
-    opacity = 'opaque'
+    opacity = joinEffectOpacity(opacity, 'opaque')
   }
 
   if (context.depth >= MAX_LOWER_DEPTH) {
@@ -236,7 +247,13 @@ function lowerSegment(
         'shell.lower_depth_exceeded',
       ]),
     )
-    return shellSegment(commandRedacted, head, requirements, 'opaque', signals)
+    return shellSegment(
+      commandRedacted,
+      head,
+      requirements,
+      joinEffectOpacity(opacity, 'opaque'),
+      signals,
+    )
   }
 
   const packageExec = peelPackageExecArgv(tokens)
@@ -248,7 +265,7 @@ function lowerSegment(
       signals.add(signal)
     }
     if (packageExec.opaque) {
-      opacity = 'opaque'
+      opacity = joinEffectOpacity(opacity, 'opaque')
     }
     const innerRecipe = packageExecInnerIsMetadata(packageExec)
       ? null
@@ -269,9 +286,7 @@ function lowerSegment(
         for (const signal of nestedSegment.signals) {
           signals.add(signal)
         }
-        if (nestedSegment.completeness === 'partial') {
-          opacity = nestedSegment.opacity === 'unparseable' ? 'unparseable' : 'recursive'
-        }
+        opacity = joinNestedOpacity(opacity, nestedSegment)
       }
     }
     return shellSegment(commandRedacted, head, requirements, opacity, signals)
@@ -342,9 +357,7 @@ function lowerSegment(
         for (const signal of nestedSegment.signals) {
           signals.add(signal)
         }
-        if (nestedSegment.completeness === 'partial') {
-          opacity = nestedSegment.opacity === 'unparseable' ? 'unparseable' : 'recursive'
-        }
+        opacity = joinNestedOpacity(opacity, nestedSegment)
       }
     }
     if (launcher.opaque || launcher.recipes.length === 0) {
@@ -353,7 +366,7 @@ function lowerSegment(
           `launcher.${launcher.reason}`,
         ]),
       )
-      opacity = 'opaque'
+      opacity = joinEffectOpacity(opacity, 'opaque')
     }
     return shellSegment(commandRedacted, head, requirements, opacity, signals)
   }
@@ -405,7 +418,7 @@ function lowerSegment(
         environmentSignals,
       ),
     )
-    opacity = 'opaque'
+    opacity = joinEffectOpacity(opacity, 'opaque')
     for (const signal of environmentSignals) {
       signals.add(signal)
     }
@@ -429,7 +442,7 @@ function lowerSegment(
         'pipe_to_shell',
       ]),
     )
-    opacity = 'opaque'
+    opacity = joinEffectOpacity(opacity, 'opaque')
   }
 
   if (opacity === 'unparseable' || opacity === 'opaque') {

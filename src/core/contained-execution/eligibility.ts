@@ -14,6 +14,7 @@ const FORBIDDEN_SIGNALS = new Set([
   'high_stakes_path',
   'pipe_to_shell',
   'secret_payload_send',
+  'shell.xargs_stdin_dynamic',
   'sensitive_path_read',
   'tier0_external',
   'tier1_catastrophic',

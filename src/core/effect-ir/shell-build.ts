@@ -1,6 +1,6 @@
 import type { CapabilityResource } from '../capability/request.js'
 import { collectRequirements } from './build.js'
-import { mergeRequirements } from './normalize.js'
+import { joinEffectOpacity, mergeRequirements } from './normalize.js'
 import type {
   AnalysisCompleteness,
   EffectNode,
@@ -60,7 +60,7 @@ export function buildShellEffectPlan(params: BuildShellEffectPlanParams): Effect
     version: 1,
     root,
     inputFingerprint: params.inputFingerprint,
-    opacity: mergeOpacity(params.segments.map((segment) => segment.opacity)),
+    opacity: joinEffectOpacity(...params.segments.map((segment) => segment.opacity)),
     disposition: requirements.length === 0 ? 'effect_free' : 'effects',
     completeness,
     signals: [
@@ -110,17 +110,4 @@ function mergeNodes(nodes: readonly ExecEffectNode[]): EffectNode {
     return nodes[0]
   }
   return { kind: 'merge', children: nodes }
-}
-
-function mergeOpacity(opacities: readonly EffectPlan['opacity'][]): EffectPlan['opacity'] {
-  if (opacities.includes('unparseable')) {
-    return 'unparseable'
-  }
-  if (opacities.includes('opaque')) {
-    return 'opaque'
-  }
-  if (opacities.includes('recursive')) {
-    return 'recursive'
-  }
-  return 'transparent'
 }

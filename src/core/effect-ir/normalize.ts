@@ -9,6 +9,25 @@ export function normalizeEffectTags(tags: Iterable<EffectTag>): readonly EffectT
   return [...set].sort()
 }
 
+/**
+ * Joins opacity evidence without allowing a later analysis stage to weaken an
+ * earlier uncertainty classification.
+ */
+export function joinEffectOpacity(
+  ...opacities: readonly EffectPlan['opacity'][]
+): EffectPlan['opacity'] {
+  if (opacities.includes('unparseable')) {
+    return 'unparseable'
+  }
+  if (opacities.includes('opaque')) {
+    return 'opaque'
+  }
+  if (opacities.includes('recursive')) {
+    return 'recursive'
+  }
+  return 'transparent'
+}
+
 export function mergeRequirements(
   ...groups: readonly (readonly EffectRequirement[])[]
 ): EffectRequirement[] {
@@ -56,13 +75,7 @@ export function mergeEffectPlans(
   const children: EffectNode[] = present.flatMap((plan) =>
     plan.root.kind === 'merge' ? [...plan.root.children] : [plan.root],
   )
-  const opacity = present.some((plan) => plan.opacity === 'unparseable')
-    ? 'unparseable'
-    : present.some((plan) => plan.opacity === 'opaque')
-      ? 'opaque'
-      : present.some((plan) => plan.opacity === 'recursive')
-        ? 'recursive'
-        : 'transparent'
+  const opacity = joinEffectOpacity(...present.map((plan) => plan.opacity))
   const fingerprints = present.map((plan) => plan.inputFingerprint).sort()
   return {
     version: 1,

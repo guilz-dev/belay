@@ -230,6 +230,53 @@ describe('contained unknown execution eligibility', () => {
     }
   })
 
+  it.each([
+    'xargs npm run verify',
+    'command xargs npm run verify',
+    'time xargs npm run verify',
+    'xargs npx fictional-runner verify',
+    'xargs pnpm exec fictional-runner verify',
+  ])('keeps xargs opaque through nested static launchers: %s', async (command) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-xargs-launcher-'))
+    try {
+      await mkdir(path.join(root, 'node_modules', '.bin'), { recursive: true })
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ scripts: { verify: 'fictional-runner verify' } }),
+      )
+      await writeFile(path.join(root, 'node_modules', '.bin', 'fictional-runner'), '#!/bin/sh\n')
+
+      const result = await classifyShellCore(command, root, root)
+
+      expect(result.reason).toBe('unknown_local_effect')
+      expect(result.effectPlan?.opacity).toBe('opaque')
+      expect(result.effectPlan?.signals).toContain('shell.xargs_stdin_dynamic')
+      if (!result.effectPlan) {
+        throw new Error('expected an xargs launcher EffectPlan')
+      }
+      expect(collectRequirements(result.effectPlan.root)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: 'process.exec' }),
+          expect.objectContaining({
+            action: 'indeterminate',
+            evidence: expect.objectContaining({
+              signals: expect.arrayContaining(['shell.xargs_stdin_dynamic']),
+            }),
+          }),
+        ]),
+      )
+      expect(
+        isContainedUnknownExecutionEligible(
+          configWithContainedExecution(),
+          gate('shell', root),
+          result,
+        ),
+      ).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects every effect or signal outside the contained local subset', () => {
     const baseline = containedUnknownResult()
     const config = configWithContainedExecution()
@@ -242,6 +289,7 @@ describe('contained unknown execution eligibility', () => {
       ['high stakes', withSignals(baseline, ['high_stakes_path'])],
       ['pipe-to-shell', withSignals(baseline, ['pipe_to_shell'])],
       ['dynamic evaluation', withSignals(baseline, ['dynamic_shell_evaluation'])],
+      ['xargs stdin dynamic', withSignals(baseline, ['shell.xargs_stdin_dynamic'])],
       ['command substitution', withSignals(baseline, ['command_substitution'])],
       [
         'unparseable shell',
