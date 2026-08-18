@@ -346,10 +346,7 @@ describe('Phase 3 plan — Runtime parity', () => {
     })
 
     it('design doc mentions plan provider ids', async () => {
-      const design = await readFile(
-        path.join(repoRoot, 'docs/.tmp/judge-provider-switching-ux.md'),
-        'utf8',
-      )
+      const design = await readFile(path.join(repoRoot, 'docs/config-schema.md'), 'utf8')
       for (const id of ['ollama', 'codex', 'claude', 'cursor']) {
         expect(design).toContain(id)
       }

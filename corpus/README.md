@@ -91,6 +91,12 @@ After reviewing audit traces:
 
 `belay quality` summarizes corpus gates, audit metrics, and harvest backlog in one report.
 
+## Coverage matrix (optional probe)
+
+Broad exploratory fixtures for `pnpm probe:coverage` live in [`coverage-matrix.json`](coverage-matrix.json).
+See [`coverage-matrix/README.md`](coverage-matrix/README.md). Not a CI hard gate; promoted cases
+require human review before entering `shell-commands.json`.
+
 ## Initial split (shell)
 
 | Category | Count | Verdict constraint | CI gate |

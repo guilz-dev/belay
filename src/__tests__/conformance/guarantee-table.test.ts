@@ -94,6 +94,11 @@ describe('guarantee table conformance', () => {
         (scenario) => scenario.substrate === 'dirty_git_file_checkpoint',
       ),
     ).toBe(true)
+    expect(
+      GUARANTEE_SCENARIOS['l1-l2-transactional'].some(
+        (scenario) => scenario.substrate === 'non_git_file_checkpoint',
+      ),
+    ).toBe(true)
   })
 
   it('keeps recovery-blocking capabilities outside the dirty-Git file-checkpoint path', async () => {

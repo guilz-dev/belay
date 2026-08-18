@@ -18,6 +18,7 @@ async function probeGitWorktreeBackend(
     return {
       eligible: false,
       backend: 'git_worktree',
+      resourceKind: 'git_repository',
       reason: 'git_worktree_unavailable',
       signals: [],
     }
@@ -27,6 +28,7 @@ async function probeGitWorktreeBackend(
     return {
       eligible: false,
       backend: 'git_worktree',
+      resourceKind: 'git_repository',
       reason: 'dirty_worktree',
       signals: ['dirty_git_worktree'],
     }
@@ -35,6 +37,7 @@ async function probeGitWorktreeBackend(
   return {
     eligible: true,
     backend: 'git_worktree',
+    resourceKind: 'git_repository',
     signals: ['clean_git_worktree'],
   }
 }

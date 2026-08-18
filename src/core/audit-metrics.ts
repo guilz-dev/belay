@@ -16,6 +16,11 @@ import {
   isApprovalRecorded,
   toAuditRecord,
 } from './audit-query.js'
+import {
+  computeRecoveryMetrics,
+  type RecoveryMetrics,
+  type RecoveryMetricsCohort,
+} from './audit-recovery-metrics.js'
 import type {
   AvailabilityAskCounts,
   ReasonApprovalRatio,
@@ -98,6 +103,8 @@ export interface AuditMetricsReport {
     readyForEnforce: boolean
     notes: string[]
   }
+  recovery: RecoveryMetrics
+  currentCohortRecovery: RecoveryMetricsCohort
 }
 
 function containedExecutionMetrics(
@@ -354,6 +361,8 @@ export function computeAuditMetrics(
     )
   }
 
+  const recoveryMetrics = computeRecoveryMetrics(auditRecords, { activeCohort })
+
   return {
     schemaVersion: AUDIT_METRICS_SCHEMA_VERSION,
     auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
@@ -390,6 +399,8 @@ export function computeAuditMetrics(
       readyForEnforce,
       notes,
     },
+    recovery: recoveryMetrics.allTime,
+    currentCohortRecovery: recoveryMetrics.currentCohort,
   }
 }
 

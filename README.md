@@ -296,11 +296,13 @@ Notable settings:
   current OS user. `upgrade` migrates repo-local approvals in; disabling merges
   them back. File-mutation tools and shell redirects cannot write control-plane
   paths while it is enabled.
-- **`policy.transactional.checkpoint.enabled: true`** — after enabling the
-  transactional git-worktree runner, persist repo-local pre-images and expose them through
-  `belay recover list`. Restore is conflict-checked and always requires a signed
-  out-of-band, exact one-shot approval. Network, remote Git, databases, processes, and
-  repo-external effects are outside this guarantee.
+- **`policy.transactional.checkpoint.enabled: true`** — after enabling the transactional
+  runner, persist repo-local pre-images and expose them through `belay recover list`. Clean Git
+  uses `git_worktree`; dirty Git and non-Git directories use `file_checkpoint` when separately
+  enabled (`policy.transactional.fileCheckpoint.enabled` and, for non-Git roots,
+  `allowNonGit: true`) with an attested workspace-isolating boundary. Restore is conflict-checked
+  and always requires a signed out-of-band, exact one-shot approval. Network, remote Git,
+  databases, processes, and repo-external effects are outside this guarantee.
 - **Cloud judge** — configure with `belay config` (interactive) or `belay config set judge.providerId <id>`.
   Providers: `ollama`, `codex`, `claude`, `cursor`. **Provider** is the vendor/service
   (`judge.providerId`); **driver** is the API compatibility layer (`judge.provider`:
@@ -344,7 +346,8 @@ belay status                     # show install scope / skill-only state
 belay metrics                    # would-block / verdict summary
 belay report                     # audit log report
 belay recover [advice] [--command "rm important.ts"] # advisory candidates only
-belay recover status                          # checkpoint backend and state counts
+belay recover status                          # checkpoint backend, eligibility, and state counts
+belay metrics                                 # gate + recovery operational metrics (schema v4)
 belay recover list                            # proven repo-local recovery points
 belay recover show <checkpoint-id>
 belay recover apply <checkpoint-id>           # signed OOB exact one-shot approval required

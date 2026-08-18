@@ -8,19 +8,21 @@ ARTIFACT_DIR="$ROOT/artifacts/quality-loop"
 REPORT_PATH=""
 RUN_FULL=true
 WITH_TESTS=false
+WITH_COVERAGE=false
 VERIFY=false
 PROBE_ARGS=()
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/quality-loop-session.sh [--full] [--with-tests] [--verify] [-- <probe args>]
+  ./scripts/quality-loop-session.sh [--full] [--with-tests] [--with-coverage] [--verify] [-- <probe args>]
   ./scripts/quality-loop-session.sh --report <artifacts/quality-loop/iteration-*.json>
 
 Modes:
   --full        Run evaluate + probe + diagnose (default)
-  --with-tests  Also run `pnpm test` after structural suite (EVALUATE)
-  --verify      Also run `pnpm test:stable` after diagnose (VERIFY)
+  --with-tests     Also run `pnpm test` after structural suite (EVALUATE)
+  --with-coverage  Also run `pnpm probe:coverage` (soft, artifacts/coverage-probe)
+  --verify         Also run `pnpm test:stable` after diagnose (VERIFY)
   --report      Diagnose from an existing probe artifact only
 
 Probe arguments (e.g. --strict --seed 42) pass through after `--`.
@@ -40,6 +42,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-tests)
       WITH_TESTS=true
+      shift
+      ;;
+    --with-coverage)
+      WITH_COVERAGE=true
       shift
       ;;
     --verify)
@@ -131,6 +137,7 @@ echo ""
 step=1
 total=4
 [[ "$WITH_TESTS" == true ]] && total=$((total + 1))
+[[ "$WITH_COVERAGE" == true ]] && total=$((total + 1))
 [[ "$VERIFY" == true ]] && total=$((total + 1))
 
 echo "$step/$total Corpus evaluation"
@@ -146,6 +153,20 @@ if [[ "$WITH_TESTS" == true ]]; then
   echo ""
   echo "$step/$total Full test suite"
   pnpm test
+  step=$((step + 1))
+fi
+
+if [[ "$WITH_COVERAGE" == true ]]; then
+  echo ""
+  echo "$step/$total Coverage probe (soft)"
+  COVERAGE_ARTIFACT_DIR="$ROOT/artifacts/coverage-probe"
+  mkdir -p "$COVERAGE_ARTIFACT_DIR"
+  PREVIOUS_COVERAGE="$(ls -t "$COVERAGE_ARTIFACT_DIR"/run-*.json 2>/dev/null | head -1 || true)"
+  if [[ -n "$PREVIOUS_COVERAGE" ]]; then
+    pnpm probe:coverage -- --output-dir "$COVERAGE_ARTIFACT_DIR" --compare "$PREVIOUS_COVERAGE"
+  else
+    pnpm probe:coverage -- --output-dir "$COVERAGE_ARTIFACT_DIR"
+  fi
   step=$((step + 1))
 fi
 

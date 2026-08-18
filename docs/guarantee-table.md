@@ -17,7 +17,7 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 |---------------|---------------|-------------------|---------------------------|------------------|
 | Default (L3+L4) | Prediction + approval | EffectPlan policy allows payload-free reads, flags reversible local mutation, and requires approval for payload sends and outside-repo mutation | Not protected — control plane and hooks are detect-only | `l3-allow-readonly`, `l3-allow-network-read`, `l3-allow-flagged-wget-output`, `l3-allow-flagged-git-fetch`, `l3-allow-flagged-git-pull`, `l3-deny-payload-send`, `l3-deny-secret-file-send`, `l3-deny-outside-repo` |
 | L1 partial (egress) | Egress proxy + L3+L4 | Same shell semantics as L3, with an additional egress boundary when traffic is brokered | Not protected — proxy bypass / raw sockets remain | `l1p-allow-readonly`, `l1p-allow-network-read`, `l1p-allow-flagged-wget-output`, `l1p-allow-flagged-git-fetch`, `l1p-allow-flagged-git-pull`, `l1p-deny-payload-send`, `l1p-deny-secret-file-send`, `l1p-deny-outside-repo` |
-| L2 (transactional) | Observed diff + L3+L4 | `allow_flagged` local mutations can be observed in a Git/file checkpoint before apply; remote and high-stakes effects remain ineligible | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-network-read`, `l2-allow-flagged-wget-output`, `l2-allow-flagged-git-fetch`, `l2-allow-flagged-git-pull`, `l2-allow-flagged-dirty-git-file-checkpoint`, `l2-deny-payload-send`, `l2-deny-secret-file-send`, `l2-deny-outside-repo` |
+| L2 (transactional) | Observed diff + L3+L4 | `allow_flagged` local mutations can be observed in a Git/file checkpoint before apply; remote and high-stakes effects remain ineligible | Not protected — snapshot-external effects remain | `l2-allow-readonly`, `l2-allow-network-read`, `l2-allow-flagged-wget-output`, `l2-allow-flagged-git-fetch`, `l2-allow-flagged-git-pull`, `l2-allow-flagged-dirty-git-file-checkpoint`, `l2-allow-flagged-non-git-file-checkpoint`, `l2-deny-payload-send`, `l2-deny-secret-file-send`, `l2-deny-outside-repo` |
 | L1-full (sandbox + egress + isolation + signing) | Sandbox + egress broker + signed control plane + L3+L4 | Same shell semantics plus outer enforcement of network/filesystem scopes; external sends and outside-repo writes require approval | Protected **only** when OS sandbox enforces FS/network deny-all and control plane is on a separate trust domain | `l1f-allow-readonly`, `l1f-allow-network-read`, `l1f-allow-flagged-wget-output`, `l1f-allow-flagged-git-fetch`, `l1f-allow-flagged-git-pull`, `l1f-deny-payload-send`, `l1f-deny-secret-file-send`, `l1f-deny-outside-repo`, `l1f-deny-outside-repo-write` |
 
 ## Contained unknown execution (opt-in)
@@ -116,6 +116,10 @@ Recovery suggestions are intentionally conservative: irreversible undo patterns 
 `git reset --hard`) are never recommended. Operators must verify steps manually; recovery
 commands themselves are subject to the same hooks if executed.
 
-Recovery v1 covers only the observed repository-local filesystem diff. It does not undo
+Recovery v2 covers the observed repository-local filesystem diff for clean Git
+(`git_worktree`), dirty Git (`file_checkpoint` with `policy.transactional.fileCheckpoint.enabled`),
+and non-Git directories (`file_checkpoint` with `allowNonGit: true`). All three paths are
+separately opt-in and require durable checkpointing plus an attested workspace-isolating
+boundary for `file_checkpoint`. CoW snapshot backends remain future work. Recovery does not undo
 network, remote Git, database, process, IPC, environment, service, or repository-external
-effects. Dirty and non-Git repositories do not receive checkpoints.
+effects.

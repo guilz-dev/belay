@@ -15,6 +15,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   host command is denied, and only pre-execution Docker substrate/daemon unavailability falls
   back to ordinary approval. All other attestation/capability/image/mirror/lease/create/inspect/
   start/timeout/cleanup failures fail closed.
+- **Recovery operational metrics (schema v4)** — `belay metrics` aggregates snapshot attempts,
+  backend/resource-kind counts, prepare latency p50/p95, sanitized failure reasons, and restore
+  applied/conflict/rejected outcomes for all-time and active-cohort audit records. Recovery
+  metrics are observational only and do not affect `readyForEnforce`.
+- **`belay doctor` and `belay recover status`** — report file-checkpoint eligibility, isolation
+  probe state, backend/resource-kind counts, and cohort recovery metrics.
+
+### Changed
+
+- **Recovery v2 documentation closeout** — README, SECURITY, ROADMAP, CONTEXT, guarantee table,
+  and the file-checkpoint implementation plan now describe clean Git, dirty Git, and non-Git
+  checkpoint recovery as delivered and separately opt-in. CoW backends remain future work.
+  Defaults keep `fileCheckpoint.enabled` and `allowNonGit` false.
 
 ## 0.8.1 — 2026-08-14
 

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
+import { getAdapterLayout } from '../adapters/layouts/index.js'
+import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { ensureBelayStateDir, loadConfigFile } from '../config-io.js'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../core/approval.js'
 import { createGateApprovalStore } from '../core/approval-service.js'
@@ -27,6 +29,8 @@ import {
   recoveryNotificationSetupWarning,
   summarizeRecoveryCheckpointDiagnostics,
 } from '../core/recovery/operator-guidance.js'
+import { probeFileCheckpointBackend } from '../core/transactional/backend-selector.js'
+import { fileCheckpointIsolationReason } from '../core/transactional/file-checkpoint-isolation.js'
 import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import type { ApprovalRecord } from '../core/types.js'
 
@@ -174,29 +178,52 @@ export async function recoveryCheckpointCommand(options: {
         checkpoints.filter((checkpoint) => checkpoint.backend === backend).length,
       ]),
     )
+    const resourceKindCounts = Object.fromEntries(
+      [
+        ...new Set(checkpoints.map((checkpoint) => checkpoint.resourceKind ?? 'git_repository')),
+      ].map((resourceKind) => [
+        resourceKind,
+        checkpoints.filter(
+          (checkpoint) => (checkpoint.resourceKind ?? 'git_repository') === resourceKind,
+        ).length,
+      ]),
+    )
     const checkpointBackends = Object.keys(backendCounts)
     const fileCheckpointConfig = config.policy.transactional.fileCheckpoint
     const configuredBoundary =
       config.capability?.boundaryDriver ??
       (config.sandbox.runtime === 'container' ? 'container' : null)
-    let isolation: string | null = configuredBoundary
-    let isolationAvailable = false
+    let attestation = null
     if (configuredBoundary) {
       try {
         const session = await boundarySessionStatus({ repoRoot, config })
-        isolationAvailable =
-          session.fresh === true && session.attestation?.isolatesWorkspaceMounts === true
-        isolation = isolationAvailable ? (session.attestation?.driver ?? configuredBoundary) : null
+        attestation = session.attestation
       } catch {
-        isolation = null
+        attestation = null
       }
     }
     const copyStrategy = fileCheckpointConfig.enabled ? await probeFileCloneStrategy() : null
+    const adapterLayout = getAdapterLayout(config.adapter)
+    const backendContext = {
+      repoRoot,
+      stateDir,
+      cwd: repoRoot,
+      dirtyIgnoreRoots: protectedArtifactRoots(
+        adapterLayout,
+        repoRoot,
+        config.controlPlane.enabled ? configuredControlPlaneDir(config) : null,
+      ),
+      fileCheckpoint: fileCheckpointConfig,
+      durableCheckpointEnabled: checkpointConfig.enabled,
+      boundaryAttestation: attestation,
+      boundaryAttestationFresh: false,
+      boundaryDriverId: configuredBoundary ?? undefined,
+    }
+    const isolationAvailable = fileCheckpointIsolationReason(backendContext) === null
+    const fileCheckpointProbe = await probeFileCheckpointBackend(backendContext)
     const fileCheckpointAvailable =
-      fileCheckpointConfig.enabled &&
-      config.policy.transactional.enabled &&
-      checkpointConfig.enabled &&
-      isolationAvailable
+      config.policy.transactional.enabled && fileCheckpointProbe.eligible
+    const isolation = isolationAvailable ? (attestation?.driver ?? configuredBoundary) : null
     return {
       ok: true,
       subcommand: 'status',
@@ -209,6 +236,7 @@ export async function recoveryCheckpointCommand(options: {
             : 'git_worktree',
       availableBackends: ['git_worktree', 'file_checkpoint'],
       backendCounts,
+      resourceKindCounts,
       fileCheckpoint: {
         enabled: fileCheckpointConfig.enabled,
         allowNonGit: fileCheckpointConfig.allowNonGit,
@@ -378,9 +406,21 @@ export async function recoveryCheckpointCommand(options: {
 
 export function formatRecoveryCheckpointResult(result: Record<string, unknown>): string {
   if (result.subcommand === 'status') {
+    const fileCheckpoint = result.fileCheckpoint as
+      | {
+          enabled?: boolean
+          allowNonGit?: boolean
+          isolation?: string | null
+          copyStrategy?: string
+          probe?: string
+        }
+      | undefined
+    const backendCounts = result.backendCounts as Record<string, number> | undefined
+    const resourceKindCounts = result.resourceKindCounts as Record<string, number> | undefined
     const lines = [
       `belay recover status for ${result.repoRoot}`,
       `Backend: ${result.backend}`,
+      `Available backends: ${(result.availableBackends as string[] | undefined)?.join(', ') ?? 'git_worktree, file_checkpoint'}`,
       `Checkpointing: ${result.enabled ? 'enabled' : 'disabled'}`,
       `Checkpoints: ${result.checkpointCount} (${result.recoverableCount} recoverable)`,
       `Needs manual repair: ${result.needsManualRepairCount ?? 0}`,
@@ -388,6 +428,17 @@ export function formatRecoveryCheckpointResult(result: Record<string, unknown>):
       `Storage: ${result.storageBytes} bytes`,
       `States: ${JSON.stringify(result.states)}`,
     ]
+    if (backendCounts && Object.keys(backendCounts).length > 0) {
+      lines.push(`Backend counts: ${JSON.stringify(backendCounts)}`)
+    }
+    if (resourceKindCounts && Object.keys(resourceKindCounts).length > 0) {
+      lines.push(`Resource kind counts: ${JSON.stringify(resourceKindCounts)}`)
+    }
+    if (fileCheckpoint) {
+      lines.push(
+        `File checkpoint: enabled=${fileCheckpoint.enabled ? 'yes' : 'no'}, allowNonGit=${fileCheckpoint.allowNonGit ? 'yes' : 'no'}, probe=${fileCheckpoint.probe ?? 'unknown'}, isolation=${fileCheckpoint.isolation ?? 'none'}${fileCheckpoint.copyStrategy ? `, copyStrategy=${fileCheckpoint.copyStrategy}` : ''}`,
+      )
+    }
     const advisories = result.advisories as string[] | undefined
     if (advisories && advisories.length > 0) {
       lines.push('', 'Advisories:')
@@ -403,6 +454,8 @@ export function formatRecoveryCheckpointResult(result: Record<string, unknown>):
       checkpointId: string
       state: string
       stateDetail?: string
+      backend: string
+      resourceKind: string
       createdAt: string
       changeCount: number
       receiptHash?: string
@@ -413,7 +466,7 @@ export function formatRecoveryCheckpointResult(result: Record<string, unknown>):
         item.state as Parameters<typeof formatRecoveryStateDiagnostic>[0],
         item.stateDetail,
       )
-      const base = `${item.checkpointId}\t${item.state}\t${item.changeCount} changes\treceipt:${item.receiptHash?.slice(0, 12) ?? '-'}\t${item.createdAt}`
+      const base = `${item.checkpointId}\t${item.state}\t${item.backend}\t${item.resourceKind}\t${item.changeCount} changes\treceipt:${item.receiptHash?.slice(0, 12) ?? '-'}\t${item.createdAt}`
       return diagnostic ? `${base}\n  ${diagnostic}` : base
     })
     return `${lines.join('\n')}\n`

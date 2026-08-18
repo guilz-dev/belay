@@ -119,10 +119,11 @@ belay config judge                        # same summary as belay judge status
 | `modelAssist` | `{ enabled, timeoutMs }` | off |
 | `transactional` | object | off — L2 observed diff |
 
-### `policy.transactional.checkpoint` (Recovery v1)
+### `policy.transactional.checkpoint` (Recovery)
 
-Checkpointing is separately opt-in. It applies only to observed-safe repository-local
-filesystem changes produced by the git-worktree transactional runner.
+Checkpointing is separately opt-in. It applies to observed-safe repository-local filesystem
+changes from the transactional runner (clean Git `git_worktree`, dirty Git `file_checkpoint`,
+or non-Git `file_checkpoint` when `allowNonGit: true`).
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -138,6 +139,29 @@ hash, and path set. Recovery approval always requires the signed token delivered
 a configured out-of-band notification channel, even when general approval signing is
 optional. After `belay approve <approval-id> --token <signed-token>`, invoke the same restore
 command again. There is no standing allow, auto-replay, `--yes`, or force-restore path.
+
+### `policy.transactional.fileCheckpoint`
+
+Separately opt-in dirty-Git and non-Git snapshot backend. Defaults keep both flags disabled.
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `enabled` | `false` | Select `file_checkpoint` for dirty Git when durable checkpointing and isolation are available |
+| `allowNonGit` | `false` | Enable non-Git directory roots after `enabled` is true |
+| `maxSourceBytes` | quota | Visible source file bytes |
+| `maxWorkspaceBytes` | quota | Logical baseline + execution mirror bytes |
+| `maxFiles` | quota | Regular files, symlinks, and directories |
+| `prepareTimeoutMs` | budget | Snapshot preparation timeout |
+| `copyConcurrency` | bounded | File-copy concurrency clamp |
+
+### `belay metrics` report (schema v4)
+
+`belay metrics` reads `audit.logPath` NDJSON and emits gate metrics plus an additive `recovery`
+section. Recovery metrics aggregate snapshot attempts/applied/skipped, backend and resource-kind
+counts, prepare latency p50/p95, sanitized failure reasons, and restore
+applied/conflict/rejected outcomes for all-time and active-cohort records. Recovery metrics are
+observational only; they do not affect authorization, `readyForEnforce`, or automatic feature
+enablement. Older audit records without recovery fields remain readable.
 
 ## `controlPlane`
 

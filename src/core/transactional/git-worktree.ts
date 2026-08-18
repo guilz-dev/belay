@@ -205,6 +205,7 @@ export async function applyWorktreeChanges(
     /** Runs while rollback backups are still available. */
     afterApply?: () => Promise<void>
     observedChanges?: Awaited<ReturnType<typeof buildObservedChangesFromTransactional>>
+    beforeMutation?: () => Promise<void>
   },
 ): Promise<void> {
   const observed =
@@ -215,6 +216,7 @@ export async function applyWorktreeChanges(
     sourceRoot: worktreePath,
     targetRoot: repoRoot,
     changes: observed,
+    beforeMutation: options?.beforeMutation,
     afterApply: options?.afterApply,
   })
 }

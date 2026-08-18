@@ -11,18 +11,20 @@
 
 `belay simulate` は **トリアージ専用**。merge 可否の最終判定は `pnpm corpus` のハードゲートとする。
 
-## 評価コンテキスト（3 系統）
+## 評価コンテキスト（4 系統）
 
-品質ループでは意図的に **3 つの評価コンテキスト** を使い分ける。混同すると「structural は緑なのに probe が赤」などの見かけの矛盾が起きる。
+品質ループでは意図的に **4 つの評価コンテキスト** を使い分ける。混同すると「structural は緑なのに probe が赤」などの見かけの矛盾が起きる。
 
 | 経路 | cwd | policy | 用途 |
 |------|-----|--------|------|
 | `pnpm test:structural` | `fixtures/`（= repoRoot） | `unknownLocalEffect: deny`（厳格） | パーサ・Tier0 回帰 |
 | `pnpm corpus` / `pnpm probe:adversarial` | `/workspace/project/src` | `DEFAULT_CONFIG_V3`（`allow_flagged`） | 本番 DEFAULT に近いハーネス |
+| `pnpm probe:coverage` | `default` / `structural` / `--context audit` | マトリクス fixture、実行なし | 広範分類の soft 観測 |
 | runtime hook | 実際の作業ディレクトリ | ユーザー `config.json` | 本番 |
 
 - **probe / corpus** はサブディレクトリ cwd でネスト `.git` 解決を検証する（`eval-context.test.ts`）。
 - **structural-suite** は repoRoot cwd + deny でより厳格。`npm install` などは structural では ask、DEFAULT では allow になり得る。
+- **`probe:coverage` の `audit`** は `loadLayeredConfig()` を使うため team/repo config（ローカル `~/.config/agent-belay/` 含む）に依存する。CI とローカルで `--compare` 結果が揺れる場合がある。
 - `quality-loop-session.sh --full` は両方走らせ、コンテキスト差による見逃しを減らす。
 
 ## 不変条件
@@ -43,7 +45,7 @@ GENERATE → LABEL → EVALUATE → DIAGNOSE → FIX → VERIFY → RATCHET
 |---|---|
 | GENERATE | `AUTO_LABEL_MUTATORS` × must-ask コア（[`src/corpus/mutators.ts`](../src/corpus/mutators.ts)） |
 | LABEL | auto-label は must-ask のみ。harvest / FP プローブは人手 |
-| EVALUATE | `pnpm corpus` / `pnpm test:structural` / `pnpm test`（`--with-tests`） |
+| EVALUATE | `pnpm corpus` / `pnpm test:structural` / `pnpm probe:coverage`（`--with-coverage`） / `pnpm test`（`--with-tests`） |
 | DIAGNOSE | probe artifact、`belay explain` ヒント、mismatch 一覧 |
 | FIX | tokenizer / parser / Tier0・Tier1 / judge |
 | VERIFY | holdout 再評価、`pnpm test:stable`（`--verify`）、`belay simulate`（参考のみ） |
@@ -76,6 +78,9 @@ pnpm probe:adversarial -- --strict
 
 # フルセッション（corpus + structural + probe + diagnose）
 ./scripts/quality-loop-session.sh --full
+
+# EVALUATE に coverage probe を含める（soft、fixture 変更 vs classifier drift は --compare）
+./scripts/quality-loop-session.sh --full --with-coverage
 
 # EVALUATE に vitest を含める
 ./scripts/quality-loop-session.sh --full --with-tests

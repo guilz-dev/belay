@@ -143,9 +143,13 @@ When those conditions hold:
 - **L3 passthrough** — high-confidence `allow` and predicted `deny_pending_approval`
   bypass transactional execution (L3 remains the fast path / L4 escalation).
 - **Not covered** — effects outside the observed repository-local filesystem diff
-  (network, remote Git, databases, processes, IPC, environment, services), non-git
-  repositories, and external network I/O (L1 egress remains separate). Overlayfs /
-  APFS clone and dirty-repository file-checkpoint backends remain future work.
+  (network, remote Git, databases, processes, IPC, environment, services), and external
+  network I/O (L1 egress remains separate). CoW snapshot backends remain future work.
+- **Delivered opt-in backends** — clean Git (`git_worktree`), dirty Git (`file_checkpoint`
+  with `policy.transactional.fileCheckpoint.enabled`), and non-Git directories
+  (`file_checkpoint` with `allowNonGit: true`) when durable checkpointing and an attested
+  workspace-isolating boundary are configured. Defaults keep both file-checkpoint flags
+  disabled.
 
 ### Sandbox capability broker & control-plane isolation (v0.9, opt-in) — L1-full path
 
