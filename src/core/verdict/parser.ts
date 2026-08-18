@@ -150,6 +150,23 @@ export function extractRecursiveScript(tokens: string[]): string | null {
   return null
 }
 
+/**
+ * True when a recursive script is evaluated from a command argument rather
+ * than expanded from a static launcher recipe. Callers use this semantic fact
+ * to preserve fail-closed policy for dynamic evaluation.
+ */
+export function isDynamicRecursiveEvaluation(tokens: string[]): boolean {
+  const filtered = tokens.filter((token) => token !== 'sudo')
+  const head = normalizeHead(filtered[0] ?? '')
+  if (head === 'eval') {
+    return true
+  }
+  return (
+    (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) &&
+    filtered.some((token) => SCRIPT_FLAGS.has(token))
+  )
+}
+
 export function isBareInterpreter(tokens: string[]): boolean {
   const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens)
   if (xargsStdinOpaque) {

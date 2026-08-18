@@ -8,6 +8,7 @@ import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
   extractRecursiveScript,
+  isDynamicRecursiveEvaluation,
   parseSegment,
   redactCommand,
   segmentOpacity,
@@ -277,8 +278,12 @@ function lowerSegment(
 
   const recursiveScript = extractRecursiveScript(tokens)
   if (recursiveScript) {
+    const dynamicEvaluation = isDynamicRecursiveEvaluation(tokens)
     requirements.push(
-      processRequirement(head || 'sh', 'spawn', commandRedacted, ['shell.recursive_wrapper']),
+      processRequirement(head || 'sh', 'spawn', commandRedacted, [
+        'shell.recursive_wrapper',
+        ...(dynamicEvaluation ? ['dynamic_shell_evaluation'] : []),
+      ]),
     )
     const nested = lowerTopLevelSegments(recursiveScript, {
       ...context,
@@ -297,6 +302,9 @@ function lowerSegment(
       }
     }
     signals.add('shell.recursive_wrapper')
+    if (dynamicEvaluation) {
+      signals.add('dynamic_shell_evaluation')
+    }
     return shellSegment(commandRedacted, head, requirements, 'recursive', signals)
   }
 

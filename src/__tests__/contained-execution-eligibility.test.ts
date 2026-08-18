@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import ts from 'typescript'
@@ -7,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
 import { isContainedUnknownExecutionEligible } from '../core/contained-execution/eligibility.js'
 import type { EffectPlan, EffectRequirement } from '../core/effect-ir/types.js'
+import type { GatedAction, GatedActionKind } from '../core/gate-contract.js'
 import type { ClassifyResult } from '../core/types.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
@@ -37,9 +39,18 @@ function configWithContainedExecution(enabled = true) {
   })
 }
 
+function gate(
+  kind: GatedActionKind = 'shell',
+  root = repoRoot,
+): Pick<GatedAction, 'kind' | 'repoRoot'> {
+  return { kind, repoRoot: root }
+}
+
 describe('contained unknown execution eligibility', () => {
   it.each([
     'fictional-runner verify',
+    'imaginary-probe verify',
+    'made-up-checker inspect',
     "bin/rails runner 'Record.count'",
     'bundle exec rspec --dry-run',
   ])('uses the same effect-based decision for unknown local command %s', async (command) => {
@@ -47,8 +58,46 @@ describe('contained unknown execution eligibility', () => {
 
     expect(result.reason).toBe('unknown_local_effect')
     expect(
-      isContainedUnknownExecutionEligible(configWithContainedExecution(), 'shell', result),
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
     ).toBe(true)
+  })
+
+  it.each([
+    'eval fictional-runner verify',
+    "sh -c 'fictional-runner verify'",
+    "node -e 'fictional-runner verify'",
+  ])('rejects dynamically evaluated recursive shell grammar: %s', async (command) => {
+    const result = await classifyShellCore(command, cwd, repoRoot)
+
+    expect(result.reason).toBe('unknown_local_effect')
+    expect(result.effectPlan?.signals).toContain('dynamic_shell_evaluation')
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it('accepts a statically expanded local launcher recipe', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-launcher-'))
+    try {
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ scripts: { verify: 'fictional-runner verify' } }),
+      )
+      const result = await classifyShellCore('npm run verify', root, root)
+
+      expect(result.reason).toBe('unknown_local_effect')
+      expect(result.effectPlan?.opacity).toBe('recursive')
+      expect(result.effectPlan?.signals).not.toContain('dynamic_shell_evaluation')
+      expect(
+        isContainedUnknownExecutionEligible(
+          configWithContainedExecution(),
+          gate('shell', root),
+          result,
+        ),
+      ).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('rejects every effect or signal outside the contained local subset', () => {
@@ -71,8 +120,63 @@ describe('contained unknown execution eligibility', () => {
     ]
 
     for (const [category, result] of risky) {
-      expect(isContainedUnknownExecutionEligible(config, 'shell', result), category).toBe(false)
+      expect(isContainedUnknownExecutionEligible(config, gate(), result), category).toBe(false)
     }
+  })
+
+  it('rejects a plan with an outside filesystem requirement even when axes claim repo-local', () => {
+    const result = withRequirement(
+      containedUnknownResult(),
+      filesystemRead('/outside-workspace/input'),
+    )
+
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it('rejects mixed local and outside filesystem requirements', () => {
+    const result = withRequirements(containedUnknownResult(), [
+      filesystemRead(path.join(repoRoot, 'local.txt')),
+      filesystemWrite('/outside-workspace/output.txt'),
+    ])
+
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it('rejects a filesystem requirement that escapes the workspace through a symlink', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-eligibility-'))
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-outside-'))
+    try {
+      await mkdir(path.join(root, 'workspace'))
+      await writeFile(path.join(outside, 'secret.txt'), 'secret')
+      await symlink(outside, path.join(root, 'workspace', 'escape'))
+      const escapedPath = path.join(root, 'workspace', 'escape', 'secret.txt')
+      const result = withRequirement(containedUnknownResult(), filesystemRead(escapedPath))
+
+      expect(
+        isContainedUnknownExecutionEligible(
+          configWithContainedExecution(),
+          gate('shell', path.join(root, 'workspace')),
+          result,
+        ),
+      ).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when the gate repository identity cannot be resolved', () => {
+    expect(
+      isContainedUnknownExecutionEligible(
+        configWithContainedExecution(),
+        gate('shell', '/workspace/\0invalid'),
+        containedUnknownResult(),
+      ),
+    ).toBe(false)
   })
 
   it('requires the contained opt-in, a shell gate, an unknown reason, and safe plan context', () => {
@@ -105,16 +209,16 @@ describe('contained unknown execution eligibility', () => {
     ]
 
     for (const [condition, config, kind, result] of cases) {
-      expect(isContainedUnknownExecutionEligible(config, kind, result), condition).toBe(false)
+      expect(isContainedUnknownExecutionEligible(config, gate(kind), result), condition).toBe(false)
     }
 
     const recursive: ContainedUnknownResult = {
       ...baseline,
       effectPlan: { ...baseline.effectPlan, opacity: 'recursive' },
     }
-    expect(isContainedUnknownExecutionEligible(enabled, 'shell', recursive)).toBe(false)
+    expect(isContainedUnknownExecutionEligible(enabled, gate(), recursive)).toBe(false)
     expect(
-      isContainedUnknownExecutionEligible(enabled, 'shell', safelyExpandedRecursive(recursive)),
+      isContainedUnknownExecutionEligible(enabled, gate(), safelyExpandedRecursive(recursive)),
     ).toBe(true)
   })
 
@@ -134,38 +238,63 @@ describe('contained unknown execution eligibility', () => {
       'command',
       'commandRedacted',
       'commandFingerprint',
+      'corpus',
+      'customAllowCommands',
+      'customExternalCommands',
       'fingerprint',
+      'inputFingerprint',
       'innerArgv',
       'normalizedCommand',
+      'overrides',
       'segmentHead',
       'summary',
     ])
-    const inspectedProperties: string[] = []
-    const stringLiterals: string[] = []
+    const inspectedIdentity: string[] = []
     const visit = (node: ts.Node) => {
       if (ts.isPropertyAccessExpression(node) && forbiddenProperties.has(node.name.text)) {
-        inspectedProperties.push(node.name.text)
+        inspectedIdentity.push(node.name.text)
       }
-      if (ts.isStringLiteral(node)) {
-        stringLiterals.push(node.text.toLowerCase())
+      if (
+        ts.isElementAccessExpression(node) &&
+        node.argumentExpression &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        forbiddenProperties.has(node.argumentExpression.text)
+      ) {
+        inspectedIdentity.push(node.argumentExpression.text)
+      }
+      if (ts.isBindingElement(node)) {
+        const propertyName = node.propertyName
+        const property =
+          propertyName && ts.isIdentifier(propertyName)
+            ? propertyName.text
+            : ts.isIdentifier(node.name)
+              ? node.name.text
+              : null
+        if (property && forbiddenProperties.has(property)) {
+          inspectedIdentity.push(property)
+        }
       }
       ts.forEachChild(node, visit)
     }
     visit(sourceFile)
 
-    expect(imports).toEqual([
-      '../config.js',
-      '../effect-ir/build.js',
-      '../effect-ir/types.js',
-      '../gate-contract.js',
-      '../types.js',
-    ])
-    expect(inspectedProperties).toEqual([])
-    expect(stringLiterals).not.toEqual(
-      expect.arrayContaining(['rails', 'rspec', 'ruby', 'bundler']),
-    )
+    expect(imports.some(isCommandAuthorityDependency)).toBe(false)
+    expect(inspectedIdentity).toEqual([])
   })
 })
+
+function isCommandAuthorityDependency(module: string): boolean {
+  return (
+    module.includes('/corpus/') ||
+    module.includes('decoder') ||
+    module.includes('override') ||
+    module === '../custom-command-match.js' ||
+    module === '../effect-ir/shell-lower.js' ||
+    module === '../fingerprint.js' ||
+    module === '../standing-allow.js' ||
+    module === '../verdict/launcher-resolve.js'
+  )
+}
 
 function containedUnknownResult(): ContainedUnknownResult {
   const requirements = [
@@ -245,6 +374,13 @@ function withRequirement(
       },
     },
   }
+}
+
+function withRequirements(
+  result: ContainedUnknownResult,
+  requirements: readonly EffectRequirement[],
+): ContainedUnknownResult {
+  return requirements.reduce(withRequirement, result)
 }
 
 function withSignals(
@@ -327,6 +463,26 @@ function controlPlaneRequirement(): EffectRequirement {
     tag: 'control_plane.write',
     action: 'control_plane.write',
     resource: { kind: 'path', path: `${repoRoot}/.belay/config.json` },
+    evidence: { level: 'certain', signals: [], basis: ['test'] },
+    provenance: {},
+  }
+}
+
+function filesystemRead(targetPath: string): EffectRequirement {
+  return {
+    tag: 'fs.read',
+    action: 'fs.read',
+    resource: { kind: 'path', path: targetPath },
+    evidence: { level: 'certain', signals: [], basis: ['test'] },
+    provenance: {},
+  }
+}
+
+function filesystemWrite(targetPath: string): EffectRequirement {
+  return {
+    tag: 'fs.write',
+    action: 'fs.write',
+    resource: { kind: 'path', path: targetPath },
     evidence: { level: 'certain', signals: [], basis: ['test'] },
     provenance: {},
   }

@@ -1,7 +1,10 @@
+import path from 'node:path'
+
 import type { BelayConfigV3 } from '../config.js'
 import { collectRequirements } from '../effect-ir/build.js'
 import type { EffectPlan, EffectRequirement } from '../effect-ir/types.js'
-import type { GatedActionKind } from '../gate-contract.js'
+import type { GatedAction } from '../gate-contract.js'
+import { resolveWorkspaceRootMatch } from '../path-utils.js'
 import type { ClassifyResult } from '../types.js'
 
 const FORBIDDEN_SIGNALS = new Set([
@@ -24,7 +27,7 @@ const FORBIDDEN_SIGNALS = new Set([
  */
 export function isContainedUnknownExecutionEligible(
   config: BelayConfigV3,
-  kind: GatedActionKind,
+  action: Pick<GatedAction, 'kind' | 'repoRoot'>,
   result: ClassifyResult,
 ): boolean {
   const contained = config.sandbox.containedExecution
@@ -32,7 +35,9 @@ export function isContainedUnknownExecutionEligible(
     !contained?.enabled ||
     !config.sandbox.enabled ||
     config.sandbox.runtime !== 'container' ||
-    kind !== 'shell' ||
+    action.kind !== 'shell' ||
+    !path.isAbsolute(action.repoRoot) ||
+    !hasResolvedRepoIdentity(action.repoRoot) ||
     !config.gates.shell ||
     result.reason !== 'unknown_local_effect' ||
     result.axes?.location !== 'repo_local' ||
@@ -51,7 +56,7 @@ export function isContainedUnknownExecutionEligible(
     requirements.length === 0 ||
     !hasSafeRecursiveExpansion(plan, requirements) ||
     !requirements.some((requirement) => requirement.action === 'process.exec') ||
-    requirements.some((requirement) => !isPermittedRequirement(requirement))
+    requirements.some((requirement) => !isPermittedRequirement(requirement, action.repoRoot))
   ) {
     return false
   }
@@ -73,7 +78,7 @@ function hasSafeRecursiveExpansion(
   )
 }
 
-function isPermittedRequirement(requirement: EffectRequirement): boolean {
+function isPermittedRequirement(requirement: EffectRequirement, repoRoot: string): boolean {
   if (requirement.tag === 'indeterminate' || requirement.action === 'indeterminate') {
     return (
       requirement.tag === 'indeterminate' &&
@@ -92,8 +97,26 @@ function isPermittedRequirement(requirement: EffectRequirement): boolean {
   return (
     ((requirement.tag === 'fs.read' && requirement.action === 'fs.read') ||
       (requirement.tag === 'fs.write' && requirement.action === 'fs.write')) &&
-    requirement.resource.kind === 'path'
+    requirement.resource.kind === 'path' &&
+    isRepoLocalPath(repoRoot, requirement.resource.path)
   )
+}
+
+function isRepoLocalPath(repoRoot: string, targetPath: string): boolean {
+  try {
+    return resolveWorkspaceRootMatch(repoRoot, [], targetPath)?.kind === 'repo'
+  } catch {
+    return false
+  }
+}
+
+function hasResolvedRepoIdentity(repoRoot: string): boolean {
+  try {
+    const match = resolveWorkspaceRootMatch(repoRoot, [], repoRoot)
+    return match?.kind === 'repo' && match.relativePath === '.'
+  } catch {
+    return false
+  }
 }
 
 function collectSignals(
