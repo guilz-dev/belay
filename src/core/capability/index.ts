@@ -12,7 +12,12 @@ export {
   BOUNDARY_ATTESTATION_VERSION,
   type BoundaryAttestation,
   type BoundaryDriverId,
+  CONTAINED_EXECUTION_ATTESTATION_VERSION,
+  type ContainedExecutionAttestation,
+  type ContainedExecutionResourceLimits,
   isAttestationFresh,
+  isContainedExecutionAttestationFresh,
+  validateContainedExecutionAttestation,
 } from './attestation.js'
 export {
   BOUNDARY_PROFILE_L1_ATTESTED,

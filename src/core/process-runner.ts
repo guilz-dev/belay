@@ -4,8 +4,10 @@ export interface ShellRunResult {
   exitCode: number | null
   signal: string | null
   timedOut: boolean
-  stdout?: string
-  stderr?: string
+  stdout: string
+  stderr: string
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
 }
 
 const PROCESS_OUTPUT_TAIL_BYTES = 16_384
@@ -13,9 +15,19 @@ const EXIT_OUTPUT_GRACE_MS = 25
 const TIMEOUT_KILL_GRACE_MS = 250
 const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000
 
-function appendOutputTail(current: Buffer, chunk: Buffer | string): Buffer {
+function appendOutputTail(
+  current: Buffer,
+  chunk: Buffer | string,
+): {
+  tail: Buffer
+  truncated: boolean
+} {
   const next = Buffer.concat([current, Buffer.from(chunk)])
-  return next.length > PROCESS_OUTPUT_TAIL_BYTES ? next.subarray(-PROCESS_OUTPUT_TAIL_BYTES) : next
+  return {
+    tail:
+      next.length > PROCESS_OUTPUT_TAIL_BYTES ? next.subarray(-PROCESS_OUTPUT_TAIL_BYTES) : next,
+    truncated: next.length > PROCESS_OUTPUT_TAIL_BYTES,
+  }
 }
 
 export function windowsProcessTreeKillArgs(pid: number): string[] {
@@ -64,16 +76,22 @@ export function runProcessWithBoundedOutput(
     })
     let stdout: Buffer = Buffer.alloc(0)
     let stderr: Buffer = Buffer.alloc(0)
+    let stdoutTruncated = false
+    let stderrTruncated = false
     let timedOut = false
     let settled = false
     let windowsCleanupPending = false
     let exitTimer: NodeJS.Timeout | undefined
 
     child.stdout.on('data', (chunk) => {
-      stdout = appendOutputTail(stdout, chunk)
+      const output = appendOutputTail(stdout, chunk)
+      stdout = output.tail
+      stdoutTruncated ||= output.truncated
     })
     child.stderr.on('data', (chunk) => {
-      stderr = appendOutputTail(stderr, chunk)
+      const output = appendOutputTail(stderr, chunk)
+      stderr = output.tail
+      stderrTruncated ||= output.truncated
     })
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
@@ -93,6 +111,8 @@ export function runProcessWithBoundedOutput(
         timedOut,
         stdout: stdout.toString('utf8'),
         stderr: stderr.toString('utf8'),
+        stdoutTruncated,
+        stderrTruncated,
       })
     }
 
@@ -126,7 +146,9 @@ export function runProcessWithBoundedOutput(
     }, timeoutMs)
 
     child.on('error', (error) => {
-      stderr = appendOutputTail(stderr, error.message)
+      const output = appendOutputTail(stderr, error.message)
+      stderr = output.tail
+      stderrTruncated ||= output.truncated
       finish(1, null)
     })
     child.on('exit', (exitCode, signal) => {

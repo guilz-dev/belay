@@ -1,4 +1,5 @@
 export const BOUNDARY_ATTESTATION_VERSION = 1 as const
+export const CONTAINED_EXECUTION_ATTESTATION_VERSION = 1 as const
 
 export type BoundaryDriverId =
   | 'container'
@@ -6,6 +7,26 @@ export type BoundaryDriverId =
   | 'seatbelt'
   | 'landlock'
   | 'host-integration'
+
+export interface ContainedExecutionResourceLimits {
+  timeoutMs: number
+  memoryMiB: number
+  cpus: number
+  pids: number
+}
+
+/** A separate execution-only capability; it does not attest L1 grant enforcement. */
+export interface ContainedExecutionAttestation {
+  version: typeof CONTAINED_EXECUTION_ATTESTATION_VERSION
+  imageId: string
+  networkNone: true
+  isolatesWorkspaceMirror: true
+  readOnlyRoot: true
+  sanitizedEnvironment: true
+  resourceLimits: ContainedExecutionResourceLimits
+  probedAt: string
+  expiresAt: string
+}
 
 export interface BoundaryAttestation {
   version: typeof BOUNDARY_ATTESTATION_VERSION
@@ -17,6 +38,8 @@ export interface BoundaryAttestation {
   probeSignals: string[]
   /** When true, the driver can mount an execution mirror at the original workspace path. */
   isolatesWorkspaceMounts?: boolean
+  /** Optional, execution-only proof. This must never be treated as an L1-full attestation. */
+  containedExecution?: ContainedExecutionAttestation
 }
 
 const KNOWN_DRIVERS = new Set<BoundaryDriverId>([
@@ -59,6 +82,12 @@ export function validateBoundaryAttestation(value: unknown): value is BoundaryAt
   ) {
     return false
   }
+  if (
+    record.containedExecution !== undefined &&
+    !validateContainedExecutionAttestation(record.containedExecution)
+  ) {
+    return false
+  }
   if (record.driver === 'host-integration' && record.materializesGrants) {
     return false
   }
@@ -70,6 +99,58 @@ export function validateBoundaryAttestation(value: unknown): value is BoundaryAt
     return false
   }
   return true
+}
+
+function hasPositiveLimit(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function hasPositiveIntegerLimit(value: unknown): value is number {
+  return hasPositiveLimit(value) && Number.isSafeInteger(value)
+}
+
+export function validateContainedExecutionAttestation(
+  value: unknown,
+): value is ContainedExecutionAttestation {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const record = value as ContainedExecutionAttestation
+  if (
+    record.version !== CONTAINED_EXECUTION_ATTESTATION_VERSION ||
+    typeof record.imageId !== 'string' ||
+    !/^sha256:[a-f0-9]{64}$/i.test(record.imageId) ||
+    record.networkNone !== true ||
+    record.isolatesWorkspaceMirror !== true ||
+    record.readOnlyRoot !== true ||
+    record.sanitizedEnvironment !== true ||
+    typeof record.probedAt !== 'string' ||
+    typeof record.expiresAt !== 'string'
+  ) {
+    return false
+  }
+  const probedAt = Date.parse(record.probedAt)
+  const expiresAt = Date.parse(record.expiresAt)
+  if (!Number.isFinite(probedAt) || !Number.isFinite(expiresAt) || expiresAt <= probedAt) {
+    return false
+  }
+  const limits = record.resourceLimits
+  return (
+    Boolean(limits) &&
+    hasPositiveIntegerLimit(limits.timeoutMs) &&
+    hasPositiveIntegerLimit(limits.memoryMiB) &&
+    hasPositiveLimit(limits.cpus) &&
+    hasPositiveIntegerLimit(limits.pids)
+  )
+}
+
+export function isContainedExecutionAttestationFresh(
+  attestation: ContainedExecutionAttestation | null | undefined,
+  now = Date.now(),
+): boolean {
+  return (
+    validateContainedExecutionAttestation(attestation) && Date.parse(attestation.expiresAt) > now
+  )
 }
 
 export function isAttestationFresh(attestation: BoundaryAttestation, now = Date.now()): boolean {
