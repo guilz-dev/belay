@@ -5,9 +5,11 @@ import type { HookVerdict } from '../core/types.js'
 
 export const COVERAGE_MATRIX_VERSION = 1 as const
 
-/** Phase 1 contexts. Phase 2 adds `audit`. */
-export const COVERAGE_CONTEXT_IDS = ['default', 'structural'] as const
+export const COVERAGE_CONTEXT_IDS = ['default', 'structural', 'audit'] as const
 export type CoverageContextId = (typeof COVERAGE_CONTEXT_IDS)[number]
+
+/** Default probe run excludes opt-in `audit`. */
+export const DEFAULT_PROBE_CONTEXT_IDS = ['default', 'structural'] as const
 
 export interface CoverageExpectation {
   verdict: HookVerdict

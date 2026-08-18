@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
+import path from 'node:path'
 
+import { loadLayeredConfig } from '../config-io.js'
 import {
   type BelayConfigV4,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
   mergeConfig,
 } from '../core/config.js'
+import type { ConfigProvenanceEntry } from '../core/config-layers.js'
 import type { ClassifierOptions } from '../core/types.js'
 import type { CoverageContextId } from './coverage-matrix.js'
 import { DEFAULT_CORPUS_REPO_ROOT } from './runtime-match.js'
@@ -17,6 +20,7 @@ export interface CoverageEvalContext {
   cwd: string
   repoRoot: string
   options: ClassifierOptions
+  configProvenance?: ConfigProvenanceEntry[]
 }
 
 export function structuralCoverageConfig(): BelayConfigV4 {
@@ -32,11 +36,12 @@ export function structuralCoverageConfig(): BelayConfigV4 {
   )
 }
 
-export function buildCoverageEvalContexts(
+export async function buildCoverageEvalContexts(
   contextIds: CoverageContextId[],
   repoRoot: string,
-): CoverageEvalContext[] {
-  const fixtureRoot = structuralFixtureRoot(repoRoot)
+): Promise<CoverageEvalContext[]> {
+  const resolvedRepoRoot = path.resolve(repoRoot)
+  const fixtureRoot = structuralFixtureRoot(resolvedRepoRoot)
   const contexts: CoverageEvalContext[] = []
 
   for (const contextId of contextIds) {
@@ -63,6 +68,19 @@ export function buildCoverageEvalContexts(
           trustedCwd: true,
         },
       })
+      continue
+    }
+
+    if (contextId === 'audit') {
+      const layered = await loadLayeredConfig(resolvedRepoRoot)
+      contexts.push({
+        id: 'audit',
+        config: layered.config,
+        cwd: resolvedRepoRoot,
+        repoRoot: resolvedRepoRoot,
+        options: {},
+        configProvenance: layered.provenance,
+      })
     }
   }
 
@@ -86,5 +104,6 @@ export function resolvedConfigHash(context: CoverageEvalContext): string {
     },
     cwd: context.cwd,
     repoRoot: context.repoRoot,
+    configProvenance: context.configProvenance,
   })
 }

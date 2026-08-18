@@ -6,14 +6,19 @@ import { classifierOptionsFromConfig } from '../core/config.js'
 import type { ClassifyResult, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import {
+  compareCoverageReports,
+  formatCoverageCompareReport,
+} from './coverage-compare.js'
+import {
   buildCoverageEvalContexts,
   type CoverageEvalContext,
   hashStableJson,
   resolvedConfigHash,
 } from './coverage-contexts.js'
+import type { ConfigProvenanceEntry } from '../core/config-layers.js'
 import {
   assertKnownContextIds,
-  COVERAGE_CONTEXT_IDS,
+  DEFAULT_PROBE_CONTEXT_IDS,
   type CoverageContextId,
   type CoverageExpectation,
   type CoverageMatrix,
@@ -30,7 +35,7 @@ export class CoverageProbeCliError extends Error {
   }
 }
 
-export const COVERAGE_PROBE_REPORT_SCHEMA_VERSION = 1 as const
+export const COVERAGE_PROBE_REPORT_SCHEMA_VERSION = 2 as const
 
 export type ClassifyFn = (
   command: string,
@@ -57,6 +62,7 @@ export interface CoverageCaseResult {
   tags: string[]
   observeOnly: boolean
   expectation?: CoverageExpectation
+  expectationHash: string | null
   actual: {
     verdict: HookVerdict
     reason: string
@@ -79,6 +85,7 @@ export interface CoverageProbeReport {
     cwd: string
     repoRoot: string
     resolvedConfigHash: string
+    configProvenance?: ConfigProvenanceEntry[]
   }>
   summary: {
     total: number
@@ -177,10 +184,10 @@ export async function evaluateCoverageMatrix(
   options: CoverageProbeOptions = {},
 ): Promise<CoverageCaseResult[]> {
   const classifyFn = options.classifyFn ?? defaultClassifyFn
-  const contextIds = options.contextIds ?? [...COVERAGE_CONTEXT_IDS]
+  const contextIds = options.contextIds ?? [...DEFAULT_PROBE_CONTEXT_IDS]
   const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot())
   const filters = options.filters ?? []
-  const contexts = buildCoverageEvalContexts(contextIds, repoRoot)
+  const contexts = await buildCoverageEvalContexts(contextIds, repoRoot)
   const cases = flattenCoverageCases(matrix).filter((testCase) =>
     caseMatchesFilter(testCase, filters),
   )
@@ -204,6 +211,7 @@ export async function evaluateCoverageMatrix(
         tags: testCase.tags,
         observeOnly,
         expectation,
+        expectationHash: expectation ? hashStableJson(expectation) : null,
         actual: {
           verdict: actual.verdict,
           reason: actual.reason,
@@ -274,8 +282,8 @@ export async function runCoverageProbe(
   const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot())
   const matrixPath = path.resolve(options.matrixPath ?? defaultCoverageMatrixPath(repoRoot))
   const matrix = await loadCoverageMatrix(matrixPath)
-  const contextIds = options.contextIds ?? [...COVERAGE_CONTEXT_IDS]
-  const contexts = buildCoverageEvalContexts(contextIds, repoRoot)
+  const contextIds = options.contextIds ?? [...DEFAULT_PROBE_CONTEXT_IDS]
+  const contexts = await buildCoverageEvalContexts(contextIds, repoRoot)
   const repeat = Math.max(1, options.repeat ?? 1)
   const filters = options.filters ?? []
 
@@ -307,6 +315,7 @@ export async function runCoverageProbe(
       cwd: evalContext.cwd,
       repoRoot: evalContext.repoRoot,
       resolvedConfigHash: resolvedConfigHash(evalContext),
+      configProvenance: evalContext.configProvenance,
     })),
     summary: summarizeResults(results, filters),
     results,
@@ -357,6 +366,7 @@ export function parseCoverageProbeCliArgs(argv: string[]): {
   repeat: number
   strict: boolean
   outputDir?: string
+  comparePath?: string
   json: boolean
 } {
   let repoRoot: string | undefined
@@ -366,6 +376,7 @@ export function parseCoverageProbeCliArgs(argv: string[]): {
   let repeat = 1
   let strict = false
   let outputDir: string | undefined
+  let comparePath: string | undefined
   let json = false
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -395,6 +406,8 @@ export function parseCoverageProbeCliArgs(argv: string[]): {
       }
     } else if (arg === '--output-dir' && argv[i + 1]) {
       outputDir = argv[++i]
+    } else if (arg === '--compare' && argv[i + 1]) {
+      comparePath = argv[++i]
     } else if (arg === '--strict') {
       strict = true
     } else if (arg === '--json') {
@@ -402,7 +415,7 @@ export function parseCoverageProbeCliArgs(argv: string[]): {
     }
   }
 
-  return { repoRoot, matrixPath, contextIds, filters, repeat, strict, outputDir, json }
+  return { repoRoot, matrixPath, contextIds, filters, repeat, strict, outputDir, comparePath, json }
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -431,6 +444,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
       if (!parsed.json) {
         console.log(`\nWrote ${outputPath}`)
+      }
+    }
+
+    if (parsed.comparePath) {
+      const baselineRaw = JSON.parse(await readFile(path.resolve(parsed.comparePath), 'utf8')) as CoverageProbeReport
+      const compareReport = compareCoverageReports(baselineRaw, report)
+      if (!parsed.json) {
+        console.log(`\n${formatCoverageCompareReport(compareReport)}`)
+      }
+      if (compareReport.configDrift.length > 0) {
+        console.warn(
+          `\nWARNING: config drift detected for ${compareReport.configDrift.length} context(s); compare may include classifier drift from config changes`,
+        )
       }
     }
 

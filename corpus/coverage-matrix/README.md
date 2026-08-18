@@ -22,14 +22,19 @@ pnpm probe:coverage -- --output-dir artifacts/coverage-probe
 Excluded from `pnpm test`. Meta tests for loader/runner live in
 `src/__tests__/corpus/coverage-probe.test.ts`.
 
-## Evaluation contexts (Phase 1)
+## Evaluation contexts
 
 | context | config | cwd | repoRoot |
 |---------|--------|-----|----------|
 | `default` | `DEFAULT_CONFIG_V3` | `/workspace/project/src` | `/workspace/project` |
 | `structural` | enforce + deny policy | `src/__tests__/verdict/fixtures` | same |
+| `audit` | `loadLayeredConfig()` + provenance | actual repo root | same (opt-in via `--context audit`) |
 
-Phase 2 adds `audit` via `--context audit` (opt-in).
+Default run uses `default` + `structural` only. Compare prior artifacts with:
+
+```bash
+pnpm probe:coverage -- --output-dir artifacts/coverage-probe --compare artifacts/coverage-probe/run-<stamp>.json
+```
 
 ## Case shape
 
