@@ -16,11 +16,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { approvePending } from '../commands/approve.js'
 import { recoveryCheckpointCommand } from '../commands/recovery-checkpoints.js'
 import { loadApprovalState, writeConfigFile } from '../config-io.js'
 import { issueApprovalToken } from '../core/approval-token.js'
+import * as boundarySession from '../core/capability/boundary-session.js'
 import {
   configuredControlPlaneDir,
   DEFAULT_CONFIG_V3,
@@ -162,6 +163,7 @@ async function rewriteArtifactBindings(
 
 describe('recovery checkpoints', () => {
   afterEach(async () => {
+    vi.restoreAllMocks()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -211,6 +213,145 @@ describe('recovery checkpoints', () => {
       backend: 'file_checkpoint',
       probeSignals: ['dirty_git_worktree', 'file_checkpoint', 'observed_repo_local_diff'],
     })
+  })
+
+  it('emits manifest v2 for non-git file_checkpoint checkpoints', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-'))
+    tempDirs.push(workspaceRoot)
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-exec-'))
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(workspaceRoot, '.recovery-state')
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'plain.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot: workspaceRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'non-git-file-checkpoint',
+      changes: [{ relativePath: 'plain.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+
+    expect(checkpoint.manifest).toMatchObject({
+      version: 2,
+      backend: 'file_checkpoint',
+      resourceKind: 'directory',
+    })
+    expect(checkpoint.manifest.proof).toMatchObject({
+      backend: 'file_checkpoint',
+      probeSignals: [
+        'non_git_workspace',
+        'non_git_file_checkpoint',
+        'file_checkpoint',
+        'observed_repo_local_diff',
+      ],
+    })
+    expect(checkpoint.manifest.repoIdentity).toBe(
+      await currentRecoveryResourceIdentity(workspaceRoot, 'directory'),
+    )
+  })
+
+  it('rejects checkpoint preparation when expected resource identity drifted', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-identity-'))
+    tempDirs.push(workspaceRoot)
+    const executionRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-recovery-nongit-identity-exec-'),
+    )
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(workspaceRoot, '.recovery-state')
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'plain.txt'), 'after\n')
+    const expectedIdentity = await currentRecoveryResourceIdentity(workspaceRoot, 'directory')
+    await rm(workspaceRoot, { recursive: true, force: true })
+    await mkdir(workspaceRoot, { recursive: true })
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+
+    await expect(
+      prepareRecoveryCheckpoint({
+        stateDir,
+        repoRoot: workspaceRoot,
+        worktreePath: executionRoot,
+        commandFingerprint: 'identity-drift',
+        changes: [{ relativePath: 'plain.txt', kind: 'modified' }],
+        config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        backend: 'file_checkpoint',
+        expectedResourceIdentity: expectedIdentity,
+      }),
+    ).rejects.toThrow('recovery_checkpoint_repo_mismatch')
+  })
+
+  it('derives git_repository for file_checkpoint checkpoints in Git workspaces', async () => {
+    const repoRoot = await createGitRepo()
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-fcp-derived-'))
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(repoRoot, '.recovery-state')
+    await writeFile(path.join(repoRoot, 'dirty.txt'), 'dirty baseline\n')
+    await writeFile(path.join(executionRoot, 'dirty.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'derived-git-file-checkpoint',
+      changes: [{ relativePath: 'dirty.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+
+    expect(checkpoint.manifest).toMatchObject({
+      version: 2,
+      resourceKind: 'git_repository',
+    })
+    expect(checkpoint.manifest.proof.probeSignals).toEqual([
+      'dirty_git_worktree',
+      'file_checkpoint',
+      'observed_repo_local_diff',
+    ])
+  })
+
+  it('lists directory resource kind in checkpoint summaries', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-list-'))
+    tempDirs.push(workspaceRoot)
+    const executionRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-list-exec-'))
+    tempDirs.push(executionRoot)
+    const stateDir = path.join(workspaceRoot, '.cursor', 'belay')
+    await writeConfigFile(workspaceRoot, {
+      ...DEFAULT_CONFIG_V3,
+      controlPlane: { ...DEFAULT_CONFIG_V3.controlPlane, enabled: true, configDir: stateDir },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        },
+      },
+    })
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'plain.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot: workspaceRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'non-git-list',
+      changes: [{ relativePath: 'plain.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+
+    const summaries = await listRecoveryCheckpoints(stateDir, workspaceRoot)
+    expect(summaries).toEqual([
+      expect.objectContaining({
+        checkpointId: checkpoint.checkpointId,
+        backend: 'file_checkpoint',
+        resourceKind: 'directory',
+      }),
+    ])
+
+    const status = await recoveryCheckpointCommand({
+      targetDir: workspaceRoot,
+      subcommand: 'status',
+    })
+    expect(status.resourceKindCounts).toEqual({ directory: 1 })
   })
 
   it('captures file-checkpoint recovery pre-images from the immutable baseline', async () => {
@@ -277,6 +418,48 @@ describe('recovery checkpoints', () => {
     expect(status.fileCheckpoint).toBeDefined()
     if (!status.fileCheckpoint) throw new Error('missing fileCheckpoint status')
     expect(['clonefile', 'reflink', 'copy']).toContain(status.fileCheckpoint.copyStrategy)
+  })
+
+  it('reports file-checkpoint unavailable when the attestation driver mismatches config', async () => {
+    const repoRoot = await createGitRepo()
+    await writeConfigFile(repoRoot, {
+      ...DEFAULT_CONFIG_V3,
+      capability: {
+        ...DEFAULT_CONFIG_V3.capability,
+        boundaryDriver: 'host-integration',
+      },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          enabled: true,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: true,
+          },
+          checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        },
+      },
+    })
+    vi.spyOn(boundarySession, 'boundarySessionStatus').mockResolvedValue({
+      attestationPath: '',
+      attestation: {
+        version: 1,
+        driver: 'container',
+        probedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        deniesUngrantedEffects: true,
+        materializesGrants: true,
+        isolatesWorkspaceMounts: true,
+        probeSignals: ['docker', 'workspace-mount-isolation'],
+      },
+      fresh: true,
+    })
+
+    const status = await recoveryCheckpointCommand({ targetDir: repoRoot, subcommand: 'status' })
+
+    expect(status.fileCheckpoint?.probe).toBe('unavailable')
+    expect(status.fileCheckpoint?.isolation).toBeNull()
   })
 
   it('skips clone probe when file checkpoint is disabled in recover status', async () => {
@@ -745,6 +928,101 @@ describe('recovery checkpoints', () => {
     expect(pendingAfterRestore.approvals).toHaveLength(0)
   })
 
+  it('requires and consumes an exact one-shot approval before CLI restore for non-git directory', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-one-shot-'))
+    tempDirs.push(workspaceRoot)
+    const stateDir = path.join(workspaceRoot, '.cursor', 'belay')
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      controlPlane: { ...DEFAULT_CONFIG_V3.controlPlane, enabled: true, configDir: stateDir },
+      policy: {
+        ...DEFAULT_CONFIG_V3.policy,
+        transactional: {
+          ...DEFAULT_CONFIG_V3.policy.transactional,
+          fileCheckpoint: {
+            ...DEFAULT_CONFIG_V3.policy.transactional.fileCheckpoint,
+            enabled: true,
+            allowNonGit: true,
+          },
+          checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+        },
+      },
+    }
+    await writeConfigFile(workspaceRoot, config)
+    await writeFile(path.join(workspaceRoot, 'modified.txt'), 'before\n')
+    const executionRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-recovery-nongit-one-shot-exec-'),
+    )
+    tempDirs.push(executionRoot)
+    await writeFile(path.join(executionRoot, 'modified.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot: workspaceRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'non-git-file-checkpoint-one-shot',
+      changes: [{ relativePath: 'modified.txt', kind: 'modified' }],
+      config: config.policy.transactional.checkpoint,
+      backend: 'file_checkpoint',
+    })
+    await writeFile(path.join(workspaceRoot, 'modified.txt'), 'after\n')
+    await markRecoveryCheckpointApplying(stateDir, checkpoint)
+    await markRecoveryCheckpointApplied(stateDir, checkpoint)
+    const checkpointId = checkpoint.checkpointId
+
+    const denied = await recoveryCheckpointCommand({
+      targetDir: workspaceRoot,
+      subcommand: 'apply',
+      checkpointId,
+    })
+    expect(denied).toMatchObject({ ok: false, verdict: 'deny_pending_approval' })
+    const approvalId = String(denied.approvalId)
+    await expect(approvePending({ targetDir: workspaceRoot, approvalId })).resolves.toMatchObject({
+      ok: false,
+    })
+    const pending = await loadApprovalState(workspaceRoot, 'pending-approvals.json', config)
+    const request = pending.approvals.find((entry) => entry.approvalId === approvalId)
+    expect(request).toBeDefined()
+    const token = await issueApprovalToken(
+      {
+        approvalId,
+        fingerprint: request?.fingerprint ?? '',
+        repoRoot: request?.repoRoot ?? '',
+        issuedAt: request?.createdAt ?? '',
+        expiresAt: request?.expiresAt ?? '',
+      },
+      configuredControlPlaneDir(config),
+    )
+    await expect(
+      approvePending({ targetDir: workspaceRoot, approvalId, token }),
+    ).resolves.toMatchObject({ ok: true })
+
+    const attempts = await Promise.allSettled([
+      recoveryCheckpointCommand({ targetDir: workspaceRoot, subcommand: 'apply', checkpointId }),
+      recoveryCheckpointCommand({ targetDir: workspaceRoot, subcommand: 'apply', checkpointId }),
+    ])
+    const restored = attempts.filter(
+      (attempt) =>
+        attempt.status === 'fulfilled' &&
+        attempt.value.ok === true &&
+        attempt.value.verdict === 'restored',
+    )
+    expect(restored).toHaveLength(1)
+    await expect(readFile(path.join(workspaceRoot, 'modified.txt'), 'utf8')).resolves.toBe(
+      'before\n',
+    )
+    const approvedRaw = await readFile(
+      path.join(workspaceRoot, '.cursor', 'belay', 'approved-approvals.json'),
+      'utf8',
+    )
+    expect(JSON.parse(approvedRaw).approvals).toHaveLength(0)
+    const pendingAfterRestore = await loadApprovalState(
+      workspaceRoot,
+      'pending-approvals.json',
+      config,
+    )
+    expect(pendingAfterRestore.approvals).toHaveLength(0)
+  })
+
   it('fails closed without touching the repo when checkpoint quota cannot be reserved', async () => {
     const repoRoot = await createGitRepo()
     const predicted = await classifyShellCore(
@@ -840,6 +1118,40 @@ describe('recovery checkpoints', () => {
       'recovery_checkpoint_repo_mismatch',
     )
     await expect(readFile(path.join(repoRoot, 'modified.txt'), 'utf8')).resolves.toBe('after\n')
+  })
+
+  it('rejects a non-git directory recreated at the same path', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-rebind-'))
+    tempDirs.push(workspaceRoot)
+    const executionRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-recovery-nongit-rebind-exec-'),
+    )
+    tempDirs.push(executionRoot)
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-recovery-nongit-rebind-state-'))
+    tempDirs.push(stateDir)
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'before\n')
+    await writeFile(path.join(executionRoot, 'plain.txt'), 'after\n')
+    const checkpoint = await prepareRecoveryCheckpoint({
+      stateDir,
+      repoRoot: workspaceRoot,
+      worktreePath: executionRoot,
+      commandFingerprint: 'non-git-rebind',
+      changes: [{ relativePath: 'plain.txt', kind: 'modified' }],
+      config: { ...DEFAULT_RECOVERY_CHECKPOINT, enabled: true },
+      backend: 'file_checkpoint',
+    })
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'after\n')
+    await markRecoveryCheckpointApplying(stateDir, checkpoint)
+    await markRecoveryCheckpointApplied(stateDir, checkpoint)
+
+    await rm(workspaceRoot, { recursive: true, force: true })
+    await mkdir(workspaceRoot, { recursive: true })
+    await writeFile(path.join(workspaceRoot, 'plain.txt'), 'after\n')
+
+    await expect(restoreRecoveryCheckpoint(stateDir, checkpoint.checkpointId)).rejects.toThrow(
+      'recovery_checkpoint_repo_mismatch',
+    )
+    await expect(readFile(path.join(workspaceRoot, 'plain.txt'), 'utf8')).resolves.toBe('after\n')
   })
 
   it('cleans orphaned staging directories and applies quotas per repository', async () => {

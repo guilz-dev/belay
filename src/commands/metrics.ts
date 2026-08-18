@@ -38,6 +38,60 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Audi
   })
 }
 
+function formatRecoveryMetricsSection(
+  label: string,
+  metrics: AuditMetricsReport['recovery'],
+  excluded?: { snapshotAttempts: number; restoreEvents: number },
+): string[] {
+  const lines = [
+    '',
+    label,
+    `Snapshot attempts: ${metrics.snapshot.attempts} (${metrics.snapshot.applied} applied, ${metrics.snapshot.skipped} skipped)`,
+  ]
+  if (excluded) {
+    lines.push(
+      `- excluded historical/mismatched snapshot attempts: ${excluded.snapshotAttempts}`,
+      `- excluded historical/mismatched restore events: ${excluded.restoreEvents}`,
+    )
+  }
+  if (metrics.snapshot.prepareSampleCount > 0) {
+    lines.push(
+      `Snapshot prepare latency: p50 ${metrics.snapshot.prepareMsP50 ?? 0}ms, p95 ${metrics.snapshot.prepareMsP95 ?? 0}ms (${metrics.snapshot.prepareSampleCount} samples)`,
+    )
+  }
+  if (Object.keys(metrics.snapshot.byBackend).length > 0) {
+    lines.push('Snapshot backends:')
+    for (const [backend, count] of Object.entries(metrics.snapshot.byBackend).sort(
+      (left, right) => right[1] - left[1],
+    )) {
+      lines.push(`- ${backend}: ${count}`)
+    }
+  }
+  if (Object.keys(metrics.snapshot.byResourceKind).length > 0) {
+    lines.push('Snapshot resource kinds:')
+    for (const [resourceKind, count] of Object.entries(metrics.snapshot.byResourceKind).sort(
+      (left, right) => right[1] - left[1],
+    )) {
+      lines.push(`- ${resourceKind}: ${count}`)
+    }
+  }
+  if (Object.keys(metrics.snapshot.failuresByReason).length > 0) {
+    lines.push('Snapshot failures by reason:')
+    for (const [reason, count] of Object.entries(metrics.snapshot.failuresByReason).sort(
+      (left, right) => right[1] - left[1],
+    )) {
+      lines.push(`- ${reason}: ${count}`)
+    }
+  }
+  const restoreTotal = metrics.restore.applied + metrics.restore.conflict + metrics.restore.rejected
+  if (restoreTotal > 0) {
+    lines.push(
+      `Restore outcomes: ${metrics.restore.applied} applied, ${metrics.restore.conflict} conflict, ${metrics.restore.rejected} rejected`,
+    )
+  }
+  return lines
+}
+
 export function formatMetricsReport(report: AuditMetricsReport): string {
   const lines = [
     `belay metrics for ${report.auditLogPath}`,
@@ -203,6 +257,18 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
       report.dogfood.readyForEnforce ? 'Ready for enforce: yes' : 'Ready for enforce: not yet',
     )
   }
+
+  lines.push(
+    ...formatRecoveryMetricsSection('All-time recovery metrics:', report.recovery),
+    ...formatRecoveryMetricsSection(
+      'Current-cohort recovery metrics:',
+      report.currentCohortRecovery,
+      {
+        snapshotAttempts: report.currentCohortRecovery.excludedSnapshotAttempts,
+        restoreEvents: report.currentCohortRecovery.excludedRestoreEvents,
+      },
+    ),
+  )
 
   return `${lines.join('\n')}\n`
 }

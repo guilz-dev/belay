@@ -118,8 +118,8 @@ with no regretted miss and few enough asks to keep enforce mode on.
 *Turn Dial 1: convert "assumed reversible" into "proven reversible," and stop
 re-asking what a human already blessed.*
 
-- **L2 substrate — git-worktree observation delivered; durable repo-local checkpoint
-  recovery delivered as opt-in.** CoW and dirty/non-Git file-checkpoint backends remain.
+- **L2 substrate — git-worktree, dirty-Git file-checkpoint, and non-Git file-checkpoint
+  recovery delivered as separately opt-in.** CoW snapshot backends remain future work.
 - **Exact approval/grant ergonomics** without restoring shell standing-allow authority.
   Repeated false positives must be fixed in EffectPlan semantics; intentional exceptions
   remain one-shot or resource-scoped.

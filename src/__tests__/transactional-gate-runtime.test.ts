@@ -247,6 +247,88 @@ describe('transactional gate runtime', () => {
     expect(['clonefile', 'reflink', 'copy']).toContain(audit.snapshotCopyStrategy)
   })
 
+  it('runs non-git file_checkpoint through the gate and audits directory resources', async () => {
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-nongit-'))
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, 'README.md'), '# plain\n')
+    await mkdir(path.join(workspaceRoot, '.cursor', 'belay'), { recursive: true })
+    const attestation = {
+      version: 1 as const,
+      driver: 'container' as const,
+      probedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      deniesUngrantedEffects: true,
+      materializesGrants: true,
+      isolatesWorkspaceMounts: true,
+      probeSignals: ['docker', 'workspace-mount-isolation'],
+    }
+    vi.spyOn(boundarySession, 'resolveBoundaryDriverContext').mockResolvedValue({
+      driver: {
+        id: 'container',
+        async probe() {
+          return attestation
+        },
+        async run(command, cwd, timeoutMs, options) {
+          const mount = options?.workspaceMount
+          return runShellCommand(command, mount ? mount.hostSourceRoot : cwd, timeoutMs)
+        },
+        materializeGrant() {
+          return null
+        },
+      },
+      driverId: 'container',
+      proxyActive: false,
+      proxyEnv: {},
+      prepareContext: { repoRoot: workspaceRoot, egressProxyActive: false, proxyEnv: {} },
+      attestationPath: path.join(workspaceRoot, '.belay', 'attestation.json'),
+      attestation,
+      attestationFresh: true,
+    })
+    const config = transactionalFileCheckpointConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot: workspaceRoot,
+      config: {
+        ...config,
+        policy: {
+          ...config.policy,
+          transactional: {
+            ...config.policy.transactional,
+            fileCheckpoint: {
+              ...config.policy.transactional.fileCheckpoint,
+              allowNonGit: true,
+            },
+          },
+        },
+      },
+      configPath: cursorAdapter.layout.configPath(workspaceRoot),
+    }
+
+    const verdict = await evaluateGatedAction(ctx, createDefaultGateRuntimeDeps(), {
+      kind: 'shell',
+      cwd: workspaceRoot,
+      command: 'touch safe-plain.txt',
+    })
+
+    expect(verdict.permission).toBe('deny')
+    expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
+    await expect(
+      readFile(path.join(workspaceRoot, 'safe-plain.txt'), 'utf8'),
+    ).resolves.toBeDefined()
+    const auditLines = (
+      await readFile(path.join(workspaceRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+    const audit = JSON.parse(auditLines.at(-1) ?? '{}')
+    expect(audit).toMatchObject({
+      transactional: true,
+      transactionalBackend: 'file_checkpoint',
+      resourceKind: 'directory',
+      recoveryBackend: 'file_checkpoint',
+    })
+  })
+
   it('runs transactional recovery when only belay init artifacts are untracked', async () => {
     const repoRoot = await createGitRepo({ gitignoreCursor: false })
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })

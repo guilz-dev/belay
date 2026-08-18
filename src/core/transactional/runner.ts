@@ -4,11 +4,13 @@ import {
 } from '../capability/boundary-run.js'
 import { hostIntegrationBoundaryContext } from '../capability/boundary-session.js'
 import { resolveGuestWorkdir } from '../capability/boundary-workspace-mount.js'
+import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import {
   discardPreparedRecoveryCheckpoint,
   listRecoveryCheckpoints,
   markRecoveryCheckpointApplied,
   markRecoveryCheckpointApplying,
+  markRecoveryCheckpointNeedsManualRepair,
   prepareRecoveryCheckpoint,
   reconcileRecoveryCheckpoint,
 } from '../recovery/checkpoint.js'
@@ -30,13 +32,28 @@ import {
 } from './reasons.js'
 import type { TransactionalExecutionResult, TransactionalRunnerParams } from './types.js'
 
+const TRANSACTIONAL_RESOURCE_IDENTITY_CHANGED = 'transactional_resource_identity_changed'
+
+function errorChainIncludes(error: unknown, message: string): boolean {
+  const seen = new Set<unknown>()
+  let current = error
+  while (current instanceof Error && !seen.has(current)) {
+    if (current.message === message) return true
+    seen.add(current)
+    current = current.cause
+  }
+  return false
+}
+
 export async function runTransactionalExecution(
   params: TransactionalRunnerParams,
 ): Promise<TransactionalExecutionResult> {
   const { predicted, repoRoot, stateDir, command, cwd, timeoutMs, diffContext } = params
+  const recoveryStateDir = canonicalPath(stateDir)
+  const recoveryStateOutsideResource = !pathWithinRoot(repoRoot, recoveryStateDir)
   const backendContext = {
     repoRoot,
-    stateDir,
+    stateDir: recoveryStateDir,
     cwd,
     dirtyIgnoreRoots: params.dirtyIgnoreRoots,
     fileCheckpoint: params.fileCheckpoint,
@@ -57,12 +74,14 @@ export async function runTransactionalExecution(
       skipReason: skipReason ?? 'transactional_execution_failed',
       predicted,
       result: predicted,
+      transactionalBackend: selection.probe.backend,
+      resourceKind: selection.probe.resourceKind,
     }
   }
 
   if (params.checkpoint?.enabled) {
     try {
-      await listRecoveryCheckpoints(stateDir, repoRoot)
+      await listRecoveryCheckpoints(recoveryStateDir, repoRoot)
     } catch (error) {
       return {
         ok: false,
@@ -70,6 +89,8 @@ export async function runTransactionalExecution(
         skipReason: error instanceof Error ? error.message : 'recovery_checkpoint_reconcile_failed',
         predicted,
         result: predicted,
+        transactionalBackend: selection.probe.backend,
+        resourceKind: selection.probe.resourceKind,
       }
     }
   }
@@ -156,7 +177,7 @@ export async function runTransactionalExecution(
       const checkpoint =
         params.checkpoint?.enabled && changes.length > 0
           ? await prepareRecoveryCheckpoint({
-              stateDir,
+              stateDir: recoveryStateDir,
               repoRoot,
               baselinePath: snapshot.baselineRoot ?? repoRoot,
               worktreePath: snapshot.executionRoot,
@@ -165,18 +186,29 @@ export async function runTransactionalExecution(
               protectedRoots: diffContext.protectedRoots,
               config: params.checkpoint,
               backend: snapshot.backend,
+              expectedResourceIdentity: snapshot.resourceIdentity,
             })
           : null
       try {
         if (checkpoint) {
-          await markRecoveryCheckpointApplying(stateDir, checkpoint)
+          await markRecoveryCheckpointApplying(recoveryStateDir, checkpoint)
         }
         let receipt: Awaited<ReturnType<typeof markRecoveryCheckpointApplied>> | undefined
+        const validateResourceIdentity = snapshot.validateResourceIdentity
         await applyWorktreeChanges(snapshot.executionRoot, repoRoot, changes, {
           observedChanges,
+          beforeMutation: validateResourceIdentity
+            ? async () => {
+                try {
+                  await validateResourceIdentity()
+                } catch (error) {
+                  throw new Error(TRANSACTIONAL_RESOURCE_IDENTITY_CHANGED, { cause: error })
+                }
+              }
+            : undefined,
           afterApply: checkpoint
             ? async () => {
-                receipt = await markRecoveryCheckpointApplied(stateDir, checkpoint)
+                receipt = await markRecoveryCheckpointApplied(recoveryStateDir, checkpoint)
               }
             : undefined,
         })
@@ -207,15 +239,35 @@ export async function runTransactionalExecution(
             : {}),
         }
       } catch (error) {
-        if (checkpoint) {
-          const recoveryState = await reconcileRecoveryCheckpoint(stateDir, checkpoint.checkpointId)
-          if (recoveryState === 'prepared') {
-            await discardPreparedRecoveryCheckpoint(stateDir, checkpoint.checkpointId)
-          }
-        }
         const toctou = error instanceof Error && error.message === TRANSACTIONAL_APPLY_TOCTOU
         const rollbackFailed =
           error instanceof Error && error.message === TRANSACTIONAL_APPLY_ROLLBACK_FAILED
+        const resourceIdentityChanged = errorChainIncludes(
+          error,
+          TRANSACTIONAL_RESOURCE_IDENTITY_CHANGED,
+        )
+        const recoveryStateUnavailable =
+          !recoveryStateOutsideResource && (rollbackFailed || resourceIdentityChanged)
+        if (checkpoint) {
+          if (recoveryStateUnavailable) {
+            // The resource path may now resolve to attacker-controlled replacement bytes.
+            // Leave the original artifact in applying state instead of touching that path.
+          } else if (rollbackFailed) {
+            await markRecoveryCheckpointNeedsManualRepair(
+              recoveryStateDir,
+              checkpoint.checkpointId,
+              TRANSACTIONAL_APPLY_ROLLBACK_FAILED,
+            )
+          } else {
+            const recoveryState = await reconcileRecoveryCheckpoint(
+              recoveryStateDir,
+              checkpoint.checkpointId,
+            )
+            if (recoveryState === 'prepared') {
+              await discardPreparedRecoveryCheckpoint(recoveryStateDir, checkpoint.checkpointId)
+            }
+          }
+        }
         const result: ClassifyResult = {
           ...predicted,
           verdict: 'deny_pending_approval',
@@ -228,9 +280,10 @@ export async function runTransactionalExecution(
               ...observed.assessment.signals,
               rollbackFailed
                 ? 'transactional_apply_rollback_failed'
-                : toctou
+                : toctou || resourceIdentityChanged
                   ? 'transactional_apply_toctou'
                   : 'transactional_apply_failed',
+              ...(recoveryStateUnavailable ? ['transactional_recovery_state_unavailable'] : []),
             ],
           },
         }
@@ -285,7 +338,10 @@ export async function runTransactionalExecution(
             snapshotCopyStrategy: snapshot.copyStrategy,
             snapshotPrepareMs: snapshot.snapshotPrepareMs,
           }
-        : {}),
+        : {
+            transactionalBackend: selection.probe.backend,
+            resourceKind: selection.probe.resourceKind,
+          }),
     }
   } finally {
     if (snapshot) {
