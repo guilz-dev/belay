@@ -1,5 +1,5 @@
-import type { CoverageContextId } from './coverage-matrix.js'
 import type { HookVerdict } from '../core/types.js'
+import type { CoverageContextId } from './coverage-matrix.js'
 import type { CoverageCaseResult, CoverageProbeReport } from './coverage-probe.js'
 
 const SUPPORTED_COMPARE_REPORT_SCHEMA_VERSIONS = [1, 2] as const
@@ -11,11 +11,7 @@ export class CoverageCompareError extends Error {
   }
 }
 
-export type CoverageCompareKind =
-  | 'fixture_change'
-  | 'classifier_drift'
-  | 'added'
-  | 'removed'
+export type CoverageCompareKind = 'fixture_change' | 'classifier_drift' | 'added' | 'removed'
 
 export interface CoverageCompareEntry {
   caseId: string
@@ -267,7 +263,9 @@ export function formatCoverageCompareReport(report: CoverageCompareReport): stri
   if (report.configDrift.length > 0) {
     lines.push('config drift (warning only):')
     for (const drift of report.configDrift) {
-      lines.push(`  - ${drift.context}: ${drift.beforeHash.slice(0, 8)} -> ${drift.afterHash.slice(0, 8)}`)
+      lines.push(
+        `  - ${drift.context}: ${drift.beforeHash.slice(0, 8)} -> ${drift.afterHash.slice(0, 8)}`,
+      )
     }
   }
   if (report.entries.length === 0) {

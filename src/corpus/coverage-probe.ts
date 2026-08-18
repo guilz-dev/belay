@@ -3,12 +3,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { classifierOptionsFromConfig } from '../core/config.js'
+import type { ConfigProvenanceEntry } from '../core/config-layers.js'
 import type { ClassifyResult, HookVerdict } from '../core/types.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 import {
+  CoverageCompareError,
   compareBaselineWarnings,
   compareCoverageReports,
-  CoverageCompareError,
   formatCoverageCompareReport,
   parseCoverageProbeReportForCompare,
 } from './coverage-compare.js'
@@ -18,14 +19,13 @@ import {
   hashStableJson,
   resolvedConfigHash,
 } from './coverage-contexts.js'
-import type { ConfigProvenanceEntry } from '../core/config-layers.js'
 import {
   assertKnownContextIds,
-  DEFAULT_PROBE_CONTEXT_IDS,
   type CoverageContextId,
   type CoverageExpectation,
   type CoverageMatrix,
   CoverageMatrixSchemaError,
+  DEFAULT_PROBE_CONTEXT_IDS,
   defaultCoverageMatrixPath,
   flattenCoverageCases,
   loadCoverageMatrix,
@@ -191,8 +191,7 @@ export async function evaluateCoverageMatrix(
   const contextIds = options.contextIds ?? [...DEFAULT_PROBE_CONTEXT_IDS]
   const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot())
   const filters = options.filters ?? []
-  const contexts =
-    options.evalContexts ?? (await buildCoverageEvalContexts(contextIds, repoRoot))
+  const contexts = options.evalContexts ?? (await buildCoverageEvalContexts(contextIds, repoRoot))
   const cases = flattenCoverageCases(matrix).filter((testCase) =>
     caseMatchesFilter(testCase, filters),
   )
@@ -460,7 +459,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       try {
         baselineRaw = JSON.parse(await readFile(path.resolve(parsed.comparePath), 'utf8'))
       } catch {
-        throw new CoverageCompareError(`--compare baseline is not valid JSON: ${parsed.comparePath}`)
+        throw new CoverageCompareError(
+          `--compare baseline is not valid JSON: ${parsed.comparePath}`,
+        )
       }
       const baseline = parseCoverageProbeReportForCompare(baselineRaw)
       const compareReport = compareCoverageReports(baseline, report)

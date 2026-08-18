@@ -4,25 +4,27 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HookVerdict } from '../../core/types.js'
 import type { VerdictPermission } from '../../core/verdict/types.js'
 import { verdict } from '../../core/verdict/verdict.js'
-import { buildCoverageEvalContexts } from '../../corpus/coverage-contexts.js'
+import {
+  CoverageCompareError,
+  compareBaselineWarnings,
+  compareCoverageReports,
+  parseCoverageProbeReportForCompare,
+} from '../../corpus/coverage-compare.js'
+import {
+  buildCoverageEvalContexts,
+  hashStableJson,
+  stableJsonStringify,
+} from '../../corpus/coverage-contexts.js'
 import {
   assertKnownContextIds,
-  COVERAGE_CONTEXT_IDS,
-  DEFAULT_PROBE_CONTEXT_IDS,
   CoverageMatrixSchemaError,
+  DEFAULT_PROBE_CONTEXT_IDS,
   parseCoverageMatrix,
 } from '../../corpus/coverage-matrix.js'
 import {
-  compareBaselineWarnings,
-  compareCoverageReports,
-  CoverageCompareError,
-  parseCoverageProbeReportForCompare,
-} from '../../corpus/coverage-compare.js'
-import { hashStableJson, stableJsonStringify } from '../../corpus/coverage-contexts.js'
-import {
   type ClassifyFn,
-  type CoverageProbeReport,
   CoverageProbeCliError,
+  type CoverageProbeReport,
   defaultClassifyFn,
   evaluateCoverageMatrix,
   parseCoverageProbeCliArgs,
@@ -311,15 +313,32 @@ describe('coverage compare', () => {
     }
   }
 
+  function firstResult(report: CoverageProbeReport) {
+    const result = report.results[0]
+    expect(result).toBeDefined()
+    return result as CoverageProbeReport['results'][number]
+  }
+
+  function firstContext(report: CoverageProbeReport) {
+    const context = report.contexts[0]
+    expect(context).toBeDefined()
+    return context as CoverageProbeReport['contexts'][number]
+  }
+
   it('separates fixture changes from classifier drift', () => {
     const baseline = minimalReport()
+    const baseResult = firstResult(baseline)
     const fixtureChanged = minimalReport({
       matrixHash: 'matrix-b',
       results: [
         {
-          ...baseline.results[0]!,
+          ...baseResult,
           commandHash: 'cmd-b',
-          actual: { verdict: 'deny_pending_approval', reason: 'external_effect', fingerprint: 'fp2' },
+          actual: {
+            verdict: 'deny_pending_approval',
+            reason: 'external_effect',
+            fingerprint: 'fp2',
+          },
           match: false,
         },
       ],
@@ -327,21 +346,27 @@ describe('coverage compare', () => {
     const classifierDrift = minimalReport({
       results: [
         {
-          ...baseline.results[0]!,
-          actual: { verdict: 'deny_pending_approval', reason: 'external_effect', fingerprint: 'fp2' },
+          ...baseResult,
+          actual: {
+            verdict: 'deny_pending_approval',
+            reason: 'external_effect',
+            fingerprint: 'fp2',
+          },
           match: false,
         },
       ],
     })
 
     expect(compareCoverageReports(baseline, fixtureChanged).entries[0]?.kind).toBe('fixture_change')
-    expect(compareCoverageReports(baseline, classifierDrift).entries[0]?.kind).toBe('classifier_drift')
+    expect(compareCoverageReports(baseline, classifierDrift).entries[0]?.kind).toBe(
+      'classifier_drift',
+    )
   })
 
   it('reports config drift without failing compare', () => {
     const baseline = minimalReport()
     const current = minimalReport({
-      contexts: [{ ...baseline.contexts[0]!, resolvedConfigHash: 'cfg-b' }],
+      contexts: [{ ...firstContext(baseline), resolvedConfigHash: 'cfg-b' }],
     })
     const compareReport = compareCoverageReports(baseline, current)
     expect(compareReport.configDrift).toHaveLength(1)
@@ -353,7 +378,7 @@ describe('coverage compare', () => {
     const current = minimalReport({
       results: [
         {
-          ...baseline.results[0]!,
+          ...firstResult(baseline),
           actual: { verdict: 'allow', reason: 'read_only', fingerprint: 'fp-changed' },
         },
       ],
