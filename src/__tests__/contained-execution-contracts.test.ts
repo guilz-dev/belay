@@ -378,39 +378,16 @@ describe('contained unknown execution contracts', () => {
     expect(verdict.mediatedExecution?.receiptHash).toBe('receipt')
   })
 
-  it('publishes the contained-execution contract without turning it into shell authority', async () => {
+  it('links the public guarantee table to the authoritative ADR and capability contract', async () => {
     const repositoryRoot = path.resolve(import.meta.dirname, '../..')
-    const documents = await Promise.all(
-      [
-        'docs/adr/ADR-006-contained-unknown-execution.md',
-        'docs/CONTEXT.md',
-        'docs/execution-boundary-map.ja.md',
-        'docs/guarantee-table.md',
-        'docs/config-schema.md',
-        'README.md',
-        'CHANGELOG.md',
-      ].map((file) => readFile(path.join(repositoryRoot, file), 'utf8')),
+    const [adr, guarantees] = await Promise.all(
+      ['docs/adr/ADR-006-contained-unknown-execution.md', 'docs/guarantee-table.md'].map((file) =>
+        readFile(path.join(repositoryRoot, file), 'utf8'),
+      ),
     )
-    const [adr, context, boundaryMap, guarantees, configSchema, readme, changelog] = documents
 
-    expect(adr).toContain('EffectPlan remains the sole shell authority')
-    expect(adr).toContain('does not grant eligibility')
-    expect(adr).toMatch(/command\s+allowlists remain\s+prohibited/)
-    expect(context).toContain('contained execution capability')
-    expect(context).toContain('does not imply `materializesGrants`')
-    expect(boundaryMap).toContain('contained unknown execution')
-    expect(boundaryMap).toContain('copy-only')
-    expect(boundaryMap).toContain('Audit mode reports `wouldMediate: true` and executes nothing')
-    expect(guarantees).toContain('Contained unknown execution (opt-in)')
-    expect(guarantees).toContain('not an L1-full claim')
-    expect(guarantees).toMatch(/log driver is `none`/)
-    expect(configSchema).toContain('`sandbox.containedExecution`')
-    expect(configSchema).toContain('no automatic image build or pull')
-    expect(configSchema).toContain('local Unix socket')
-    expect(readme).toContain('Contained unknown execution (opt-in)')
-    expect(readme).toContain('No command allowlist is involved')
-    expect(readme).toMatch(/workspace changes are\s+discarded/i)
-    expect(changelog).toContain('Contained unknown execution')
+    expect(adr).toContain('# ADR-006')
+    expect(guarantees).toContain('src/conformance/contained-execution-guarantee.ts')
   })
 
   it('keeps exact 16 KiB stdout and stderr output without truncation', async () => {

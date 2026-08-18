@@ -4,7 +4,9 @@ This table states what belay guarantees **per configuration**. Adversarial
 resistance is claimed **only** for the L1-full row when the external sandbox runtime
 actually enforces deny-all (container / seatbelt / landlock / Cursor sandbox).
 
-Machine-readable source: `src/conformance/guarantee-table.ts` and `src/conformance/guarantee-posture.ts`.  
+Machine-readable source: `src/conformance/guarantee-table.ts`,
+`src/conformance/guarantee-posture.ts`, and the separate contained-capability contract
+`src/conformance/contained-execution-guarantee.ts`.
 Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 `src/__tests__/conformance/guarantee-table.test.ts`,
 `src/__tests__/conformance/guarantee-posture.test.ts`.
@@ -22,8 +24,9 @@ Conformance tests: `src/__tests__/conformance/layer-matrix.test.ts`,
 
 Contained unknown execution is a separate execution capability, not a fifth layer profile and
 not an L1-full claim. The machine-readable profile table deliberately remains limited to the
-four general configurations above; the contained route applies only to one eligible
-`unknown_local_effect` after canonical EffectPlan classification.
+four general configurations above; its separate normative contract is
+`src/conformance/contained-execution-guarantee.ts`. The contained route applies only to one
+eligible `unknown_local_effect` after canonical EffectPlan classification.
 
 When `sandbox.containedExecution.enabled` is configured and `belay session start` has produced a
 fresh signed compatible capability, Belay guarantees for that one mediated run:

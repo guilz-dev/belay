@@ -1,16 +1,26 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
+import { CONTAINED_UNKNOWN_EXECUTION_GUARANTEE } from '../conformance/contained-execution-guarantee.js'
+import { signBoundaryAttestation } from '../core/capability/boundary-attestation-sign.js'
+import { DEFAULT_CONFIG_V3, normalizeConfig, scrubOptionsFromConfig } from '../core/config.js'
 import {
   buildContainedDockerCreateArgs,
+  executeContainedDocker,
   probeContainedDockerBoundary,
+  probeContainedDockerForSession,
 } from '../core/contained-execution/docker.js'
+import {
+  type ContainedExecutionMirrorHandle,
+  validateContainedExecutionMirrorLease,
+  withContainedExecutionMirror,
+} from '../core/contained-execution/mirror.js'
 
 const execFileAsync = promisify(execFile)
 const imageReference = 'alpine:3.20'
@@ -25,6 +35,35 @@ const dockerEnvironment = {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+async function assertContainerAbsent(containerId: string): Promise<void> {
+  await execFileAsync(dockerExecutable, ['--host', dockerHost, 'rm', '-f', containerId], {
+    env: dockerEnvironment,
+  })
+  await expect(
+    execFileAsync(dockerExecutable, ['--host', dockerHost, 'inspect', containerId], {
+      env: dockerEnvironment,
+    }),
+  ).rejects.toThrow()
+}
+
+async function containedContainerIds(): Promise<string[]> {
+  const listed = await execFileAsync(
+    dockerExecutable,
+    ['--host', dockerHost, 'ps', '-a', '--filter', 'name=belay-contained-', '--format', '{{.ID}}'],
+    { env: dockerEnvironment },
+  )
+  return listed.stdout.split('\n').filter(Boolean).sort()
+}
+
+async function pathIsAbsent(target: string): Promise<boolean> {
+  try {
+    await lstat(target)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+  }
 }
 let localImageAvailable = false
 if (dockerHost.startsWith('unix:///')) {
@@ -54,6 +93,7 @@ describe('contained Docker inspect integration', () => {
       roots.push(parent)
       const mirror = path.join(parent, 'mirror')
       await mkdir(mirror)
+      const beforeContainers = await containedContainerIds()
 
       const capability = await probeContainedDockerBoundary({
         repoRoot: parent,
@@ -80,78 +120,141 @@ describe('contained Docker inspect integration', () => {
         proxyEnvironment: 'neutralized-empty',
         tmpfs: { exec: false, mode: 0o1777, sizeBytes: 67_108_864 },
       })
+      expect(await containedContainerIds()).toEqual(beforeContainers)
     },
     60_000,
   )
 
   it.skipIf(!localImageAvailable)(
-    'gives the guest no network or host paths beyond its declared mirror mount',
+    'executes the production mirror, signed attestation, and Docker path without host exposure',
     async () => {
-      const parent = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-isolation-'))
-      roots.push(parent)
-      const mirror = path.join(parent, 'mirror')
-      const sourceWorkspace = path.join(parent, 'source-workspace')
-      const controlPlane = path.join(parent, 'control-plane')
-      const unrelatedHostPath = path.join(parent, 'unrelated-host-path')
-      const guestWorkspacePath = '/workspace/belay-contained-isolation-probe'
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-production-'))
+      const unrelatedHostPath = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-unrelated-'))
+      roots.push(repoRoot, unrelatedHostPath)
+      const controlPlaneDir = path.join(repoRoot, '.belay-control')
+      const sourceSecretRoot = path.join(repoRoot, 'source-secret-root')
+      const originalSourceSentinel = path.join(sourceSecretRoot, 'source-secret')
+      const controlPlaneSentinel = path.join(controlPlaneDir, 'control-secret')
+      const unrelatedSentinel = path.join(unrelatedHostPath, 'unrelated-secret')
+      await Promise.all([mkdir(sourceSecretRoot), mkdir(controlPlaneDir)])
       await Promise.all([
-        mkdir(mirror),
-        mkdir(sourceWorkspace),
-        mkdir(controlPlane),
-        mkdir(unrelatedHostPath),
+        writeFile(path.join(repoRoot, 'current-state-marker'), 'visible-in-mirror'),
+        writeFile(originalSourceSentinel, 'source-private'),
+        writeFile(controlPlaneSentinel, 'control-private'),
+        writeFile(unrelatedSentinel, 'unrelated-private'),
       ])
-      await Promise.all([
-        writeFile(path.join(mirror, 'mirror-visible'), 'mirror-only'),
-        writeFile(path.join(sourceWorkspace, 'host-source-secret'), 'source-only'),
-        writeFile(path.join(controlPlane, 'control-plane-secret'), 'control-only'),
-        writeFile(path.join(unrelatedHostPath, 'unrelated-secret'), 'unrelated-only'),
-      ])
-      const image = await execFileAsync(
-        dockerExecutable,
-        ['--host', dockerHost, 'image', 'inspect', '--format', '{{.Id}}', imageReference],
-        { env: dockerEnvironment },
-      )
-      const containerName = `belay-contained-${randomUUID()}`
-      let containerId = containerName
-      const command = [
-        `test -f ${shellQuote(path.join(guestWorkspacePath, 'mirror-visible'))}`,
-        `test ! -e ${shellQuote(path.join(sourceWorkspace, 'host-source-secret'))}`,
-        `test ! -e ${shellQuote(path.join(controlPlane, 'control-plane-secret'))}`,
-        `test ! -e ${shellQuote(path.join(unrelatedHostPath, 'unrelated-secret'))}`,
-        '! wget -q -T 2 -O - http://1.1.1.1',
-        'printf isolated',
-      ].join(' && ')
-      try {
-        const created = await execFileAsync(
-          dockerExecutable,
-          [
-            '--host',
+      const config = normalizeConfig({
+        ...DEFAULT_CONFIG_V3,
+        sandbox: {
+          enabled: true,
+          runtime: 'container',
+          denyNetworkByDefault: true,
+          containedExecution: {
+            enabled: true,
+            image: imageReference,
+            dockerExecutable,
             dockerHost,
-            ...buildContainedDockerCreateArgs({
-              containerName,
-              imageId: image.stdout.trim(),
-              command,
-              hostMirrorRoot: mirror,
-              guestWorkspacePath,
-              guestCwd: guestWorkspacePath,
-              resourceLimits: { timeoutMs: 10_000, memoryMiB: 128, cpus: 0.5, pids: 32 },
-              user: `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
+            timeoutMs: 10_000,
+            memoryMiB: 128,
+            cpus: 0.5,
+            pids: 32,
+          },
+        },
+      })
+      const containedConfig = config.sandbox.containedExecution
+      if (!containedConfig) throw new Error('expected contained execution config')
+      const attestation = await probeContainedDockerForSession({
+        repoRoot,
+        controlPlaneDir,
+        config: containedConfig,
+      })
+      const signedAttestation = await signBoundaryAttestation({
+        repoRoot,
+        controlPlaneDir,
+        attestation,
+      })
+      expect(attestation).toMatchObject({
+        deniesUngrantedEffects: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.deniesUngrantedEffects,
+        materializesGrants: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.materializesGrants,
+        containedExecution: {
+          networkNone: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.network === 'none',
+          readOnlyRoot: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.readOnlyRoot,
+          sanitizedEnvironment:
+            CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.sanitizedHostEnvironment,
+          logDriver: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.logDriver,
+        },
+      })
+      const beforeContainers = await containedContainerIds()
+      const command = [
+        `test -f ${shellQuote(path.join(repoRoot, 'current-state-marker'))}`,
+        `test ! -e ${shellQuote(originalSourceSentinel)}`,
+        `test ! -e ${shellQuote(controlPlaneSentinel)}`,
+        `test ! -e ${shellQuote(unrelatedSentinel)}`,
+        '! wget -q -T 2 -O - http://1.1.1.1',
+        'printf contained-production-ok',
+      ].join(' && ')
+      let mirror: ContainedExecutionMirrorHandle | undefined
+      const execution = await withContainedExecutionMirror(
+        {
+          sourceRoot: repoRoot,
+          controlPlaneRoots: [controlPlaneDir, sourceSecretRoot],
+          limits: {
+            maxFiles: 100,
+            maxSourceBytes: 1_000_000,
+            maxWorkspaceBytes: 1_000_000,
+            prepareTimeoutMs: 10_000,
+          },
+        },
+        async (prepared) => {
+          mirror = prepared
+          expect(
+            validateContainedExecutionMirrorLease(prepared, {
+              sourceRoot: repoRoot,
+              protectedRoots: [controlPlaneDir, sourceSecretRoot],
             }),
-          ],
-          { env: dockerEnvironment },
-        )
-        containerId = created.stdout.trim()
-        const started = await execFileAsync(
-          dockerExecutable,
-          ['--host', dockerHost, 'start', '--attach', containerId],
-          { env: dockerEnvironment },
-        )
-        expect(started.stdout).toBe('isolated')
-      } finally {
-        await execFileAsync(dockerExecutable, ['--host', dockerHost, 'rm', '-f', containerId], {
-          env: dockerEnvironment,
-        }).catch(() => undefined)
+          ).toBe(true)
+          return executeContainedDocker({
+            repoRoot,
+            controlPlaneDir,
+            protectedRoots: [sourceSecretRoot],
+            config: containedConfig,
+            mirror: prepared,
+            guestCwd: repoRoot,
+            command,
+            inputFingerprint: 'a'.repeat(64),
+            outputScrubOptions: scrubOptionsFromConfig(config),
+            signedAttestation,
+          })
+        },
+      )
+
+      expect(execution.stdout).toBe('contained-production-ok')
+      expect(execution.stderr).toContain('Network unreachable')
+      expect(execution.receipt).toMatchObject({
+        network: { mode: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.network },
+        readOnlyRoot: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.readOnlyRoot,
+        logging: { driver: CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.boundary.logDriver },
+        environment: { hostForwarded: false, proxyEnvironment: 'neutralized-empty' },
+        resources: {
+          memoryMiB: containedConfig.memoryMiB,
+          cpus: containedConfig.cpus,
+          pids: containedConfig.pids,
+        },
+      })
+      expect(execution.receipt.mirror).toMatchObject({ backend: 'file_copy', cardinality: 1 })
+      const serialized = JSON.stringify(execution)
+      for (const sentinel of ['source-private', 'control-private', 'unrelated-private']) {
+        expect(serialized).not.toContain(sentinel)
       }
+      if (!mirror) throw new Error('expected production mirror')
+      expect(await pathIsAbsent(mirror.hostMirrorRoot)).toBe(true)
+      expect(
+        validateContainedExecutionMirrorLease(mirror, {
+          sourceRoot: repoRoot,
+          protectedRoots: [controlPlaneDir, sourceSecretRoot],
+        }),
+      ).toBe(false)
+      expect(await containedContainerIds()).toEqual(beforeContainers)
     },
     60_000,
   )
@@ -215,9 +318,7 @@ describe('contained Docker inspect integration', () => {
           }),
         ).rejects.toThrow()
       } finally {
-        await execFileAsync(dockerExecutable, ['--host', dockerHost, 'rm', '-f', containerId], {
-          env: dockerEnvironment,
-        }).catch(() => undefined)
+        await assertContainerAbsent(containerId)
       }
     },
     60_000,

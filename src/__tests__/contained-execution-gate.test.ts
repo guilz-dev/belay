@@ -16,6 +16,7 @@ import {
 import { auditProject } from '../commands/audit.js'
 import { formatExplainReport } from '../commands/explain.js'
 import { formatMetricsReport, metricsProject } from '../commands/metrics.js'
+import { CONTAINED_UNKNOWN_EXECUTION_GUARANTEE } from '../conformance/contained-execution-guarantee.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
 import { type BelayConfigV3, mergeConfig, scrubOptionsFromConfig } from '../core/config.js'
 import {
@@ -176,6 +177,11 @@ describe('contained unknown execution gate integration', () => {
     })
 
     expect(verdict).toMatchObject({ permission: 'allow', wouldBlock: true, wouldMediate: true })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.audit).toEqual({
+      wouldMediate: true,
+      executesContainedCommand: false,
+      executesHostCommand: false,
+    })
     expect(verdict.approvalId).toBeUndefined()
     expect(auditEvents).toHaveLength(1)
     expect(auditEvents[0]).toMatchObject({ wouldMediate: true, permission: 'allow' })
@@ -239,6 +245,14 @@ describe('contained unknown execution gate integration', () => {
 
     expect(executions).toHaveLength(1)
     expect(hostExecutions).toBe(0)
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.enforce).toMatchObject({
+      originalHostCommand: 'deny',
+      mirror: 'file_copy',
+      startsAtMostOnce: true,
+      workspaceChanges: 'discard',
+      output: 'scrubbed-16KiB-tails',
+      audit: 'safe-metadata-only',
+    })
     expect(attestationPaths).toEqual([path.join(repoRoot, '.belay', 'attestation.json')])
     expect(mirrorOptions).toEqual([
       expect.objectContaining({
