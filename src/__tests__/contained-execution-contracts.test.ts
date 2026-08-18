@@ -31,6 +31,12 @@ const containedCapability = {
   isolatesWorkspaceMirror: true,
   readOnlyRoot: true,
   sanitizedEnvironment: true,
+  dockerSubstrate: {
+    binaryPath: '/usr/local/bin/docker',
+    binarySha256: 'd'.repeat(64),
+    endpoint: 'unix:///var/run/docker.sock',
+    daemonId: 'local-daemon',
+  },
   user: '501:20',
   entrypoint: '/bin/sh',
   capDropAll: true,
@@ -44,6 +50,12 @@ const containedCapability = {
     nosuid: true,
     nodev: true,
   },
+  memorySwapMiB: 2048,
+  shmSizeMiB: 64,
+  healthcheckDisabled: true,
+  privateNamespaces: true,
+  privileged: false,
+  devicesNone: true,
   resourceLimits: { timeoutMs: 30_000, memoryMiB: 2048, cpus: 2, pids: 256 },
   probedAt: '2026-08-18T00:00:00.000Z',
   expiresAt: future,
@@ -77,6 +89,8 @@ describe('contained unknown execution contracts', () => {
     expect(migrated.sandbox.containedExecution).toEqual({
       enabled: false,
       image: null,
+      dockerExecutable: null,
+      dockerHost: null,
       timeoutMs: 30_000,
       memoryMiB: 2048,
       cpus: 2,
@@ -92,6 +106,8 @@ describe('contained unknown execution contracts', () => {
         containedExecution: {
           enabled: true,
           image: 'registry.example/runner@sha256:abc',
+          dockerExecutable: '/usr/local/bin/docker',
+          dockerHost: 'unix:///var/run/docker.sock',
           timeoutMs: 5_000,
           memoryMiB: 512,
           cpus: 1,
@@ -117,6 +133,8 @@ describe('contained unknown execution contracts', () => {
         containedExecution: {
           enabled: true,
           image: 'registry.example/runner@sha256:abc',
+          dockerExecutable: '/usr/local/bin/docker',
+          dockerHost: 'unix:///var/run/docker.sock',
           timeoutMs: 5_000,
           memoryMiB: 512,
           cpus: 0.5,
@@ -155,6 +173,36 @@ describe('contained unknown execution contracts', () => {
         },
       }),
     ).toThrow('contained execution requires an explicit image')
+
+    for (const [extra, message] of [
+      [{ dockerExecutable: null, dockerHost: 'unix:///var/run/docker.sock' }, 'executable'],
+      [
+        { dockerExecutable: 'docker', dockerHost: 'unix:///var/run/docker.sock' },
+        'absolute executable',
+      ],
+      [{ dockerExecutable: '/usr/local/bin/docker', dockerHost: null }, 'Docker host'],
+      [
+        { dockerExecutable: '/usr/local/bin/docker', dockerHost: 'tcp://127.0.0.1:2375' },
+        'local unix',
+      ],
+    ] as const) {
+      expect(() =>
+        normalizeConfig({
+          ...DEFAULT_CONFIG_V3,
+          sandbox: {
+            enabled: true,
+            runtime: 'container',
+            denyNetworkByDefault: true,
+            containedExecution: {
+              ...containedCapability.resourceLimits,
+              enabled: true,
+              image: 'local/runner:task4',
+              ...extra,
+            },
+          },
+        }),
+      ).toThrow(message)
+    }
   })
 
   it('validates a fresh contained capability without upgrading it to L1-full', () => {
@@ -173,6 +221,12 @@ describe('contained unknown execution contracts', () => {
     expect(validateContainedExecutionAttestation({ ...containedCapability, version: 0 })).toBe(
       false,
     )
+  })
+
+  it('rejects a legacy contained capability without Docker substrate identity', () => {
+    const legacy = { ...containedCapability } as Record<string, unknown>
+    delete legacy.dockerSubstrate
+    expect(validateContainedExecutionAttestation(legacy)).toBe(false)
   })
 
   it('rejects a contained capability probed in the future', () => {

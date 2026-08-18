@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { access, constants, lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -7,6 +8,7 @@ import type {
   BoundaryAttestation,
   ContainedExecutionAttestation,
   ContainedExecutionResourceLimits,
+  DockerSubstrateIdentity,
 } from '../capability/attestation.js'
 import { isContainedExecutionAttestationFresh } from '../capability/attestation.js'
 import { verifySignedBoundaryAttestation } from '../capability/boundary-attestation-sign.js'
@@ -14,11 +16,16 @@ import type { BelayContainedExecutionConfig } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
 import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import { runProcessWithBoundedOutput, type ShellRunResult } from '../process-runner.js'
-import type { ContainedExecutionMirrorBackend, ContainedExecutionMirrorHandle } from './mirror.js'
+import {
+  type ContainedExecutionMirrorBackend,
+  type ContainedExecutionMirrorHandle,
+  validateContainedExecutionMirrorLease,
+} from './mirror.js'
 
 const DOCKER_CONTROL_TIMEOUT_MS = 10_000
 const CONTAINED_ATTESTATION_TTL_MS = 15 * 60_000
 const TMPFS_SIZE_BYTES = 64 * 1024 * 1024
+const SHM_SIZE_MIB = 64
 const TMPFS_OPTIONS = `rw,nosuid,nodev,noexec,size=${TMPFS_SIZE_BYTES},mode=1777`
 const PROXY_ENV_NAMES = [
   'HTTP_PROXY',
@@ -30,18 +37,52 @@ const PROXY_ENV_NAMES = [
   'all_proxy',
   'no_proxy',
 ] as const
+const MINIMAL_DOCKER_ENV = Object.freeze({
+  DOCKER_CONFIG: '/var/empty/belay-docker-config',
+  HOME: '/var/empty',
+  LC_ALL: 'C',
+  PATH: '/usr/bin:/bin',
+})
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
+const CONTAINER_ID = /^[a-f0-9]{64}$/
 const SAFE_CONTAINER_NAME = /^belay-contained-[0-9a-f-]{36}$/
 
+export const CONTAINED_EXECUTION_BOUNDARY_UNAVAILABLE = 'contained_execution_boundary_unavailable'
 export const CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED =
   'contained_execution_container_cleanup_unconfirmed'
 
+export class ContainedDockerBoundaryUnavailableError extends Error {
+  readonly code = CONTAINED_EXECUTION_BOUNDARY_UNAVAILABLE
+  readonly executionStarted = false
+  readonly receipt = undefined
+
+  constructor(
+    readonly reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(`${CONTAINED_EXECUTION_BOUNDARY_UNAVAILABLE}: ${reason}`, options)
+    this.name = 'ContainedDockerBoundaryUnavailableError'
+  }
+}
+
+export class ContainedDockerStartAttemptError extends Error {
+  readonly code = 'contained_execution_start_attempt_failed'
+  readonly executionStarted = true
+
+  constructor(options?: ErrorOptions) {
+    super('contained_execution_start_attempt_failed', options)
+    this.name = 'ContainedDockerStartAttemptError'
+  }
+}
+
 export class ContainedDockerCleanupUnconfirmedError extends Error {
   readonly code = CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED
-  readonly executionStarted = true
   readonly cleanupConfirmed = false
 
-  constructor(readonly containerName: string) {
+  constructor(
+    readonly containerName: string,
+    readonly executionStarted: boolean,
+  ) {
     super(`${CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED}: ${containerName}`)
     this.name = 'ContainedDockerCleanupUnconfirmedError'
   }
@@ -56,69 +97,174 @@ export interface ContainedDockerInspect {
     Entrypoint: string[] | string | null
     Cmd: string[] | null
     WorkingDir: string
+    Healthcheck: { Test?: string[] | null } | null
   }
   HostConfig: {
+    AutoRemove: boolean
+    Privileged: boolean
+    CapAdd: string[] | null
+    CapDrop: string[] | null
+    SecurityOpt: string[] | null
+    Devices: unknown[] | null
+    DeviceRequests: unknown[] | null
+    DeviceCgroupRules: string[] | null
+    GroupAdd: string[] | null
+    VolumesFrom: string[] | null
+    Binds: string[] | null
+    PortBindings: Record<string, unknown> | null
+    PublishAllPorts: boolean
+    Links: string[] | null
+    ExtraHosts: string[] | null
+    Dns: string[] | null
+    DnsOptions: string[] | null
+    DnsSearch: string[] | null
     NetworkMode: string
     ReadonlyRootfs: boolean
     Tmpfs: Record<string, string> | null
-    CapDrop: string[] | null
-    SecurityOpt: string[] | null
     Memory: number
+    MemorySwap: number
+    ShmSize: number
     NanoCpus: number
     PidsLimit: number | null
-    Devices?: unknown[] | null
-    Binds?: string[] | null
-    ExtraHosts?: string[] | null
+    RestartPolicy: { Name: string; MaximumRetryCount: number }
+    IpcMode: string
+    PidMode: string
+    UTSMode: string
+    UsernsMode: string
+    CgroupnsMode: string
   }
-  Mounts: Array<{
-    Type: string
-    Source: string
-    Destination: string
-    RW: boolean
-  }>
+  NetworkSettings: { Ports: Record<string, unknown> | null }
+  Mounts: Array<{ Type: string; Source: string; Destination: string; RW: boolean }>
 }
 
 export interface ContainedDockerDependencies {
-  runDocker(args: string[], timeoutMs: number): Promise<ShellRunResult>
+  resolveSubstrate(params: {
+    executable: string
+    host: string
+    repoRoot: string
+    protectedRoots: readonly string[]
+  }): Promise<DockerSubstrateIdentity>
+  runProcess(
+    file: string,
+    args: string[],
+    env: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<ShellRunResult>
   now(): number
   randomUUID(): string
   uid(): number
   gid(): number
 }
 
+function overlaps(candidate: string, root: string): boolean {
+  return pathWithinRoot(root, candidate) || pathWithinRoot(candidate, root)
+}
+
+async function digestFile(file: string): Promise<string> {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+async function resolveConfiguredDockerSubstrate(params: {
+  executable: string
+  host: string
+  repoRoot: string
+  protectedRoots: readonly string[]
+}): Promise<DockerSubstrateIdentity> {
+  if (!path.isAbsolute(params.executable) || /[\0\n\r]/.test(params.executable)) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_binary_invalid')
+  }
+  if (!params.host.startsWith('unix:///') || /[\0\n\r]/.test(params.host)) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_host_invalid')
+  }
+  const configuredSocket = params.host.slice('unix://'.length)
+  if (!path.isAbsolute(configuredSocket)) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_host_invalid')
+  }
+
+  let binaryPath: string
+  let socketPath: string
+  try {
+    await access(params.executable, constants.X_OK)
+    ;[binaryPath, socketPath] = await Promise.all([
+      realpath(params.executable),
+      realpath(configuredSocket),
+    ])
+    const [binaryInfo, socketInfo] = await Promise.all([lstat(binaryPath), lstat(socketPath)])
+    if (!binaryInfo.isFile() || binaryInfo.isSymbolicLink() || !socketInfo.isSocket()) {
+      throw new Error('invalid Docker substrate type')
+    }
+  } catch (error) {
+    throw new ContainedDockerBoundaryUnavailableError(
+      'contained_execution_docker_substrate_unavailable',
+      { cause: error },
+    )
+  }
+  const excluded = [params.repoRoot, ...params.protectedRoots].map(canonicalPath)
+  if (excluded.some((root) => overlaps(binaryPath, root) || overlaps(socketPath, root))) {
+    throw new ContainedDockerBoundaryUnavailableError(
+      'contained_execution_docker_substrate_overlap',
+    )
+  }
+  const endpoint = `unix://${socketPath}`
+  const info = await runProcessWithBoundedOutput(
+    binaryPath,
+    ['--host', endpoint, 'info', '--format', '{{json .ID}}'],
+    { env: { ...MINIMAL_DOCKER_ENV }, argv0: 'docker' },
+    DOCKER_CONTROL_TIMEOUT_MS,
+  )
+  if (info.timedOut || info.exitCode !== 0) {
+    throw new ContainedDockerBoundaryUnavailableError(
+      'contained_execution_docker_daemon_unavailable',
+    )
+  }
+  let daemonId: unknown
+  try {
+    daemonId = JSON.parse(info.stdout.trim())
+  } catch (error) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_daemon_invalid', {
+      cause: error,
+    })
+  }
+  if (typeof daemonId !== 'string' || !daemonId || /[\0\n\r]/.test(daemonId)) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_daemon_invalid')
+  }
+  return { binaryPath, binarySha256: await digestFile(binaryPath), endpoint, daemonId }
+}
+
 const productionDependencies: ContainedDockerDependencies = {
-  runDocker: (args, timeoutMs) => runProcessWithBoundedOutput('docker', args, {}, timeoutMs),
+  resolveSubstrate: resolveConfiguredDockerSubstrate,
+  runProcess: (file, args, env, timeoutMs) =>
+    runProcessWithBoundedOutput(file, args, { env, argv0: 'docker' }, timeoutMs),
   now: () => Date.now(),
   randomUUID,
   uid: () => {
-    if (!process.getuid) {
-      throw new Error('contained_execution_host_identity_unavailable')
-    }
+    if (!process.getuid) throw new Error('contained_execution_host_identity_unavailable')
     return process.getuid()
   },
   gid: () => {
-    if (!process.getgid) {
-      throw new Error('contained_execution_host_identity_unavailable')
-    }
+    if (!process.getgid) throw new Error('contained_execution_host_identity_unavailable')
     return process.getgid()
   },
 }
 
-function exactKeys(value: object, allowed: readonly string[]): boolean {
-  const allowedSet = new Set(allowed)
-  return Object.keys(value).every((key) => allowedSet.has(key))
+function dockerCall(
+  dependencies: ContainedDockerDependencies,
+  substrate: DockerSubstrateIdentity,
+  args: string[],
+  timeoutMs: number,
+): Promise<ShellRunResult> {
+  return dependencies.runProcess(
+    substrate.binaryPath,
+    ['--host', substrate.endpoint, ...args],
+    { ...MINIMAL_DOCKER_ENV },
+    timeoutMs,
+  )
 }
 
-function assertSafeDockerPath(value: string, errorCode: string): void {
-  if (
-    !path.isAbsolute(value) ||
-    value.includes('\0') ||
-    value.includes('\n') ||
-    value.includes('\r') ||
-    value.includes(',')
-  ) {
-    throw new Error(errorCode)
-  }
+function assertSafeDockerPath(value: string, code: string): void {
+  if (!path.isAbsolute(value) || /[\0\n\r,]/.test(value)) throw new Error(code)
 }
 
 function assertResourceLimits(limits: ContainedExecutionResourceLimits): void {
@@ -131,13 +277,11 @@ function assertResourceLimits(limits: ContainedExecutionResourceLimits): void {
     limits.cpus <= 0 ||
     !Number.isSafeInteger(limits.pids) ||
     limits.pids <= 0
-  ) {
+  )
     throw new Error('contained_execution_resource_limits_invalid')
-  }
 }
 
-export interface BuildContainedDockerArgsParams {
-  operation: 'create' | 'run'
+export interface BuildContainedDockerCreateArgsParams {
   containerName: string
   imageId: string
   command: string
@@ -148,10 +292,10 @@ export interface BuildContainedDockerArgsParams {
   user: string
 }
 
-export function buildContainedDockerArgs(params: BuildContainedDockerArgsParams): string[] {
-  if (!IMAGE_ID.test(params.imageId)) {
-    throw new Error('contained_execution_invalid_image_id')
-  }
+export function buildContainedDockerCreateArgs(
+  params: BuildContainedDockerCreateArgsParams,
+): string[] {
+  if (!IMAGE_ID.test(params.imageId)) throw new Error('contained_execution_invalid_image_id')
   if (!SAFE_CONTAINER_NAME.test(params.containerName)) {
     throw new Error('contained_execution_invalid_container_name')
   }
@@ -159,13 +303,10 @@ export function buildContainedDockerArgs(params: BuildContainedDockerArgsParams)
   assertSafeDockerPath(params.guestWorkspacePath, 'contained_execution_invalid_mount')
   assertSafeDockerPath(params.guestCwd, 'contained_execution_invalid_cwd')
   assertResourceLimits(params.resourceLimits)
-  if (!/^\d+:\d+$/.test(params.user)) {
-    throw new Error('contained_execution_invalid_user')
-  }
-
+  if (!/^\d+:\d+$/.test(params.user)) throw new Error('contained_execution_invalid_user')
+  const memory = `${params.resourceLimits.memoryMiB}m`
   return [
-    params.operation,
-    ...(params.operation === 'run' ? ['--rm'] : []),
+    'create',
     '--name',
     params.containerName,
     '--network',
@@ -177,14 +318,27 @@ export function buildContainedDockerArgs(params: BuildContainedDockerArgsParams)
     'ALL',
     '--security-opt',
     'no-new-privileges',
+    '--privileged=false',
+    '--publish-all=false',
+    '--restart',
+    'no',
     '--memory',
-    `${params.resourceLimits.memoryMiB}m`,
+    memory,
+    '--memory-swap',
+    memory,
+    '--shm-size',
+    `${SHM_SIZE_MIB}m`,
     '--cpus',
     String(params.resourceLimits.cpus),
     '--pids-limit',
     String(params.resourceLimits.pids),
     '--user',
     params.user,
+    '--no-healthcheck',
+    '--ipc',
+    'none',
+    '--cgroupns',
+    'private',
     ...PROXY_ENV_NAMES.flatMap((name) => ['--env', `${name}=`]),
     '--mount',
     `type=bind,src=${params.hostMirrorRoot},dst=${params.guestWorkspacePath}`,
@@ -198,12 +352,12 @@ export function buildContainedDockerArgs(params: BuildContainedDockerArgsParams)
   ]
 }
 
-function parseSingleInspect<T>(output: string, errorCode: string): T {
+function parseSingleInspect<T>(output: string, code: string): T {
   let parsed: unknown
   try {
     parsed = JSON.parse(output)
   } catch {
-    throw new Error(errorCode)
+    throw new Error(code)
   }
   if (
     !Array.isArray(parsed) ||
@@ -211,105 +365,94 @@ function parseSingleInspect<T>(output: string, errorCode: string): T {
     !parsed[0] ||
     typeof parsed[0] !== 'object'
   ) {
-    throw new Error(errorCode)
+    throw new Error(code)
   }
   return parsed[0] as T
 }
 
-interface LocalDockerImage {
+interface LocalImage {
   imageId: string
   environment: string[]
 }
 
 async function resolveLocalImage(
-  imageReference: string,
+  reference: string,
   dependencies: ContainedDockerDependencies,
-): Promise<LocalDockerImage> {
-  if (!imageReference.trim() || /[\0\n\r]/.test(imageReference)) {
-    throw new Error('contained_execution_image_missing')
+  substrate: DockerSubstrateIdentity,
+): Promise<LocalImage> {
+  if (!reference.trim() || /[\0\n\r]/.test(reference)) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_image_missing')
   }
-  const inspected = await dependencies.runDocker(
-    ['image', 'inspect', imageReference],
+  const inspected = await dockerCall(
+    dependencies,
+    substrate,
+    ['image', 'inspect', reference],
     DOCKER_CONTROL_TIMEOUT_MS,
   )
   if (inspected.timedOut || inspected.exitCode !== 0) {
-    throw new Error('contained_execution_image_missing')
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_image_missing')
   }
-  const image = parseSingleInspect<{
-    Id?: unknown
-    Config?: { Env?: unknown }
-  }>(inspected.stdout, 'contained_execution_image_inspect_invalid')
+  const image = parseSingleInspect<{ Id?: unknown; Config?: { Env?: unknown } }>(
+    inspected.stdout,
+    'contained_execution_image_inspect_invalid',
+  )
   if (
     typeof image.Id !== 'string' ||
     !IMAGE_ID.test(image.Id) ||
     (image.Config?.Env != null &&
       (!Array.isArray(image.Config.Env) ||
         !image.Config.Env.every((entry) => typeof entry === 'string')))
-  ) {
-    throw new Error('contained_execution_image_inspect_invalid')
-  }
-  return {
-    imageId: image.Id,
-    environment: (image.Config?.Env as string[] | null | undefined) ?? [],
-  }
+  )
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_image_inspect_invalid')
+  return { imageId: image.Id, environment: (image.Config?.Env as string[] | undefined) ?? [] }
 }
 
-function envLastValue(env: string[], name: string): string | undefined {
-  let value: string | undefined
-  for (const entry of env) {
-    const separator = entry.indexOf('=')
-    if (separator >= 0 && entry.slice(0, separator) === name) {
-      value = entry.slice(separator + 1)
-    }
-  }
-  return value
-}
-
-function parseEnvironment(env: string[]): Map<string, string> | null {
+function parseEnvironment(entries: string[]): Map<string, string> | null {
   const parsed = new Map<string, string>()
-  for (const entry of env) {
+  for (const entry of entries) {
     const separator = entry.indexOf('=')
     const name = entry.slice(0, separator)
-    if (separator <= 0 || parsed.has(name)) {
-      return null
-    }
+    if (separator <= 0 || parsed.has(name)) return null
     parsed.set(name, entry.slice(separator + 1))
   }
   return parsed
 }
 
-function environmentMatchesImageWithNeutralizedProxy(
-  actualEntries: string[],
-  imageEntries: string[],
-): boolean {
+function environmentMatches(actualEntries: string[], imageEntries: string[]): boolean {
   const actual = parseEnvironment(actualEntries)
-  const expected = parseEnvironment(imageEntries)
-  if (!actual || !expected) {
-    return false
+  const expected = new Map<string, string>()
+  for (const entry of imageEntries) {
+    const separator = entry.indexOf('=')
+    if (separator <= 0) return false
+    expected.set(entry.slice(0, separator), entry.slice(separator + 1))
   }
-  for (const name of PROXY_ENV_NAMES) {
-    expected.set(name, '')
-  }
+  if (!actual) return false
+  for (const name of PROXY_ENV_NAMES) expected.set(name, '')
   return (
     actual.size === expected.size &&
     [...expected].every(([name, value]) => actual.get(name) === value)
   )
 }
 
-function sameStringSet(actual: string[] | null | undefined, expected: string[]): boolean {
-  return (
-    Array.isArray(actual) &&
-    actual.length === expected.length &&
-    [...actual].sort().join('\0') === [...expected].sort().join('\0')
-  )
+function empty(value: unknown[] | null | undefined): boolean {
+  return value == null || value.length === 0
 }
 
-function arrayEmpty(value: unknown[] | null | undefined): boolean {
-  return value == null || value.length === 0
+function emptyRecord(value: Record<string, unknown> | null | undefined): boolean {
+  return value == null || Object.keys(value).length === 0
+}
+
+function sameSet(actual: string[] | null | undefined, expected: string[]): boolean {
+  return Boolean(
+    actual &&
+      actual.length === expected.length &&
+      [...actual].sort().join('\0') === [...expected].sort().join('\0'),
+  )
 }
 
 function assertContainedInspect(params: {
   inspect: ContainedDockerInspect
+  containerId: string
   imageId: string
   hostMirrorRoot: string
   guestWorkspacePath: string
@@ -319,44 +462,67 @@ function assertContainedInspect(params: {
   resourceLimits: ContainedExecutionResourceLimits
   user: string
 }): void {
-  const { inspect, resourceLimits } = params
-  const env = inspect.Config.Env ?? []
-  const mount = inspect.Mounts[0]
+  const { inspect: value, resourceLimits: limits } = params
+  const mount = value.Mounts[0]
+  const healthcheck = value.Config.Healthcheck?.Test
   const valid =
-    inspect.Image === params.imageId &&
-    inspect.HostConfig.NetworkMode === 'none' &&
-    inspect.HostConfig.ReadonlyRootfs === true &&
-    inspect.HostConfig.Tmpfs != null &&
-    Object.keys(inspect.HostConfig.Tmpfs).length === 1 &&
-    inspect.HostConfig.Tmpfs['/tmp'] === TMPFS_OPTIONS &&
-    sameStringSet(inspect.HostConfig.CapDrop, ['ALL']) &&
-    sameStringSet(inspect.HostConfig.SecurityOpt, ['no-new-privileges']) &&
-    inspect.HostConfig.Memory === resourceLimits.memoryMiB * 1024 * 1024 &&
-    inspect.HostConfig.NanoCpus === Math.round(resourceLimits.cpus * 1_000_000_000) &&
-    inspect.HostConfig.PidsLimit === resourceLimits.pids &&
-    arrayEmpty(inspect.HostConfig.Devices) &&
-    arrayEmpty(inspect.HostConfig.Binds) &&
-    arrayEmpty(inspect.HostConfig.ExtraHosts) &&
-    inspect.Config.User === params.user &&
-    Array.isArray(inspect.Config.Entrypoint) &&
-    inspect.Config.Entrypoint.length === 1 &&
-    inspect.Config.Entrypoint[0] === '/bin/sh' &&
-    Array.isArray(inspect.Config.Cmd) &&
-    inspect.Config.Cmd.length === 2 &&
-    inspect.Config.Cmd[0] === '-c' &&
-    inspect.Config.Cmd[1] === params.command &&
-    inspect.Config.WorkingDir === params.guestCwd &&
-    inspect.Mounts.length === 1 &&
+    value.Id === params.containerId &&
+    value.Image === params.imageId &&
+    value.Config.User === params.user &&
+    Array.isArray(value.Config.Entrypoint) &&
+    value.Config.Entrypoint.length === 1 &&
+    value.Config.Entrypoint[0] === '/bin/sh' &&
+    Array.isArray(value.Config.Cmd) &&
+    value.Config.Cmd.length === 2 &&
+    value.Config.Cmd[0] === '-c' &&
+    value.Config.Cmd[1] === params.command &&
+    value.Config.WorkingDir === params.guestCwd &&
+    Array.isArray(healthcheck) &&
+    healthcheck.length === 1 &&
+    healthcheck[0] === 'NONE' &&
+    environmentMatches(value.Config.Env ?? [], params.imageEnvironment) &&
+    value.HostConfig.AutoRemove === false &&
+    value.HostConfig.Privileged === false &&
+    empty(value.HostConfig.CapAdd) &&
+    sameSet(value.HostConfig.CapDrop, ['ALL']) &&
+    sameSet(value.HostConfig.SecurityOpt, ['no-new-privileges']) &&
+    empty(value.HostConfig.Devices) &&
+    empty(value.HostConfig.DeviceRequests) &&
+    empty(value.HostConfig.DeviceCgroupRules) &&
+    empty(value.HostConfig.GroupAdd) &&
+    empty(value.HostConfig.VolumesFrom) &&
+    empty(value.HostConfig.Binds) &&
+    emptyRecord(value.HostConfig.PortBindings) &&
+    value.HostConfig.PublishAllPorts === false &&
+    empty(value.HostConfig.Links) &&
+    empty(value.HostConfig.ExtraHosts) &&
+    empty(value.HostConfig.Dns) &&
+    empty(value.HostConfig.DnsOptions) &&
+    empty(value.HostConfig.DnsSearch) &&
+    value.HostConfig.NetworkMode === 'none' &&
+    value.HostConfig.ReadonlyRootfs === true &&
+    value.HostConfig.Tmpfs != null &&
+    Object.keys(value.HostConfig.Tmpfs).length === 1 &&
+    value.HostConfig.Tmpfs['/tmp'] === TMPFS_OPTIONS &&
+    value.HostConfig.Memory === limits.memoryMiB * 1024 * 1024 &&
+    value.HostConfig.MemorySwap === limits.memoryMiB * 1024 * 1024 &&
+    value.HostConfig.ShmSize === SHM_SIZE_MIB * 1024 * 1024 &&
+    value.HostConfig.NanoCpus === Math.round(limits.cpus * 1_000_000_000) &&
+    value.HostConfig.PidsLimit === limits.pids &&
+    value.HostConfig.RestartPolicy?.Name === 'no' &&
+    value.HostConfig.RestartPolicy?.MaximumRetryCount === 0 &&
+    value.HostConfig.IpcMode === 'none' &&
+    value.HostConfig.PidMode === '' &&
+    value.HostConfig.UTSMode === '' &&
+    value.HostConfig.UsernsMode === '' &&
+    value.HostConfig.CgroupnsMode === 'private' &&
+    emptyRecord(value.NetworkSettings.Ports) &&
+    value.Mounts.length === 1 &&
     mount?.Type === 'bind' &&
     canonicalPath(mount.Source) === canonicalPath(params.hostMirrorRoot) &&
     mount.Destination === params.guestWorkspacePath &&
-    mount.RW === true &&
-    PROXY_ENV_NAMES.every((name) => envLastValue(env, name) === '') &&
-    environmentMatchesImageWithNeutralizedProxy(env, params.imageEnvironment)
-
-  if (!valid) {
-    throw new Error('contained_execution_probe_mismatch')
-  }
+    mount.RW === true
+  if (!valid) throw new Error('contained_execution_inspect_mismatch')
 }
 
 function containerMissing(result: ShellRunResult): boolean {
@@ -364,22 +530,24 @@ function containerMissing(result: ShellRunResult): boolean {
 }
 
 async function cleanupContainer(
-  containerName: string,
+  identity: string,
+  executionStarted: boolean,
   dependencies: ContainedDockerDependencies,
+  substrate: DockerSubstrateIdentity,
 ): Promise<void> {
-  await dependencies.runDocker(['rm', '-f', containerName], DOCKER_CONTROL_TIMEOUT_MS)
-  const inspected = await dependencies.runDocker(
-    ['inspect', '--type', 'container', containerName],
+  await dockerCall(dependencies, substrate, ['rm', '-f', identity], DOCKER_CONTROL_TIMEOUT_MS)
+  const inspected = await dockerCall(
+    dependencies,
+    substrate,
+    ['inspect', '--type', 'container', identity],
     DOCKER_CONTROL_TIMEOUT_MS,
   )
   if (inspected.timedOut || inspected.exitCode === 0 || !containerMissing(inspected)) {
-    throw new ContainedDockerCleanupUnconfirmedError(containerName)
+    throw new ContainedDockerCleanupUnconfirmedError(identity, executionStarted)
   }
 }
 
-function resourceLimitsFromConfig(
-  config: BelayContainedExecutionConfig,
-): ContainedExecutionResourceLimits {
+function limitsFromConfig(config: BelayContainedExecutionConfig): ContainedExecutionResourceLimits {
   return {
     timeoutMs: config.timeoutMs,
     memoryMiB: config.memoryMiB,
@@ -388,89 +556,122 @@ function resourceLimitsFromConfig(
   }
 }
 
+function substrateMatches(left: DockerSubstrateIdentity, right: DockerSubstrateIdentity): boolean {
+  return (
+    left.binaryPath === right.binaryPath &&
+    left.binarySha256 === right.binarySha256 &&
+    left.endpoint === right.endpoint &&
+    left.daemonId === right.daemonId
+  )
+}
+
+async function substrateFor(params: {
+  config: BelayContainedExecutionConfig
+  repoRoot: string
+  protectedRoots: readonly string[]
+  dependencies: ContainedDockerDependencies
+}): Promise<DockerSubstrateIdentity> {
+  if (!params.config.dockerExecutable || !params.config.dockerHost) {
+    throw new ContainedDockerBoundaryUnavailableError('contained_execution_docker_config_missing')
+  }
+  return params.dependencies.resolveSubstrate({
+    executable: params.config.dockerExecutable,
+    host: params.config.dockerHost,
+    repoRoot: params.repoRoot,
+    protectedRoots: params.protectedRoots,
+  })
+}
+
 export async function probeContainedDockerBoundary(params: {
+  repoRoot: string
+  protectedRoots: readonly string[]
   imageReference: string
+  dockerExecutable: string
+  dockerHost: string
   hostProbeRoot: string
   guestWorkspacePath: string
   resourceLimits: ContainedExecutionResourceLimits
   dependencies?: ContainedDockerDependencies
 }): Promise<ContainedExecutionAttestation> {
   const dependencies = params.dependencies ?? productionDependencies
-  const resourceLimits: ContainedExecutionResourceLimits = {
-    timeoutMs: params.resourceLimits.timeoutMs,
-    memoryMiB: params.resourceLimits.memoryMiB,
-    cpus: params.resourceLimits.cpus,
-    pids: params.resourceLimits.pids,
-  }
-  assertResourceLimits(resourceLimits)
-  const image = await resolveLocalImage(params.imageReference, dependencies)
-  const { imageId } = image
+  assertResourceLimits(params.resourceLimits)
+  const substrate = await dependencies.resolveSubstrate({
+    executable: params.dockerExecutable,
+    host: params.dockerHost,
+    repoRoot: params.repoRoot,
+    protectedRoots: params.protectedRoots,
+  })
+  const image = await resolveLocalImage(params.imageReference, dependencies, substrate)
   const containerName = `belay-contained-${dependencies.randomUUID()}`
   const user = `${dependencies.uid()}:${dependencies.gid()}`
-  const args = buildContainedDockerArgs({
-    operation: 'create',
+  const args = buildContainedDockerCreateArgs({
     containerName,
-    imageId,
+    imageId: image.imageId,
     command: ':',
     hostMirrorRoot: params.hostProbeRoot,
     guestWorkspacePath: params.guestWorkspacePath,
     guestCwd: params.guestWorkspacePath,
-    resourceLimits,
+    resourceLimits: params.resourceLimits,
     user,
   })
-
   let operationError: unknown
+  let identity = containerName
   try {
-    const created = await dependencies.runDocker(args, DOCKER_CONTROL_TIMEOUT_MS)
-    if (created.timedOut || created.exitCode !== 0) {
-      throw new Error('contained_execution_probe_create_failed')
+    const created = await dockerCall(dependencies, substrate, args, DOCKER_CONTROL_TIMEOUT_MS)
+    const captured = created.stdout.trim()
+    if (CONTAINER_ID.test(captured)) identity = captured
+    if (created.timedOut || created.exitCode !== 0 || !CONTAINER_ID.test(captured)) {
+      throw new ContainedDockerBoundaryUnavailableError('contained_execution_probe_create_failed')
     }
-    const inspected = await dependencies.runDocker(
-      ['inspect', '--type', 'container', containerName],
+    const inspected = await dockerCall(
+      dependencies,
+      substrate,
+      ['inspect', '--type', 'container', identity],
       DOCKER_CONTROL_TIMEOUT_MS,
     )
     if (inspected.timedOut || inspected.exitCode !== 0) {
-      throw new Error('contained_execution_probe_inspect_failed')
+      throw new ContainedDockerBoundaryUnavailableError('contained_execution_probe_inspect_failed')
     }
     assertContainedInspect({
-      inspect: parseSingleInspect<ContainedDockerInspect>(
-        inspected.stdout,
-        'contained_execution_probe_inspect_invalid',
-      ),
-      imageId,
+      inspect: parseSingleInspect(inspected.stdout, 'contained_execution_probe_inspect_invalid'),
+      containerId: identity,
+      imageId: image.imageId,
       hostMirrorRoot: params.hostProbeRoot,
       guestWorkspacePath: params.guestWorkspacePath,
       guestCwd: params.guestWorkspacePath,
       command: ':',
       imageEnvironment: image.environment,
-      resourceLimits,
+      resourceLimits: params.resourceLimits,
       user,
     })
-    const started = await dependencies.runDocker(
-      ['start', '--attach', containerName],
-      resourceLimits.timeoutMs,
+    const started = await dockerCall(
+      dependencies,
+      substrate,
+      ['start', '--attach', identity],
+      params.resourceLimits.timeoutMs,
     )
     if (started.timedOut || started.exitCode !== 0) {
-      throw new Error('contained_execution_probe_run_failed')
+      throw new ContainedDockerStartAttemptError()
     }
   } catch (error) {
     operationError = error
   }
-
-  await cleanupContainer(containerName, dependencies)
-  if (operationError) {
-    throw operationError
-  }
-
+  await cleanupContainer(
+    identity,
+    operationError instanceof ContainedDockerStartAttemptError,
+    dependencies,
+    substrate,
+  )
+  if (operationError) throw operationError
   const probedAtMs = dependencies.now()
-  const probedAt = new Date(probedAtMs).toISOString()
   return {
     version: 1,
-    imageId,
+    imageId: image.imageId,
     networkNone: true,
     isolatesWorkspaceMirror: true,
     readOnlyRoot: true,
     sanitizedEnvironment: true,
+    dockerSubstrate: substrate,
     user,
     entrypoint: '/bin/sh',
     capDropAll: true,
@@ -484,10 +685,142 @@ export async function probeContainedDockerBoundary(params: {
       nosuid: true,
       nodev: true,
     },
-    resourceLimits,
-    probedAt,
+    memorySwapMiB: params.resourceLimits.memoryMiB,
+    shmSizeMiB: SHM_SIZE_MIB,
+    healthcheckDisabled: true,
+    privateNamespaces: true,
+    privileged: false,
+    devicesNone: true,
+    resourceLimits: { ...params.resourceLimits },
+    probedAt: new Date(probedAtMs).toISOString(),
     expiresAt: new Date(probedAtMs + CONTAINED_ATTESTATION_TTL_MS).toISOString(),
   }
+}
+
+async function validatedGuestCwd(params: {
+  mirror: ContainedExecutionMirrorHandle
+  repoRoot: string
+  protectedRoots: readonly string[]
+  controlPlaneDir: string
+  guestCwd: string
+}): Promise<string> {
+  if (
+    !validateContainedExecutionMirrorLease(params.mirror, {
+      sourceRoot: params.repoRoot,
+      protectedRoots: params.protectedRoots,
+    })
+  )
+    throw new Error('contained_execution_invalid_mirror_lease')
+  if (
+    params.mirror.backend !== 'file_copy' ||
+    params.mirror.guestWorkspacePath !== path.resolve(params.repoRoot) ||
+    !path.isAbsolute(params.guestCwd) ||
+    !pathWithinRoot(params.mirror.guestWorkspacePath, params.guestCwd)
+  )
+    throw new Error('contained_execution_invalid_cwd')
+  const resolvedRoot = await realpath(params.mirror.hostMirrorRoot)
+  const protectedRoots = [params.repoRoot, params.controlPlaneDir, ...params.protectedRoots].map(
+    canonicalPath,
+  )
+  if (protectedRoots.some((root) => overlaps(resolvedRoot, root))) {
+    throw new Error('contained_execution_protected_root_overlap')
+  }
+  const relative = path.relative(params.mirror.guestWorkspacePath, path.resolve(params.guestCwd))
+  let resolvedCwd: string
+  try {
+    resolvedCwd = await realpath(path.join(resolvedRoot, relative))
+  } catch {
+    throw new Error('contained_execution_invalid_cwd')
+  }
+  const info = await lstat(resolvedCwd)
+  if (!info.isDirectory() || !pathWithinRoot(resolvedRoot, resolvedCwd)) {
+    throw new Error('contained_execution_invalid_cwd')
+  }
+  return path.join(params.mirror.guestWorkspacePath, path.relative(resolvedRoot, resolvedCwd))
+}
+
+export interface ContainedExecutionReceipt {
+  version: 1
+  actionFingerprint: string
+  attestationDigest: string
+  executionStarted: true
+  timeoutMs: number
+  dockerSubstrate: DockerSubstrateIdentity
+  imageId: string
+  mirror: {
+    backend: ContainedExecutionMirrorBackend
+    type: 'bind'
+    cardinality: 1
+    readWrite: true
+    sourceFingerprint: string
+    guestWorkspacePath: string
+    guestCwd: string
+  }
+  network: {
+    mode: 'none'
+    publishAllPorts: false
+    portBindings: Record<string, never>
+    links: []
+    extraHosts: []
+    dns: []
+    dnsOptions: []
+    dnsSearch: []
+  }
+  readOnlyRoot: true
+  tmpfs: { path: '/tmp'; sizeBytes: number; mode: 0o1777; exec: false; nosuid: true; nodev: true }
+  environment: {
+    hostForwarded: false
+    proxyEnvironment: 'neutralized-empty'
+    neutralizedVariables: readonly string[]
+    imageEnvironmentDigest: string
+  }
+  privilege: {
+    privileged: false
+    noNewPrivileges: true
+    capAdd: []
+    capDrop: ['ALL']
+    groupAdd: []
+  }
+  devices: { devices: []; deviceRequests: []; deviceCgroupRules: [] }
+  storage: { volumesFrom: []; bindsOutsideMirror: [] }
+  namespaces: { ipc: 'none'; pid: 'private'; uts: 'private'; cgroup: 'private'; user: 'default' }
+  healthcheckDisabled: true
+  lifecycle: { autoRemove: false; restart: 'no'; maximumRetryCount: 0 }
+  resources: {
+    memoryMiB: number
+    memorySwapMiB: number
+    shmSizeMiB: number
+    cpus: number
+    nanoCpus: number
+    pids: number
+  }
+  user: string
+  entrypoint: '/bin/sh'
+  exitCode: number | null
+  timedOut: boolean
+}
+
+export interface ContainedDockerExecutionResult extends ShellRunResult {
+  executionStarted: true
+  receipt: ContainedExecutionReceipt
+  receiptHash: string
+}
+
+export interface ExecuteContainedDockerParams {
+  repoRoot: string
+  controlPlaneDir: string
+  protectedRoots: readonly string[]
+  config: BelayContainedExecutionConfig
+  mirror: ContainedExecutionMirrorHandle
+  guestCwd: string
+  command: string
+  signedAttestation: unknown
+  dependencies?: ContainedDockerDependencies
+}
+
+function exactKeys(value: object, allowed: readonly string[]): boolean {
+  const names = new Set(allowed)
+  return Object.keys(value).every((name) => names.has(name))
 }
 
 function limitsEqual(
@@ -502,93 +835,6 @@ function limitsEqual(
   )
 }
 
-async function validatedGuestCwd(
-  mirror: ContainedExecutionMirrorHandle,
-  repoRoot: string,
-  guestCwd: string,
-): Promise<string> {
-  if (
-    mirror.backend !== 'file_copy' ||
-    mirror.guestWorkspacePath !== path.resolve(repoRoot) ||
-    !path.isAbsolute(guestCwd) ||
-    !pathWithinRoot(mirror.guestWorkspacePath, guestCwd)
-  ) {
-    throw new Error('contained_execution_invalid_cwd')
-  }
-  assertSafeDockerPath(mirror.hostMirrorRoot, 'contained_execution_invalid_mount')
-  assertSafeDockerPath(mirror.guestWorkspacePath, 'contained_execution_invalid_mount')
-  assertSafeDockerPath(guestCwd, 'contained_execution_invalid_cwd')
-
-  const rootInfo = await lstat(mirror.hostMirrorRoot)
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new Error('contained_execution_invalid_mount')
-  }
-  const relative = path.relative(mirror.guestWorkspacePath, path.resolve(guestCwd))
-  const hostCwd = path.join(mirror.hostMirrorRoot, relative)
-  let resolvedRoot: string
-  let resolvedCwd: string
-  try {
-    ;[resolvedRoot, resolvedCwd] = await Promise.all([
-      realpath(mirror.hostMirrorRoot),
-      realpath(hostCwd),
-    ])
-  } catch {
-    throw new Error('contained_execution_invalid_cwd')
-  }
-  const canonicalRepoRoot = canonicalPath(repoRoot)
-  if (
-    pathWithinRoot(canonicalRepoRoot, resolvedRoot) ||
-    pathWithinRoot(resolvedRoot, canonicalRepoRoot)
-  ) {
-    throw new Error('contained_execution_invalid_mount')
-  }
-  const cwdInfo = await lstat(resolvedCwd)
-  if (!cwdInfo.isDirectory() || !pathWithinRoot(resolvedRoot, resolvedCwd)) {
-    throw new Error('contained_execution_invalid_cwd')
-  }
-  const canonicalRelative = path.relative(resolvedRoot, resolvedCwd)
-  return path.join(mirror.guestWorkspacePath, canonicalRelative)
-}
-
-export interface ContainedExecutionReceipt {
-  version: 1
-  imageId: string
-  mirrorBackend: ContainedExecutionMirrorBackend
-  networkMode: 'none'
-  readOnlyRoot: true
-  tmpfsPath: '/tmp'
-  tmpfsSizeBytes: number
-  tmpfsExec: false
-  capDrop: 'ALL'
-  noNewPrivileges: true
-  memoryBytes: number
-  nanoCpus: number
-  pidsLimit: number
-  user: string
-  entrypoint: '/bin/sh'
-  proxyEnvironment: 'neutralized-empty'
-  guestWorkspacePath: string
-  guestCwd: string
-  exitCode: number | null
-  timedOut: boolean
-}
-
-export interface ContainedDockerExecutionResult extends ShellRunResult {
-  receipt: ContainedExecutionReceipt
-  receiptHash: string
-}
-
-export interface ExecuteContainedDockerParams {
-  repoRoot: string
-  controlPlaneDir: string
-  config: BelayContainedExecutionConfig
-  mirror: ContainedExecutionMirrorHandle
-  guestCwd: string
-  command: string
-  signedAttestation: unknown
-  dependencies?: ContainedDockerDependencies
-}
-
 export async function executeContainedDocker(
   params: ExecuteContainedDockerParams,
 ): Promise<ContainedDockerExecutionResult> {
@@ -596,6 +842,7 @@ export async function executeContainedDocker(
     !exactKeys(params, [
       'repoRoot',
       'controlPlaneDir',
+      'protectedRoots',
       'config',
       'mirror',
       'guestCwd',
@@ -603,129 +850,243 @@ export async function executeContainedDocker(
       'signedAttestation',
       'dependencies',
     ]) ||
-    !exactKeys(params.config, ['enabled', 'image', 'timeoutMs', 'memoryMiB', 'cpus', 'pids']) ||
+    !exactKeys(params.config, [
+      'enabled',
+      'image',
+      'dockerExecutable',
+      'dockerHost',
+      'timeoutMs',
+      'memoryMiB',
+      'cpus',
+      'pids',
+    ]) ||
     !exactKeys(params.mirror, ['hostMirrorRoot', 'guestWorkspacePath', 'backend', 'cleanup'])
   ) {
     throw new Error('contained_execution_unknown_option')
   }
-  if (!params.config.enabled || !params.config.image) {
+  if (!params.config.enabled || !params.config.image)
     throw new Error('contained_execution_disabled')
-  }
-  const resourceLimits = resourceLimitsFromConfig(params.config)
-  assertResourceLimits(resourceLimits)
-  const guestCwd = await validatedGuestCwd(params.mirror, params.repoRoot, params.guestCwd)
+  const dependencies = params.dependencies ?? productionDependencies
+  const limits = limitsFromConfig(params.config)
+  assertResourceLimits(limits)
+  const guestCwd = await validatedGuestCwd(params)
   const verified = await verifySignedBoundaryAttestation({
     file: params.signedAttestation,
     expectedRepoRoot: params.repoRoot,
     controlPlaneDir: params.controlPlaneDir,
   })
-  const dependencies = params.dependencies ?? productionDependencies
+  const current = dependencies.now()
   const capability = verified?.driver === 'container' ? verified.containedExecution : undefined
-  const currentTime = dependencies.now()
-  const envelopeProbedAt = verified ? Date.parse(verified.probedAt) : Number.NaN
-  const envelopeExpiresAt = verified ? Date.parse(verified.expiresAt) : Number.NaN
   if (
     !capability ||
-    !Number.isFinite(envelopeProbedAt) ||
-    !Number.isFinite(envelopeExpiresAt) ||
-    envelopeProbedAt > currentTime ||
-    envelopeExpiresAt <= currentTime ||
-    !isContainedExecutionAttestationFresh(capability, currentTime)
-  ) {
+    !isContainedExecutionAttestationFresh(capability, current) ||
+    !verified ||
+    Date.parse(verified.probedAt) > current ||
+    Date.parse(verified.expiresAt) <= current
+  )
     throw new Error('contained_execution_capability_invalid')
-  }
-  if (!limitsEqual(capability.resourceLimits, resourceLimits)) {
-    throw new Error('contained_execution_capability_mismatch')
-  }
   if (
+    !limitsEqual(capability.resourceLimits, limits) ||
+    capability.memorySwapMiB !== limits.memoryMiB ||
+    capability.shmSizeMiB !== SHM_SIZE_MIB ||
+    capability.healthcheckDisabled !== true ||
+    capability.privateNamespaces !== true ||
+    capability.privileged !== false ||
+    capability.devicesNone !== true ||
     capability.tmpfs.sizeBytes !== TMPFS_SIZE_BYTES ||
     capability.tmpfs.exec !== false ||
     capability.proxyEnvironment !== 'neutralized-empty' ||
     capability.entrypoint !== '/bin/sh' ||
     capability.capDropAll !== true ||
     capability.noNewPrivileges !== true
-  ) {
+  )
     throw new Error('contained_execution_capability_mismatch')
+  const substrate = await substrateFor({
+    config: params.config,
+    repoRoot: params.repoRoot,
+    protectedRoots: params.protectedRoots,
+    dependencies,
+  })
+  if (!substrateMatches(substrate, capability.dockerSubstrate)) {
+    throw new ContainedDockerBoundaryUnavailableError(
+      'contained_execution_docker_substrate_mismatch',
+    )
   }
-
-  const imageId = (await resolveLocalImage(params.config.image, dependencies)).imageId
-  if (imageId !== capability.imageId) {
-    throw new Error('contained_execution_image_mismatch')
-  }
-  const containerName = `belay-contained-${dependencies.randomUUID()}`
+  const image = await resolveLocalImage(params.config.image, dependencies, substrate)
+  if (image.imageId !== capability.imageId) throw new Error('contained_execution_image_mismatch')
   const user = `${dependencies.uid()}:${dependencies.gid()}`
-  if (user !== capability.user) {
-    throw new Error('contained_execution_capability_mismatch')
-  }
-  const args = buildContainedDockerArgs({
-    operation: 'run',
+  if (user !== capability.user) throw new Error('contained_execution_capability_mismatch')
+  const containerName = `belay-contained-${dependencies.randomUUID()}`
+  const createArgs = buildContainedDockerCreateArgs({
     containerName,
-    imageId,
+    imageId: image.imageId,
     command: params.command,
     hostMirrorRoot: params.mirror.hostMirrorRoot,
     guestWorkspacePath: params.mirror.guestWorkspacePath,
     guestCwd,
-    resourceLimits,
+    resourceLimits: limits,
     user,
   })
 
-  let run: ShellRunResult | undefined
+  let identity = containerName
+  let executionStarted = false
   let operationError: unknown
+  let startResult: ShellRunResult | undefined
   try {
-    run = await dependencies.runDocker(args, resourceLimits.timeoutMs)
+    const created = await dockerCall(dependencies, substrate, createArgs, DOCKER_CONTROL_TIMEOUT_MS)
+    const captured = created.stdout.trim()
+    if (CONTAINER_ID.test(captured)) identity = captured
+    if (created.timedOut || created.exitCode !== 0 || !CONTAINER_ID.test(captured)) {
+      throw new ContainedDockerBoundaryUnavailableError('contained_execution_create_failed')
+    }
+    const inspected = await dockerCall(
+      dependencies,
+      substrate,
+      ['inspect', '--type', 'container', identity],
+      DOCKER_CONTROL_TIMEOUT_MS,
+    )
+    if (inspected.timedOut || inspected.exitCode !== 0) {
+      throw new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_failed')
+    }
+    try {
+      assertContainedInspect({
+        inspect: parseSingleInspect(inspected.stdout, 'contained_execution_inspect_invalid'),
+        containerId: identity,
+        imageId: image.imageId,
+        hostMirrorRoot: params.mirror.hostMirrorRoot,
+        guestWorkspacePath: params.mirror.guestWorkspacePath,
+        guestCwd,
+        command: params.command,
+        imageEnvironment: image.environment,
+        resourceLimits: limits,
+        user,
+      })
+    } catch (error) {
+      throw new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_mismatch', {
+        cause: error,
+      })
+    }
+    executionStarted = true
+    try {
+      startResult = await dockerCall(
+        dependencies,
+        substrate,
+        ['start', '--attach', identity],
+        limits.timeoutMs,
+      )
+    } catch (error) {
+      throw new ContainedDockerStartAttemptError({ cause: error })
+    }
   } catch (error) {
     operationError = error
   }
-  await cleanupContainer(containerName, dependencies)
-  if (operationError) {
-    throw operationError
-  }
-  if (!run) {
-    throw new Error('contained_execution_run_failed')
-  }
+  await cleanupContainer(identity, executionStarted, dependencies, substrate)
+  if (operationError) throw operationError
+  if (!startResult) throw new ContainedDockerStartAttemptError()
 
   const receipt: ContainedExecutionReceipt = {
     version: 1,
-    imageId,
-    mirrorBackend: params.mirror.backend,
-    networkMode: 'none',
+    actionFingerprint: hashValue(
+      canonicalStringify({ version: 1, command: params.command, guestCwd }),
+    ),
+    attestationDigest: hashValue(canonicalStringify(params.signedAttestation)),
+    executionStarted: true,
+    timeoutMs: limits.timeoutMs,
+    dockerSubstrate: substrate,
+    imageId: image.imageId,
+    mirror: {
+      backend: params.mirror.backend,
+      type: 'bind',
+      cardinality: 1,
+      readWrite: true,
+      sourceFingerprint: hashValue(canonicalPath(params.mirror.hostMirrorRoot)),
+      guestWorkspacePath: params.mirror.guestWorkspacePath,
+      guestCwd,
+    },
+    network: {
+      mode: 'none',
+      publishAllPorts: false,
+      portBindings: {},
+      links: [],
+      extraHosts: [],
+      dns: [],
+      dnsOptions: [],
+      dnsSearch: [],
+    },
     readOnlyRoot: true,
-    tmpfsPath: '/tmp',
-    tmpfsSizeBytes: TMPFS_SIZE_BYTES,
-    tmpfsExec: false,
-    capDrop: 'ALL',
-    noNewPrivileges: true,
-    memoryBytes: resourceLimits.memoryMiB * 1024 * 1024,
-    nanoCpus: Math.round(resourceLimits.cpus * 1_000_000_000),
-    pidsLimit: resourceLimits.pids,
+    tmpfs: {
+      path: '/tmp',
+      sizeBytes: TMPFS_SIZE_BYTES,
+      mode: 0o1777,
+      exec: false,
+      nosuid: true,
+      nodev: true,
+    },
+    environment: {
+      hostForwarded: false,
+      proxyEnvironment: 'neutralized-empty',
+      neutralizedVariables: [...PROXY_ENV_NAMES],
+      imageEnvironmentDigest: hashValue(canonicalStringify(image.environment)),
+    },
+    privilege: {
+      privileged: false,
+      noNewPrivileges: true,
+      capAdd: [],
+      capDrop: ['ALL'],
+      groupAdd: [],
+    },
+    devices: { devices: [], deviceRequests: [], deviceCgroupRules: [] },
+    storage: { volumesFrom: [], bindsOutsideMirror: [] },
+    namespaces: { ipc: 'none', pid: 'private', uts: 'private', cgroup: 'private', user: 'default' },
+    healthcheckDisabled: true,
+    lifecycle: { autoRemove: false, restart: 'no', maximumRetryCount: 0 },
+    resources: {
+      memoryMiB: limits.memoryMiB,
+      memorySwapMiB: limits.memoryMiB,
+      shmSizeMiB: SHM_SIZE_MIB,
+      cpus: limits.cpus,
+      nanoCpus: Math.round(limits.cpus * 1_000_000_000),
+      pids: limits.pids,
+    },
     user,
     entrypoint: '/bin/sh',
-    proxyEnvironment: 'neutralized-empty',
-    guestWorkspacePath: params.mirror.guestWorkspacePath,
-    guestCwd,
-    exitCode: run.exitCode,
-    timedOut: run.timedOut,
+    exitCode: startResult.exitCode,
+    timedOut: startResult.timedOut,
   }
-  return { ...run, receipt, receiptHash: hashValue(canonicalStringify(receipt)) }
+  return {
+    ...startResult,
+    executionStarted: true,
+    receipt,
+    receiptHash: hashValue(canonicalStringify(receipt)),
+  }
 }
 
 export async function probeContainedDockerForSession(params: {
   repoRoot: string
+  controlPlaneDir: string
   config: BelayContainedExecutionConfig
   dependencies?: ContainedDockerDependencies
 }): Promise<BoundaryAttestation> {
-  if (!params.config.enabled || !params.config.image) {
+  if (
+    !params.config.enabled ||
+    !params.config.image ||
+    !params.config.dockerExecutable ||
+    !params.config.dockerHost
+  )
     throw new Error('contained_execution_disabled')
-  }
   const probeRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-probe-'))
   let probeError: unknown
   let capability: ContainedExecutionAttestation | undefined
   try {
     capability = await probeContainedDockerBoundary({
+      repoRoot: params.repoRoot,
+      protectedRoots: [params.controlPlaneDir],
       imageReference: params.config.image,
+      dockerExecutable: params.config.dockerExecutable,
+      dockerHost: params.config.dockerHost,
       hostProbeRoot: probeRoot,
       guestWorkspacePath: path.resolve(params.repoRoot),
-      resourceLimits: resourceLimitsFromConfig(params.config),
+      resourceLimits: limitsFromConfig(params.config),
       dependencies: params.dependencies,
     })
   } catch (error) {
@@ -736,16 +1097,10 @@ export async function probeContainedDockerForSession(params: {
     await lstat(probeRoot)
     throw new Error('contained_execution_probe_root_cleanup_unconfirmed')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error
-    }
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  if (probeError) {
-    throw probeError
-  }
-  if (!capability) {
-    throw new Error('contained_execution_probe_failed')
-  }
+  if (probeError) throw probeError
+  if (!capability) throw new Error('contained_execution_probe_failed')
   return {
     version: 1,
     driver: 'container',

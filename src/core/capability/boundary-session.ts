@@ -8,7 +8,7 @@ import {
   probeContainedDockerForSession,
 } from '../contained-execution/docker.js'
 import type { BoundaryAttestation, BoundaryDriverId } from './attestation.js'
-import { isAttestationFresh } from './attestation.js'
+import { isAttestationFresh, isContainedExecutionAttestationFresh } from './attestation.js'
 import {
   readSignedAttestationFile,
   signBoundaryAttestation,
@@ -39,6 +39,23 @@ export interface ResolvedBoundaryDriverContext {
   attestationPath: string
   attestation: BoundaryAttestation | null
   attestationFresh: boolean
+  containedExecutionFresh?: boolean
+}
+
+function containedExecutionFresh(
+  attestation: BoundaryAttestation | null,
+  now = Date.now(),
+): boolean | undefined {
+  if (attestation?.driver !== 'container' || !attestation.containedExecution) return undefined
+  const probedAt = Date.parse(attestation.probedAt)
+  const expiresAt = Date.parse(attestation.expiresAt)
+  return (
+    Number.isFinite(probedAt) &&
+    Number.isFinite(expiresAt) &&
+    probedAt <= now &&
+    expiresAt > now &&
+    isContainedExecutionAttestationFresh(attestation.containedExecution, now)
+  )
 }
 
 export function boundaryAttestationPath(repoRoot: string, config: BelayConfigV4): string {
@@ -147,6 +164,7 @@ export async function resolveBoundaryDriverContext(params: {
     attestationPath,
     attestation,
     attestationFresh: attestation ? isAttestationFresh(attestation) : false,
+    containedExecutionFresh: containedExecutionFresh(attestation),
   }
 }
 
@@ -177,6 +195,7 @@ export async function startBoundarySession(params: {
   if (contained?.enabled === true) {
     const attestation = await probeContainedDockerForSession({
       repoRoot: params.repoRoot,
+      controlPlaneDir: configuredControlPlaneDir(params.config),
       config: contained,
       dependencies: params.containedDockerDependencies,
     })
@@ -207,7 +226,13 @@ export async function startBoundarySession(params: {
 export async function boundarySessionStatus(params: {
   repoRoot: string
   config: BelayConfigV4
-}): Promise<{ attestationPath: string; attestation: BoundaryAttestation | null; fresh: boolean }> {
+  now?: number
+}): Promise<{
+  attestationPath: string
+  attestation: BoundaryAttestation | null
+  fresh: boolean
+  containedExecutionFresh?: boolean
+}> {
   const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
   const attestation = await loadBoundaryAttestation(
     attestationPath,
@@ -218,6 +243,7 @@ export async function boundarySessionStatus(params: {
     attestationPath,
     attestation,
     fresh: attestation ? isAttestationFresh(attestation) : false,
+    containedExecutionFresh: containedExecutionFresh(attestation, params.now),
   }
 }
 

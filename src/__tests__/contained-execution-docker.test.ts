@@ -1,34 +1,57 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { BoundaryAttestation } from '../core/capability/attestation.js'
+import type {
+  BoundaryAttestation,
+  DockerSubstrateIdentity,
+} from '../core/capability/attestation.js'
 import { signBoundaryAttestation } from '../core/capability/boundary-attestation-sign.js'
-import { startBoundarySession } from '../core/capability/boundary-session.js'
+import { boundarySessionStatus, startBoundarySession } from '../core/capability/boundary-session.js'
 import { type BelayContainedExecutionConfig, DEFAULT_CONFIG_V4 } from '../core/config.js'
 import {
-  buildContainedDockerArgs,
+  buildContainedDockerCreateArgs,
+  ContainedDockerBoundaryUnavailableError,
+  ContainedDockerCleanupUnconfirmedError,
   type ContainedDockerDependencies,
   type ContainedDockerInspect,
   executeContainedDocker,
   probeContainedDockerBoundary,
 } from '../core/contained-execution/docker.js'
-import type { ContainedExecutionMirrorHandle } from '../core/contained-execution/mirror.js'
+import {
+  type ContainedExecutionMirrorHandle,
+  prepareContainedExecutionMirror,
+} from '../core/contained-execution/mirror.js'
 import type { ShellRunResult } from '../core/process-runner.js'
 
 const imageId = `sha256:${'a'.repeat(64)}`
 const otherImageId = `sha256:${'b'.repeat(64)}`
+const containerId = 'c'.repeat(64)
 const now = Date.parse('2026-08-18T10:00:00.000Z')
+const substrate: DockerSubstrateIdentity = {
+  binaryPath: '/real/docker',
+  binarySha256: 'd'.repeat(64),
+  endpoint: 'unix:///real/docker.sock',
+  daemonId: 'local-daemon',
+}
 const config = {
   enabled: true,
   image: 'local/runner:task4',
+  dockerExecutable: '/configured/docker',
+  dockerHost: 'unix:///configured/docker.sock',
   timeoutMs: 30_000,
   memoryMiB: 512,
   cpus: 1.5,
   pids: 64,
 } satisfies BelayContainedExecutionConfig
+const minimalEnv = {
+  DOCKER_CONFIG: '/var/empty/belay-docker-config',
+  HOME: '/var/empty',
+  LC_ALL: 'C',
+  PATH: '/usr/bin:/bin',
+}
 
 function result(overrides: Partial<ShellRunResult> = {}): ShellRunResult {
   return {
@@ -43,19 +66,19 @@ function result(overrides: Partial<ShellRunResult> = {}): ShellRunResult {
   }
 }
 
-function containerInspect(params: {
-  hostRoot: string
-  guestRoot: string
-  cwd: string
-  command?: string
-}): ContainedDockerInspect {
+function arg(args: string[], flag: string): string {
+  return args[args.indexOf(flag) + 1] ?? ''
+}
+
+function inspectFor(createArgs: string[]): ContainedDockerInspect {
+  const mount = arg(createArgs, '--mount')
   return {
-    Id: 'probe-container-id',
+    Id: containerId,
     Image: imageId,
     Config: {
-      User: '501:20',
+      User: arg(createArgs, '--user'),
       Env: [
-        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        'PATH=/usr/bin',
         'IMAGE_DEFINED=yes',
         'HTTP_PROXY=',
         'HTTPS_PROXY=',
@@ -67,95 +90,164 @@ function containerInspect(params: {
         'no_proxy=',
       ],
       Entrypoint: ['/bin/sh'],
-      Cmd: ['-c', params.command ?? ':'],
-      WorkingDir: params.cwd,
+      Cmd: ['-c', createArgs.at(-1) ?? ''],
+      WorkingDir: arg(createArgs, '--workdir'),
+      Healthcheck: { Test: ['NONE'] },
     },
     HostConfig: {
+      AutoRemove: false,
+      Privileged: false,
+      CapAdd: [],
+      CapDrop: ['ALL'],
+      SecurityOpt: ['no-new-privileges'],
+      Devices: [],
+      DeviceRequests: [],
+      DeviceCgroupRules: [],
+      GroupAdd: [],
+      VolumesFrom: [],
+      Binds: [],
+      PortBindings: {},
+      PublishAllPorts: false,
+      Links: [],
+      ExtraHosts: [],
+      Dns: [],
+      DnsOptions: [],
+      DnsSearch: [],
       NetworkMode: 'none',
       ReadonlyRootfs: true,
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,noexec,size=67108864,mode=1777' },
-      CapDrop: ['ALL'],
-      SecurityOpt: ['no-new-privileges'],
-      Memory: 536_870_912,
+      Memory: 512 * 1024 * 1024,
+      MemorySwap: 512 * 1024 * 1024,
+      ShmSize: 64 * 1024 * 1024,
       NanoCpus: 1_500_000_000,
       PidsLimit: 64,
-      Devices: [],
-      Binds: [],
-      ExtraHosts: [],
+      RestartPolicy: { Name: 'no', MaximumRetryCount: 0 },
+      IpcMode: 'none',
+      PidMode: '',
+      UTSMode: '',
+      UsernsMode: '',
+      CgroupnsMode: 'private',
     },
+    NetworkSettings: { Ports: {} },
     Mounts: [
       {
         Type: 'bind',
-        Source: params.hostRoot,
-        Destination: params.guestRoot,
+        Source: mount.match(/(?:^|,)src=([^,]+)/)?.[1] ?? '',
+        Destination: mount.match(/(?:^|,)dst=([^,]+)/)?.[1] ?? '',
         RW: true,
       },
     ],
   }
 }
 
-function fakeDependencies(params: {
-  hostRoot: string
-  guestRoot: string
-  cwd: string
-  image?: string
-  inspect?: ContainedDockerInspect
-  runResult?: ShellRunResult
-  cleanupInspectResult?: ShellRunResult
-}): ContainedDockerDependencies & { calls: string[][] } {
-  const calls: string[][] = []
-  let containerInspectCount = 0
+interface Call {
+  file: string
+  args: string[]
+  env: Record<string, string>
+  timeoutMs: number
+}
+
+function fakeDependencies(
+  options: {
+    substrate?: DockerSubstrateIdentity
+    imageId?: string
+    imageMissing?: boolean
+    create?: ShellRunResult
+    inspect?: ShellRunResult
+    start?: ShellRunResult
+    mutate?: (value: ContainedDockerInspect) => void
+    cleanupPresent?: boolean
+  } = {},
+): ContainedDockerDependencies & { calls: Call[] } {
+  const calls: Call[] = []
+  let createArgs: string[] = []
+  let present = false
   return {
     calls,
     now: () => now,
     randomUUID: () => '123e4567-e89b-42d3-a456-426614174000',
     uid: () => 501,
     gid: () => 20,
-    async runDocker(args) {
-      calls.push(args)
-      if (args[0] === 'image') {
+    async resolveSubstrate() {
+      return options.substrate ?? substrate
+    },
+    async runProcess(file, args, env, timeoutMs) {
+      calls.push({ file, args, env, timeoutMs })
+      const dockerArgs = args.slice(2)
+      if (dockerArgs[0] === 'image') {
+        if (options.imageMissing) return result({ exitCode: 1, stderr: 'missing' })
         return result({
           stdout: JSON.stringify([
             {
-              Id: params.image ?? imageId,
-              Config: {
-                Env: [
-                  'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-                  'IMAGE_DEFINED=yes',
-                ],
-              },
+              Id: options.imageId ?? imageId,
+              Config: { Env: ['PATH=/usr/bin', 'IMAGE_DEFINED=yes'] },
             },
           ]),
         })
       }
-      if (args[0] === 'create') {
-        return result({ stdout: 'probe-container-id\n' })
+      if (dockerArgs[0] === 'create') {
+        createArgs = dockerArgs
+        const created = options.create ?? result({ stdout: `${containerId}\n` })
+        present = created.exitCode === 0 && !created.timedOut
+        return created
       }
-      if (args[0] === 'run') {
-        return params.runResult ?? result({ stdout: 'ok' })
-      }
-      if (args[0] === 'start') {
-        return result()
-      }
-      if (args[0] === 'rm') {
-        return result()
-      }
-      if (args[0] === 'inspect') {
-        containerInspectCount += 1
-        if (containerInspectCount === 1 && params.inspect) {
-          return result({ stdout: JSON.stringify([params.inspect]) })
+      if (dockerArgs[0] === 'inspect') {
+        if (present) {
+          if (options.inspect) return options.inspect
+          const value = inspectFor(createArgs)
+          options.mutate?.(value)
+          return result({ stdout: JSON.stringify([value]) })
         }
-        return (
-          params.cleanupInspectResult ??
-          result({ exitCode: 1, stderr: 'Error: No such container: belay-contained' })
-        )
+        if (options.cleanupPresent) return result({ stdout: JSON.stringify([{ Id: containerId }]) })
+        return result({ exitCode: 1, stderr: `No such container: ${containerId}` })
       }
-      throw new Error(`unexpected docker args: ${args.join(' ')}`)
+      if (dockerArgs[0] === 'start') return options.start ?? result({ stdout: 'guest tail' })
+      if (dockerArgs[0] === 'rm') {
+        if (!options.cleanupPresent) present = false
+        return result()
+      }
+      throw new Error(`unexpected Docker call: ${dockerArgs.join(' ')}`)
     },
   }
 }
 
-function attestation(overrides: Partial<BoundaryAttestation> = {}): BoundaryAttestation {
+interface Fixture {
+  repoRoot: string
+  controlPlaneDir: string
+  protectedRoots: string[]
+  mirror: ContainedExecutionMirrorHandle
+}
+
+const roots: string[] = []
+const mirrors: ContainedExecutionMirrorHandle[] = []
+
+afterEach(async () => {
+  await Promise.allSettled(mirrors.splice(0).map((mirror) => mirror.cleanup()))
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+async function fixture(): Promise<Fixture> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-source-'))
+  const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-control-'))
+  roots.push(repoRoot, controlPlaneDir)
+  await mkdir(path.join(repoRoot, 'sub'))
+  await writeFile(path.join(repoRoot, 'input.txt'), 'input\n')
+  const protectedRoots = [controlPlaneDir]
+  const mirror = await prepareContainedExecutionMirror({
+    sourceRoot: repoRoot,
+    controlPlaneRoots: protectedRoots,
+    limits: {
+      maxFiles: 100,
+      maxSourceBytes: 1024 * 1024,
+      maxWorkspaceBytes: 1024 * 1024,
+      prepareTimeoutMs: 10_000,
+    },
+  })
+  mirrors.push(mirror)
+  return { repoRoot, controlPlaneDir, protectedRoots, mirror }
+}
+
+function capability(overrides: Partial<BoundaryAttestation> = {}): BoundaryAttestation {
   const probedAt = new Date(now - 1_000).toISOString()
   return {
     version: 1,
@@ -164,7 +256,7 @@ function attestation(overrides: Partial<BoundaryAttestation> = {}): BoundaryAtte
     expiresAt: new Date(now + 60_000).toISOString(),
     deniesUngrantedEffects: false,
     materializesGrants: false,
-    probeSignals: ['docker', 'contained-execution'],
+    probeSignals: ['contained-execution'],
     containedExecution: {
       version: 1,
       imageId,
@@ -172,6 +264,7 @@ function attestation(overrides: Partial<BoundaryAttestation> = {}): BoundaryAtte
       isolatesWorkspaceMirror: true,
       readOnlyRoot: true,
       sanitizedEnvironment: true,
+      dockerSubstrate: substrate,
       user: '501:20',
       entrypoint: '/bin/sh',
       capDropAll: true,
@@ -185,11 +278,17 @@ function attestation(overrides: Partial<BoundaryAttestation> = {}): BoundaryAtte
         nosuid: true,
         nodev: true,
       },
+      memorySwapMiB: 512,
+      shmSizeMiB: 64,
+      healthcheckDisabled: true,
+      privateNamespaces: true,
+      privileged: false,
+      devicesNone: true,
       resourceLimits: {
-        timeoutMs: config.timeoutMs,
-        memoryMiB: config.memoryMiB,
-        cpus: config.cpus,
-        pids: config.pids,
+        timeoutMs: 30_000,
+        memoryMiB: 512,
+        cpus: 1.5,
+        pids: 64,
       },
       probedAt,
       expiresAt: new Date(now + 60_000).toISOString(),
@@ -198,42 +297,42 @@ function attestation(overrides: Partial<BoundaryAttestation> = {}): BoundaryAtte
   }
 }
 
-describe('contained Docker execution', () => {
-  const tempRoots: string[] = []
-
-  afterEach(async () => {
-    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+async function signed(value: Fixture, attestation = capability()): Promise<unknown> {
+  return signBoundaryAttestation({
+    repoRoot: value.repoRoot,
+    attestation,
+    controlPlaneDir: value.controlPlaneDir,
   })
+}
 
-  async function mirror(): Promise<ContainedExecutionMirrorHandle> {
-    const parent = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-docker-test-'))
-    tempRoots.push(parent)
-    const hostMirrorRoot = path.join(parent, 'mirror')
-    await mkdir(path.join(hostMirrorRoot, 'sub'), { recursive: true })
-    return {
-      hostMirrorRoot,
-      guestWorkspacePath: '/workspace/project',
-      backend: 'file_copy',
-      async cleanup() {},
-    }
+function executionParams(value: Fixture, signedAttestation: unknown) {
+  return {
+    repoRoot: value.repoRoot,
+    controlPlaneDir: value.controlPlaneDir,
+    protectedRoots: value.protectedRoots,
+    config,
+    mirror: value.mirror,
+    guestCwd: value.repoRoot,
+    command: 'fictional-runner check',
+    signedAttestation,
   }
+}
 
-  it('builds the exact hardened argv with one writable mirror and no host env or egress path', () => {
+describe('contained Docker execution hardening', () => {
+  it('builds the exact create-only policy argv', () => {
     expect(
-      buildContainedDockerArgs({
-        operation: 'run',
+      buildContainedDockerCreateArgs({
         containerName: 'belay-contained-123e4567-e89b-42d3-a456-426614174000',
         imageId,
         command: 'fictional-runner check',
         hostMirrorRoot: '/private/tmp/mirror',
         guestWorkspacePath: '/workspace/project',
-        guestCwd: '/workspace/project/sub',
+        guestCwd: '/workspace/project',
         resourceLimits: config,
         user: '501:20',
       }),
     ).toEqual([
-      'run',
-      '--rm',
+      'create',
       '--name',
       'belay-contained-123e4567-e89b-42d3-a456-426614174000',
       '--network',
@@ -245,34 +344,41 @@ describe('contained Docker execution', () => {
       'ALL',
       '--security-opt',
       'no-new-privileges',
+      '--privileged=false',
+      '--publish-all=false',
+      '--restart',
+      'no',
       '--memory',
       '512m',
+      '--memory-swap',
+      '512m',
+      '--shm-size',
+      '64m',
       '--cpus',
       '1.5',
       '--pids-limit',
       '64',
       '--user',
       '501:20',
-      '--env',
-      'HTTP_PROXY=',
-      '--env',
-      'HTTPS_PROXY=',
-      '--env',
-      'ALL_PROXY=',
-      '--env',
-      'NO_PROXY=',
-      '--env',
-      'http_proxy=',
-      '--env',
-      'https_proxy=',
-      '--env',
-      'all_proxy=',
-      '--env',
-      'no_proxy=',
+      '--no-healthcheck',
+      '--ipc',
+      'none',
+      '--cgroupns',
+      'private',
+      ...[
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'ALL_PROXY',
+        'NO_PROXY',
+        'http_proxy',
+        'https_proxy',
+        'all_proxy',
+        'no_proxy',
+      ].flatMap((name) => ['--env', `${name}=`]),
       '--mount',
       'type=bind,src=/private/tmp/mirror,dst=/workspace/project',
       '--workdir',
-      '/workspace/project/sub',
+      '/workspace/project',
       '--entrypoint',
       '/bin/sh',
       imageId,
@@ -281,258 +387,294 @@ describe('contained Docker execution', () => {
     ])
   })
 
-  it('resolves a local image, probes inspect properties from the shared builder, and cleans up', async () => {
-    const handle = await mirror()
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: containerInspect({
-        hostRoot: handle.hostMirrorRoot,
-        guestRoot: handle.guestWorkspacePath,
-        cwd: handle.guestWorkspacePath,
-      }),
-    })
-
-    const capability = await probeContainedDockerBoundary({
+  it('uses the verified absolute binary, local endpoint, and minimal child environment', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies()
+    const probed = await probeContainedDockerBoundary({
+      repoRoot: value.repoRoot,
+      protectedRoots: value.protectedRoots,
       imageReference: config.image ?? '',
-      guestWorkspacePath: handle.guestWorkspacePath,
-      hostProbeRoot: handle.hostMirrorRoot,
+      dockerExecutable: config.dockerExecutable ?? '',
+      dockerHost: config.dockerHost ?? '',
+      hostProbeRoot: value.mirror.hostMirrorRoot,
+      guestWorkspacePath: value.repoRoot,
       resourceLimits: config,
       dependencies,
     })
-
-    expect(capability.imageId).toBe(imageId)
-    expect(capability.resourceLimits).toEqual({
-      timeoutMs: 30_000,
-      memoryMiB: 512,
-      cpus: 1.5,
-      pids: 64,
-    })
-    expect(capability).toMatchObject({
-      user: '501:20',
-      entrypoint: '/bin/sh',
-      capDropAll: true,
-      noNewPrivileges: true,
-      proxyEnvironment: 'neutralized-empty',
-      tmpfs: {
-        path: '/tmp',
-        sizeBytes: 67_108_864,
-        mode: 0o1777,
-        exec: false,
-        nosuid: true,
-        nodev: true,
-      },
-    })
-    expect(dependencies.calls[0]).toEqual(['image', 'inspect', config.image])
-    expect(dependencies.calls.some((args) => args[0] === 'create')).toBe(true)
-    expect(dependencies.calls.some((args) => args[0] === 'start')).toBe(true)
-    expect(dependencies.calls.slice(-2).map((args) => args[0])).toEqual(['rm', 'inspect'])
-  })
-
-  it('fails probe closed on an inspect mismatch and still confirms container removal', async () => {
-    const handle = await mirror()
-    const inspected = containerInspect({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    inspected.HostConfig.NetworkMode = 'bridge'
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: inspected,
-    })
-
-    await expect(
-      probeContainedDockerBoundary({
-        imageReference: config.image ?? '',
-        guestWorkspacePath: handle.guestWorkspacePath,
-        hostProbeRoot: handle.hostMirrorRoot,
-        resourceLimits: config,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_probe_mismatch')
-    expect(dependencies.calls.slice(-2).map((args) => args[0])).toEqual(['rm', 'inspect'])
+    expect(probed.dockerSubstrate).toEqual(substrate)
+    for (const call of dependencies.calls) {
+      expect(call.file).toBe(substrate.binaryPath)
+      expect(call.args.slice(0, 2)).toEqual(['--host', substrate.endpoint])
+      expect(call.env).toEqual(minimalEnv)
+    }
   })
 
   it.each([
+    ['path', { binaryPath: '/other/docker' }],
+    ['digest', { binarySha256: 'e'.repeat(64) }],
+    ['socket', { endpoint: 'unix:///other.sock' }],
+    ['daemon', { daemonId: 'other' }],
+  ])('rejects substrate %s drift before Docker work', async (_name, drift) => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ substrate: { ...substrate, ...drift } })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies,
+      }),
+    ).rejects.toMatchObject({ executionStarted: false })
+    expect(dependencies.calls).toEqual([])
+  })
+
+  it('rejects forged, provenance-mismatched, and control-plane-overlapping mirrors', async () => {
+    const value = await fixture()
+    const signedAttestation = await signed(value)
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, signedAttestation),
+        mirror: { ...value.mirror },
+        dependencies: fakeDependencies(),
+      }),
+    ).rejects.toThrow('contained_execution_invalid_mirror_lease')
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, signedAttestation),
+        protectedRoots: [],
+        dependencies: fakeDependencies(),
+      }),
+    ).rejects.toThrow('contained_execution_invalid_mirror_lease')
+    const overlapSignature = await signBoundaryAttestation({
+      repoRoot: value.repoRoot,
+      attestation: capability(),
+      controlPlaneDir: value.mirror.hostMirrorRoot,
+    })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, overlapSignature),
+        controlPlaneDir: value.mirror.hostMirrorRoot,
+        dependencies: fakeDependencies(),
+      }),
+    ).rejects.toThrow('contained_execution_protected_root_overlap')
+  })
+
+  it.each([
+    ['create failure', { create: result({ exitCode: 125 }) }],
+    ['create timeout', { create: result({ exitCode: null, timedOut: true }) }],
+    ['inspect failure', { inspect: result({ exitCode: 1 }) }],
+  ])('returns a typed pre-start error for %s', async (_name, options) => {
+    const value = await fixture()
+    const dependencies = fakeDependencies(options)
+    const failure = await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies,
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ContainedDockerBoundaryUnavailableError)
+    expect(failure).toMatchObject({ executionStarted: false, receipt: undefined })
+    expect(dependencies.calls.filter((call) => call.args[2] === 'start')).toHaveLength(0)
+  })
+
+  it('creates, validates, starts exactly once by captured ID, and confirms cleanup', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ start: result({ exitCode: 7, stdout: 'tail' }) })
+    const executed = await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies,
+    })
+    expect(dependencies.calls.map((call) => call.args[2])).toEqual([
+      'image',
+      'create',
+      'inspect',
+      'start',
+      'rm',
+      'inspect',
+    ])
+    expect(dependencies.calls.find((call) => call.args[2] === 'start')?.args).toEqual([
+      '--host',
+      substrate.endpoint,
+      'start',
+      '--attach',
+      containerId,
+    ])
+    expect(executed).toMatchObject({ exitCode: 7, executionStarted: true })
+  })
+
+  it('never retries an ambiguous timed-out start', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ start: result({ exitCode: null, timedOut: true }) })
+    const executed = await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies,
+    })
+    expect(executed).toMatchObject({ timedOut: true, executionStarted: true })
+    expect(dependencies.calls.filter((call) => call.args[2] === 'start')).toHaveLength(1)
+  })
+
+  it('makes cleanup uncertainty dominant before and after start', async () => {
+    const value = await fixture()
+    for (const [create, executionStarted] of [
+      [result({ exitCode: 125 }), false],
+      [undefined, true],
+    ] as const) {
+      const dependencies = fakeDependencies({ create, cleanupPresent: true })
+      const failure = await executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies,
+      }).catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(ContainedDockerCleanupUnconfirmedError)
+      expect(failure).toMatchObject({ executionStarted })
+    }
+  })
+
+  const mutations: Array<[string, (value: ContainedDockerInspect) => void]> = [
+    ['container id', (v) => (v.Id = 'e'.repeat(64))],
+    ['image', (v) => (v.Image = otherImageId)],
+    ['env', (v) => v.Config.Env?.push('HOST_TOKEN=secret')],
+    ['user', (v) => (v.Config.User = '0:0')],
+    ['entrypoint', (v) => (v.Config.Entrypoint = ['/bin/bash'])],
+    ['cmd', (v) => (v.Config.Cmd = ['-c', 'other'])],
+    ['workdir', (v) => (v.Config.WorkingDir = '/')],
+    ['healthcheck', (v) => (v.Config.Healthcheck = null)],
+    ['privileged', (v) => (v.HostConfig.Privileged = true)],
+    ['cap add', (v) => (v.HostConfig.CapAdd = ['SYS_ADMIN'])],
+    ['cap drop', (v) => (v.HostConfig.CapDrop = [])],
+    ['security opt', (v) => (v.HostConfig.SecurityOpt = [])],
+    ['device', (v) => (v.HostConfig.Devices = [{}])],
+    ['device request', (v) => (v.HostConfig.DeviceRequests = [{}])],
+    ['device rule', (v) => (v.HostConfig.DeviceCgroupRules = ['a'])],
+    ['group', (v) => (v.HostConfig.GroupAdd = ['0'])],
+    ['volumes from', (v) => (v.HostConfig.VolumesFrom = ['x'])],
+    ['binds', (v) => (v.HostConfig.Binds = ['/x:/y'])],
+    ['port binding', (v) => (v.HostConfig.PortBindings = { '80/tcp': [{}] })],
+    ['publish ports', (v) => (v.HostConfig.PublishAllPorts = true)],
+    ['links', (v) => (v.HostConfig.Links = ['x:y'])],
+    ['extra hosts', (v) => (v.HostConfig.ExtraHosts = ['x:1.2.3.4'])],
+    ['dns', (v) => (v.HostConfig.Dns = ['8.8.8.8'])],
+    ['dns options', (v) => (v.HostConfig.DnsOptions = ['use-vc'])],
+    ['dns search', (v) => (v.HostConfig.DnsSearch = ['example'])],
+    ['network', (v) => (v.HostConfig.NetworkMode = 'bridge')],
+    ['readonly', (v) => (v.HostConfig.ReadonlyRootfs = false)],
+    ['tmpfs', (v) => (v.HostConfig.Tmpfs = {})],
+    ['memory', (v) => (v.HostConfig.Memory += 1)],
+    ['memory swap', (v) => (v.HostConfig.MemorySwap += 1)],
+    ['shm', (v) => (v.HostConfig.ShmSize += 1)],
+    ['cpu', (v) => (v.HostConfig.NanoCpus += 1)],
+    ['pids', (v) => (v.HostConfig.PidsLimit = 65)],
+    ['restart', (v) => (v.HostConfig.RestartPolicy.Name = 'always')],
+    ['auto remove', (v) => (v.HostConfig.AutoRemove = true)],
+    ['ipc', (v) => (v.HostConfig.IpcMode = 'host')],
+    ['pid', (v) => (v.HostConfig.PidMode = 'host')],
+    ['uts', (v) => (v.HostConfig.UTSMode = 'host')],
+    ['userns', (v) => (v.HostConfig.UsernsMode = 'host')],
+    ['cgroupns', (v) => (v.HostConfig.CgroupnsMode = 'host')],
+    ['network ports', (v) => (v.NetworkSettings.Ports = { '80/tcp': [] })],
+    ['mount cardinality', (v) => v.Mounts.push({ ...v.Mounts[0] })],
+    ['mount rw', (v) => (v.Mounts[0].RW = false)],
+    ['mount source', (v) => (v.Mounts[0].Source = '/other')],
+    ['mount destination', (v) => (v.Mounts[0].Destination = '/other')],
+  ]
+
+  it.each(mutations)('rejects pre-start inspect drift in %s', async (_name, mutate) => {
+    const value = await fixture()
+    const dependencies = fakeDependencies({ mutate })
+    const failure = await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies,
+    }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ executionStarted: false })
+    expect(dependencies.calls.filter((call) => call.args[2] === 'start')).toHaveLength(0)
+  })
+
+  it.each([
+    ['stale', capability({ expiresAt: new Date(now - 1).toISOString() })],
+    ['legacy', { ...capability(), containedExecution: undefined }],
     [
-      'read-only root',
-      (value: ContainedDockerInspect) => (value.HostConfig.ReadonlyRootfs = false),
+      'non-container',
+      { ...capability(), driver: 'seatbelt' as const, containedExecution: undefined },
     ],
-    [
-      'mount graph',
-      (value: ContainedDockerInspect) => {
-        const mount = value.Mounts[0]
-        if (mount) value.Mounts.push({ ...mount })
-      },
-    ],
-    ['tmpfs', (value: ContainedDockerInspect) => (value.HostConfig.Tmpfs = null)],
-    ['capabilities', (value: ContainedDockerInspect) => (value.HostConfig.CapDrop = [])],
-    ['security opts', (value: ContainedDockerInspect) => (value.HostConfig.SecurityOpt = [])],
-    ['memory', (value: ContainedDockerInspect) => (value.HostConfig.Memory = 1)],
-    ['cpu', (value: ContainedDockerInspect) => (value.HostConfig.NanoCpus = 1)],
-    ['pids', (value: ContainedDockerInspect) => (value.HostConfig.PidsLimit = 1)],
-    ['user', (value: ContainedDockerInspect) => (value.Config.User = '0:0')],
-    ['entrypoint', (value: ContainedDockerInspect) => (value.Config.Entrypoint = ['/bin/bash'])],
-    ['working directory', (value: ContainedDockerInspect) => (value.Config.WorkingDir = '/')],
-    ['devices', (value: ContainedDockerInspect) => (value.HostConfig.Devices = [{}])],
-    ['legacy binds', (value: ContainedDockerInspect) => (value.HostConfig.Binds = ['/:/host'])],
-  ])('fails probe closed when inspect changes %s', async (_label, mutate) => {
-    const handle = await mirror()
-    const inspected = containerInspect({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    mutate(inspected)
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: inspected,
-    })
-
+  ])('rejects %s signed attestation before Docker work', async (_name, attestation) => {
+    const value = await fixture()
+    const dependencies = fakeDependencies()
     await expect(
-      probeContainedDockerBoundary({
-        imageReference: config.image ?? '',
-        guestWorkspacePath: handle.guestWorkspacePath,
-        hostProbeRoot: handle.hostMirrorRoot,
-        resourceLimits: config,
+      executeContainedDocker({
+        ...executionParams(value, await signed(value, attestation)),
         dependencies,
       }),
-    ).rejects.toThrow('contained_execution_probe_mismatch')
+    ).rejects.toThrow('contained_execution_capability_invalid')
+    expect(dependencies.calls).toEqual([])
   })
 
-  it('fails probe closed when container removal cannot be confirmed', async () => {
-    const handle = await mirror()
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: containerInspect({
-        hostRoot: handle.hostMirrorRoot,
-        guestRoot: handle.guestWorkspacePath,
-        cwd: handle.guestWorkspacePath,
-      }),
-      cleanupInspectResult: result({ stdout: '[{"Id":"still-present"}]' }),
-    })
-
-    await expect(
-      probeContainedDockerBoundary({
-        imageReference: config.image ?? '',
-        guestWorkspacePath: handle.guestWorkspacePath,
-        hostProbeRoot: handle.hostMirrorRoot,
-        resourceLimits: config,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_container_cleanup_unconfirmed')
-  })
-
-  it('fails probe closed when inspect does not bind the created container to the immutable ID', async () => {
-    const handle = await mirror()
-    const inspected = containerInspect({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    delete (inspected as { Image?: string }).Image
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: inspected,
-    })
-
-    await expect(
-      probeContainedDockerBoundary({
-        imageReference: config.image ?? '',
-        guestWorkspacePath: handle.guestWorkspacePath,
-        hostProbeRoot: handle.hostMirrorRoot,
-        resourceLimits: config,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_probe_mismatch')
-  })
-
-  it('allows image-defined env but rejects any container env not derived from the image or proxy neutralization', async () => {
-    const handle = await mirror()
-    const inspected = containerInspect({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    inspected.Config.Env?.push('HOST_TOKEN=injected')
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      inspect: inspected,
-    })
-
-    await expect(
-      probeContainedDockerBoundary({
-        imageReference: config.image ?? '',
-        guestWorkspacePath: handle.guestWorkspacePath,
-        hostProbeRoot: handle.hostMirrorRoot,
-        resourceLimits: config,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_probe_mismatch')
-  })
-
-  it('adds only the contained capability during session start when the feature is enabled', async () => {
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-session-'))
-    tempRoots.push(repoRoot)
-    let inspectCount = 0
-    let createArgs: string[] = []
-    const dependencies: ContainedDockerDependencies = {
-      now: () => now,
-      randomUUID: () => '123e4567-e89b-42d3-a456-426614174000',
-      uid: () => 501,
-      gid: () => 20,
-      async runDocker(args) {
-        if (args[0] === 'image') {
-          return result({
-            stdout: JSON.stringify([
-              {
-                Id: imageId,
-                Config: {
-                  Env: [
-                    'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-                    'IMAGE_DEFINED=yes',
-                  ],
-                },
-              },
-            ]),
-          })
-        }
-        if (args[0] === 'create') {
-          createArgs = args
-          return result({ stdout: 'probe-container-id\n' })
-        }
-        if (args[0] === 'inspect') {
-          inspectCount += 1
-          if (inspectCount === 1) {
-            const mountSpec = createArgs[createArgs.indexOf('--mount') + 1] ?? ''
-            const source = mountSpec.match(/src=([^,]+)/)?.[1] ?? ''
-            return result({
-              stdout: JSON.stringify([
-                containerInspect({
-                  hostRoot: source,
-                  guestRoot: repoRoot,
-                  cwd: repoRoot,
-                }),
-              ]),
-            })
-          }
-          return result({ exitCode: 1, stderr: 'No such container' })
-        }
-        return result()
+  it('rejects tampering, missing image, and immutable image mismatch', async () => {
+    const value = await fixture()
+    const signedValue = (await signed(value)) as {
+      attestation: BoundaryAttestation
+      [key: string]: unknown
+    }
+    const tampered = {
+      ...signedValue,
+      attestation: {
+        ...signedValue.attestation,
+        containedExecution: {
+          ...signedValue.attestation.containedExecution,
+          imageId: otherImageId,
+        },
       },
     }
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, tampered),
+        dependencies: fakeDependencies(),
+      }),
+    ).rejects.toThrow('contained_execution_capability_invalid')
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies: fakeDependencies({ imageMissing: true }),
+      }),
+    ).rejects.toMatchObject({ executionStarted: false })
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value)),
+        dependencies: fakeDependencies({ imageId: otherImageId }),
+      }),
+    ).rejects.toThrow('contained_execution_image_mismatch')
+  })
+
+  it('returns complete command-separated privacy-preserving receipts', async () => {
+    const value = await fixture()
+    const envelope = await signed(value)
+    const first = await executeContainedDocker({
+      ...executionParams(value, envelope),
+      command: 'runner first',
+      dependencies: fakeDependencies(),
+    })
+    const second = await executeContainedDocker({
+      ...executionParams(value, envelope),
+      command: 'runner second',
+      dependencies: fakeDependencies(),
+    })
+    expect(first.receiptHash).not.toBe(second.receiptHash)
+    expect(first.receipt).toMatchObject({
+      actionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      attestationDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      executionStarted: true,
+      timeoutMs: 30_000,
+      dockerSubstrate: substrate,
+      imageId,
+      mirror: { backend: 'file_copy', cardinality: 1, readWrite: true },
+      tmpfs: { mode: 0o1777, nosuid: true, nodev: true, exec: false },
+      environment: { hostForwarded: false, proxyEnvironment: 'neutralized-empty' },
+      privilege: { privileged: false, capAdd: [], capDrop: ['ALL'] },
+      devices: { devices: [], deviceRequests: [], deviceCgroupRules: [] },
+      resources: { memoryMiB: 512, memorySwapMiB: 512, shmSizeMiB: 64, pids: 64 },
+    })
+    expect(first.receipt).not.toHaveProperty('command')
+    expect(first.receipt).not.toHaveProperty('stdout')
+    expect(first.receipt).not.toHaveProperty('stderr')
+  })
+
+  it('signs and reports fresh contained execution without upgrading generic freshness', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-session-'))
+    roots.push(repoRoot)
     const fullConfig = {
       ...DEFAULT_CONFIG_V4,
       sandbox: {
@@ -542,421 +684,22 @@ describe('contained Docker execution', () => {
         containedExecution: config,
       },
     }
-
     const started = await startBoundarySession({
       repoRoot,
       config: fullConfig,
-      containedDockerDependencies: dependencies,
+      containedDockerDependencies: fakeDependencies(),
     })
-
     expect(started.attestation).toMatchObject({
-      driver: 'container',
       deniesUngrantedEffects: false,
       materializesGrants: false,
-      containedExecution: { imageId, networkNone: true },
+      containedExecution: { dockerSubstrate: substrate },
     })
-    const signed = JSON.parse(await readFile(started.attestationPath, 'utf8'))
-    expect(signed.attestation.containedExecution.imageId).toBe(imageId)
-  })
-
-  it('rejects missing, stale, tampered, legacy, image-mismatched, and limit-mismatched capabilities', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const valid = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const validCapability = valid.attestation.containedExecution
-    const currentCapability = attestation().containedExecution
-    if (!validCapability || !currentCapability) {
-      throw new Error('test fixture is missing contained capability')
-    }
-    const base = {
-      repoRoot: handle.guestWorkspacePath,
-      controlPlaneDir,
-      config,
-      mirror: handle,
-      guestCwd: handle.guestWorkspacePath,
-      command: 'fictional-runner check',
-    }
-    const deps = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-
-    for (const [label, signedAttestation, runConfig, resolvedImage] of [
-      ['missing', undefined, config, imageId],
-      ['legacy', attestation(), config, imageId],
-      [
-        'non-container',
-        await signBoundaryAttestation({
-          repoRoot: handle.guestWorkspacePath,
-          attestation: {
-            ...attestation(),
-            driver: 'host-integration',
-            containedExecution: undefined,
-          },
-          controlPlaneDir,
-        }),
-        config,
-        imageId,
-      ],
-      [
-        'tampered',
-        {
-          ...valid,
-          attestation: {
-            ...valid.attestation,
-            containedExecution: { ...validCapability, imageId: otherImageId },
-          },
-        },
-        config,
-        imageId,
-      ],
-      [
-        'stale',
-        await signBoundaryAttestation({
-          repoRoot: handle.guestWorkspacePath,
-          attestation: attestation({
-            containedExecution: {
-              ...currentCapability,
-              expiresAt: new Date(now - 1).toISOString(),
-            },
-          }),
-          controlPlaneDir,
-        }),
-        config,
-        imageId,
-      ],
-      [
-        'stale signed envelope',
-        await signBoundaryAttestation({
-          repoRoot: handle.guestWorkspacePath,
-          attestation: {
-            ...attestation(),
-            expiresAt: new Date(now - 1).toISOString(),
-          },
-          controlPlaneDir,
-        }),
-        config,
-        imageId,
-      ],
-      ['image mismatch', valid, config, otherImageId],
-      ['limit mismatch', valid, { ...config, pids: 65 }, imageId],
-      [
-        'fixed policy mismatch',
-        await signBoundaryAttestation({
-          repoRoot: handle.guestWorkspacePath,
-          attestation: {
-            ...attestation(),
-            containedExecution: {
-              ...currentCapability,
-              tmpfs: { ...currentCapability.tmpfs, sizeBytes: 1 },
-            },
-          },
-          controlPlaneDir,
-        }),
-        config,
-        imageId,
-      ],
-    ] as const) {
-      const localDeps = {
-        ...deps,
-        ...fakeDependencies({
-          hostRoot: handle.hostMirrorRoot,
-          guestRoot: handle.guestWorkspacePath,
-          cwd: handle.guestWorkspacePath,
-          image: resolvedImage,
-        }),
-      }
-      await expect(
-        executeContainedDocker({
-          ...base,
-          config: runConfig,
-          signedAttestation,
-          dependencies: localDeps,
-        }),
-        label,
-      ).rejects.toThrow()
-    }
-  })
-
-  it('rejects a configured image reference that is not present locally without pulling', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    dependencies.runDocker = async (args) => {
-      dependencies.calls.push(args)
-      return result({ exitCode: 1, stderr: 'No such image' })
-    }
-
-    await expect(
-      executeContainedDocker({
-        repoRoot: handle.guestWorkspacePath,
-        controlPlaneDir,
-        config,
-        mirror: handle,
-        guestCwd: handle.guestWorkspacePath,
-        command: 'true',
-        signedAttestation,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_image_missing')
-    expect(dependencies.calls).toEqual([['image', 'inspect', config.image]])
-  })
-
-  it('runs the command once by immutable ID and returns bounded output with a deterministic receipt', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: `${handle.guestWorkspacePath}/sub`,
-      runResult: result({
-        exitCode: 7,
-        stdout: 'tail',
-        stderr: 'error tail',
-        stdoutTruncated: true,
-      }),
-    })
-
-    const executed = await executeContainedDocker({
-      repoRoot: handle.guestWorkspacePath,
-      controlPlaneDir,
-      config,
-      mirror: handle,
-      guestCwd: `${handle.guestWorkspacePath}/sub`,
-      command: 'fictional-runner check',
-      signedAttestation,
-      dependencies,
-    })
-
-    expect(dependencies.calls.filter((args) => args[0] === 'run')).toHaveLength(1)
-    expect(dependencies.calls.find((args) => args[0] === 'run')).toContain(imageId)
-    expect(dependencies.calls.find((args) => args[0] === 'run')).not.toContain(config.image)
-    expect(executed).toMatchObject({
-      exitCode: 7,
-      timedOut: false,
-      stdout: 'tail',
-      stderr: 'error tail',
-      stdoutTruncated: true,
-      receipt: {
-        version: 1,
-        imageId,
-        mirrorBackend: 'file_copy',
-        networkMode: 'none',
-        tmpfsExec: false,
-        exitCode: 7,
-        timedOut: false,
-      },
-    })
-    expect(executed.receipt).not.toHaveProperty('stdout')
-    expect(executed.receipt).not.toHaveProperty('stderr')
-    expect(executed.receiptHash).toMatch(/^[a-f0-9]{64}$/)
-
-    const differentOutputDependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: `${handle.guestWorkspacePath}/sub`,
-      runResult: result({ exitCode: 7, stdout: 'different', stderr: 'also different' }),
-    })
-    const sameEnforcement = await executeContainedDocker({
-      repoRoot: handle.guestWorkspacePath,
-      controlPlaneDir,
-      config,
-      mirror: handle,
-      guestCwd: `${handle.guestWorkspacePath}/sub`,
-      command: 'fictional-runner check',
-      signedAttestation,
-      dependencies: differentOutputDependencies,
-    })
-    expect(sameEnforcement.receiptHash).toBe(executed.receiptHash)
-  })
-
-  it('rejects a runtime host identity that differs from the identity probed for the capability', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    dependencies.uid = () => 502
-
-    await expect(
-      executeContainedDocker({
-        repoRoot: handle.guestWorkspacePath,
-        controlPlaneDir,
-        config,
-        mirror: handle,
-        guestCwd: handle.guestWorkspacePath,
-        command: 'true',
-        signedAttestation,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_capability_mismatch')
-    expect(dependencies.calls.filter((args) => args[0] === 'run')).toHaveLength(0)
-  })
-
-  it('cleans up timed-out and failed containers and fails closed when absence is unconfirmed', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const base = {
-      repoRoot: handle.guestWorkspacePath,
-      controlPlaneDir,
-      config,
-      mirror: handle,
-      guestCwd: handle.guestWorkspacePath,
-      command: 'fictional-runner check',
-      signedAttestation,
-    }
-
-    for (const runResult of [result({ timedOut: true, exitCode: null }), result({ exitCode: 9 })]) {
-      const dependencies = fakeDependencies({
-        hostRoot: handle.hostMirrorRoot,
-        guestRoot: handle.guestWorkspacePath,
-        cwd: handle.guestWorkspacePath,
-        runResult,
-      })
-      await executeContainedDocker({ ...base, dependencies })
-      expect(dependencies.calls.slice(-2).map((args) => args[0])).toEqual(['rm', 'inspect'])
-    }
-
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-      runResult: result({ timedOut: true, exitCode: null }),
-      cleanupInspectResult: result({ stdout: '[{"Id":"still-present"}]' }),
-    })
-    await expect(executeContainedDocker({ ...base, dependencies })).rejects.toThrow(
-      'contained_execution_container_cleanup_unconfirmed',
+    expect(JSON.parse(await readFile(started.attestationPath, 'utf8'))).toHaveProperty(
+      'attestation.containedExecution.dockerSubstrate.daemonId',
+      substrate.daemonId,
     )
-  })
-
-  it('rejects invalid mount/cwd paths and any extra mount or env option before Docker execution', async () => {
-    const handle = await mirror()
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: handle.guestWorkspacePath,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const dependencies = fakeDependencies({
-      hostRoot: handle.hostMirrorRoot,
-      guestRoot: handle.guestWorkspacePath,
-      cwd: handle.guestWorkspacePath,
-    })
-    const base = {
-      repoRoot: handle.guestWorkspacePath,
-      controlPlaneDir,
-      config,
-      mirror: handle,
-      command: 'true',
-      signedAttestation,
-      dependencies,
-    }
-
-    await expect(
-      executeContainedDocker({ ...base, guestCwd: '/workspace/outside' }),
-    ).rejects.toThrow('contained_execution_invalid_cwd')
-    await expect(
-      executeContainedDocker({
-        ...base,
-        guestCwd: handle.guestWorkspacePath,
-        env: { TOKEN: 'secret' },
-      } as never),
-    ).rejects.toThrow('contained_execution_unknown_option')
-    await expect(
-      executeContainedDocker({
-        ...base,
-        guestCwd: handle.guestWorkspacePath,
-        mounts: ['/:/host'],
-      } as never),
-    ).rejects.toThrow('contained_execution_unknown_option')
-    await expect(
-      executeContainedDocker({
-        ...base,
-        config: { ...config, env: { TOKEN: 'secret' } },
-        guestCwd: handle.guestWorkspacePath,
-      } as never),
-    ).rejects.toThrow('contained_execution_unknown_option')
-    await expect(
-      executeContainedDocker({
-        ...base,
-        mirror: { ...handle, mounts: ['/:/host'] },
-        guestCwd: handle.guestWorkspacePath,
-      } as never),
-    ).rejects.toThrow('contained_execution_unknown_option')
-    expect(dependencies.calls).toEqual([])
-  })
-
-  it('rejects a forged mirror handle that would mount the source workspace itself', async () => {
-    const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-source-'))
-    tempRoots.push(sourceRoot)
-    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-signing-'))
-    tempRoots.push(controlPlaneDir)
-    const signedAttestation = await signBoundaryAttestation({
-      repoRoot: sourceRoot,
-      attestation: attestation(),
-      controlPlaneDir,
-    })
-    const forgedMirror: ContainedExecutionMirrorHandle = {
-      hostMirrorRoot: sourceRoot,
-      guestWorkspacePath: sourceRoot,
-      backend: 'file_copy',
-      async cleanup() {},
-    }
-    const dependencies = fakeDependencies({
-      hostRoot: sourceRoot,
-      guestRoot: sourceRoot,
-      cwd: sourceRoot,
-    })
-
-    await expect(
-      executeContainedDocker({
-        repoRoot: sourceRoot,
-        controlPlaneDir,
-        config,
-        mirror: forgedMirror,
-        guestCwd: sourceRoot,
-        command: 'true',
-        signedAttestation,
-        dependencies,
-      }),
-    ).rejects.toThrow('contained_execution_invalid_mount')
-    expect(dependencies.calls).toEqual([])
+    const status = await boundarySessionStatus({ repoRoot, config: fullConfig, now })
+    expect(status.fresh).toBe(false)
+    expect(status.containedExecutionFresh).toBe(true)
   })
 })

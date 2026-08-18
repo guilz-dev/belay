@@ -75,6 +75,35 @@ export interface ContainedExecutionMirrorHandle {
   cleanup(): Promise<void>
 }
 
+interface ContainedExecutionMirrorLease {
+  sourceRoot: string
+  hostMirrorRoot: string
+  guestWorkspacePath: string
+  backend: ContainedExecutionMirrorBackend
+  protectedRoots: string[]
+  live: boolean
+}
+
+const mirrorLeases = new WeakMap<ContainedExecutionMirrorHandle, ContainedExecutionMirrorLease>()
+
+/** Internal execution-boundary check; the public core index deliberately does not re-export it. */
+export function validateContainedExecutionMirrorLease(
+  handle: ContainedExecutionMirrorHandle,
+  expected: { sourceRoot: string; protectedRoots: readonly string[] },
+): boolean {
+  const lease = mirrorLeases.get(handle)
+  const protectedRoots = expected.protectedRoots.map(canonicalPath)
+  return Boolean(
+    lease?.live &&
+      lease.sourceRoot === canonicalPath(expected.sourceRoot) &&
+      lease.hostMirrorRoot === handle.hostMirrorRoot &&
+      lease.guestWorkspacePath === handle.guestWorkspacePath &&
+      lease.backend === handle.backend &&
+      lease.protectedRoots.length === protectedRoots.length &&
+      lease.protectedRoots.every((root, index) => root === protectedRoots[index]),
+  )
+}
+
 interface MirrorTestDependencies {
   makeTempRoot?(): Promise<string>
   removeRoot?(root: string): Promise<void>
@@ -777,12 +806,25 @@ async function prepareWithDependencies(
     )
     await chmod(guestRoot, 0o700)
 
-    return {
+    const lease: ContainedExecutionMirrorLease = {
+      sourceRoot,
       hostMirrorRoot: guestRoot,
       guestWorkspacePath,
       backend: 'file_copy',
-      cleanup: () => cleanupOwnedRoot(guestRoot, dependencies),
+      protectedRoots,
+      live: true,
     }
+    const handle: ContainedExecutionMirrorHandle = {
+      hostMirrorRoot: guestRoot,
+      guestWorkspacePath,
+      backend: 'file_copy',
+      async cleanup() {
+        lease.live = false
+        await cleanupOwnedRoot(guestRoot, dependencies)
+      },
+    }
+    mirrorLeases.set(handle, lease)
+    return handle
   } catch (error) {
     try {
       await cleanupOwnedRoot(guestRoot, dependencies)

@@ -220,6 +220,10 @@ export interface BelaySandboxConfig {
 export interface BelayContainedExecutionConfig {
   enabled: boolean
   image: string | null
+  /** Required when enabled; optional in source objects for disabled backwards compatibility. */
+  dockerExecutable?: string | null
+  /** Required when enabled; only local absolute unix:// endpoints are accepted. */
+  dockerHost?: string | null
   timeoutMs: number
   memoryMiB: number
   cpus: number
@@ -454,6 +458,8 @@ export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
 export const DEFAULT_CONTAINED_EXECUTION: BelayContainedExecutionConfig = {
   enabled: false,
   image: null,
+  dockerExecutable: null,
+  dockerHost: null,
   timeoutMs: 30_000,
   memoryMiB: 2048,
   cpus: 2,
@@ -481,6 +487,12 @@ export function normalizeContainedExecutionConfig(
   return {
     enabled: raw?.enabled === true,
     image: typeof raw?.image === 'string' && raw.image.trim() ? raw.image.trim() : null,
+    dockerExecutable:
+      typeof raw?.dockerExecutable === 'string' && raw.dockerExecutable.trim()
+        ? raw.dockerExecutable.trim()
+        : null,
+    dockerHost:
+      typeof raw?.dockerHost === 'string' && raw.dockerHost.trim() ? raw.dockerHost.trim() : null,
     timeoutMs: positiveInteger(raw?.timeoutMs, DEFAULT_CONTAINED_EXECUTION.timeoutMs),
     memoryMiB: positiveInteger(raw?.memoryMiB, DEFAULT_CONTAINED_EXECUTION.memoryMiB),
     cpus: positiveNumber(raw?.cpus, DEFAULT_CONTAINED_EXECUTION.cpus),
@@ -504,6 +516,27 @@ function normalizeSandboxConfig(raw: Partial<BelaySandboxConfig> | undefined): B
   }
   if (containedExecution.enabled && !containedExecution.image) {
     throw new Error('contained execution requires an explicit image')
+  }
+  if (containedExecution.enabled && !containedExecution.dockerExecutable) {
+    throw new Error('contained execution requires an explicit Docker executable')
+  }
+  if (
+    containedExecution.enabled &&
+    (!path.isAbsolute(containedExecution.dockerExecutable ?? '') ||
+      /[\0\n\r]/.test(containedExecution.dockerExecutable ?? ''))
+  ) {
+    throw new Error('contained execution requires an absolute executable path')
+  }
+  if (containedExecution.enabled && !containedExecution.dockerHost) {
+    throw new Error('contained execution requires an explicit Docker host')
+  }
+  if (
+    containedExecution.enabled &&
+    (!containedExecution.dockerHost?.startsWith('unix:///') ||
+      !path.isAbsolute(containedExecution.dockerHost.slice('unix://'.length)) ||
+      /[\0\n\r]/.test(containedExecution.dockerHost))
+  ) {
+    throw new Error('contained execution requires a local unix Docker host')
   }
   return {
     enabled: raw?.enabled === true,

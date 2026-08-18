@@ -31,6 +31,8 @@ function configWithContainedExecution(enabled = true) {
       containedExecution: {
         enabled,
         image: enabled ? 'registry.example/contained-runner:latest' : null,
+        dockerExecutable: enabled ? '/usr/local/bin/docker' : null,
+        dockerHost: enabled ? 'unix:///var/run/docker.sock' : null,
         timeoutMs: 30_000,
         memoryMiB: 2048,
         cpus: 2,

@@ -48,15 +48,17 @@ export async function sessionStatusProject(params: {
   ok: boolean
   attestationPath: string
   fresh: boolean
+  containedExecutionFresh?: boolean
   attestation: Awaited<ReturnType<typeof boundarySessionStatus>>['attestation']
 }> {
   const repoRoot = path.resolve(params.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
   const status = await boundarySessionStatus({ repoRoot, config })
   return {
-    ok: status.fresh,
+    ok: status.fresh || status.containedExecutionFresh === true,
     attestationPath: status.attestationPath,
     fresh: status.fresh,
+    containedExecutionFresh: status.containedExecutionFresh,
     attestation: status.attestation,
   }
 }
@@ -71,6 +73,9 @@ export function formatSessionStatusReport(
     `Attestation: ${report.attestationPath}`,
     `Driver: ${report.attestation.driver}`,
     `Fresh: ${report.fresh ? 'yes' : 'no'}`,
+    ...(report.containedExecutionFresh === undefined
+      ? []
+      : [`Contained execution fresh: ${report.containedExecutionFresh ? 'yes' : 'no'}`]),
     `Expires: ${report.attestation.expiresAt}`,
     `Materializes grants: ${report.attestation.materializesGrants ? 'yes' : 'no'}`,
   ].join('\n')

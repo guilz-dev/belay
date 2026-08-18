@@ -78,7 +78,7 @@ export {
   scrubOptionsFromConfig,
 } from './config.js'
 export type {
-  BuildContainedDockerArgsParams,
+  BuildContainedDockerCreateArgsParams,
   ContainedDockerDependencies,
   ContainedDockerExecutionResult,
   ContainedDockerInspect,
@@ -86,9 +86,12 @@ export type {
   ExecuteContainedDockerParams,
 } from './contained-execution/docker.js'
 export {
-  buildContainedDockerArgs,
+  buildContainedDockerCreateArgs,
+  CONTAINED_EXECUTION_BOUNDARY_UNAVAILABLE,
   CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED,
+  ContainedDockerBoundaryUnavailableError,
   ContainedDockerCleanupUnconfirmedError,
+  ContainedDockerStartAttemptError,
   executeContainedDocker,
   probeContainedDockerBoundary,
   probeContainedDockerForSession,

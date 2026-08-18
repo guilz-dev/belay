@@ -25,6 +25,7 @@ import {
   type ContainedExecutionMirrorLimits,
   prepareContainedExecutionMirror,
   prepareContainedExecutionMirrorForTests,
+  validateContainedExecutionMirrorLease,
   withContainedExecutionMirror,
   withContainedExecutionMirrorForTests,
 } from '../core/contained-execution/mirror.js'
@@ -526,6 +527,37 @@ describe('contained execution mirror', () => {
     await expect(mirror.cleanup()).resolves.toBeUndefined()
     await expect(mirror.cleanup()).resolves.toBeUndefined()
     await expectAbsent(allocatedRoot)
+  })
+
+  it('accepts only the exact live opaque lease and bound provenance', async () => {
+    const sourceRoot = await temporaryDirectory('belay-contained-lease-source-')
+    const protectedRoot = await temporaryDirectory('belay-contained-lease-protected-')
+    await writeFile(path.join(sourceRoot, 'input.txt'), 'input\n')
+    const mirror = await prepareContainedExecutionMirror(mirrorOptions(sourceRoot, [protectedRoot]))
+
+    expect(
+      validateContainedExecutionMirrorLease(mirror, {
+        sourceRoot,
+        protectedRoots: [protectedRoot],
+      }),
+    ).toBe(true)
+    expect(
+      validateContainedExecutionMirrorLease(
+        { ...mirror },
+        { sourceRoot, protectedRoots: [protectedRoot] },
+      ),
+    ).toBe(false)
+    expect(validateContainedExecutionMirrorLease(mirror, { sourceRoot, protectedRoots: [] })).toBe(
+      false,
+    )
+
+    await mirror.cleanup()
+    expect(
+      validateContainedExecutionMirrorLease(mirror, {
+        sourceRoot,
+        protectedRoots: [protectedRoot],
+      }),
+    ).toBe(false)
   })
 
   it('prefers cleanup-unconfirmed over an operation failure', async () => {

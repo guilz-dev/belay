@@ -6,16 +6,26 @@ import { promisify } from 'node:util'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { isDockerAvailable } from '../core/capability/boundary-driver-container.js'
 import { probeContainedDockerBoundary } from '../core/contained-execution/docker.js'
 
 const execFileAsync = promisify(execFile)
 const imageReference = 'alpine:3.20'
-const dockerAvailable = await isDockerAvailable()
+const dockerExecutable = process.env.BELAY_TEST_DOCKER_EXECUTABLE ?? '/usr/local/bin/docker'
+const dockerHost = process.env.BELAY_TEST_DOCKER_HOST ?? 'unix:///var/run/docker.sock'
+const dockerEnvironment = {
+  DOCKER_CONFIG: '/var/empty/belay-docker-config',
+  HOME: '/var/empty',
+  LC_ALL: 'C',
+  PATH: '/usr/bin:/bin',
+}
 let localImageAvailable = false
-if (dockerAvailable) {
+if (dockerHost.startsWith('unix:///')) {
   try {
-    await execFileAsync('docker', ['image', 'inspect', imageReference])
+    await execFileAsync(
+      dockerExecutable,
+      ['--host', dockerHost, 'image', 'inspect', imageReference],
+      { env: dockerEnvironment },
+    )
     localImageAvailable = true
   } catch {
     // The probe must never pull. Integration coverage skips without a pre-provisioned image.
@@ -38,7 +48,11 @@ describe('contained Docker inspect integration', () => {
       await mkdir(mirror)
 
       const capability = await probeContainedDockerBoundary({
+        repoRoot: parent,
+        protectedRoots: [],
         imageReference,
+        dockerExecutable,
+        dockerHost,
         hostProbeRoot: mirror,
         guestWorkspacePath: '/workspace/belay-contained-probe',
         resourceLimits: {
