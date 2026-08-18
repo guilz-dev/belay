@@ -8,6 +8,7 @@ import { detectUnparseableShell } from '../shell-unparseable.js'
 import type { VerdictOpacity } from './types.js'
 
 const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
+const MAX_WRAPPER_PEEL_DEPTH = 32
 
 const TRANSPARENT_WRAPPERS = new Set([
   'sudo',
@@ -53,11 +54,17 @@ export function normalizeHead(token: string): string {
 export function peelTransparentWrappers(tokens: string[]): {
   tokens: string[]
   xargsStdinOpaque: boolean
+  opaque: boolean
 } {
   let current = [...tokens]
   let xargsStdinOpaque = false
+  let peelDepth = 0
 
   while (current.length > 0) {
+    if (peelDepth >= MAX_WRAPPER_PEEL_DEPTH) {
+      return { tokens: current, xargsStdinOpaque: false, opaque: true }
+    }
+    peelDepth += 1
     while (current.length > 0 && ENV_PREFIX_PATTERN.test(current[0] ?? '')) {
       current.shift()
     }
@@ -66,6 +73,25 @@ export function peelTransparentWrappers(tokens: string[]): {
     }
 
     const head = normalizeHead(current[0] ?? '')
+    if (head === 'sudo') {
+      const wrapper = peelSudoWrapper(current)
+      if (wrapper.kind === 'opaque') {
+        return { tokens: current, xargsStdinOpaque: false, opaque: true }
+      }
+      current = wrapper.tokens
+      continue
+    }
+    if (head === 'command' || head === 'builtin' || head === 'exec') {
+      const wrapper = peelShellInvocationWrapper(head, current)
+      if (wrapper.kind === 'opaque') {
+        return { tokens: current, xargsStdinOpaque: false, opaque: true }
+      }
+      if (wrapper.kind === 'preserve') {
+        return { tokens: current, xargsStdinOpaque: false, opaque: false }
+      }
+      current = wrapper.tokens
+      continue
+    }
     if (!TRANSPARENT_WRAPPERS.has(head)) {
       break
     }
@@ -78,7 +104,7 @@ export function peelTransparentWrappers(tokens: string[]): {
       const rest = current.slice(index)
       if (rest.length === 0) {
         xargsStdinOpaque = true
-        return { tokens: [], xargsStdinOpaque: true }
+        return { tokens: [], xargsStdinOpaque: true, opaque: true }
       }
       current = rest
       continue
@@ -101,7 +127,138 @@ export function peelTransparentWrappers(tokens: string[]): {
     current = current.slice(1)
   }
 
-  return { tokens: current, xargsStdinOpaque }
+  return { tokens: current, xargsStdinOpaque, opaque: false }
+}
+
+type ShellInvocationWrapperResult =
+  | { kind: 'peeled'; tokens: string[] }
+  | { kind: 'preserve' }
+  | { kind: 'opaque' }
+
+function peelSudoWrapper(
+  tokens: string[],
+): Extract<ShellInvocationWrapperResult, { kind: 'peeled' | 'opaque' }> {
+  let index = 1
+  while (index < tokens.length) {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
+      index += 1
+      break
+    }
+    if (!token.startsWith('-') || token === '-') {
+      break
+    }
+    if (token === '-n' || token === '--non-interactive') {
+      index += 1
+      continue
+    }
+    if (token === '-u' || token === '-g' || token === '--user' || token === '--group') {
+      if (!tokens[index + 1] || tokens[index + 1] === '--') {
+        return { kind: 'opaque' }
+      }
+      index += 2
+      continue
+    }
+    if ((token.startsWith('-u') || token.startsWith('-g')) && token.length > 2) {
+      index += 1
+      continue
+    }
+    if (
+      (token.startsWith('--user=') || token.startsWith('--group=')) &&
+      token.slice(token.indexOf('=') + 1).length > 0
+    ) {
+      index += 1
+      continue
+    }
+    return { kind: 'opaque' }
+  }
+  return index < tokens.length
+    ? { kind: 'peeled', tokens: tokens.slice(index) }
+    : { kind: 'opaque' }
+}
+
+function peelShellInvocationWrapper(
+  head: 'command' | 'builtin' | 'exec',
+  tokens: string[],
+): ShellInvocationWrapperResult {
+  switch (head) {
+    case 'command':
+      return peelCommandWrapper(tokens)
+    case 'builtin':
+      return peelBuiltinWrapper(tokens)
+    case 'exec':
+      return peelExecWrapper(tokens)
+  }
+}
+
+function peelCommandWrapper(tokens: string[]): ShellInvocationWrapperResult {
+  let index = 1
+  let inspection = false
+  while (index < tokens.length) {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
+      index += 1
+      break
+    }
+    if (!token.startsWith('-') || token === '-') {
+      break
+    }
+    const flags = token.slice(1)
+    if (!flags || ![...flags].every((flag) => flag === 'p' || flag === 'v' || flag === 'V')) {
+      return { kind: 'opaque' }
+    }
+    inspection ||= flags.includes('v') || flags.includes('V')
+    index += 1
+  }
+  if (inspection) {
+    return { kind: 'preserve' }
+  }
+  return index < tokens.length
+    ? { kind: 'peeled', tokens: tokens.slice(index) }
+    : { kind: 'opaque' }
+}
+
+function peelBuiltinWrapper(tokens: string[]): ShellInvocationWrapperResult {
+  const first = tokens[1]
+  if (first === '--') {
+    return tokens.length > 2 ? { kind: 'peeled', tokens: tokens.slice(2) } : { kind: 'opaque' }
+  }
+  if (!first || first.startsWith('-')) {
+    return { kind: 'opaque' }
+  }
+  return { kind: 'peeled', tokens: tokens.slice(1) }
+}
+
+function peelExecWrapper(tokens: string[]): ShellInvocationWrapperResult {
+  let index = 1
+  while (index < tokens.length) {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
+      index += 1
+      break
+    }
+    if (!token.startsWith('-') || token === '-') {
+      break
+    }
+    if (token === '-a') {
+      if (!tokens[index + 1]) {
+        return { kind: 'opaque' }
+      }
+      index += 2
+      continue
+    }
+    if (token.startsWith('-a') && token.length > 2) {
+      index += 1
+      continue
+    }
+    if (![...token.slice(1)].every((flag) => flag === 'c' || flag === 'l')) {
+      return { kind: 'opaque' }
+    }
+    index += 1
+  }
+  return index < tokens.length
+    ? { kind: 'peeled', tokens: tokens.slice(index) }
+    : { kind: 'opaque' }
 }
 
 export function isVariableIndirectHead(head: string): boolean {
@@ -118,12 +275,16 @@ export function extractEvalBody(tokens: string[]): string | null {
 }
 
 export function extractRecursiveScript(tokens: string[]): string | null {
-  const filtered = tokens.filter((token) => token !== 'sudo')
+  const { tokens: filtered, opaque } = peelTransparentWrappers(tokens)
+  if (opaque) {
+    return null
+  }
   const head = normalizeHead(filtered[0] ?? '')
   const second = filtered[1] ?? ''
 
   if (head === 'eval') {
-    return extractEvalBody(tokens)
+    const body = filtered.slice(1).join(' ').trim()
+    return body || null
   }
 
   if (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) {
@@ -156,7 +317,10 @@ export function extractRecursiveScript(tokens: string[]): string | null {
  * to preserve fail-closed policy for dynamic evaluation.
  */
 export function isDynamicRecursiveEvaluation(tokens: string[]): boolean {
-  const filtered = tokens.filter((token) => token !== 'sudo')
+  const { tokens: filtered, opaque } = peelTransparentWrappers(tokens)
+  if (opaque) {
+    return false
+  }
   const head = normalizeHead(filtered[0] ?? '')
   if (head === 'eval') {
     return true
@@ -167,9 +331,15 @@ export function isDynamicRecursiveEvaluation(tokens: string[]): boolean {
   )
 }
 
+export function isCommandInspection(tokens: string[]): boolean {
+  return (
+    normalizeHead(tokens[0] ?? '') === 'command' && peelCommandWrapper(tokens).kind === 'preserve'
+  )
+}
+
 export function isBareInterpreter(tokens: string[]): boolean {
-  const { tokens: peeled, xargsStdinOpaque } = peelTransparentWrappers(tokens)
-  if (xargsStdinOpaque) {
+  const { tokens: peeled, xargsStdinOpaque, opaque } = peelTransparentWrappers(tokens)
+  if (xargsStdinOpaque || opaque) {
     return true
   }
   if (peeled.length === 0) {
@@ -350,8 +520,8 @@ export function segmentOpacity(command: string): VerdictOpacity {
     return 'unparseable'
   }
   const tokens = tokenizeShell(command)
-  const { xargsStdinOpaque } = peelTransparentWrappers(tokens)
-  if (xargsStdinOpaque) {
+  const { xargsStdinOpaque, opaque } = peelTransparentWrappers(tokens)
+  if (xargsStdinOpaque || opaque) {
     return 'opaque'
   }
   if (isBareInterpreter(tokens)) {

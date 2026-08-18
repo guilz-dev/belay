@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
 import { isContainedUnknownExecutionEligible } from '../core/contained-execution/eligibility.js'
+import { collectRequirements } from '../core/effect-ir/build.js'
 import type { EffectPlan, EffectRequirement } from '../core/effect-ir/types.js'
 import type { GatedAction, GatedActionKind } from '../core/gate-contract.js'
 import type { ClassifyResult } from '../core/types.js'
@@ -66,11 +67,86 @@ describe('contained unknown execution eligibility', () => {
     'eval fictional-runner verify',
     "sh -c 'fictional-runner verify'",
     "node -e 'fictional-runner verify'",
+    'command eval fictional-runner verify',
+    'builtin eval fictional-runner verify',
+    "exec sh -c 'fictional-runner verify'",
+    'env command eval fictional-runner verify',
+    'env -- command eval fictional-runner verify',
+    "sudo exec sh -c 'fictional-runner verify'",
+    "sudo -- exec sh -c 'fictional-runner verify'",
+    "sudo -u root exec sh -c 'fictional-runner verify'",
+    "sudo --user=root exec sh -c 'fictional-runner verify'",
+    'command -- eval fictional-runner verify',
+    'command -p eval fictional-runner verify',
+    'builtin -- eval fictional-runner verify',
+    "exec -- sh -c 'fictional-runner verify'",
+    "exec -a contained-runner sh -c 'fictional-runner verify'",
   ])('rejects dynamically evaluated recursive shell grammar: %s', async (command) => {
     const result = await classifyShellCore(command, cwd, repoRoot)
 
     expect(result.reason).toBe('unknown_local_effect')
     expect(result.effectPlan?.signals).toContain('dynamic_shell_evaluation')
+    if (!result.effectPlan) {
+      throw new Error('expected a dynamic evaluation EffectPlan')
+    }
+    expect(collectRequirements(result.effectPlan.root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidence: expect.objectContaining({
+            signals: expect.arrayContaining(['dynamic_shell_evaluation']),
+          }),
+        }),
+      ]),
+    )
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it.each([
+    'command -v eval',
+    'command -V eval',
+  ])('keeps command inspection distinct from dynamic evaluation: %s', async (command) => {
+    const result = await classifyShellCore(command, cwd, repoRoot)
+
+    expect(result.effectPlan?.signals).not.toContain('dynamic_shell_evaluation')
+    expect(result.verdict).toBe('allow')
+    expect(result.effectPlan?.root).toEqual(
+      expect.objectContaining({
+        kind: 'exec',
+        requirements: expect.arrayContaining([
+          expect.objectContaining({
+            action: 'process.exec',
+            resource: expect.objectContaining({ kind: 'executable', operation: 'inspect' }),
+          }),
+        ]),
+      }),
+    )
+  })
+
+  it('fails closed when command wrapper options do not prove a target grammar', async () => {
+    const result = await classifyShellCore(
+      'command -not-an-option eval fictional-runner verify',
+      cwd,
+      repoRoot,
+    )
+
+    expect(result.effectPlan?.opacity).toBe('opaque')
+    expect(
+      isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
+    ).toBe(false)
+  })
+
+  it('fails closed when nested wrapper peeling exceeds its bound', async () => {
+    const command = [
+      ...Array.from({ length: 33 }, () => 'command'),
+      'eval',
+      'fictional-runner',
+      'verify',
+    ].join(' ')
+    const result = await classifyShellCore(command, cwd, repoRoot)
+
+    expect(result.effectPlan?.opacity).toBe('opaque')
     expect(
       isContainedUnknownExecutionEligible(configWithContainedExecution(), gate(), result),
     ).toBe(false)

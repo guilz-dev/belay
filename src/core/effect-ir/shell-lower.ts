@@ -8,6 +8,7 @@ import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
   extractRecursiveScript,
+  isCommandInspection,
   isDynamicRecursiveEvaluation,
   parseSegment,
   redactCommand,
@@ -277,7 +278,7 @@ function lowerSegment(
   }
 
   const recursiveScript = extractRecursiveScript(tokens)
-  if (recursiveScript) {
+  if (recursiveScript && opacity !== 'opaque' && opacity !== 'unparseable') {
     const dynamicEvaluation = isDynamicRecursiveEvaluation(tokens)
     requirements.push(
       processRequirement(head || 'sh', 'spawn', commandRedacted, [
@@ -619,6 +620,9 @@ function decodeProcessOrFilesystem(params: {
   const { tokens, head, env, cwd, repoRoot, segment } = params
   const args = tokens.slice(1)
 
+  if (isCommandInspection(tokens)) {
+    return [processRequirement(head, 'inspect', segment, ['process.inspect.command_lookup'])]
+  }
   if (head === 'lsof') {
     return validLsof(args)
       ? [processRequirement(head, 'inspect', segment, ['process.inspect.lsof'])]
