@@ -58,20 +58,16 @@ describe('quality loop', () => {
     expect(combined).not.toMatch(/config set overrides\.(?:allow|external)/i)
   })
 
-  it(
-    'reports corpus hard gate status for the belay repo',
-    async () => {
-      const report = await qualityCheck({ targetDir: process.cwd() })
-      expect(report.schemaVersion).toBe(1)
-      expect(report.corpus.passesHardGates).toBe(true)
-      expect(report.corpus.totalCases).toBeGreaterThan(0)
-      expect(report.corpus.provenanceCounts.unspecified).toBeGreaterThanOrEqual(0)
-      expect(report.corpus.mustAskMisses).toBe(0)
-      expect(report.corpus.provablyBenignBlocks).toBe(0)
-      expect(report.harvest.scope).toBe('shell')
-      expect(report.notes.some((note) => note.includes('hard gates'))).toBe(true)
-      expect(report.ok).toBe(true)
-    },
-    60_000,
-  )
+  it('reports corpus hard gate status for the belay repo', async () => {
+    const report = await qualityCheck({ targetDir: process.cwd() })
+    expect(report.schemaVersion).toBe(1)
+    expect(report.corpus.passesHardGates).toBe(true)
+    expect(report.corpus.totalCases).toBeGreaterThan(0)
+    expect(report.corpus.provenanceCounts.unspecified).toBeGreaterThanOrEqual(0)
+    expect(report.corpus.mustAskMisses).toBe(0)
+    expect(report.corpus.provablyBenignBlocks).toBe(0)
+    expect(report.harvest.scope).toBe('shell')
+    expect(report.notes.some((note) => note.includes('hard gates'))).toBe(true)
+    expect(report.ok).toBe(true)
+  }, 60_000)
 })
