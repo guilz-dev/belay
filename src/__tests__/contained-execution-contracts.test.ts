@@ -549,4 +549,55 @@ describe('contained unknown execution contracts', () => {
       expect(captured).toContain('END 終端')
     }
   })
+
+  it.each([
+    [
+      'question mark in username',
+      `https://pre?${'URL.USER.QUESTION.LEAK.'.repeat(2_000)}:pass@host/path END 終端`,
+      'URL.USER.QUESTION.LEAK.',
+    ],
+    [
+      'hash in username',
+      `https://pre#${'URL.USER.HASH.LEAK.'.repeat(2_000)}:pass@host/path END 終端`,
+      'URL.USER.HASH.LEAK.',
+    ],
+    [
+      'question mark in password',
+      `https://user:pre?${'URL.PASSWORD.QUESTION.LEAK.'.repeat(2_000)}@host/path END 終端`,
+      'URL.PASSWORD.QUESTION.LEAK.',
+    ],
+    [
+      'hash in password',
+      `https://user:pre#${'URL.PASSWORD.HASH.LEAK.'.repeat(2_000)}@host/path END 終端`,
+      'URL.PASSWORD.HASH.LEAK.',
+    ],
+  ] as const)('keeps real-child URL %s inside the authority state on stdout and stderr', async (_name, output, sentinel) => {
+    const result = await runProcessWithBoundedOutput(
+      process.execPath,
+      [
+        '-e',
+        `const value = Buffer.from(process.argv[1]); const sizes = [1, 7, 2, 31, 3, 64, 11, 127, 4, 19]; let offset = 0; let index = 0; while (offset < value.length) { const end = Math.min(offset + sizes[index % sizes.length], value.length); const chunk = value.subarray(offset, end); process.stdout.write(chunk); process.stderr.write(chunk); offset = end; index += 1 }`,
+        output,
+      ],
+      {},
+      5_000,
+      {
+        scrubOptions: {
+          maskApprovalIds: true,
+          maskBearerTokens: true,
+          maskAuthHeaders: true,
+          maskKeyValueSecrets: true,
+          maskHighEntropyStrings: true,
+        },
+      },
+    )
+    expect(result.stdoutTruncated).toBe(true)
+    expect(result.stderrTruncated).toBe(true)
+    for (const captured of [result.stdout, result.stderr]) {
+      expect(Buffer.byteLength(captured)).toBeLessThanOrEqual(16_384)
+      expect(captured).not.toContain('\uFFFD')
+      expect(captured).not.toContain(sentinel)
+      expect(captured).toContain('END 終端')
+    }
+  })
 })

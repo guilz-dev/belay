@@ -247,6 +247,50 @@ describe('streaming scrubber', () => {
   })
 
   const punctuation = ['.', ':', '@', '/', '=', '+', '_', '-', '?', '#']
+  const asciiPunctuation = Array.from(`!"#$%&'()*+,-./:;<=>?@[\\]^_\`{|}~`)
+  const urlPunctuationCases = [
+    ...asciiPunctuation
+      .filter((mark) => !['/', ':', '@'].includes(mark))
+      .map((mark) => ({
+        name: `URL username punctuation ${mark}`,
+        input: `SAFE https://pre${mark}USER.URL.SENTINEL:pass@host/path END 終端`,
+        eofInput: `SAFE https://pre${mark}USER.URL.SENTINEL:pass@host`,
+        sentinel: 'USER.URL.SENTINEL',
+      })),
+    ...asciiPunctuation
+      .filter((mark) => !['/', '@'].includes(mark))
+      .map((mark) => ({
+        name: `URL password punctuation ${mark}`,
+        input: `SAFE https://user:pre${mark}PASSWORD.URL.SENTINEL@host/path END 終端`,
+        eofInput: `SAFE https://user:pre${mark}PASSWORD.URL.SENTINEL@host`,
+        sentinel: 'PASSWORD.URL.SENTINEL',
+      })),
+  ]
+
+  it.each(
+    urlPunctuationCases,
+  )('keeps $name inside the conservative authority state through path and EOF', ({
+    input,
+    eofInput,
+    sentinel,
+  }) => {
+    for (const value of [input, eofInput]) {
+      expect(scrubString(value)).not.toContain(sentinel)
+      for (const chunking of ['whole', 'bytewise', 'varied'] as const) {
+        expect(streamScrub(value, chunking).output).not.toContain(sentinel)
+      }
+    }
+  })
+
+  it('reprocesses a URL path slash so an adjacent approval marker is scrubbed', () => {
+    const input = 'SAFE https://user:pass@host/belay-approve ADJACENT.APPROVAL.SENTINEL END 終端'
+    const sentinel = 'ADJACENT.APPROVAL.SENTINEL'
+    expect(scrubString(input)).not.toContain(sentinel)
+    for (const chunking of ['whole', 'bytewise', 'varied'] as const) {
+      expect(streamScrub(input, chunking).output).not.toContain(sentinel)
+    }
+  })
+
   const differentialCases = [
     ...punctuation.flatMap((mark) => [
       {

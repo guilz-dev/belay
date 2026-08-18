@@ -500,8 +500,7 @@ export function createStreamingScrubber(options: ScrubOptions = {}): StreamingSc
 
       if (state?.kind === 'url_authority') {
         const character = pending[0] ?? ''
-        if (/[\s/?#]/.test(character)) {
-          output += consumeRaw(1)
+        if (/[\s/]/.test(character)) {
           state = undefined
           continue
         }
