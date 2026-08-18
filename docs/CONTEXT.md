@@ -35,9 +35,11 @@ authorization model. It complements
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
 5. `deny_pending_approval` is never auto-approved; human escalation is mandatory.
 6. **Contained unknown execution** (Docker-only and opt-in): EffectPlan remains the sole shell
-   authority. A verified contained route may mediate an eligible unknown local plan once, but
+   authority. In enforce mode, a verified contained route may mediate an eligible unknown local plan once, but
    executable names, prefixes, fingerprints, corpus membership, and framework identity never make
-   it eligible. The original host command is denied; source changes are discarded. Command
+   it eligible. The original host command is denied after mediation; source changes are discarded.
+   In audit mode, Belay performs no contained execution and returns ordinary host pass-through.
+   Command
    allowlists remain prohibited ([ADR-006](./adr/ADR-006-contained-unknown-execution.md)).
 7. A contained execution capability does not imply `materializesGrants`,
    `deniesUngrantedEffects`, a verified broker, or L1-full. Its Docker protections apply to its

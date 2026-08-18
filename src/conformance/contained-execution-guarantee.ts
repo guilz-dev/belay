@@ -22,7 +22,15 @@ export interface ContainedUnknownExecutionGuarantee {
       'framework-identity',
     ]
   }
-  audit: { wouldMediate: true; executesContainedCommand: false; executesHostCommand: false }
+  audit: {
+    wouldMediate: true
+    containedRouteExecution: 'none'
+    readsAttestation: false
+    preparesMirror: false
+    startsContainer: false
+    gatePermission: 'allow'
+    hostExecution: 'delegated-to-host'
+  }
   enforce: {
     originalHostCommand: 'deny'
     mirror: 'file_copy'
@@ -63,18 +71,39 @@ export interface ContainedUnknownExecutionGuarantee {
       'contained_execution_docker_daemon_unavailable',
     ]
   }
-  failClosed: readonly [
-    'contained_execution_capability_invalid',
-    'contained_execution_capability_mismatch',
-    'contained_execution_image_missing',
-    'contained_execution_image_mismatch',
-    'contained_execution_invalid_mirror_lease',
-    'contained_execution_cleanup_unconfirmed',
-    'contained_execution_create_failed',
-    'contained_execution_inspect_failed',
-    'contained_execution_start_attempt_failed',
-    'contained_execution_timeout',
-  ]
+  failure: {
+    /** Every setup failure other than the exact approval fallback set denies before host replay. */
+    setup: {
+      categories: readonly [
+        'boundary',
+        'capability',
+        'image',
+        'mirror',
+        'lease',
+        'container-lifecycle',
+        'cleanup',
+      ]
+      outcome: 'deny'
+      hostExecution: 'deny'
+      approval: 'none'
+      approvalStateMutation: 'none'
+    }
+    /** A started container that times out or exits nonzero is terminal, never an approval. */
+    command: {
+      timeout: 'contained_execution_failed'
+      nonzero: 'contained_execution_failed'
+      hostExecution: 'deny'
+      approval: 'none'
+    }
+  }
+  outcomes: {
+    success: {
+      exitCode: 0
+      outcome: 'contained_execution_complete'
+      hostExecution: 'deny'
+      approval: 'none'
+    }
+  }
 }
 
 export type ContainedUnknownExecutionScenario =
@@ -99,7 +128,15 @@ export const CONTAINED_UNKNOWN_EXECUTION_GUARANTEE: ContainedUnknownExecutionGua
       'framework-identity',
     ],
   },
-  audit: { wouldMediate: true, executesContainedCommand: false, executesHostCommand: false },
+  audit: {
+    wouldMediate: true,
+    containedRouteExecution: 'none',
+    readsAttestation: false,
+    preparesMirror: false,
+    startsContainer: false,
+    gatePermission: 'allow',
+    hostExecution: 'delegated-to-host',
+  },
   enforce: {
     originalHostCommand: 'deny',
     mirror: 'file_copy',
@@ -140,18 +177,37 @@ export const CONTAINED_UNKNOWN_EXECUTION_GUARANTEE: ContainedUnknownExecutionGua
       'contained_execution_docker_daemon_unavailable',
     ],
   },
-  failClosed: [
-    'contained_execution_capability_invalid',
-    'contained_execution_capability_mismatch',
-    'contained_execution_image_missing',
-    'contained_execution_image_mismatch',
-    'contained_execution_invalid_mirror_lease',
-    'contained_execution_cleanup_unconfirmed',
-    'contained_execution_create_failed',
-    'contained_execution_inspect_failed',
-    'contained_execution_start_attempt_failed',
-    'contained_execution_timeout',
-  ],
+  failure: {
+    setup: {
+      categories: [
+        'boundary',
+        'capability',
+        'image',
+        'mirror',
+        'lease',
+        'container-lifecycle',
+        'cleanup',
+      ],
+      outcome: 'deny',
+      hostExecution: 'deny',
+      approval: 'none',
+      approvalStateMutation: 'none',
+    },
+    command: {
+      timeout: 'contained_execution_failed',
+      nonzero: 'contained_execution_failed',
+      hostExecution: 'deny',
+      approval: 'none',
+    },
+  },
+  outcomes: {
+    success: {
+      exitCode: 0,
+      outcome: 'contained_execution_complete',
+      hostExecution: 'deny',
+      approval: 'none',
+    },
+  },
 }
 
 /** Executable EffectPlan scenarios; routing and output use the gate/executor suites. */

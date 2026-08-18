@@ -47,7 +47,15 @@ describe('contained unknown execution guarantee conformance', () => {
         shell: 'effect-plan-only',
         commandIdentityEligibility: false,
       },
-      audit: { wouldMediate: true, executesContainedCommand: false },
+      audit: {
+        wouldMediate: true,
+        containedRouteExecution: 'none',
+        readsAttestation: false,
+        preparesMirror: false,
+        startsContainer: false,
+        gatePermission: 'allow',
+        hostExecution: 'delegated-to-host',
+      },
       enforce: { originalHostCommand: 'deny', mirror: 'file_copy', startsAtMostOnce: true },
       fallback: {
         approvalOnly: [
@@ -56,9 +64,32 @@ describe('contained unknown execution guarantee conformance', () => {
         ],
       },
     })
-    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failClosed).toContain(
-      'contained_execution_cleanup_unconfirmed',
-    )
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup).toMatchObject({
+      categories: expect.arrayContaining(['mirror', 'cleanup']),
+      outcome: 'deny',
+      hostExecution: 'deny',
+      approval: 'none',
+      approvalStateMutation: 'none',
+    })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.command).toMatchObject({
+      timeout: 'contained_execution_failed',
+      nonzero: 'contained_execution_failed',
+      hostExecution: 'deny',
+      approval: 'none',
+    })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.outcomes.success).toEqual({
+      exitCode: 0,
+      outcome: 'contained_execution_complete',
+      hostExecution: 'deny',
+      approval: 'none',
+    })
+  })
+
+  it('keeps the approval fallback set to the two pre-execution Docker availability reasons', () => {
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.fallback.approvalOnly).toEqual([
+      'contained_execution_docker_substrate_unavailable',
+      'contained_execution_docker_daemon_unavailable',
+    ])
   })
 
   it('keeps fictional and ecosystem command names on the same EffectPlan eligibility route', async () => {

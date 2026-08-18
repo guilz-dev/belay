@@ -43,8 +43,10 @@ imply `materializesGrants`, `deniesUngrantedEffects`, or an adversarial same-use
 
 ## Fallback taxonomy
 
-- In audit mode, the contained path reports `wouldMediate: true` and executes neither a
-  mirror nor a container.
+- In audit mode, Belay's contained route reports `wouldMediate: true` and performs no contained
+  execution: it reads no attestation and prepares neither a mirror nor a container. The gate
+  returns `allow`, so the host hook delegates the original invocation as ordinary audit
+  pass-through; it is not a contained-route host replay.
 - Before any container start, only typed Docker substrate or daemon unavailability falls
   back to the ordinary `unknown_local_effect` approval path.
 - Missing, stale, tampered, or mismatched capability/image; mirror or lease failure;

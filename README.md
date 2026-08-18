@@ -184,7 +184,10 @@ discarded; there is no diff/apply or host replay. Guest output is scrubbed and r
 16 KiB tails. A nonzero guest exit is reported as contained failure and does not create an
 approval.
 
-In audit mode the contained route reports `wouldMediate` and runs neither a mirror nor a container.
+In audit mode Belay's contained route reports `wouldMediate` and performs no contained execution:
+it reads no attestation and runs neither a mirror nor a container. The gate returns `allow`, so the
+host hook delegates the original invocation as ordinary audit pass-through; it is not a contained
+route host replay.
 In enforce mode, only pre-execution Docker substrate or daemon unavailability returns to the normal
 approval path. Missing, stale, or tampered attestation/capability; missing or mismatched image;
 mirror/lease failure; create/inspect/start failure; timeout; and cleanup uncertainty fail closed

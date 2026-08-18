@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { CONTAINED_UNKNOWN_EXECUTION_GUARANTEE } from '../../conformance/contained-execution-guarantee.js'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
 import {
   type ApprovalReplayHint,
@@ -670,10 +671,9 @@ async function discardApprovedApproval(
 }
 
 const MEDIATED_OUTPUT_LIMIT_BYTES = 16_384
-const CONTAINED_FALLBACK_REASONS = new Set([
-  'contained_execution_docker_substrate_unavailable',
-  'contained_execution_docker_daemon_unavailable',
-])
+const CONTAINED_FALLBACK_REASONS: ReadonlySet<string> = new Set(
+  CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.fallback.approvalOnly,
+)
 
 function utf8Tail(value: string): { value: string; truncated: boolean } {
   const encoded = Buffer.from(value)

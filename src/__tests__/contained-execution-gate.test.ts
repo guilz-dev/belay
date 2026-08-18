@@ -159,13 +159,22 @@ describe('contained unknown execution gate integration', () => {
     const result = await eligibleResult('fictional-runner verify', repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
     const auditEvents: Record<string, unknown>[] = []
+    let attestationReads = 0
+    let mirrorPreparations = 0
+    let containerStarts = 0
     const deps = patchedDeps({
       auditEvents,
       persistAudit: true,
+      onReadAttestation: async () => {
+        attestationReads += 1
+        return { signed: true }
+      },
       onMirror: async () => {
+        mirrorPreparations += 1
         throw new Error('audit mode prepared a mirror')
       },
       onExecute: async () => {
+        containerStarts += 1
         throw new Error('audit mode called Docker')
       },
     })
@@ -176,11 +185,25 @@ describe('contained unknown execution gate integration', () => {
       command: 'fictional-runner verify',
     })
 
-    expect(verdict).toMatchObject({ permission: 'allow', wouldBlock: true, wouldMediate: true })
-    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.audit).toEqual({
-      wouldMediate: true,
-      executesContainedCommand: false,
-      executesHostCommand: false,
+    const auditGuarantee = CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.audit
+    expect(verdict).toMatchObject({
+      permission: auditGuarantee.gatePermission,
+      wouldBlock: true,
+      wouldMediate: auditGuarantee.wouldMediate,
+    })
+    expect({
+      containedRouteExecution:
+        attestationReads + mirrorPreparations + containerStarts === 0 ? 'none' : 'started',
+      readsAttestation: attestationReads > 0,
+      preparesMirror: mirrorPreparations > 0,
+      startsContainer: containerStarts > 0,
+      hostExecution: verdict.permission === 'allow' ? 'delegated-to-host' : 'denied',
+    }).toEqual({
+      containedRouteExecution: auditGuarantee.containedRouteExecution,
+      readsAttestation: auditGuarantee.readsAttestation,
+      preparesMirror: auditGuarantee.preparesMirror,
+      startsContainer: auditGuarantee.startsContainer,
+      hostExecution: auditGuarantee.hostExecution,
     })
     expect(verdict.approvalId).toBeUndefined()
     expect(auditEvents).toHaveLength(1)
@@ -193,10 +216,26 @@ describe('contained unknown execution gate integration', () => {
   })
 
   it.each([
-    ['fictional-runner verify', 0, false, 'contained_execution_complete'],
-    ["bin/rails runner 'Record.count'", 7, false, 'contained_execution_failed'],
-    ['bundle exec rspec --dry-run', null, true, 'contained_execution_failed'],
-  ] as const)('mediates %s once, blocks host execution, and reports %s', async (command, exitCode, timedOut, reason) => {
+    ['fictional-runner verify', 0, false, CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.outcomes.success],
+    [
+      "bin/rails runner 'Record.count'",
+      7,
+      false,
+      {
+        ...CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.command,
+        outcome: 'contained_execution_failed',
+      },
+    ],
+    [
+      'bundle exec rspec --dry-run',
+      null,
+      true,
+      {
+        ...CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.command,
+        outcome: 'contained_execution_failed',
+      },
+    ],
+  ] as const)('mediates %s once, blocks host execution, and reports the typed outcome', async (command, exitCode, timedOut, outcome) => {
     const { repoRoot, controlPlaneDir, config, ctx } = await fixture()
     const result = await eligibleResult(command, repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
@@ -286,10 +325,19 @@ describe('contained unknown execution gate integration', () => {
         cursorLayout.repoLocalStateDir(repoRoot),
       ]),
     )
-    expect(verdict).toMatchObject({
+    expect({
+      reason: verdict.reason,
+      permission: verdict.permission,
+      hostExecution: verdict.permission === 'deny' ? 'deny' : 'delegated-to-host',
+      approval: verdict.approvalId ? 'created' : 'none',
+    }).toMatchObject({
+      reason: outcome.outcome,
       permission: 'deny',
+      hostExecution: outcome.hostExecution,
+      approval: outcome.approval,
+    })
+    expect(verdict).toMatchObject({
       wouldBlock: false,
-      reason,
       mediatedExecution: {
         exitCode,
         timedOut,
@@ -298,7 +346,7 @@ describe('contained unknown execution gate integration', () => {
     })
     expect(verdict.approvalId).toBeUndefined()
     expect(auditEvents[0]).toMatchObject({
-      reason,
+      reason: outcome.outcome,
       permission: 'deny',
       receiptHash: `receipt-${exitCode}`,
       imageId: `sha256:${'a'.repeat(64)}`,
@@ -543,77 +591,81 @@ describe('contained unknown execution gate integration', () => {
     [
       'definite daemon unavailability',
       new ContainedDockerBoundaryUnavailableError('contained_execution_docker_daemon_unavailable'),
-      true,
+      'fallback',
     ],
     [
       'definite substrate unavailability',
       new ContainedDockerBoundaryUnavailableError(
         'contained_execution_docker_substrate_unavailable',
       ),
-      true,
+      'fallback',
     ],
     [
       'missing image',
       new ContainedDockerBoundaryUnavailableError('contained_execution_image_missing'),
-      false,
+      'image',
     ],
-    ['attempted start', new ContainedDockerStartAttemptError(), false],
-    ['container cleanup', new ContainedDockerCleanupUnconfirmedError('container', true), false],
-    ['stale attestation', new Error('contained_execution_capability_invalid'), false],
-    ['image mismatch', new Error('contained_execution_image_mismatch'), false],
-    ['invalid mirror lease', new Error('contained_execution_invalid_mirror_lease'), false],
+    ['attempted start', new ContainedDockerStartAttemptError(), 'container-lifecycle'],
+    ['container cleanup', new ContainedDockerCleanupUnconfirmedError('container', true), 'cleanup'],
+    ['stale attestation', new Error('contained_execution_capability_invalid'), 'capability'],
+    ['image mismatch', new Error('contained_execution_image_mismatch'), 'image'],
+    ['invalid mirror lease', new Error('contained_execution_invalid_mirror_lease'), 'lease'],
     [
       'container create failure',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_failed'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container create timeout',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_timeout'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container create truncation',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_truncated'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container create invalidity',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_invalid'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container create mismatch',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_mismatch'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container inspect failure',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_failed'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container inspect timeout',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_timeout'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container inspect truncation',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_truncated'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container inspect invalidity',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_invalid'),
-      false,
+      'container-lifecycle',
     ],
     [
       'container inspect mismatch',
       new ContainedDockerBoundaryUnavailableError('contained_execution_inspect_mismatch'),
-      false,
+      'container-lifecycle',
     ],
-    ['invalid contained config', new Error('contained_execution_resource_limits_invalid'), false],
-  ] as const)('%s follows the required approval fallback taxonomy', async (_name, failure, fallback) => {
+    [
+      'invalid contained config',
+      new Error('contained_execution_resource_limits_invalid'),
+      'boundary',
+    ],
+  ] as const)('%s follows the required approval fallback taxonomy', async (_name, failure, category) => {
     const { repoRoot, ctx } = await fixture()
     const result = await eligibleResult('fictional-runner verify', repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
@@ -633,11 +685,23 @@ describe('contained unknown execution gate integration', () => {
       { kind: 'shell', cwd: path.join(repoRoot, 'app'), command: 'fictional-runner verify' },
     )
 
+    const guarantee = CONTAINED_UNKNOWN_EXECUTION_GUARANTEE
+    const fallback = category === 'fallback'
     expect(Boolean(verdict.approvalId)).toBe(fallback)
     expect(verdict.permission).toBe('deny')
     if (fallback) {
+      expect(guarantee.fallback.approvalOnly).toContain(
+        (failure as ContainedDockerBoundaryUnavailableError).reason,
+      )
       expect(approvalWrites).toBeGreaterThan(0)
     } else {
+      expect(guarantee.failure.setup.categories).toContain(category)
+      expect(guarantee.failure.setup).toMatchObject({
+        outcome: 'deny',
+        hostExecution: 'deny',
+        approval: 'none',
+        approvalStateMutation: 'none',
+      })
       expect(approvalWrites).toBe(0)
     }
     if (!fallback && /capability|image/.test(String((failure as Error).message))) {
@@ -653,10 +717,14 @@ describe('contained unknown execution gate integration', () => {
     const result = await eligibleResult('fictional-runner verify', repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
     const auditEvents: Record<string, unknown>[] = []
+    let approvalWrites = 0
     const verdict = await evaluateGatedAction(
       ctx,
       patchedDeps({
         auditEvents,
+        onApprovalWrite: () => {
+          approvalWrites += 1
+        },
         onMirror: async () => {
           throw new Error('contained_execution_mirror_limits_invalid')
         },
@@ -668,6 +736,9 @@ describe('contained unknown execution gate integration', () => {
       permission: 'deny',
       reason: 'contained_execution_mirror_limits_invalid',
     })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.categories).toContain('mirror')
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.approval).toBe('none')
+    expect(approvalWrites).toBe(0)
     expect(verdict.approvalId).toBeUndefined()
   })
 
@@ -698,6 +769,8 @@ describe('contained unknown execution gate integration', () => {
       permission: 'deny',
       reason: 'contained_execution_capability_invalid',
     })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.categories).toContain('capability')
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.approval).toBe('none')
     expect(verdict.approvalId).toBeUndefined()
     expect(verdict.user_message).toContain('belay session start')
   })
@@ -707,10 +780,14 @@ describe('contained unknown execution gate integration', () => {
     const result = await eligibleResult('fictional-runner verify', repoRoot)
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
     const auditEvents: Record<string, unknown>[] = []
+    let approvalWrites = 0
     const verdict = await evaluateGatedAction(
       ctx,
       patchedDeps({
         auditEvents,
+        onApprovalWrite: () => {
+          approvalWrites += 1
+        },
         onMirror: async (options, operation) => {
           await withContainedExecutionMirror(options, operation)
           throw new ContainedExecutionCleanupUnconfirmedError('/private/mirror')
@@ -723,6 +800,9 @@ describe('contained unknown execution gate integration', () => {
       permission: 'deny',
       reason: 'contained_execution_cleanup_unconfirmed',
     })
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.categories).toContain('cleanup')
+    expect(CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.failure.setup.approval).toBe('none')
+    expect(approvalWrites).toBe(0)
     expect(verdict.approvalId).toBeUndefined()
     expect(auditEvents[0]?.workspaceChangesDiscarded).toBeUndefined()
   })

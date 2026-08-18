@@ -36,12 +36,14 @@ Every gated action follows one of four execution classes:
 - Eligibility is effect-based after canonical classification: an `unknown_local_effect` must be a
   repository-local shell plan with only the contained local subset. Executable names, prefixes,
   fingerprints, corpus membership, and Rails/RSpec identity are never authority.
-- Audit mode reports `wouldMediate: true` and executes nothing in the contained route: no
-  attestation read, mirror preparation, container create, or container start.
+- Audit mode reports `wouldMediate: true`; Belay の contained route 自体は何も実行しない:
+  attestation read、mirror preparation、container create、container start はいずれもない。Gate は
+  `allow` を返すため、host hook は通常の audit pass-through として元の invocation を委譲する。これは
+  contained route による host replay ではない。
 - Enforce mode copies the current workspace into a metadata-free bounded `file_copy` mirror,
   excluding `.git`, the Belay control plane, protected adapter state, and escaping symlinks. It
   mounts only that mirror at the original absolute guest workspace path and runs one command.
-- The original host command is always denied. The mirror is discarded on every terminal path;
+- Enforce mode では original host command を常に deny する。The mirror is discarded on every terminal path;
   there is no diff, apply, recovery checkpoint, or host replay.
 - This is deliberately distinct from transactional apply. The reviewed copy-only backend
   supersedes the initial detached Git worktree idea: it works from clean, dirty, and non-Git

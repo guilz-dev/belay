@@ -45,7 +45,9 @@ fresh signed compatible capability, Belay guarantees for that one mediated run:
   zero and nonzero exits discard mirror changes. Successful cleanup is confirmed before the route
   completes; cleanup uncertainty fails closed.
 
-Audit mode records `wouldMediate` but does not prepare a mirror or execute a container. In enforce
+Audit mode records `wouldMediate`, while Belay performs no contained execution: it reads no
+attestation and does not prepare a mirror or execute a container. Its `allow` verdict delegates the
+original invocation as ordinary host audit pass-through, not contained-route replay. In enforce
 mode, only typed pre-execution Docker substrate/daemon unavailability falls back to the existing
 approval path. Missing/stale/tampered capability, image mismatch or absence, mirror/lease failure,
 create/inspect/start failure, timeout, and cleanup failure deny without approval. A nonzero guest
