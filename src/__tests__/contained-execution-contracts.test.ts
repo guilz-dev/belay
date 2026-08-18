@@ -94,6 +94,30 @@ describe('contained unknown execution contracts', () => {
       cpus: 1,
       pids: 64,
     })
+
+    const fractionalCpu = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      sandbox: {
+        enabled: true,
+        runtime: 'container',
+        denyNetworkByDefault: true,
+        containedExecution: {
+          enabled: true,
+          image: 'registry.example/runner@sha256:abc',
+          timeoutMs: 5_000,
+          memoryMiB: 512,
+          cpus: 0.5,
+          pids: 64,
+        },
+      },
+    })
+    expect(fractionalCpu.sandbox.containedExecution?.cpus).toBe(0.5)
+    expect(
+      validateContainedExecutionAttestation({
+        ...containedCapability,
+        resourceLimits: { ...containedCapability.resourceLimits, cpus: 0.5 },
+      }),
+    ).toBe(true)
   })
 
   it('rejects enabled contained execution without an enabled container runtime and image', () => {
@@ -138,6 +162,20 @@ describe('contained unknown execution contracts', () => {
     )
   })
 
+  it('rejects a contained capability probed in the future', () => {
+    const now = Date.parse('2026-08-18T12:00:00.000Z')
+    expect(
+      isContainedExecutionAttestationFresh(
+        {
+          ...containedCapability,
+          probedAt: new Date(now + 1).toISOString(),
+          expiresAt: new Date(now + 60_000).toISOString(),
+        },
+        now,
+      ),
+    ).toBe(false)
+  })
+
   it('rejects a tampered signed contained capability', async () => {
     controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-attest-'))
     const signed = await signBoundaryAttestation({
@@ -153,6 +191,21 @@ describe('contained unknown execution contracts', () => {
           containedExecution: { ...containedCapability, imageId: `sha256:${'b'.repeat(64)}` },
         },
       },
+      expectedRepoRoot: '/repo',
+      controlPlaneDir,
+    })
+    expect(verified).toBeNull()
+  })
+
+  it('rejects a signed non-container attestation carrying a contained capability', async () => {
+    controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-attest-'))
+    const signed = await signBoundaryAttestation({
+      repoRoot: '/repo',
+      attestation: { ...attestation(), driver: 'host-integration' },
+      controlPlaneDir,
+    })
+    const verified = await verifySignedBoundaryAttestation({
+      file: signed,
       expectedRepoRoot: '/repo',
       controlPlaneDir,
     })
@@ -200,20 +253,43 @@ describe('contained unknown execution contracts', () => {
     expect(verdict.mediatedExecution?.receiptHash).toBe('receipt')
   })
 
-  it('retains 16 KiB output tails and marks truncation', async () => {
+  it('keeps exact 16 KiB stdout and stderr output without truncation', async () => {
     const result = await runProcessWithBoundedOutput(
       process.execPath,
-      [
-        '-e',
-        "process.stdout.write('x'.repeat(17000) + 'stdout-tail'); process.stderr.write('y'.repeat(17000) + 'stderr-tail')",
-      ],
+      ['-e', "process.stdout.write('o'.repeat(16384)); process.stderr.write('e'.repeat(16384))"],
       {},
       5_000,
     )
-    expect(result.stdout).toHaveLength(16_384)
-    expect(result.stderr).toHaveLength(16_384)
-    expect(result.stdout.endsWith('stdout-tail')).toBe(true)
-    expect(result.stderr.endsWith('stderr-tail')).toBe(true)
+    expect(result.stdout).toBe('o'.repeat(16_384))
+    expect(result.stderr).toBe('e'.repeat(16_384))
+    expect(result.stdoutTruncated).toBe(false)
+    expect(result.stderrTruncated).toBe(false)
+  })
+
+  it('retains the final 16 KiB of 16,385-byte stdout and stderr output', async () => {
+    const result = await runProcessWithBoundedOutput(
+      process.execPath,
+      ['-e', "process.stdout.write('a'.repeat(16385)); process.stderr.write('b'.repeat(16385))"],
+      {},
+      5_000,
+    )
+    expect(result.stdout).toBe('a'.repeat(16_384))
+    expect(result.stderr).toBe('b'.repeat(16_384))
+    expect(result.stdoutTruncated).toBe(true)
+    expect(result.stderrTruncated).toBe(true)
+  })
+
+  it('drops a partial leading UTF-8 character from a truncated output tail', async () => {
+    const result = await runProcessWithBoundedOutput(
+      process.execPath,
+      ['-e', "process.stdout.write('€'.repeat(5462)); process.stderr.write('€'.repeat(5462))"],
+      {},
+      5_000,
+    )
+    expect(result.stdout).toBe('€'.repeat(5461))
+    expect(result.stderr).toBe('€'.repeat(5461))
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(16_384)
+    expect(Buffer.byteLength(result.stderr, 'utf8')).toBeLessThanOrEqual(16_384)
     expect(result.stdoutTruncated).toBe(true)
     expect(result.stderrTruncated).toBe(true)
   })

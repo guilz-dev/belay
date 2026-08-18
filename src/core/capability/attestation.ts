@@ -82,11 +82,13 @@ export function validateBoundaryAttestation(value: unknown): value is BoundaryAt
   ) {
     return false
   }
-  if (
-    record.containedExecution !== undefined &&
-    !validateContainedExecutionAttestation(record.containedExecution)
-  ) {
-    return false
+  if (record.containedExecution !== undefined) {
+    if (
+      record.driver !== 'container' ||
+      !validateContainedExecutionAttestation(record.containedExecution)
+    ) {
+      return false
+    }
   }
   if (record.driver === 'host-integration' && record.materializesGrants) {
     return false
@@ -148,8 +150,11 @@ export function isContainedExecutionAttestationFresh(
   attestation: ContainedExecutionAttestation | null | undefined,
   now = Date.now(),
 ): boolean {
+  // A contained proof must have been observed already; no clock skew is accepted.
   return (
-    validateContainedExecutionAttestation(attestation) && Date.parse(attestation.expiresAt) > now
+    validateContainedExecutionAttestation(attestation) &&
+    Date.parse(attestation.probedAt) <= now &&
+    Date.parse(attestation.expiresAt) > now
   )
 }
 

@@ -471,6 +471,10 @@ function positiveInteger(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback
 }
 
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 export function normalizeContainedExecutionConfig(
   raw: Partial<BelayContainedExecutionConfig> | undefined,
 ): BelayContainedExecutionConfig {
@@ -479,7 +483,7 @@ export function normalizeContainedExecutionConfig(
     image: typeof raw?.image === 'string' && raw.image.trim() ? raw.image.trim() : null,
     timeoutMs: positiveInteger(raw?.timeoutMs, DEFAULT_CONTAINED_EXECUTION.timeoutMs),
     memoryMiB: positiveInteger(raw?.memoryMiB, DEFAULT_CONTAINED_EXECUTION.memoryMiB),
-    cpus: positiveInteger(raw?.cpus, DEFAULT_CONTAINED_EXECUTION.cpus),
+    cpus: positiveNumber(raw?.cpus, DEFAULT_CONTAINED_EXECUTION.cpus),
     pids: positiveInteger(raw?.pids, DEFAULT_CONTAINED_EXECUTION.pids),
   }
 }

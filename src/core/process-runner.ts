@@ -30,6 +30,17 @@ function appendOutputTail(
   }
 }
 
+function decodeOutputTail(tail: Buffer): string {
+  for (let offset = 0; offset <= Math.min(3, tail.length); offset += 1) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(tail.subarray(offset))
+    } catch {
+      // A byte cap may have cut a leading multi-byte character; try its next boundary.
+    }
+  }
+  return tail.toString('utf8')
+}
+
 export function windowsProcessTreeKillArgs(pid: number): string[] {
   return ['/pid', String(pid), '/t', '/f']
 }
@@ -109,8 +120,8 @@ export function runProcessWithBoundedOutput(
         exitCode,
         signal: signal ? String(signal) : null,
         timedOut,
-        stdout: stdout.toString('utf8'),
-        stderr: stderr.toString('utf8'),
+        stdout: decodeOutputTail(stdout),
+        stderr: decodeOutputTail(stderr),
         stdoutTruncated,
         stderrTruncated,
       })
