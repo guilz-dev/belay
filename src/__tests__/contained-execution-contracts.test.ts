@@ -67,6 +67,27 @@ const containedCapability = {
   expiresAt: future,
 } satisfies ContainedExecutionAttestation
 
+const malformedNestedCapabilities: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+  ['null Docker substrate', { dockerSubstrate: null }],
+  ['primitive Docker substrate', { dockerSubstrate: 'x' }],
+  ['array Docker substrate', { dockerSubstrate: [] }],
+  [
+    'wrong Docker substrate field type',
+    { dockerSubstrate: { ...containedCapability.dockerSubstrate, binaryPath: 42 } },
+  ],
+  ['null Docker configuration', { dockerConfiguration: null }],
+  ['primitive Docker configuration', { dockerConfiguration: 'x' }],
+  ['array Docker configuration', { dockerConfiguration: [] }],
+  [
+    'wrong Docker configuration field type',
+    { dockerConfiguration: { ...containedCapability.dockerConfiguration, host: 42 } },
+  ],
+  ['primitive tmpfs', { tmpfs: 'x' }],
+  ['array tmpfs', { tmpfs: [] }],
+  ['primitive resource limits', { resourceLimits: 'x' }],
+  ['array resource limits', { resourceLimits: [] }],
+]
+
 function attestation(): BoundaryAttestation {
   return {
     version: 1,
@@ -233,6 +254,36 @@ describe('contained unknown execution contracts', () => {
     const legacy = { ...containedCapability } as Record<string, unknown>
     delete legacy.dockerSubstrate
     expect(validateContainedExecutionAttestation(legacy)).toBe(false)
+  })
+
+  it.each(
+    malformedNestedCapabilities,
+  )('returns false without throwing for %s', (_name, override) => {
+    const malformed: unknown = { ...containedCapability, ...override }
+    expect(() => validateContainedExecutionAttestation(malformed)).not.toThrow()
+    expect(validateContainedExecutionAttestation(malformed)).toBe(false)
+  })
+
+  it('rejects validly signed envelopes with malformed nested capabilities', async () => {
+    controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-contained-attest-'))
+    for (const [, override] of malformedNestedCapabilities) {
+      const malformed = {
+        ...attestation(),
+        containedExecution: { ...containedCapability, ...override },
+      } as unknown as BoundaryAttestation
+      const signed = await signBoundaryAttestation({
+        repoRoot: '/repo',
+        attestation: malformed,
+        controlPlaneDir,
+      })
+      await expect(
+        verifySignedBoundaryAttestation({
+          file: signed,
+          expectedRepoRoot: '/repo',
+          controlPlaneDir,
+        }),
+      ).resolves.toBeNull()
+    }
   })
 
   it('rejects a contained capability probed in the future', () => {

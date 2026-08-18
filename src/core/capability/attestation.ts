@@ -82,15 +82,23 @@ const KNOWN_DRIVERS = new Set<BoundaryDriverId>([
   'host-integration',
 ])
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isBoundaryDriver(value: unknown): value is BoundaryDriverId {
+  return typeof value === 'string' && KNOWN_DRIVERS.has(value as BoundaryDriverId)
+}
+
 export function validateBoundaryAttestation(value: unknown): value is BoundaryAttestation {
-  if (!value || typeof value !== 'object') {
+  if (!isRecord(value)) {
     return false
   }
-  const record = value as BoundaryAttestation
+  const record = value
   if (record.version !== BOUNDARY_ATTESTATION_VERSION) {
     return false
   }
-  if (!KNOWN_DRIVERS.has(record.driver)) {
+  if (!isBoundaryDriver(record.driver)) {
     return false
   }
   if (typeof record.probedAt !== 'string' || typeof record.expiresAt !== 'string') {
@@ -146,10 +154,12 @@ function hasPositiveIntegerLimit(value: unknown): value is number {
 export function validateContainedExecutionAttestation(
   value: unknown,
 ): value is ContainedExecutionAttestation {
-  if (!value || typeof value !== 'object') {
+  if (!isRecord(value)) {
     return false
   }
-  const record = value as ContainedExecutionAttestation
+  const record = value
+  const dockerSubstrate = record.dockerSubstrate
+  const dockerConfiguration = record.dockerConfiguration
   if (
     record.version !== CONTAINED_EXECUTION_ATTESTATION_VERSION ||
     typeof record.imageId !== 'string' ||
@@ -161,22 +171,27 @@ export function validateContainedExecutionAttestation(
     record.isolatesWorkspaceMirror !== true ||
     record.readOnlyRoot !== true ||
     record.sanitizedEnvironment !== true ||
-    !record.dockerSubstrate ||
-    !path.isAbsolute(record.dockerSubstrate.binaryPath) ||
-    /[\0\n\r]/.test(record.dockerSubstrate.binaryPath) ||
-    !/^[a-f0-9]{64}$/.test(record.dockerSubstrate.binarySha256) ||
-    !record.dockerSubstrate.endpoint.startsWith('unix:///') ||
-    !path.isAbsolute(record.dockerSubstrate.endpoint.slice('unix://'.length)) ||
-    /[\0\n\r]/.test(record.dockerSubstrate.endpoint) ||
-    typeof record.dockerSubstrate.daemonId !== 'string' ||
-    !record.dockerSubstrate.daemonId ||
-    /[\0\n\r]/.test(record.dockerSubstrate.daemonId) ||
-    !record.dockerConfiguration ||
-    !path.isAbsolute(record.dockerConfiguration.executable) ||
-    /[\0\n\r]/.test(record.dockerConfiguration.executable) ||
-    !record.dockerConfiguration.host.startsWith('unix:///') ||
-    !path.isAbsolute(record.dockerConfiguration.host.slice('unix://'.length)) ||
-    /[\0\n\r]/.test(record.dockerConfiguration.host) ||
+    !isRecord(dockerSubstrate) ||
+    typeof dockerSubstrate.binaryPath !== 'string' ||
+    !path.isAbsolute(dockerSubstrate.binaryPath) ||
+    /[\0\n\r]/.test(dockerSubstrate.binaryPath) ||
+    typeof dockerSubstrate.binarySha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(dockerSubstrate.binarySha256) ||
+    typeof dockerSubstrate.endpoint !== 'string' ||
+    !dockerSubstrate.endpoint.startsWith('unix:///') ||
+    !path.isAbsolute(dockerSubstrate.endpoint.slice('unix://'.length)) ||
+    /[\0\n\r]/.test(dockerSubstrate.endpoint) ||
+    typeof dockerSubstrate.daemonId !== 'string' ||
+    !dockerSubstrate.daemonId ||
+    /[\0\n\r]/.test(dockerSubstrate.daemonId) ||
+    !isRecord(dockerConfiguration) ||
+    typeof dockerConfiguration.executable !== 'string' ||
+    !path.isAbsolute(dockerConfiguration.executable) ||
+    /[\0\n\r]/.test(dockerConfiguration.executable) ||
+    typeof dockerConfiguration.host !== 'string' ||
+    !dockerConfiguration.host.startsWith('unix:///') ||
+    !path.isAbsolute(dockerConfiguration.host.slice('unix://'.length)) ||
+    /[\0\n\r]/.test(dockerConfiguration.host) ||
     typeof record.user !== 'string' ||
     !/^\d+:\d+$/.test(record.user) ||
     record.entrypoint !== '/bin/sh' ||
@@ -197,7 +212,7 @@ export function validateContainedExecutionAttestation(
   const limits = record.resourceLimits
   const tmpfs = record.tmpfs
   return (
-    Boolean(tmpfs) &&
+    isRecord(tmpfs) &&
     tmpfs.path === '/tmp' &&
     hasPositiveIntegerLimit(tmpfs.sizeBytes) &&
     tmpfs.mode === 0o1777 &&
@@ -210,7 +225,7 @@ export function validateContainedExecutionAttestation(
     record.privateNamespaces === true &&
     record.privileged === false &&
     record.devicesNone === true &&
-    Boolean(limits) &&
+    isRecord(limits) &&
     hasPositiveIntegerLimit(limits.timeoutMs) &&
     hasPositiveIntegerLimit(limits.memoryMiB) &&
     hasPositiveLimit(limits.cpus) &&

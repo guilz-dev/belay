@@ -812,6 +812,40 @@ describe('contained Docker execution hardening', () => {
     expect(dependencies.calls).toEqual([])
   })
 
+  it.each([
+    ['primitive Docker substrate', { dockerSubstrate: 'x' }],
+    ['null Docker substrate', { dockerSubstrate: null }],
+    ['array Docker substrate', { dockerSubstrate: [] }],
+    ['wrong-field Docker substrate', { dockerSubstrate: { ...substrate, binaryPath: 42 } }],
+    ['primitive Docker configuration', { dockerConfiguration: 'x' }],
+    ['null Docker configuration', { dockerConfiguration: null }],
+    ['array Docker configuration', { dockerConfiguration: [] }],
+    [
+      'wrong-field Docker configuration',
+      {
+        dockerConfiguration: {
+          executable: config.dockerExecutable,
+          host: 42,
+        },
+      },
+    ],
+  ] as const)('rejects a signed malformed %s as capability-invalid before Docker work', async (_name, override) => {
+    const value = await fixture()
+    const base = capability()
+    const malformed = {
+      ...base,
+      containedExecution: { ...base.containedExecution, ...override },
+    } as unknown as BoundaryAttestation
+    const dependencies = fakeDependencies()
+    await expect(
+      executeContainedDocker({
+        ...executionParams(value, await signed(value, malformed)),
+        dependencies,
+      }),
+    ).rejects.toThrow('contained_execution_capability_invalid')
+    expect(dependencies.calls).toEqual([])
+  })
+
   it('rejects tampering, missing image, and immutable image mismatch', async () => {
     const value = await fixture()
     const signedValue = (await signed(value)) as {
