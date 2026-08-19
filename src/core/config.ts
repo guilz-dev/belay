@@ -213,6 +213,21 @@ export interface BelaySandboxConfig {
   enabled: boolean
   runtime: SandboxRuntime
   denyNetworkByDefault: boolean
+  /** Optional in source config for backwards compatibility; normalization always supplies it. */
+  containedExecution?: BelayContainedExecutionConfig
+}
+
+export interface BelayContainedExecutionConfig {
+  enabled: boolean
+  image: string | null
+  /** Required when enabled; optional in source objects for disabled backwards compatibility. */
+  dockerExecutable?: string | null
+  /** Required when enabled; only local absolute unix:// endpoints are accepted. */
+  dockerHost?: string | null
+  timeoutMs: number
+  memoryMiB: number
+  cpus: number
+  pids: number
 }
 
 export interface BelayClassifierConfig {
@@ -440,10 +455,95 @@ export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
   isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
 }
 
+export const DEFAULT_CONTAINED_EXECUTION: BelayContainedExecutionConfig = {
+  enabled: false,
+  image: null,
+  dockerExecutable: null,
+  dockerHost: null,
+  timeoutMs: 30_000,
+  memoryMiB: 2048,
+  cpus: 2,
+  pids: 256,
+}
+
 export const DEFAULT_SANDBOX_V3: BelaySandboxConfig = {
   enabled: false,
   runtime: 'none',
   denyNetworkByDefault: true,
+  containedExecution: { ...DEFAULT_CONTAINED_EXECUTION },
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback
+}
+
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+export function normalizeContainedExecutionConfig(
+  raw: Partial<BelayContainedExecutionConfig> | undefined,
+): BelayContainedExecutionConfig {
+  return {
+    enabled: raw?.enabled === true,
+    image: typeof raw?.image === 'string' && raw.image.trim() ? raw.image.trim() : null,
+    dockerExecutable:
+      typeof raw?.dockerExecutable === 'string' && raw.dockerExecutable.trim()
+        ? raw.dockerExecutable.trim()
+        : null,
+    dockerHost:
+      typeof raw?.dockerHost === 'string' && raw.dockerHost.trim() ? raw.dockerHost.trim() : null,
+    timeoutMs: positiveInteger(raw?.timeoutMs, DEFAULT_CONTAINED_EXECUTION.timeoutMs),
+    memoryMiB: positiveInteger(raw?.memoryMiB, DEFAULT_CONTAINED_EXECUTION.memoryMiB),
+    cpus: positiveNumber(raw?.cpus, DEFAULT_CONTAINED_EXECUTION.cpus),
+    pids: positiveInteger(raw?.pids, DEFAULT_CONTAINED_EXECUTION.pids),
+  }
+}
+
+function normalizeSandboxConfig(raw: Partial<BelaySandboxConfig> | undefined): BelaySandboxConfig {
+  const runtime: SandboxRuntime =
+    raw?.runtime === 'cursor-sandbox' ||
+    raw?.runtime === 'container' ||
+    raw?.runtime === 'seatbelt' ||
+    raw?.runtime === 'landlock'
+      ? raw.runtime
+      : DEFAULT_SANDBOX_V3.runtime
+  const containedExecution = normalizeContainedExecutionConfig(raw?.containedExecution)
+  if (containedExecution.enabled && (raw?.enabled !== true || runtime !== 'container')) {
+    throw new Error(
+      'contained execution requires sandbox.runtime=container with sandbox.enabled=true',
+    )
+  }
+  if (containedExecution.enabled && !containedExecution.image) {
+    throw new Error('contained execution requires an explicit image')
+  }
+  if (containedExecution.enabled && !containedExecution.dockerExecutable) {
+    throw new Error('contained execution requires an explicit Docker executable')
+  }
+  if (
+    containedExecution.enabled &&
+    (!path.isAbsolute(containedExecution.dockerExecutable ?? '') ||
+      /[\0\n\r]/.test(containedExecution.dockerExecutable ?? ''))
+  ) {
+    throw new Error('contained execution requires an absolute executable path')
+  }
+  if (containedExecution.enabled && !containedExecution.dockerHost) {
+    throw new Error('contained execution requires an explicit Docker host')
+  }
+  if (
+    containedExecution.enabled &&
+    (!containedExecution.dockerHost?.startsWith('unix:///') ||
+      !path.isAbsolute(containedExecution.dockerHost.slice('unix://'.length)) ||
+      /[\0\n\r]/.test(containedExecution.dockerHost))
+  ) {
+    throw new Error('contained execution requires a local unix Docker host')
+  }
+  return {
+    enabled: raw?.enabled === true,
+    runtime,
+    denyNetworkByDefault: raw?.denyNetworkByDefault !== false,
+    containedExecution,
+  }
 }
 
 export const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig = {}
@@ -1255,17 +1355,7 @@ export function normalizeConfig(
           : DEFAULT_EGRESS_V3.listenPort,
       demoteL3External: v4.egress?.demoteL3External !== false,
     },
-    sandbox: {
-      enabled: v4.sandbox?.enabled === true,
-      runtime:
-        v4.sandbox?.runtime === 'cursor-sandbox' ||
-        v4.sandbox?.runtime === 'container' ||
-        v4.sandbox?.runtime === 'seatbelt' ||
-        v4.sandbox?.runtime === 'landlock'
-          ? v4.sandbox.runtime
-          : DEFAULT_SANDBOX_V3.runtime,
-      denyNetworkByDefault: v4.sandbox?.denyNetworkByDefault !== false,
-    },
+    sandbox: normalizeSandboxConfig(v4.sandbox),
     audit: {
       logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
       includeAssessment: v4.audit?.includeAssessment !== false,
@@ -1363,6 +1453,10 @@ export function mergeConfig(
     sandbox: {
       ...defaults.sandbox,
       ...migrated.sandbox,
+      containedExecution: {
+        ...(defaults.sandbox.containedExecution ?? DEFAULT_CONTAINED_EXECUTION),
+        ...(migrated.sandbox.containedExecution ?? DEFAULT_CONTAINED_EXECUTION),
+      },
     },
     audit: {
       ...defaults.audit,

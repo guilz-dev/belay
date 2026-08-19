@@ -3,8 +3,12 @@ import path from 'node:path'
 import { egressStatus } from '../../services/egress-service.js'
 import type { BelayConfigV4 } from '../config.js'
 import { configuredControlPlaneDir } from '../config.js'
+import {
+  type ContainedDockerDependencies,
+  probeContainedDockerForSession,
+} from '../contained-execution/docker.js'
 import type { BoundaryAttestation, BoundaryDriverId } from './attestation.js'
-import { isAttestationFresh } from './attestation.js'
+import { isAttestationFresh, isContainedExecutionAttestationFresh } from './attestation.js'
 import {
   readSignedAttestationFile,
   signBoundaryAttestation,
@@ -35,6 +39,37 @@ export interface ResolvedBoundaryDriverContext {
   attestationPath: string
   attestation: BoundaryAttestation | null
   attestationFresh: boolean
+  containedExecutionFresh?: boolean
+}
+
+function containedExecutionFresh(
+  attestation: BoundaryAttestation | null,
+  config: BelayConfigV4,
+  now = Date.now(),
+): boolean | undefined {
+  if (attestation?.driver !== 'container' || !attestation.containedExecution) return undefined
+  const current = config.sandbox.containedExecution
+  const capability = attestation.containedExecution
+  const configCompatible = Boolean(
+    current?.enabled &&
+      current.image === capability.imageReference &&
+      current.dockerExecutable === capability.dockerConfiguration.executable &&
+      current.dockerHost === capability.dockerConfiguration.host &&
+      current.timeoutMs === capability.resourceLimits.timeoutMs &&
+      current.memoryMiB === capability.resourceLimits.memoryMiB &&
+      current.cpus === capability.resourceLimits.cpus &&
+      current.pids === capability.resourceLimits.pids,
+  )
+  const probedAt = Date.parse(attestation.probedAt)
+  const expiresAt = Date.parse(attestation.expiresAt)
+  return (
+    Number.isFinite(probedAt) &&
+    Number.isFinite(expiresAt) &&
+    probedAt <= now &&
+    expiresAt > now &&
+    configCompatible &&
+    isContainedExecutionAttestationFresh(capability, now)
+  )
 }
 
 export function boundaryAttestationPath(repoRoot: string, config: BelayConfigV4): string {
@@ -143,6 +178,7 @@ export async function resolveBoundaryDriverContext(params: {
     attestationPath,
     attestation,
     attestationFresh: attestation ? isAttestationFresh(attestation) : false,
+    containedExecutionFresh: containedExecutionFresh(attestation, params.config),
   }
 }
 
@@ -167,7 +203,25 @@ export async function startBoundarySession(params: {
   config: BelayConfigV4
   driverId?: BoundaryDriverId
   egressProxyRunning?: boolean
+  containedDockerDependencies?: ContainedDockerDependencies
 }): Promise<{ attestation: BoundaryAttestation; attestationPath: string }> {
+  const contained = params.config.sandbox.containedExecution
+  if (contained?.enabled === true) {
+    const attestation = await probeContainedDockerForSession({
+      repoRoot: params.repoRoot,
+      controlPlaneDir: configuredControlPlaneDir(params.config),
+      config: contained,
+      dependencies: params.containedDockerDependencies,
+    })
+    const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
+    await saveBoundaryAttestation(
+      attestationPath,
+      attestation,
+      params.repoRoot,
+      configuredControlPlaneDir(params.config),
+    )
+    return { attestation, attestationPath }
+  }
   const resolved = await resolveBoundaryDriverContext(params)
   const attestation = await resolved.driver.probe()
   if (resolved.driver.prepare) {
@@ -186,7 +240,13 @@ export async function startBoundarySession(params: {
 export async function boundarySessionStatus(params: {
   repoRoot: string
   config: BelayConfigV4
-}): Promise<{ attestationPath: string; attestation: BoundaryAttestation | null; fresh: boolean }> {
+  now?: number
+}): Promise<{
+  attestationPath: string
+  attestation: BoundaryAttestation | null
+  fresh: boolean
+  containedExecutionFresh?: boolean
+}> {
   const attestationPath = boundaryAttestationPath(params.repoRoot, params.config)
   const attestation = await loadBoundaryAttestation(
     attestationPath,
@@ -197,6 +257,7 @@ export async function boundarySessionStatus(params: {
     attestationPath,
     attestation,
     fresh: attestation ? isAttestationFresh(attestation) : false,
+    containedExecutionFresh: containedExecutionFresh(attestation, params.config, params.now),
   }
 }
 

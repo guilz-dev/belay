@@ -5,8 +5,12 @@ import { verdictTestContext } from './helpers.js'
 
 describe('parser xargs', () => {
   it('treats xargs as a transparent wrapper', () => {
-    const { tokens, xargsStdinOpaque } = peelTransparentWrappers(['xargs', 'curl'])
+    const { tokens, xargsStdinOpaque, encounteredXargs } = peelTransparentWrappers([
+      'xargs',
+      'curl',
+    ])
     expect(xargsStdinOpaque).toBe(false)
+    expect(encounteredXargs).toBe(true)
     expect(tokens).toEqual(['curl'])
   })
 
@@ -14,6 +18,18 @@ describe('parser xargs', () => {
     const { tokens, xargsStdinOpaque } = peelTransparentWrappers(['xargs'])
     expect(xargsStdinOpaque).toBe(true)
     expect(tokens).toEqual([])
+  })
+
+  it('does not drop xargs options without proving their operand grammar', () => {
+    const peeled = peelTransparentWrappers(['xargs', '-n', '1', 'curl'])
+
+    expect(peeled.opaque).toBe(true)
+  })
+
+  it('peels the xargs replacement option after consuming its operand', () => {
+    const peeled = peelTransparentWrappers(['xargs', '-I{}', 'curl'])
+
+    expect(peeled).toMatchObject({ tokens: ['curl'], opaque: false, encounteredXargs: true })
   })
 
   it('escalates piped xargs curl with data upload on legacy allow_flagged policy', async () => {

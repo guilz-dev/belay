@@ -1,4 +1,6 @@
-import type { Assessment, ClassifyResult, HookVerdict } from './types.js'
+import type { Assessment, ClassifyResult, HookVerdict, MediatedExecutionResult } from './types.js'
+
+export type { MediatedExecutionResult } from './types.js'
 
 export const GATE_CONTRACT_VERSION = 1 as const
 
@@ -39,6 +41,8 @@ export interface GateVerdict extends GatePermissionResponse {
   effectPlan?: ClassifyResult['effectPlan']
   effectPlanPolicyDecisions?: ClassifyResult['effectPlanPolicyDecisions']
   boundaryProfile?: string
+  wouldMediate?: boolean
+  mediatedExecution?: MediatedExecutionResult
 }
 
 export function isGatedAction(value: unknown): value is GatedAction {
@@ -84,6 +88,8 @@ export function classifyResultToGateVerdict(params: {
     effectPlan: result.effectPlan,
     effectPlanPolicyDecisions: result.effectPlanPolicyDecisions,
     boundaryProfile: result.boundaryProfile,
+    wouldMediate: result.wouldMediate,
+    mediatedExecution: result.mediatedExecution,
   }
 }
 

@@ -48,6 +48,14 @@ export interface AuditMetricsCohort {
   availabilityAsks: AvailabilityAskCounts
   wouldBlockByReason: Record<string, number>
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
+  containedExecution: ContainedExecutionMetrics
+}
+
+export interface ContainedExecutionMetrics {
+  wouldMediate: number
+  complete: number
+  failed: number
+  timedOut: number
 }
 
 export interface AuditMetricsReport {
@@ -75,6 +83,7 @@ export interface AuditMetricsReport {
   currentCohort: AuditMetricsCohort
   approvalRecordedCount: number
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
+  containedExecution: ContainedExecutionMetrics
   approvalLatency: {
     count: number
     medianMs: number | null
@@ -96,6 +105,19 @@ export interface AuditMetricsReport {
   }
   recovery: RecoveryMetrics
   currentCohortRecovery: RecoveryMetricsCohort
+}
+
+function containedExecutionMetrics(
+  records: readonly Record<string, unknown>[],
+): ContainedExecutionMetrics {
+  return {
+    wouldMediate: records.filter((record) => record.wouldMediate === true).length,
+    complete: records.filter((record) => record.reason === 'contained_execution_complete').length,
+    failed: records.filter((record) => record.reason === 'contained_execution_failed').length,
+    timedOut: records.filter(
+      (record) => record.reason === 'contained_execution_failed' && record.timedOut === true,
+    ).length,
+  }
 }
 
 export function parseAuditNdjson(raw: string): Record<string, unknown>[] {
@@ -262,6 +284,7 @@ export function computeAuditMetrics(
     availabilityAsks: cohortAvailabilityAsks,
     wouldBlockByReason: cohortWouldBlockByReason,
     topWouldBlockSummaries: cohortTopWouldBlockSummaries,
+    containedExecution: containedExecutionMetrics(cohortGateRecords),
   }
 
   const mode = options.mode ?? null
@@ -365,6 +388,7 @@ export function computeAuditMetrics(
     currentCohort,
     approvalRecordedCount,
     topWouldBlockSummaries,
+    containedExecution: containedExecutionMetrics(auditRecords),
     approvalLatency,
     gateEventsByDay: bucketGateEventsByDay(auditRecords),
     bypassAttemptCount: bypassAttempts.length,

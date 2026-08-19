@@ -46,6 +46,12 @@ export interface AuditRecord {
   recoveryState?: string
   replayContext?: AuditReplayContext
   actionSnapshot?: AuditActionSnapshot
+  wouldMediate?: boolean
+  receiptHash?: string
+  imageId?: string
+  mirrorBackend?: 'file_copy'
+  exitCode?: number | null
+  timedOut?: boolean
   [key: string]: unknown
 }
 

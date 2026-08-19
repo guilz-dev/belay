@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Contained unknown execution (opt-in)** — eligible repository-local `unknown_local_effect`
+  commands can run once in a fresh signed, immutable-image Docker boundary with network disabled,
+  a copy-only workspace mirror, mandatory scrubbed bounded output, and discarded changes. This is not a
+  command allowlist or L1-full claim: EffectPlan remains the sole shell authority, the original
+  host command is denied, and only pre-execution Docker substrate/daemon unavailability falls
+  back to ordinary approval. All other attestation/capability/image/mirror/lease/create/inspect/
+  start/timeout/cleanup failures fail closed.
 - **Recovery operational metrics (schema v4)** — `belay metrics` aggregates snapshot attempts,
   backend/resource-kind counts, prepare latency p50/p95, sanitized failure reasons, and restore
   applied/conflict/rejected outcomes for all-time and active-cohort audit records. Recovery

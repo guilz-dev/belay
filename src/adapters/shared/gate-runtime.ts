@@ -23,14 +23,17 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
+import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
+import { readSignedAttestationFile } from '../../core/capability/boundary-attestation-sign.js'
 import { isEgressProxyActive } from '../../core/capability/boundary-egress.js'
 import {
   isBoundaryCleanupError,
   safeBoundaryCleanupResourceId,
 } from '../../core/capability/boundary-run.js'
 import {
+  boundaryAttestationPath,
   resolveBoundaryDriverContext,
   runBoundaryAgentCommand,
 } from '../../core/capability/boundary-session.js'
@@ -64,6 +67,22 @@ import {
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
+import {
+  ContainedDockerBoundaryUnavailableError,
+  type ExecuteContainedDockerParams,
+  executeContainedDocker,
+} from '../../core/contained-execution/docker.js'
+import { isContainedUnknownExecutionEligible } from '../../core/contained-execution/eligibility.js'
+import { ContainedExecutionFailureError } from '../../core/contained-execution/failure.js'
+import {
+  type ContainedExecutionMirrorHandle,
+  type ContainedExecutionMirrorOptions,
+  withContainedExecutionMirror,
+} from '../../core/contained-execution/mirror.js'
+import {
+  CONTAINED_EXECUTION_OUTPUT_SCRUB_OPTIONS,
+  isContainedExecutionApprovalFallbackReason,
+} from '../../core/contained-execution/policy.js'
 import { effectPlanAuditFields, hashEffectPlan } from '../../core/effect-ir/audit.js'
 import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
 import {
@@ -94,6 +113,7 @@ import {
   pendingApprovalsFile,
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
+  scrubString,
   scrubValue,
   toolFingerprint,
 } from '../../core/index.js'
@@ -164,6 +184,23 @@ function auditProvenance(config: BelayConfigV3): Record<string, string> {
   }
 }
 
+function preservedContainedAuditMetadata(record: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {}
+  if (record.wouldMediate === true) safe.wouldMediate = true
+  if (typeof record.receiptHash === 'string' && /^[a-f0-9]{64}$/.test(record.receiptHash)) {
+    safe.receiptHash = record.receiptHash
+  }
+  if (typeof record.imageId === 'string' && /^sha256:[a-f0-9]{64}$/.test(record.imageId)) {
+    safe.imageId = record.imageId
+  }
+  if (record.mirrorBackend === 'file_copy') safe.mirrorBackend = record.mirrorBackend
+  if (record.exitCode === null || Number.isSafeInteger(record.exitCode)) {
+    safe.exitCode = record.exitCode
+  }
+  if (typeof record.timedOut === 'boolean') safe.timedOut = record.timedOut
+  return safe
+}
+
 function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
   if (
     ctx.config.adapter === 'cursor' ||
@@ -211,6 +248,14 @@ export interface GateRuntimeDeps {
     stdout?: string
     stderr?: string
   }>
+  readSignedAttestation: (filePath: string) => Promise<unknown>
+  withContainedExecutionMirror: <T>(
+    options: ContainedExecutionMirrorOptions,
+    operation: (mirror: ContainedExecutionMirrorHandle) => Promise<T>,
+  ) => Promise<T>
+  executeContainedDocker: (
+    params: ExecuteContainedDockerParams,
+  ) => ReturnType<typeof executeContainedDocker>
 }
 
 const REPLAY_AUDIT_FAILURE_NOTE =
@@ -259,7 +304,7 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
         string,
         unknown
       >
-      Object.assign(scrubbed, provenance)
+      Object.assign(scrubbed, provenance, preservedContainedAuditMetadata(record))
       await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
         encoding: 'utf8',
         flag: 'a',
@@ -296,6 +341,9 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
         runOptions: { mountReadOnly: false },
       })
     },
+    readSignedAttestation: readSignedAttestationFile,
+    withContainedExecutionMirror,
+    executeContainedDocker,
   }
 }
 
@@ -624,6 +672,224 @@ async function discardApprovedApproval(
   }
 }
 
+function scrubMediatedOutput(value: string): { value: string; truncated: boolean } {
+  const source = boundedUtf8Tail(value)
+  const scrubbed = boundedUtf8Tail(
+    scrubString(source.value, CONTAINED_EXECUTION_OUTPUT_SCRUB_OPTIONS),
+  )
+  return { value: scrubbed.value, truncated: source.truncated || scrubbed.truncated }
+}
+
+function normalizeContainedFailure(error: unknown): ContainedExecutionFailureError {
+  if (error instanceof ContainedExecutionFailureError) {
+    return error
+  }
+  if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+    return new ContainedExecutionFailureError('contained_execution_capability_invalid', {
+      cause: error,
+    })
+  }
+  return new ContainedExecutionFailureError('contained_execution_boundary_failed', { cause: error })
+}
+
+function containedAuditBase(
+  kind: GatedActionKind,
+  mode: 'enforce' | 'audit',
+  result: ClassifyResult,
+): Record<string, unknown> {
+  const planFields = effectPlanAuditFields(result.effectPlan)
+  return {
+    event: gateAuditEventName(kind),
+    kind,
+    fingerprint: result.fingerprint,
+    mode,
+    schemaVersion: result.axes ? 2 : 1,
+    effectPlanVersion: planFields.effectPlanVersion,
+    effectIRHash: planFields.effectIRHash,
+    effectPlanSignals: planFields.effectPlanSignals,
+    effectPlanOpacity: planFields.effectPlanOpacity,
+    effectPlanDisposition: planFields.effectPlanDisposition,
+    effectPlanCompleteness: planFields.effectPlanCompleteness,
+    wouldMediate: true,
+  }
+}
+
+async function mediateContainedUnknownExecution(params: {
+  ctx: GateRuntimeContext
+  deps: GateRuntimeDeps
+  action: GatedAction
+  command: string
+  result: ClassifyResult
+}): Promise<GateVerdict | null> {
+  const { ctx, deps, action, command } = params
+  const result = { ...params.result, wouldMediate: true }
+  if (ctx.config.mode === 'audit') {
+    await deps.appendAudit(ctx, {
+      ...containedAuditBase(action.kind, ctx.config.mode, result),
+      verdict: result.verdict,
+      reason: result.reason,
+      wouldBlock: true,
+      permission: 'allow',
+    })
+    return classifyResultToGateVerdict({
+      result,
+      mode: ctx.config.mode,
+      permission: 'allow',
+      wouldBlock: true,
+    })
+  }
+
+  const controlPlaneDir = configuredControlPlaneDir(ctx.config)
+  const attestationPath = boundaryAttestationPath(ctx.repoRoot, ctx.config)
+  const protectedRoots = [
+    ...new Set([
+      ...protectedArtifactRoots(ctx.layout, ctx.repoRoot, controlPlaneDir),
+      attestationPath,
+    ]),
+  ]
+  const checkpoint = ctx.config.policy.transactional.fileCheckpoint
+  const containedConfig = ctx.config.sandbox.containedExecution
+  if (!containedConfig?.enabled) {
+    return null
+  }
+  let execution: Awaited<ReturnType<GateRuntimeDeps['executeContainedDocker']>> | undefined
+  let mirrorBackend: ContainedExecutionMirrorHandle['backend'] | undefined
+  try {
+    let signedAttestation: unknown
+    try {
+      signedAttestation = await deps.readSignedAttestation(attestationPath)
+    } catch (error) {
+      throw new ContainedExecutionFailureError('contained_execution_capability_invalid', {
+        cause: error,
+      })
+    }
+    execution = await deps.withContainedExecutionMirror(
+      {
+        sourceRoot: ctx.repoRoot,
+        controlPlaneRoots: protectedRoots,
+        limits: {
+          maxFiles: checkpoint.maxFiles,
+          maxSourceBytes: checkpoint.maxSourceBytes,
+          maxWorkspaceBytes: checkpoint.maxWorkspaceBytes,
+          prepareTimeoutMs: checkpoint.prepareTimeoutMs,
+        },
+      },
+      async (mirror) => {
+        mirrorBackend = mirror.backend
+        return deps.executeContainedDocker({
+          repoRoot: ctx.repoRoot,
+          controlPlaneDir,
+          protectedRoots,
+          config: containedConfig,
+          mirror,
+          guestCwd: action.cwd,
+          command,
+          inputFingerprint: result.fingerprint,
+          signedAttestation,
+        })
+      },
+    )
+  } catch (error) {
+    if (
+      error instanceof ContainedDockerBoundaryUnavailableError &&
+      isContainedExecutionApprovalFallbackReason(error.reason)
+    ) {
+      return null
+    }
+    const failure = normalizeContainedFailure(error)
+    const reason = failure.code
+    const failedResult: ClassifyResult = {
+      ...result,
+      verdict: 'deny_pending_approval',
+      reason,
+    }
+    await deps.appendAudit(ctx, {
+      ...containedAuditBase(action.kind, ctx.config.mode, failedResult),
+      verdict: failedResult.verdict,
+      reason,
+      wouldBlock: true,
+      permission: 'deny',
+      ...(mirrorBackend ? { mirrorBackend } : {}),
+    })
+    const sessionHint =
+      failure.remediation === 'session-start' ? ' Run `belay session start`, then retry.' : ''
+    return classifyResultToGateVerdict({
+      result: failedResult,
+      mode: ctx.config.mode,
+      permission: 'deny',
+      wouldBlock: true,
+      user_message: `Belay could not confirm safe contained execution (${reason}).${sessionHint}`,
+      agent_message:
+        `Belay denied the original host command because contained execution failed closed (${reason}).` +
+        sessionHint,
+    })
+  }
+
+  const stdout = scrubMediatedOutput(execution.stdout)
+  const stderr = scrubMediatedOutput(execution.stderr)
+  const mediatedExecution = {
+    exitCode: execution.exitCode,
+    signal: execution.signal,
+    timedOut: execution.timedOut,
+    stdout: stdout.value,
+    stderr: stderr.value,
+    stdoutTruncated: execution.stdoutTruncated || stdout.truncated,
+    stderrTruncated: execution.stderrTruncated || stderr.truncated,
+    receiptHash: execution.receiptHash,
+    workspaceChangesDiscarded: true as const,
+  }
+  const reason =
+    execution.exitCode === 0 && !execution.timedOut
+      ? 'contained_execution_complete'
+      : 'contained_execution_failed'
+  const mediatedResult: ClassifyResult = {
+    ...result,
+    verdict: 'allow',
+    reason,
+    mediatedExecution,
+  }
+  await deps.appendAudit(ctx, {
+    ...containedAuditBase(action.kind, ctx.config.mode, mediatedResult),
+    verdict: mediatedResult.verdict,
+    reason,
+    wouldBlock: false,
+    permission: 'deny',
+    receiptHash: execution.receiptHash,
+    imageId: execution.receipt.imageId,
+    mirrorBackend,
+    exitCode: execution.exitCode,
+    timedOut: execution.timedOut,
+  })
+
+  const status = execution.timedOut
+    ? 'timed out'
+    : execution.exitCode === 0
+      ? 'completed successfully'
+      : `failed with exit ${execution.exitCode}`
+  const output = [
+    mediatedExecution.stdout
+      ? `stdout tail${mediatedExecution.stdoutTruncated ? ' (truncated)' : ''}:\n${mediatedExecution.stdout}`
+      : '',
+    mediatedExecution.stderr
+      ? `stderr tail${mediatedExecution.stderrTruncated ? ' (truncated)' : ''}:\n${mediatedExecution.stderr}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  return classifyResultToGateVerdict({
+    result: mediatedResult,
+    mode: ctx.config.mode,
+    permission: 'deny',
+    wouldBlock: false,
+    user_message:
+      `Belay contained execution ${status}; the original host command was not run and workspace changes were discarded. Receipt: ${execution.receiptHash}.` +
+      (output ? `\n${output}` : ''),
+    agent_message:
+      `Belay already ran this command once inside the contained boundary (${status}). Do not retry it on the host. Receipt: ${execution.receiptHash}.` +
+      (output ? `\n${output}` : ''),
+  })
+}
+
 export async function evaluateGatedAction(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
@@ -738,6 +1004,23 @@ export async function evaluateGatedAction(
     egressProxyActive,
   }
   const predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
+
+  if (
+    action.kind === 'shell' &&
+    action.command &&
+    isContainedUnknownExecutionEligible(ctx.config, action, predicted)
+  ) {
+    const mediated = await mediateContainedUnknownExecution({
+      ctx,
+      deps,
+      action,
+      command: action.command,
+      result: predicted,
+    })
+    if (mediated) {
+      return mediated
+    }
+  }
 
   let result = predicted
   let predictedAssessment: Assessment | undefined

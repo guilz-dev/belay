@@ -1,21 +1,62 @@
 import { type SpawnOptionsWithoutStdio, spawn } from 'node:child_process'
 
+import {
+  appendBoundedOutputTail,
+  decodeBoundedOutputTail,
+  OUTPUT_TAIL_LIMIT_BYTES,
+} from './bounded-output.js'
+import { createStreamingScrubber } from './scrub.js'
+import type { ScrubOptions } from './types.js'
+
 export interface ShellRunResult {
   exitCode: number | null
   signal: string | null
   timedOut: boolean
-  stdout?: string
-  stderr?: string
+  stdout: string
+  stderr: string
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
 }
 
-const PROCESS_OUTPUT_TAIL_BYTES = 16_384
 const EXIT_OUTPUT_GRACE_MS = 25
 const TIMEOUT_KILL_GRACE_MS = 250
 const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000
 
-function appendOutputTail(current: Buffer, chunk: Buffer | string): Buffer {
-  const next = Buffer.concat([current, Buffer.from(chunk)])
-  return next.length > PROCESS_OUTPUT_TAIL_BYTES ? next.subarray(-PROCESS_OUTPUT_TAIL_BYTES) : next
+export interface ProcessOutputPolicy {
+  /** Scrub credential context before the irreversible output-tail cap is applied. */
+  scrubOptions: ScrubOptions
+}
+
+class ScrubbedOutputTail {
+  readonly #scrubber
+  #tail: Buffer = Buffer.alloc(0)
+  #tailTruncated = false
+  #rawBytes = 0
+
+  constructor(options: ScrubOptions) {
+    this.#scrubber = createStreamingScrubber(options)
+  }
+
+  append(chunk: Buffer | string): void {
+    const bytes = Buffer.from(chunk)
+    this.#rawBytes += bytes.length
+    this.#appendSafe(this.#scrubber.write(bytes))
+  }
+
+  finish(): { value: string; truncated: boolean } {
+    this.#appendSafe(this.#scrubber.end())
+    return {
+      value: decodeBoundedOutputTail(this.#tail),
+      truncated: this.#rawBytes > OUTPUT_TAIL_LIMIT_BYTES || this.#tailTruncated,
+    }
+  }
+
+  #appendSafe(value: string): void {
+    if (!value) return
+    const output = appendBoundedOutputTail(this.#tail, value)
+    this.#tail = output.tail
+    this.#tailTruncated ||= output.truncated
+  }
 }
 
 export function windowsProcessTreeKillArgs(pid: number): string[] {
@@ -54,6 +95,7 @@ export function runProcessWithBoundedOutput(
   args: string[],
   options: SpawnOptionsWithoutStdio,
   timeoutMs: number,
+  outputPolicy?: ProcessOutputPolicy,
 ): Promise<ShellRunResult> {
   return new Promise((resolve) => {
     const detached = process.platform !== 'win32'
@@ -64,16 +106,36 @@ export function runProcessWithBoundedOutput(
     })
     let stdout: Buffer = Buffer.alloc(0)
     let stderr: Buffer = Buffer.alloc(0)
+    let stdoutTruncated = false
+    let stderrTruncated = false
+    const scrubbedStdout = outputPolicy
+      ? new ScrubbedOutputTail(outputPolicy.scrubOptions)
+      : undefined
+    const scrubbedStderr = outputPolicy
+      ? new ScrubbedOutputTail(outputPolicy.scrubOptions)
+      : undefined
     let timedOut = false
     let settled = false
     let windowsCleanupPending = false
     let exitTimer: NodeJS.Timeout | undefined
 
     child.stdout.on('data', (chunk) => {
-      stdout = appendOutputTail(stdout, chunk)
+      if (scrubbedStdout) {
+        scrubbedStdout.append(chunk)
+        return
+      }
+      const output = appendBoundedOutputTail(stdout, chunk)
+      stdout = output.tail
+      stdoutTruncated ||= output.truncated
     })
     child.stderr.on('data', (chunk) => {
-      stderr = appendOutputTail(stderr, chunk)
+      if (scrubbedStderr) {
+        scrubbedStderr.append(chunk)
+        return
+      }
+      const output = appendBoundedOutputTail(stderr, chunk)
+      stderr = output.tail
+      stderrTruncated ||= output.truncated
     })
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
@@ -87,12 +149,16 @@ export function runProcessWithBoundedOutput(
       }
       child.stdout.destroy()
       child.stderr.destroy()
+      const safeStdout = scrubbedStdout?.finish()
+      const safeStderr = scrubbedStderr?.finish()
       resolve({
         exitCode,
         signal: signal ? String(signal) : null,
         timedOut,
-        stdout: stdout.toString('utf8'),
-        stderr: stderr.toString('utf8'),
+        stdout: safeStdout?.value ?? decodeBoundedOutputTail(stdout),
+        stderr: safeStderr?.value ?? decodeBoundedOutputTail(stderr),
+        stdoutTruncated: safeStdout?.truncated ?? stdoutTruncated,
+        stderrTruncated: safeStderr?.truncated ?? stderrTruncated,
       })
     }
 
@@ -126,7 +192,14 @@ export function runProcessWithBoundedOutput(
     }, timeoutMs)
 
     child.on('error', (error) => {
-      stderr = appendOutputTail(stderr, error.message)
+      if (scrubbedStderr) {
+        scrubbedStderr.append(error.message)
+        finish(1, null)
+        return
+      }
+      const output = appendBoundedOutputTail(stderr, error.message)
+      stderr = output.tail
+      stderrTruncated ||= output.truncated
       finish(1, null)
     })
     child.on('exit', (exitCode, signal) => {

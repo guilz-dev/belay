@@ -12,7 +12,12 @@ export {
   collectRequirements,
   flattenRequirementsToCapabilityRequests,
 } from './build.js'
-export { mergeEffectPlans, mergeRequirements, normalizeEffectTags } from './normalize.js'
+export {
+  joinEffectOpacity,
+  mergeEffectPlans,
+  mergeRequirements,
+  normalizeEffectTags,
+} from './normalize.js'
 export {
   innerRecipeFromPeel,
   isPackageExecLauncher,

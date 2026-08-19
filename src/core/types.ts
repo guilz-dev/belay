@@ -5,6 +5,18 @@ import type { CapabilityRequestV1 } from './capability/request.js'
 import type { FsScopeAllowlistFile } from './capability/types.js'
 import type { EffectPlan, EffectPlanPolicyProjection } from './effect-ir/types.js'
 
+export interface MediatedExecutionResult {
+  exitCode: number | null
+  signal: string | null
+  timedOut: boolean
+  stdout: string
+  stderr: string
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
+  receiptHash: string
+  workspaceChangesDiscarded: true
+}
+
 export type BelayMode = 'enforce' | 'audit'
 
 export type HookVerdict = 'allow' | 'allow_flagged' | 'deny_pending_approval' // concept: ask
@@ -51,6 +63,8 @@ export interface ClassifyResult {
   effectPlanPolicyDecisions?: PolicyDecision[]
   effectPlanProjection?: EffectPlanPolicyProjection
   boundaryProfile?: string
+  wouldMediate?: boolean
+  mediatedExecution?: MediatedExecutionResult
 }
 
 export type UnknownLocalEffectPolicy = 'allow_flagged' | 'deny'

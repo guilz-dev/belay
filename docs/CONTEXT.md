@@ -4,7 +4,8 @@ This document records the normative terms for Belay's resource-scoped capability
 authorization model. It complements
 [ADR-003](./adr/ADR-003-resource-scoped-capability.md),
 [ADR-004](./adr/ADR-004-effectplan-shell-authority.md), and
-[ADR-005](./adr/ADR-005-command-allowlist-prohibition.md).
+[ADR-005](./adr/ADR-005-command-allowlist-prohibition.md), and
+[ADR-006](./adr/ADR-006-contained-unknown-execution.md).
 
 ## Core objects
 
@@ -18,6 +19,9 @@ authorization model. It complements
   `unknown` resource, etc.) are rejected.
 - **BoundaryAttestation** — Evidence that a real runtime boundary (not config strings alone)
   probed successfully and can materialize grants.
+- **Contained execution capability** — A separate, fresh signed Docker proof used only to run one
+  eligible `unknown_local_effect` in a discarded copy-only workspace mirror. It is not a grant
+  materialization or L1-full capability.
 
 ## Invariants
 
@@ -30,7 +34,18 @@ authorization model. It complements
    sends, and ambiguous network effects require approval.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
 5. `deny_pending_approval` is never auto-approved; human escalation is mandatory.
-6. **Recovery execution** (transactional; durable checkpoint backend is opt-in): when enabled,
+6. **Contained unknown execution** (Docker-only and opt-in): EffectPlan remains the sole shell
+   authority. In enforce mode, a verified contained route may mediate an eligible unknown local
+   plan once, but executable names, prefixes, fingerprints, corpus membership, and framework
+   identity never make it eligible. The original host command is denied after mediation; source
+   changes are discarded, and guest output uses mandatory credential scrubbing before its bounded
+   tails regardless of ordinary audit-redaction settings. In audit mode, Belay performs no
+   contained execution and returns ordinary host pass-through. Command allowlists remain prohibited
+   ([ADR-006](./adr/ADR-006-contained-unknown-execution.md)).
+7. A contained execution capability does not imply `materializesGrants`,
+   `deniesUngrantedEffects`, a verified broker, or L1-full. Its Docker protections apply to its
+   one declared container/mirror execution only.
+8. **Recovery execution** (transactional; durable checkpoint backend is opt-in): when enabled,
    local mutations run only after an observed-safe proof in a git worktree or file-checkpoint
    mirror. Clean Git uses `git_worktree`; dirty Git and non-Git directories use
    `file_checkpoint` when separately enabled (`policy.transactional.fileCheckpoint.enabled` and,
@@ -41,7 +56,7 @@ authorization model. It complements
    `recovery_substrate_unavailable`, `recovery_dirty_worktree`, or `recovery_execution_failed`
    — the host must not fall back to unproven execution. `belay metrics` schema v4 aggregates
    snapshot and restore outcomes for operational evidence without affecting authorization.
-7. Linked worktrees are repository-local only when their canonical Git common directory
+9. Linked worktrees are repository-local only when their canonical Git common directory
    matches the primary repository. Separate and malformed repositories fail closed.
 
 ## Policy precedence
@@ -61,11 +76,14 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - `capabilityRequests`
 - `authorizationDecision`
 - `boundaryProfile`
+- `wouldMediate` (audit-mode eligibility signal)
+- `mediatedExecution` (scrubbed, bounded contained result; never a host replay authority)
 
 ## Completed migration work
 
 - Approval state v3 migration and grant lease consumption at reference monitors
 - Docker `BoundaryDriver` and transactional runner execution via `BoundaryDriver`
+- Opt-in contained unknown execution via a separately attested, copy-only Docker route
 - `belay session start` for boundary attestation
 - Gate sync classification latency budgets (`gate-latency-budget.ts`) and quality-loop ratchet advisories (`sandbox advisories`; PLAN 100ms/500ms tightening is ongoing via floor ratchet)
 
