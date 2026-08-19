@@ -191,11 +191,13 @@ Hook I/O, approval, trace, installer ride unchanged.
 |---|---|---|
 | L4 human approval | final backstop | **implemented (reused)** |
 | L3 prediction | noise reduction | **rebuilt** = deterministic shell lowering + EffectPlan policy. LLM is shadow-only; runtime command lists are inert |
-| L2 observation (substrate) | measured on snapshots | **not implemented (assumed)** ← §10 holes |
+| L2 observation (substrate) | measured on transactional mirrors with durable checkpoints | **implemented as opt-in Recovery v2**; CoW backends remain future work |
 | L1 containment (egress) | deny-all boundary | not implemented (future) |
 
-This design is the stage of “L3+L4 done right (deterministic effects + exact approval).”
-“Is it restorable?” is answered **assuming** L2 substrate (git+fs snapshots) exists — that is the next layer.
+The default remains “L3+L4 done right” (deterministic effects + exact approval). When Recovery v2
+is enabled, L2 observes changes in an isolated mirror and persists durable pre-images before
+applying proven-safe effects. Without that opt-in, the gate remains predictive rather than claiming
+transactional proof.
 
 ---
 
@@ -220,7 +222,7 @@ This design is the stage of “L3+L4 done right (deterministic effects + exact a
 | H2 | **cwd missing** on sandbox path → relative path containment fails | medium | defaults to ask (safe but may raise false positives) |
 | H3 | **cold start** → first open-region command hits fallback ask | low | safe side; prewarm mitigates shadow judge only; sync gate does not call Tier1 |
 | H4 | **residual false negatives in open region** — 2B may allow unknown new external-mutation tools | medium (historical) | Superseded for shell authority: partial/unsupported EffectPlans ask; the LLM is shadow-only |
-| H5 | **substrate not implemented (L2)** — “restorable” assumes git+fs snapshots exist but they do not. Tracked git is real; deleting untracked files leans on “regenerable” | medium | **Closed (Recovery v2, opt-in).** Clean Git uses `git_worktree`; dirty Git and non-Git directories use `file_checkpoint` when separately enabled. CoW backends remain future work. |
+| H5 | **L2 substrate absent in the prototype** — “restorable” assumed git+fs snapshots that did not yet exist | medium | **Closed as an implementation gap (Recovery v2, opt-in).** Clean Git uses `git_worktree`; dirty Git and non-Git directories use `file_checkpoint` when separately enabled. CoW backends remain future work. |
 | H6 | Tier1 = 2B can drift | low–medium | structural judgment offloaded to determinism; LLM alone only in open region |
 
 **Overconfidence is the only real danger** — floor misses return to YOLO only (no worse), but pushing YOLO harder because “belay is there” and then missing things is worse. Hence honest documentation (storyline spirit).

@@ -7,7 +7,7 @@ import {
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
 } from '../../adapters/shared/gate-runtime.js'
-import { mergeConfig, belayStateDir } from '../../core/config.js'
+import { belayStateDir, mergeConfig } from '../../core/config.js'
 import { buildShellEffectPlan } from '../../core/effect-ir/index.js'
 import * as gateEngine from '../../core/gate-engine.js'
 import { standingAllowFile } from '../../core/standing-allow.js'
@@ -211,10 +211,7 @@ describe('gate-runtime integration', () => {
     await mkdir(path.dirname(configPath), { recursive: true })
     await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')
 
-    const standingPath = standingAllowFile(
-      enforceConfig,
-      cursorLayout.repoLocalStateDir(repoRoot),
-    )
+    const standingPath = standingAllowFile(enforceConfig, cursorLayout.repoLocalStateDir(repoRoot))
     await mkdir(belayStateDir(enforceConfig, cursorLayout.repoLocalStateDir(repoRoot)), {
       recursive: true,
     })

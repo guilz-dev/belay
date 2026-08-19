@@ -22,6 +22,9 @@ authorization model. It complements
 - **Contained execution capability** — A separate, fresh signed Docker proof used only to run one
   eligible `unknown_local_effect` in a discarded copy-only workspace mirror. It is not a grant
   materialization or L1-full capability.
+- **Benign probe core** — A test-only command fixture used to generate false-positive probes and
+  structural availability expectations. It never grants runtime authority; only the resulting
+  `EffectPlan` and PolicyEngine projection can authorize a shell action.
 
 ## Invariants
 

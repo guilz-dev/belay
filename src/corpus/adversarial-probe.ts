@@ -2,8 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { evaluateCommandBatch, evaluateFpCommandBatch } from './evaluate.js'
 import { BENIGN_PROBE_CORES } from './benign-probe-cores.js'
+import { evaluateCommandBatch, evaluateFpCommandBatch } from './evaluate.js'
 import {
   AUTO_LABEL_MUTATORS,
   CATASTROPHIC_CORES,

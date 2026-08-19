@@ -5,7 +5,6 @@ import path from 'node:path'
 import type { BelayConfigV4 } from './config.js'
 import { belayStateDir } from './config.js'
 import type { GatedActionKind } from './gate-contract.js'
-import type { ClassifyResult } from './types.js'
 
 export type StandingAllowSource = 'operator' | 'availability-reconfirmed'
 
@@ -25,41 +24,13 @@ export interface StandingAllowFile {
   entries: StandingAllowEntry[]
 }
 
-export interface StandingAllowMatch {
-  source: StandingAllowSource
-  entryId?: string
-}
-
 const EMPTY_STANDING_ALLOW: StandingAllowFile = {
   version: 1,
   entries: [],
 }
 
-/** Default TTL for operator / availability-reconfirmed standing-allow entries. */
-export const DEFAULT_STANDING_ALLOW_TTL_MS = 30 * 24 * 60 * 60 * 1000
-
-/** Reasons that must never be silenced via standing-allow (defense in depth with signal checks). */
-const STANDING_ALLOW_BLOCKED_REASONS = new Set([
-  'external_effect',
-  'tier1_catastrophic',
-  'protected_artifact',
-  'pipe_to_shell',
-  'command_substitution',
-  'outside_repo_mutation',
-  'outside_repo_redirect',
-  'control_plane_mutation',
-])
-
 export function standingAllowFile(config: BelayConfigV4, repoLocalStateDir: string): string {
   return `${belayStateDir(config, repoLocalStateDir)}/standing-allow.json`
-}
-
-export function isTier0StandingAllowBlocked(result: ClassifyResult): boolean {
-  if (result.reason.startsWith('tier0_') || STANDING_ALLOW_BLOCKED_REASONS.has(result.reason)) {
-    return true
-  }
-  const signals = result.assessment?.signals ?? []
-  return signals.some((signal) => signal === 'tier0_external' || signal === 'tier1_catastrophic')
 }
 
 function isExpired(iso: string, now = Date.now()): boolean {
@@ -133,88 +104,6 @@ export async function saveStandingAllow(filePath: string, state: StandingAllowFi
   await mkdir(path.dirname(filePath), { recursive: true })
   const compacted = compactStandingAllow(state)
   await writeFile(filePath, `${JSON.stringify(compacted, null, 2)}\n`, 'utf8')
-}
-
-function matchStateEntry(params: {
-  kind: GatedActionKind
-  fingerprint: string
-  repoRoot: string
-  state: StandingAllowFile
-  now?: number
-}): StandingAllowMatch | null {
-  const now = params.now ?? Date.now()
-  const match = params.state.entries.find(
-    (entry) =>
-      entry.kind === params.kind &&
-      entry.fingerprint === params.fingerprint &&
-      !isExpired(entry.expiresAt, now) &&
-      (entry.repoRoot === undefined || entry.repoRoot === params.repoRoot),
-  )
-  if (!match) {
-    return null
-  }
-  return { source: match.source, entryId: match.fingerprint }
-}
-
-export function resolveStandingAllowMatch(params: {
-  kind: GatedActionKind
-  result: ClassifyResult
-  repoRoot: string
-  state: StandingAllowFile
-  now?: number
-}): StandingAllowMatch | null {
-  if (params.kind === 'shell') {
-    return null
-  }
-  if (params.result.verdict !== 'deny_pending_approval') {
-    return null
-  }
-  if (isTier0StandingAllowBlocked(params.result)) {
-    return null
-  }
-
-  return matchStateEntry({
-    kind: params.kind,
-    fingerprint: params.result.fingerprint,
-    repoRoot: params.repoRoot,
-    state: params.state,
-    now: params.now,
-  })
-}
-
-export function addStandingAllowEntry(
-  state: StandingAllowFile,
-  entry: Omit<StandingAllowEntry, 'createdAt' | 'expiresAt'> & {
-    createdAt?: string
-    expiresAt?: string
-    ttlMs?: number
-  },
-): StandingAllowFile {
-  const createdAt = entry.createdAt ?? new Date().toISOString()
-  const ttlMs = entry.ttlMs ?? DEFAULT_STANDING_ALLOW_TTL_MS
-  const expiresAt = entry.expiresAt ?? new Date(Date.parse(createdAt) + ttlMs).toISOString()
-  const next: StandingAllowEntry = {
-    kind: entry.kind,
-    fingerprint: entry.fingerprint,
-    source: entry.source,
-    reason: entry.reason,
-    createdAt,
-    expiresAt,
-    ...(entry.summary ? { summary: entry.summary } : {}),
-    ...(entry.repoRoot ? { repoRoot: entry.repoRoot } : {}),
-  }
-  const filtered = state.entries.filter(
-    (existing) =>
-      !(
-        existing.kind === next.kind &&
-        existing.fingerprint === next.fingerprint &&
-        existing.repoRoot === next.repoRoot
-      ),
-  )
-  return compactStandingAllow({
-    version: 1,
-    entries: [...filtered, next],
-  })
 }
 
 export function revokeStandingAllowEntry(

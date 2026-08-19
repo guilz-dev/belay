@@ -54,7 +54,8 @@ To restore the legacy two-step UX (approve, then always retry manually), set
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
 
-**Do not use command allowlists** (`overrides.allow`, standing shell lists) to fix blocks.
+**Do not use command allowlists** (`overrides.allow`) or legacy standing-allow records
+(shell, tool, or subagent) to fix blocks; none of them change runtime authorization.
 Improve EffectPlan semantics, approve once with `/belay-approve`, or use an exact
 resource-scoped grant. See ADR-005 in the belay repository.
 For install health and audit visibility, use `/belay status` or `belay status`.

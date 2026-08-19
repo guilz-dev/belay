@@ -210,7 +210,7 @@ export interface FpCommandBatchResult {
   isFp: boolean
 }
 
-/** False-positive probe: must-allow cores that receive deny_pending_approval count as FP. */
+/** False-positive probe: benign probe cores that receive deny_pending_approval count as FP. */
 export async function evaluateFpCommandBatch(
   cases: Array<{ command: string; core: string; mutatorId: string }>,
   repoRoot = defaultCorpusEvalPaths().repoRoot,
