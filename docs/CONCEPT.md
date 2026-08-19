@@ -216,11 +216,11 @@ This design is the stage of “L3+L4 done right (deterministic effects + exact a
 
 | # | Hole | Severity | Current behavior |
 |---|---|---|---|
-| H1 | Tokenizer does not split **chains `a && b` / command substitution `$(...)` / subshells**. Hidden catastrophe (`ls && dropdb prod`) slips through | **high (false negative)** | Falls back to YOLO baseline only (no worse). **Top priority to close** |
+| H1 | Tokenizer does not split **chains `a && b` / command substitution `$(...)` / subshells**. Hidden catastrophe (`ls && dropdb prod`) slips through | **high (false negative)** | **Closed (H0).** Chains, pipes, sequences, and substitution are split; unparseable segments ask. Adversarial corpus enforces FN=0. |
 | H2 | **cwd missing** on sandbox path → relative path containment fails | medium | defaults to ask (safe but may raise false positives) |
-| H3 | **cold start** → first open-region command hits fallback ask | low | safe side; prewarm mitigates |
+| H3 | **cold start** → first open-region command hits fallback ask | low | safe side; prewarm mitigates shadow judge only; sync gate does not call Tier1 |
 | H4 | **residual false negatives in open region** — 2B may allow unknown new external-mutation tools | medium (historical) | Superseded for shell authority: partial/unsupported EffectPlans ask; the LLM is shadow-only |
-| H5 | **substrate not implemented (L2)** — “restorable” assumes git+fs snapshots exist but they do not. Tracked git is real; deleting untracked files leans on “regenerable” | medium | git worktree / fs snapshots would make this literally true |
+| H5 | **substrate not implemented (L2)** — “restorable” assumes git+fs snapshots exist but they do not. Tracked git is real; deleting untracked files leans on “regenerable” | medium | **Closed (Recovery v2, opt-in).** Clean Git uses `git_worktree`; dirty Git and non-Git directories use `file_checkpoint` when separately enabled. CoW backends remain future work. |
 | H6 | Tier1 = 2B can drift | low–medium | structural judgment offloaded to determinism; LLM alone only in open region |
 
 **Overconfidence is the only real danger** — floor misses return to YOLO only (no worse), but pushing YOLO harder because “belay is there” and then missing things is worse. Hence honest documentation (storyline spirit).
@@ -245,7 +245,7 @@ Honest ceiling: zero false negatives is not provable in principle. Victory = “
 1. **Tier0 tokenizer hardening (H1)** — split on `&& || ; |` and newlines; detect `$(...)` / backticks / subshells. Verdict per segment; unparseable → ask. Closes the largest hole
 2. **Adversarial corpus + eval harness** — hard gate false negatives = 0. Grow from real trace
 3. **Continue audit dogfood** — measure real-distribution false positives; seed corpus
-4. (later) **L2 substrate** (git worktree snapshot) to make “restorable” literally true
+4. **L2 substrate (Recovery v2)** — git-worktree, dirty-Git file-checkpoint, and non-Git file-checkpoint recovery delivered as separately opt-in (2026-08). CoW backends remain future work.
 5. (superseded) a standing approval cache was considered; current policy instead fixes
    EffectPlan semantics or uses exact one-shot/resource-scoped grants
 

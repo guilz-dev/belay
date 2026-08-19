@@ -52,7 +52,7 @@ describe('adversarial probe', () => {
     expect(holdoutFixFnRateRatio(0.1, null)).toBeNull()
   })
 
-  it('generates FP probe cases from must-allow cores', () => {
+  it('generates FP probe cases from benign probe cores', () => {
     const cases = generateFpProbeCases(42)
     expect(cases.length).toBeGreaterThan(0)
     expect(cases.every((c) => c.core === 'pnpm test' || c.mutatorId)).toBe(true)

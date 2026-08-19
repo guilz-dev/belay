@@ -131,11 +131,6 @@ import {
 } from '../../core/recovery/fail-closed.js'
 import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import {
-  loadStandingAllow,
-  resolveStandingAllowMatch,
-  standingAllowFile,
-} from '../../core/standing-allow.js'
-import {
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   isTransactionalEligible,
   runTransactionalExecution,
@@ -1423,41 +1418,6 @@ async function gateDecisionToVerdict(
       user_message: userMessage,
       agent_message: agentMessage,
     })
-  }
-
-  if (
-    kind !== 'shell' &&
-    result.verdict === 'deny_pending_approval' &&
-    ctx.config.mode === 'enforce' &&
-    !TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason)
-  ) {
-    const standingAllowPath = standingAllowFile(
-      ctx.config,
-      ctx.layout.repoLocalStateDir(ctx.repoRoot),
-    )
-    const standingState = await loadStandingAllow(standingAllowPath)
-    const standingMatch = resolveStandingAllowMatch({
-      kind,
-      result,
-      repoRoot: ctx.repoRoot,
-      state: standingState,
-    })
-    if (standingMatch) {
-      await deps.appendAudit(ctx, {
-        ...gateBase,
-        verdict: 'allow',
-        reason: 'standing_allow',
-        standingAllowSource: standingMatch.source,
-        wouldBlock: false,
-        permission: 'allow',
-      })
-      return classifyResultToGateVerdict({
-        result: { ...result, verdict: 'allow', reason: 'standing_allow' },
-        mode: ctx.config.mode,
-        permission: 'allow',
-        wouldBlock: false,
-      })
-    }
   }
 
   const brokerActive = isCapabilityBrokerDemotionActive(ctx.config)

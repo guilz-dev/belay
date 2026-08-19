@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { evaluateCommandBatch, evaluateFpCommandBatch } from './evaluate.js'
-import { MUST_ALLOW_SHELL_COMMANDS } from './must-allow-commands.js'
+import { BENIGN_PROBE_CORES } from './benign-probe-cores.js'
 import {
   AUTO_LABEL_MUTATORS,
   CATASTROPHIC_CORES,
@@ -124,9 +124,9 @@ export function generateProbeCases(seed: number, maxCases?: number): MutatedCase
   return shuffled.slice(0, maxCases)
 }
 
-/** Benign must-allow cores × AUTO_LABEL mutators — FP over-stop probe (not for corpus auto-add). */
+/** Benign probe cores × AUTO_LABEL mutators — FP over-stop probe (not for corpus auto-add). */
 export function generateFpProbeCases(seed: number): MutatedCase[] {
-  const all = generateMutatedCases([...MUST_ALLOW_SHELL_COMMANDS], AUTO_LABEL_MUTATORS)
+  const all = generateMutatedCases([...BENIGN_PROBE_CORES], AUTO_LABEL_MUTATORS)
   return shuffleWithSeed(all, seed + 1000)
 }
 

@@ -52,8 +52,9 @@ describe('corpus evaluation', () => {
 
   it('loads shell corpus with labeled categories and derived runtime keys', async () => {
     const cases = await loadCorpusCases(corpusDir)
-    expect(cases).toHaveLength(74)
+    expect(cases).toHaveLength(75)
     expect(cases.every((entry) => entry.kind === 'shell')).toBe(true)
+    expect(new Set(cases.map((entry) => entry.command)).size).toBe(cases.length)
 
     const counts = {
       'must-ask': cases.filter((entry) => entry.category === 'must-ask').length,
@@ -62,7 +63,7 @@ describe('corpus evaluation', () => {
     }
     expect(counts).toEqual({
       'must-ask': 37,
-      'provably-benign': 21,
+      'provably-benign': 22,
       'accepted-benign': 16,
     })
 

@@ -24,7 +24,8 @@ security-relevant reports.
 
 Normalized shell actions are authorized only by their canonical `EffectPlan` and
 PolicyEngine projection. Command-name allow/deny lists, legacy overrides, corpus entries,
-and shell standing-allow records are forbidden as runtime authority. Payload-free network
+and legacy standing-allow records (shell, tool, subagent) are forbidden as runtime
+authority. Payload-free network
 reads allow; external mutation, explicit payload/file/secret sends, high-stakes effects,
 and partial/indeterminate plans require approval. See
 [ADR-004](docs/adr/ADR-004-effectplan-shell-authority.md) and

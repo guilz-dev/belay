@@ -18,7 +18,7 @@ Related: [effect-typed-capability-proposal.ja.md](./effect-typed-capability-prop
 正規化できた一般 shell は
 `shell-lower.ts` → canonical `EffectPlan` → `policy.ts` の projection を唯一の判定根拠とする。
 旧 `VerdictEffect`、command head の集合、`overrides.allow` / `overrides.external`、
-corpus catalog、shell standing-allow は permission を変更しない。
+corpus catalog、legacy standing-allow（shell / tool / subagent）は permission を変更しない。
 
 - payloadなしの外部readは `allow`
 - repo/workspace-localな可逆 mutation は `allow_flagged`
