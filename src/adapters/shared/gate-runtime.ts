@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { CONTAINED_UNKNOWN_EXECUTION_GUARANTEE } from '../../conformance/contained-execution-guarantee.js'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
 import {
   type ApprovalReplayHint,
@@ -24,6 +23,7 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
+import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
 import { readSignedAttestationFile } from '../../core/capability/boundary-attestation-sign.js'
@@ -69,18 +69,20 @@ import {
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import {
   ContainedDockerBoundaryUnavailableError,
-  ContainedDockerCleanupUnconfirmedError,
-  ContainedDockerStartAttemptError,
   type ExecuteContainedDockerParams,
   executeContainedDocker,
 } from '../../core/contained-execution/docker.js'
 import { isContainedUnknownExecutionEligible } from '../../core/contained-execution/eligibility.js'
+import { ContainedExecutionFailureError } from '../../core/contained-execution/failure.js'
 import {
-  ContainedExecutionCleanupUnconfirmedError,
   type ContainedExecutionMirrorHandle,
   type ContainedExecutionMirrorOptions,
   withContainedExecutionMirror,
 } from '../../core/contained-execution/mirror.js'
+import {
+  CONTAINED_EXECUTION_OUTPUT_SCRUB_OPTIONS,
+  isContainedExecutionApprovalFallbackReason,
+} from '../../core/contained-execution/policy.js'
 import { effectPlanAuditFields, hashEffectPlan } from '../../core/effect-ir/audit.js'
 import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
 import {
@@ -670,57 +672,24 @@ async function discardApprovedApproval(
   }
 }
 
-const MEDIATED_OUTPUT_LIMIT_BYTES = 16_384
-const CONTAINED_FALLBACK_REASONS: ReadonlySet<string> = new Set(
-  CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.fallback.approvalOnly,
-)
-
-function utf8Tail(value: string): { value: string; truncated: boolean } {
-  const encoded = Buffer.from(value)
-  if (encoded.length <= MEDIATED_OUTPUT_LIMIT_BYTES) {
-    return { value, truncated: false }
-  }
-  const tail = encoded.subarray(-MEDIATED_OUTPUT_LIMIT_BYTES)
-  for (let offset = 0; offset <= Math.min(3, tail.length); offset += 1) {
-    try {
-      return {
-        value: new TextDecoder('utf-8', { fatal: true }).decode(tail.subarray(offset)),
-        truncated: true,
-      }
-    } catch {
-      // The byte cap may cut a leading multi-byte character.
-    }
-  }
-  return { value: tail.toString('utf8'), truncated: true }
-}
-
-function scrubMediatedOutput(
-  value: string,
-  config: BelayConfigV3,
-): { value: string; truncated: boolean } {
-  const source = utf8Tail(value)
-  const scrubbed = utf8Tail(scrubString(source.value, scrubOptionsFromConfig(config)))
+function scrubMediatedOutput(value: string): { value: string; truncated: boolean } {
+  const source = boundedUtf8Tail(value)
+  const scrubbed = boundedUtf8Tail(
+    scrubString(source.value, CONTAINED_EXECUTION_OUTPUT_SCRUB_OPTIONS),
+  )
   return { value: scrubbed.value, truncated: source.truncated || scrubbed.truncated }
 }
 
-function containedFailureReason(error: unknown): string {
-  if (error instanceof ContainedDockerBoundaryUnavailableError) {
-    return error.reason
-  }
-  if (
-    error instanceof ContainedDockerStartAttemptError ||
-    error instanceof ContainedDockerCleanupUnconfirmedError ||
-    error instanceof ContainedExecutionCleanupUnconfirmedError
-  ) {
-    return error.code
-  }
-  if (error instanceof Error && /^contained_execution_[a-z0-9_]+$/.test(error.message)) {
-    return error.message
+function normalizeContainedFailure(error: unknown): ContainedExecutionFailureError {
+  if (error instanceof ContainedExecutionFailureError) {
+    return error
   }
   if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
-    return 'contained_execution_capability_invalid'
+    return new ContainedExecutionFailureError('contained_execution_capability_invalid', {
+      cause: error,
+    })
   }
-  return 'contained_execution_boundary_failed'
+  return new ContainedExecutionFailureError('contained_execution_boundary_failed', { cause: error })
 }
 
 function containedAuditBase(
@@ -743,16 +712,6 @@ function containedAuditBase(
     effectPlanCompleteness: planFields.effectPlanCompleteness,
     wouldMediate: true,
   }
-}
-
-function containedFailureNeedsSession(reason: string): boolean {
-  return (
-    reason.includes('capability') ||
-    reason.includes('attestation') ||
-    reason.includes('image') ||
-    reason.includes('substrate') ||
-    reason.includes('docker')
-  )
 }
 
 async function mediateContainedUnknownExecution(params: {
@@ -800,7 +759,9 @@ async function mediateContainedUnknownExecution(params: {
     try {
       signedAttestation = await deps.readSignedAttestation(attestationPath)
     } catch (error) {
-      throw new Error('contained_execution_capability_invalid', { cause: error })
+      throw new ContainedExecutionFailureError('contained_execution_capability_invalid', {
+        cause: error,
+      })
     }
     execution = await deps.withContainedExecutionMirror(
       {
@@ -824,7 +785,6 @@ async function mediateContainedUnknownExecution(params: {
           guestCwd: action.cwd,
           command,
           inputFingerprint: result.fingerprint,
-          outputScrubOptions: scrubOptionsFromConfig(ctx.config),
           signedAttestation,
         })
       },
@@ -832,11 +792,12 @@ async function mediateContainedUnknownExecution(params: {
   } catch (error) {
     if (
       error instanceof ContainedDockerBoundaryUnavailableError &&
-      CONTAINED_FALLBACK_REASONS.has(error.reason)
+      isContainedExecutionApprovalFallbackReason(error.reason)
     ) {
       return null
     }
-    const reason = containedFailureReason(error)
+    const failure = normalizeContainedFailure(error)
+    const reason = failure.code
     const failedResult: ClassifyResult = {
       ...result,
       verdict: 'deny_pending_approval',
@@ -850,9 +811,8 @@ async function mediateContainedUnknownExecution(params: {
       permission: 'deny',
       ...(mirrorBackend ? { mirrorBackend } : {}),
     })
-    const sessionHint = containedFailureNeedsSession(reason)
-      ? ' Run `belay session start`, then retry.'
-      : ''
+    const sessionHint =
+      failure.remediation === 'session-start' ? ' Run `belay session start`, then retry.' : ''
     return classifyResultToGateVerdict({
       result: failedResult,
       mode: ctx.config.mode,
@@ -865,8 +825,8 @@ async function mediateContainedUnknownExecution(params: {
     })
   }
 
-  const stdout = scrubMediatedOutput(execution.stdout, ctx.config)
-  const stderr = scrubMediatedOutput(execution.stderr, ctx.config)
+  const stdout = scrubMediatedOutput(execution.stdout)
+  const stderr = scrubMediatedOutput(execution.stderr)
   const mediatedExecution = {
     exitCode: execution.exitCode,
     signal: execution.signal,

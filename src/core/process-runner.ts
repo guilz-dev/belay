@@ -1,5 +1,10 @@
 import { type SpawnOptionsWithoutStdio, spawn } from 'node:child_process'
 
+import {
+  appendBoundedOutputTail,
+  decodeBoundedOutputTail,
+  OUTPUT_TAIL_LIMIT_BYTES,
+} from './bounded-output.js'
 import { createStreamingScrubber } from './scrub.js'
 import type { ScrubOptions } from './types.js'
 
@@ -13,7 +18,6 @@ export interface ShellRunResult {
   stderrTruncated: boolean
 }
 
-const PROCESS_OUTPUT_TAIL_BYTES = 16_384
 const EXIT_OUTPUT_GRACE_MS = 25
 const TIMEOUT_KILL_GRACE_MS = 250
 const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000
@@ -42,43 +46,17 @@ class ScrubbedOutputTail {
   finish(): { value: string; truncated: boolean } {
     this.#appendSafe(this.#scrubber.end())
     return {
-      value: decodeOutputTail(this.#tail),
-      truncated: this.#rawBytes > PROCESS_OUTPUT_TAIL_BYTES || this.#tailTruncated,
+      value: decodeBoundedOutputTail(this.#tail),
+      truncated: this.#rawBytes > OUTPUT_TAIL_LIMIT_BYTES || this.#tailTruncated,
     }
   }
 
   #appendSafe(value: string): void {
     if (!value) return
-    const output = appendOutputTail(this.#tail, value)
+    const output = appendBoundedOutputTail(this.#tail, value)
     this.#tail = output.tail
     this.#tailTruncated ||= output.truncated
   }
-}
-
-function appendOutputTail(
-  current: Buffer,
-  chunk: Buffer | string,
-): {
-  tail: Buffer
-  truncated: boolean
-} {
-  const next = Buffer.concat([current, Buffer.from(chunk)])
-  return {
-    tail:
-      next.length > PROCESS_OUTPUT_TAIL_BYTES ? next.subarray(-PROCESS_OUTPUT_TAIL_BYTES) : next,
-    truncated: next.length > PROCESS_OUTPUT_TAIL_BYTES,
-  }
-}
-
-function decodeOutputTail(tail: Buffer): string {
-  for (let offset = 0; offset <= Math.min(3, tail.length); offset += 1) {
-    try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(tail.subarray(offset))
-    } catch {
-      // A byte cap may have cut a leading multi-byte character; try its next boundary.
-    }
-  }
-  return tail.toString('utf8')
 }
 
 export function windowsProcessTreeKillArgs(pid: number): string[] {
@@ -146,7 +124,7 @@ export function runProcessWithBoundedOutput(
         scrubbedStdout.append(chunk)
         return
       }
-      const output = appendOutputTail(stdout, chunk)
+      const output = appendBoundedOutputTail(stdout, chunk)
       stdout = output.tail
       stdoutTruncated ||= output.truncated
     })
@@ -155,7 +133,7 @@ export function runProcessWithBoundedOutput(
         scrubbedStderr.append(chunk)
         return
       }
-      const output = appendOutputTail(stderr, chunk)
+      const output = appendBoundedOutputTail(stderr, chunk)
       stderr = output.tail
       stderrTruncated ||= output.truncated
     })
@@ -177,8 +155,8 @@ export function runProcessWithBoundedOutput(
         exitCode,
         signal: signal ? String(signal) : null,
         timedOut,
-        stdout: safeStdout?.value ?? decodeOutputTail(stdout),
-        stderr: safeStderr?.value ?? decodeOutputTail(stderr),
+        stdout: safeStdout?.value ?? decodeBoundedOutputTail(stdout),
+        stderr: safeStderr?.value ?? decodeBoundedOutputTail(stderr),
         stdoutTruncated: safeStdout?.truncated ?? stdoutTruncated,
         stderrTruncated: safeStderr?.truncated ?? stderrTruncated,
       })
@@ -219,7 +197,7 @@ export function runProcessWithBoundedOutput(
         finish(1, null)
         return
       }
-      const output = appendOutputTail(stderr, error.message)
+      const output = appendBoundedOutputTail(stderr, error.message)
       stderr = output.tail
       stderrTruncated ||= output.truncated
       finish(1, null)

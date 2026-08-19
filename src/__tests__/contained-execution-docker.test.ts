@@ -394,7 +394,6 @@ function executionParams(value: Fixture, signedAttestation: unknown) {
     guestCwd: value.repoRoot,
     command: 'fictional-runner check',
     inputFingerprint: 'f'.repeat(64),
-    outputScrubOptions,
     signedAttestation,
   }
 }
@@ -609,7 +608,6 @@ describe('contained Docker execution hardening', () => {
         guestCwd: repoRoot,
         command: 'fictional-runner check',
         inputFingerprint: 'f'.repeat(64),
-        outputScrubOptions,
         signedAttestation,
         dependencies,
       }),
@@ -708,6 +706,19 @@ describe('contained Docker execution hardening', () => {
         .every((call) => call.outputPolicy === undefined),
     ).toBe(true)
     expect(executed).toMatchObject({ exitCode: 7, executionStarted: true })
+  })
+
+  it('always applies mandatory attached-output scrubbing', async () => {
+    const value = await fixture()
+    const dependencies = fakeDependencies()
+    await executeContainedDocker({
+      ...executionParams(value, await signed(value)),
+      dependencies,
+    })
+
+    expect(dependencies.calls.find((call) => call.args[2] === 'start')?.outputPolicy).toEqual({
+      scrubOptions: outputScrubOptions,
+    })
   })
 
   it('never retries an ambiguous timed-out start', async () => {

@@ -236,7 +236,9 @@ stale proof, and configuration mismatch require a session restart; execution rec
 identity. Runtime networking is always `none` and v1 has no egress grants. This configuration
 only mediates eligible `unknown_local_effect` shell plans; it does not make an executable, prefix,
 fingerprint, corpus entry, or framework name eligible, and it does not imply grant materialization
-or L1-full.
+or L1-full. Guest stdout/stderr use a mandatory contained-output scrub policy before the 16 KiB
+tail cap; the general `redaction.*` switches apply to ordinary audit data but cannot weaken this
+execution boundary.
 
 ## `approval`
 

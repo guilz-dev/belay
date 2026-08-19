@@ -55,6 +55,8 @@ imply `materializesGrants`, `deniesUngrantedEffects`, or an adversarial same-use
   command.
 - A contained command that exits nonzero is reported as contained failure and receives no
   approval. Its workspace changes are discarded just like a zero-exit run.
+- Guest stdout and stderr always use the mandatory contained-output scrub policy before the
+  16 KiB tail cap. User-configurable audit redaction flags cannot weaken this boundary.
 
 ## Consequences
 

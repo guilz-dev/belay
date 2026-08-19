@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import { CONTAINED_UNKNOWN_EXECUTION_GUARANTEE } from '../conformance/contained-execution-guarantee.js'
 import { signBoundaryAttestation } from '../core/capability/boundary-attestation-sign.js'
-import { DEFAULT_CONFIG_V3, normalizeConfig, scrubOptionsFromConfig } from '../core/config.js'
+import { DEFAULT_CONFIG_V3, normalizeConfig } from '../core/config.js'
 import {
   buildContainedDockerCreateArgs,
   executeContainedDocker,
@@ -222,7 +222,6 @@ describe('contained Docker inspect integration', () => {
             guestCwd: repoRoot,
             command,
             inputFingerprint: 'a'.repeat(64),
-            outputScrubOptions: scrubOptionsFromConfig(config),
             signedAttestation,
           })
         },

@@ -38,8 +38,9 @@ authorization model. It complements
    authority. In enforce mode, a verified contained route may mediate an eligible unknown local
    plan once, but executable names, prefixes, fingerprints, corpus membership, and framework
    identity never make it eligible. The original host command is denied after mediation; source
-   changes are discarded. In audit mode, Belay performs no contained execution and returns
-   ordinary host pass-through. Command allowlists remain prohibited
+   changes are discarded, and guest output uses mandatory credential scrubbing before its bounded
+   tails regardless of ordinary audit-redaction settings. In audit mode, Belay performs no
+   contained execution and returns ordinary host pass-through. Command allowlists remain prohibited
    ([ADR-006](./adr/ADR-006-contained-unknown-execution.md)).
 7. A contained execution capability does not imply `materializesGrants`,
    `deniesUngrantedEffects`, a verified broker, or L1-full. Its Docker protections apply to its

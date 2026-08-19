@@ -2,21 +2,53 @@ import { StringDecoder } from 'node:string_decoder'
 
 import type { ScrubOptions } from './types.js'
 
+const AUTHORIZATION_SCHEMES = ['bearer', 'basic', 'token'] as const
+const GENERIC_AUTH_HEADERS = ['X-Api-Key', 'X-Auth-Token', 'Private-Token'] as const
+const KEY_VALUE_SECRET_NAMES = [
+  'api_key',
+  'api-key',
+  'apikey',
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'credential',
+] as const
+
+function regexAlternation(values: readonly string[]): string {
+  return values.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+}
+
+const AUTHORIZATION_SCHEME_ALTERNATION = regexAlternation(AUTHORIZATION_SCHEMES)
+const GENERIC_AUTH_HEADER_ALTERNATION = regexAlternation(GENERIC_AUTH_HEADERS)
+const KEY_VALUE_SECRET_NAME_ALTERNATION = regexAlternation(KEY_VALUE_SECRET_NAMES)
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi
 const TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g
 const APPROVAL_ID_PATTERN = /\bbelay_[a-z0-9]{8,}\b/gi
 const TOKEN_PREFIX_PATTERN = /\/belay-approve\s+\S+/gi
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi
-const AUTH_HEADER_PATTERN = /(?<!["'])\bAuthorization:\s*(?:Bearer|Basic|Token)?\s*\S+/gi
+const AUTH_HEADER_PATTERN = new RegExp(
+  `(?<!["'])\\bAuthorization:\\s*(?:${AUTHORIZATION_SCHEME_ALTERNATION})?\\s*\\S+`,
+  'gi',
+)
 const DOUBLE_QUOTED_AUTH_HEADER_PATTERN = /"Authorization:\s*[^"]*"/gi
 const SINGLE_QUOTED_AUTH_HEADER_PATTERN = /'Authorization:\s*[^']*'/gi
-const GENERIC_AUTH_HEADER_PATTERN = /(?<!["'])\b(?:X-Api-Key|X-Auth-Token|Private-Token):\s*\S+/gi
-const DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN =
-  /"(X-Api-Key|X-Auth-Token|Private-Token):\s*[^"]*"/gi
-const SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN =
-  /'(X-Api-Key|X-Auth-Token|Private-Token):\s*[^']*'/gi
-const KEY_VALUE_SECRET_PATTERN =
-  /\b(api[_-]?key|token|secret|password|passwd|credential)\b\s*[:=]\s*['"]?[^\s'"]{4,}/gi
+const GENERIC_AUTH_HEADER_PATTERN = new RegExp(
+  `(?<!["'])\\b(?:${GENERIC_AUTH_HEADER_ALTERNATION}):\\s*\\S+`,
+  'gi',
+)
+const DOUBLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN = new RegExp(
+  `"(${GENERIC_AUTH_HEADER_ALTERNATION}):\\s*[^"]*"`,
+  'gi',
+)
+const SINGLE_QUOTED_GENERIC_AUTH_HEADER_PATTERN = new RegExp(
+  `'(${GENERIC_AUTH_HEADER_ALTERNATION}):\\s*[^']*'`,
+  'gi',
+)
+const KEY_VALUE_SECRET_PATTERN = new RegExp(
+  `\\b(${KEY_VALUE_SECRET_NAME_ALTERNATION})\\b\\s*[:=]\\s*['"]?[^\\s'"]{4,}`,
+  'gi',
+)
 const URL_CREDENTIALS_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/g
 const MYSQL_INLINE_PASSWORD_PATTERN = /(\s-p)([^\s]+)/g
 const HIGH_ENTROPY_PATTERN = /\b[A-Za-z0-9+/]{40,}={0,2}\b/g
@@ -141,7 +173,6 @@ interface LiteralMarker {
   quote?: '"' | "'"
 }
 
-const AUTHORIZATION_SCHEMES = ['bearer', 'basic', 'token'] as const
 type ShapeCharacter = 'hex' | 'digit' | 'version' | 'variant' | '-' | 'T' | ':'
 
 const UUID_SHAPE: readonly ShapeCharacter[] = [
@@ -210,7 +241,7 @@ function configuredMarkers(options: Required<ScrubOptions>): LiteralMarker[] {
         literal: `${quote}Authorization:`,
         quote,
       })
-      for (const header of ['X-Api-Key', 'X-Auth-Token', 'Private-Token']) {
+      for (const header of GENERIC_AUTH_HEADERS) {
         markers.push({
           kind: 'quoted_generic_header',
           literal: `${quote}${header}:`,
@@ -223,7 +254,7 @@ function configuredMarkers(options: Required<ScrubOptions>): LiteralMarker[] {
       literal: 'Authorization:',
       requiresWordBoundary: true,
     })
-    for (const header of ['X-Api-Key', 'X-Auth-Token', 'Private-Token']) {
+    for (const header of GENERIC_AUTH_HEADERS) {
       markers.push({ kind: 'generic_header', literal: `${header}:`, requiresWordBoundary: true })
     }
   }
@@ -231,16 +262,7 @@ function configuredMarkers(options: Required<ScrubOptions>): LiteralMarker[] {
     markers.push({ kind: 'bearer', literal: 'Bearer', requiresWordBoundary: true })
   }
   if (options.maskKeyValueSecrets) {
-    for (const name of [
-      'api_key',
-      'api-key',
-      'apikey',
-      'token',
-      'secret',
-      'password',
-      'passwd',
-      'credential',
-    ]) {
+    for (const name of KEY_VALUE_SECRET_NAMES) {
       markers.push({ kind: 'key_name', literal: name, requiresWordBoundary: true })
     }
     markers.push({ kind: 'url_authority', literal: '://' })

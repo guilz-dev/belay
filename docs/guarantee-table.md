@@ -41,9 +41,10 @@ fresh signed compatible capability, Belay guarantees for that one mediated run:
   this mirror at the original absolute guest workspace path. The declared mounts make the host
   source workspace, Git metadata/common directory, Belay control plane, Docker socket, devices,
   and unrelated host paths inaccessible through the contained command.
-- The command starts at most once, its output is scrubbed and capped to 16 KiB tails, and both
-  zero and nonzero exits discard mirror changes. Successful cleanup is confirmed before the route
-  completes; cleanup uncertainty fails closed.
+- The command starts at most once, its output is scrubbed by a mandatory contained-output policy
+  and capped to 16 KiB tails, and both zero and nonzero exits discard mirror changes. Ordinary
+  audit `redaction.*` flags cannot disable this boundary. Successful cleanup is confirmed before
+  the route completes; cleanup uncertainty fails closed.
 
 Audit mode records `wouldMediate`, while Belay performs no contained execution: it reads no
 attestation and does not prepare a mirror or execute a container. Its `allow` verdict delegates the

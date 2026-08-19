@@ -47,4 +47,3 @@ git rev-parse origin/feat/contained-unknown-execution
 ## 関連資料
 
 - [Contained Unknown Execution実装plan](../superpowers/plans/2026-08-18-contained-unknown-execution.md)
-

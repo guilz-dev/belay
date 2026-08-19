@@ -33,19 +33,18 @@ import {
   hashSymlinkTarget,
   type PresentSnapshotNode,
 } from '../transactional/snapshot-node.js'
+import { ContainedExecutionFailureError } from './failure.js'
 
 export const CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED = 'contained_execution_cleanup_unconfirmed'
 export const CONTAINED_EXECUTION_SOURCE_CHANGED = 'contained_execution_source_changed'
 export const CONTAINED_EXECUTION_UNSAFE_SYMLINK = 'contained_execution_unsafe_symlink'
 
-export class ContainedExecutionCleanupUnconfirmedError extends Error {
-  readonly code = CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED
-
+export class ContainedExecutionCleanupUnconfirmedError extends ContainedExecutionFailureError {
   constructor(
     readonly mirrorRoot: string,
     options?: ErrorOptions,
   ) {
-    super(`${CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED}: ${mirrorRoot}`, options)
+    super(CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED, options)
     this.name = 'ContainedExecutionCleanupUnconfirmedError'
   }
 }
@@ -270,7 +269,7 @@ function addWorkspaceBytes(context: CopyContext, bytes: number): void {
 
 function safeReadFlags(): number {
   if (fsConstants.O_NOFOLLOW === undefined || fsConstants.O_NONBLOCK === undefined) {
-    throw new Error('contained_execution_safe_open_unavailable')
+    throw new ContainedExecutionFailureError('contained_execution_safe_open_unavailable')
   }
   return fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
 }
@@ -314,7 +313,7 @@ async function readStableFile(
     assertRegularSingleLinkBigInt(opened)
     const openedIdentity = identityFromStats(opened)
     if (!identitiesEqual(identityFromStats(before), openedIdentity)) {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
 
     const hash = createHash('sha256')
@@ -337,7 +336,7 @@ async function readStableFile(
       !identitiesEqual(openedIdentity, identityFromStats(after)) ||
       BigInt(position) !== after.size
     ) {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
     const mode = Number(after.mode)
     return {
@@ -423,12 +422,12 @@ async function readSafeSymlink(
 ): Promise<{ node: PresentSnapshotNode & { kind: 'symlink' }; identity: NodeIdentity }> {
   const before = await lstat(absolutePath, { bigint: true })
   if (!before.isSymbolicLink()) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
   const identity = identityFromStats(before)
   const target = await readlink(absolutePath)
   if (path.isAbsolute(target)) {
-    throw new Error(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
   }
 
   const lexicalTarget = path.resolve(path.dirname(absolutePath), target)
@@ -438,21 +437,21 @@ async function readSafeSymlink(
     pathMatchesRoots(lexicalTarget, context.protectedRoots) ||
     pathMatchesRoots(lexicalTarget, context.metadataRoots)
   ) {
-    throw new Error(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
   }
 
   let resolvedTarget: string
   try {
     resolvedTarget = await realpath(absolutePath)
   } catch {
-    throw new Error(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
   }
   if (
     !isAtOrWithin(context.sourceRoot, resolvedTarget) ||
     pathMatchesRoots(resolvedTarget, context.protectedRoots) ||
     pathMatchesRoots(resolvedTarget, context.metadataRoots)
   ) {
-    throw new Error(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_UNSAFE_SYMLINK)
   }
 
   const after = await lstat(absolutePath, { bigint: true })
@@ -462,7 +461,7 @@ async function readSafeSymlink(
     !identitiesEqual(identity, identityFromStats(after)) ||
     targetAfter !== target
   ) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
 
   return {
@@ -484,12 +483,12 @@ async function walkDirectory(
 
   const before = await lstat(absoluteDirectory, { bigint: true })
   if (!before.isDirectory() || before.isSymbolicLink()) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
   const beforeIdentity = identityFromStats(before)
   const resolvedDirectory = await realpath(absoluteDirectory)
   if (!isAtOrWithin(context.sourceRoot, resolvedDirectory)) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
 
   const directoryFlags = safeReadFlags() | (fsConstants.O_DIRECTORY ?? 0)
@@ -497,7 +496,7 @@ async function walkDirectory(
   try {
     const opened = await directory.stat({ bigint: true })
     if (!opened.isDirectory() || !identitiesEqual(beforeIdentity, identityFromStats(opened))) {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
 
     const entriesDirectory = await opendir(absoluteDirectory, { bufferSize: 32 })
@@ -551,7 +550,7 @@ async function walkDirectory(
       !identitiesEqual(beforeIdentity, identityFromStats(after)) ||
       !identitiesEqual(beforeIdentity, identityFromStats(pathAfter))
     ) {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
   } finally {
     await directory.close()
@@ -568,7 +567,7 @@ async function buildSafeMirrorSnapshot(
   const canonicalSourceRoot = await realpath(sourceRoot)
   const rootInfo = await lstat(canonicalSourceRoot)
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new Error('contained_execution_source_not_directory')
+    throw new ContainedExecutionFailureError('contained_execution_source_not_directory')
   }
 
   const context: SnapshotContext = {
@@ -589,7 +588,7 @@ async function buildSafeMirrorSnapshot(
 
 function assertEntryIdentity(entry: MirrorEntry, identity: NodeIdentity): void {
   if (!identitiesEqual(entry.identity, identity)) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
 }
 
@@ -617,7 +616,7 @@ async function copyStableRegularFile(
     const openedIdentity = identityFromStats(opened)
     assertEntryIdentity(entry, openedIdentity)
     if (entry.node.kind !== 'file') {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
 
     await mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 })
@@ -658,14 +657,14 @@ async function copyStableRegularFile(
       BigInt(position) !== after.size ||
       hashFileNode(Number(after.mode), hash.digest('hex')) !== entry.node.hash
     ) {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
     await destination.sync()
   } finally {
     await Promise.allSettled([source.close(), destination?.close() ?? Promise.resolve()])
   }
   if (entry.node.kind !== 'file') {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
   await chmod(destinationPath, safePermissionMode(entry.node.mode))
 }
@@ -692,7 +691,7 @@ async function materializeSnapshot(
       const currentInfo = await lstat(sourcePath, { bigint: true })
       assertEntryIdentity(entry, identityFromStats(currentInfo))
       if (current !== entry.node.target) {
-        throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+        throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
       }
       await mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 })
       await symlink(entry.node.target, destinationPath)
@@ -703,7 +702,7 @@ async function materializeSnapshot(
 
   for (const entry of directoryEntries.reverse()) {
     if (entry.node.kind !== 'directory') {
-      throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+      throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
     }
     await chmod(
       joinRelativePath(destinationRoot, entry.relativePath),
@@ -727,13 +726,13 @@ async function assertStableCopiedSnapshot(
     buildSafeMirrorSnapshot(destinationRoot, [], limits, deadlineMs, now),
   ])
   if (before.treeHash !== after.treeHash || before.treeHash !== copied.treeHash) {
-    throw new Error(CONTAINED_EXECUTION_SOURCE_CHANGED)
+    throw new ContainedExecutionFailureError(CONTAINED_EXECUTION_SOURCE_CHANGED)
   }
 }
 
 function validateOptions(options: ContainedExecutionMirrorOptions): void {
   if (!Array.isArray(options.controlPlaneRoots)) {
-    throw new Error('contained_execution_control_plane_roots_required')
+    throw new ContainedExecutionFailureError('contained_execution_control_plane_roots_required')
   }
   const values = [
     options.limits?.maxFiles,
@@ -742,7 +741,7 @@ function validateOptions(options: ContainedExecutionMirrorOptions): void {
     options.limits?.prepareTimeoutMs,
   ]
   if (values.some((value) => !Number.isSafeInteger(value) || (value ?? 0) <= 0)) {
-    throw new Error('contained_execution_mirror_limits_invalid')
+    throw new ContainedExecutionFailureError('contained_execution_mirror_limits_invalid')
   }
 }
 
@@ -775,7 +774,7 @@ async function prepareWithDependencies(
   const sourceRoot = canonicalPath(options.sourceRoot)
   const protectedRoots = options.controlPlaneRoots.map((root) => canonicalPath(root))
   if (pathMatchesRoots(sourceRoot, protectedRoots)) {
-    throw new Error('contained_execution_source_is_protected')
+    throw new ContainedExecutionFailureError('contained_execution_source_is_protected')
   }
 
   const guestRoot = await dependencies.makeTempRoot()

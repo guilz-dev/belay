@@ -56,7 +56,16 @@ describe('contained unknown execution guarantee conformance', () => {
         gatePermission: 'allow',
         hostExecution: 'delegated-to-host',
       },
-      enforce: { originalHostCommand: 'deny', mirror: 'file_copy', startsAtMostOnce: true },
+      enforce: {
+        originalHostCommand: 'deny',
+        mirror: 'file_copy',
+        startsAtMostOnce: true,
+        output: {
+          scrub: 'mandatory',
+          tailBytes: 16_384,
+          userRedactionCanDisable: false,
+        },
+      },
       fallback: {
         approvalOnly: [
           'contained_execution_docker_substrate_unavailable',

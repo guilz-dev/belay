@@ -77,40 +77,6 @@ export {
   resolveControlPlaneDir,
   scrubOptionsFromConfig,
 } from './config.js'
-export type {
-  BuildContainedDockerCreateArgsParams,
-  ContainedDockerDependencies,
-  ContainedDockerExecutionResult,
-  ContainedDockerInspect,
-  ContainedExecutionReceipt,
-  ExecuteContainedDockerParams,
-} from './contained-execution/docker.js'
-export {
-  buildContainedDockerCreateArgs,
-  CONTAINED_EXECUTION_BOUNDARY_UNAVAILABLE,
-  CONTAINED_EXECUTION_CONTAINER_CLEANUP_UNCONFIRMED,
-  ContainedDockerBoundaryUnavailableError,
-  ContainedDockerCleanupUnconfirmedError,
-  ContainedDockerStartAttemptError,
-  executeContainedDocker,
-  probeContainedDockerBoundary,
-  probeContainedDockerForSession,
-} from './contained-execution/docker.js'
-export { isContainedUnknownExecutionEligible } from './contained-execution/eligibility.js'
-export type {
-  ContainedExecutionMirrorBackend,
-  ContainedExecutionMirrorHandle,
-  ContainedExecutionMirrorLimits,
-  ContainedExecutionMirrorOptions,
-} from './contained-execution/mirror.js'
-export {
-  CONTAINED_EXECUTION_CLEANUP_UNCONFIRMED,
-  CONTAINED_EXECUTION_SOURCE_CHANGED,
-  CONTAINED_EXECUTION_UNSAFE_SYMLINK,
-  ContainedExecutionCleanupUnconfirmedError,
-  prepareContainedExecutionMirror,
-  withContainedExecutionMirror,
-} from './contained-execution/mirror.js'
 export { matchesCustomCommand } from './custom-command-match.js'
 export {
   canonicalStringify,

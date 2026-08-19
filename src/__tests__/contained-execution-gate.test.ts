@@ -25,6 +25,7 @@ import {
   ContainedDockerStartAttemptError,
   type ExecuteContainedDockerParams,
 } from '../core/contained-execution/docker.js'
+import { ContainedExecutionFailureError } from '../core/contained-execution/failure.js'
 import type { ContainedExecutionMirrorOptions } from '../core/contained-execution/mirror.js'
 import {
   ContainedExecutionCleanupUnconfirmedError,
@@ -289,7 +290,11 @@ describe('contained unknown execution gate integration', () => {
       mirror: 'file_copy',
       startsAtMostOnce: true,
       workspaceChanges: 'discard',
-      output: 'scrubbed-16KiB-tails',
+      output: {
+        scrub: 'mandatory',
+        tailBytes: 16_384,
+        userRedactionCanDisable: false,
+      },
       audit: 'safe-metadata-only',
     })
     expect(attestationPaths).toEqual([path.join(repoRoot, '.belay', 'attestation.json')])
@@ -311,7 +316,6 @@ describe('contained unknown execution gate integration', () => {
       guestCwd: path.join(repoRoot, 'app'),
       command,
       inputFingerprint: result.fingerprint,
-      outputScrubOptions: scrubOptionsFromConfig(config),
       signedAttestation: { signed: true },
     })
     expect(executions[0]?.mirror.guestWorkspacePath).toBe(repoRoot)
@@ -406,6 +410,51 @@ describe('contained unknown execution gate integration', () => {
     expect(persisted).not.toContain('stderr')
     expect(persisted).not.toContain('supersecret')
     expect(persisted).not.toContain(repoRoot)
+  })
+
+  it('keeps contained output scrubbing mandatory when ordinary redaction is disabled', async () => {
+    const { repoRoot, ctx } = await fixture()
+    ctx.config.redaction = {
+      maskApprovalIds: false,
+      maskBearerTokens: false,
+      maskAuthHeaders: false,
+      maskKeyValueSecrets: false,
+      maskHighEntropyStrings: false,
+    }
+    const command = 'fictional-runner verify'
+    const result = await eligibleResult(command, repoRoot)
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = patchedDeps({
+      auditEvents,
+      onExecute: async () => {
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: 'Authorization: Bearer SUPERSECRET123',
+          stderr: 'token=LOWENTROPYSECRET',
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          executionStarted: true,
+          receipt: { imageId: `sha256:${'b'.repeat(64)}` } as never,
+          receiptHash: 'mandatory-redaction-receipt',
+        }
+      },
+    })
+
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: path.join(repoRoot, 'app'),
+      command,
+    })
+
+    expect(verdict.mediatedExecution).toMatchObject({
+      stdout: 'Authorization: <redacted>',
+      stderr: 'token=<redacted>',
+    })
+    expect(verdict.user_message).not.toContain('SUPERSECRET123')
+    expect(verdict.user_message).not.toContain('LOWENTROPYSECRET')
   })
 
   it('scrubs undecided credential prefixes before adapter messages and audit persistence', async () => {
@@ -607,9 +656,21 @@ describe('contained unknown execution gate integration', () => {
     ],
     ['attempted start', new ContainedDockerStartAttemptError(), 'container-lifecycle'],
     ['container cleanup', new ContainedDockerCleanupUnconfirmedError('container', true), 'cleanup'],
-    ['stale attestation', new Error('contained_execution_capability_invalid'), 'capability'],
-    ['image mismatch', new Error('contained_execution_image_mismatch'), 'image'],
-    ['invalid mirror lease', new Error('contained_execution_invalid_mirror_lease'), 'lease'],
+    [
+      'stale attestation',
+      new ContainedExecutionFailureError('contained_execution_capability_invalid'),
+      'capability',
+    ],
+    [
+      'image mismatch',
+      new ContainedExecutionFailureError('contained_execution_image_mismatch'),
+      'image',
+    ],
+    [
+      'invalid mirror lease',
+      new ContainedExecutionFailureError('contained_execution_invalid_mirror_lease'),
+      'lease',
+    ],
     [
       'container create failure',
       new ContainedDockerBoundaryUnavailableError('contained_execution_create_failed'),
@@ -662,7 +723,7 @@ describe('contained unknown execution gate integration', () => {
     ],
     [
       'invalid contained config',
-      new Error('contained_execution_resource_limits_invalid'),
+      new ContainedExecutionFailureError('contained_execution_resource_limits_invalid'),
       'boundary',
     ],
   ] as const)('%s follows the required approval fallback taxonomy', async (_name, failure, category) => {
@@ -689,12 +750,18 @@ describe('contained unknown execution gate integration', () => {
     const fallback = category === 'fallback'
     expect(Boolean(verdict.approvalId)).toBe(fallback)
     expect(verdict.permission).toBe('deny')
+    expect(failure).toBeInstanceOf(ContainedExecutionFailureError)
+    expect((failure as ContainedExecutionFailureError).disposition).toBe(
+      fallback ? 'approval-fallback' : 'deny',
+    )
     if (fallback) {
+      expect((failure as ContainedExecutionFailureError).phase).toBe('boundary')
       expect(guarantee.fallback.approvalOnly).toContain(
         (failure as ContainedDockerBoundaryUnavailableError).reason,
       )
       expect(approvalWrites).toBeGreaterThan(0)
     } else {
+      expect((failure as ContainedExecutionFailureError).phase).toBe(category)
       expect(guarantee.failure.setup.categories).toContain(category)
       expect(guarantee.failure.setup).toMatchObject({
         outcome: 'deny',
@@ -712,6 +779,28 @@ describe('contained unknown execution gate integration', () => {
     }
   })
 
+  it('does not trust contained-looking reason strings from untyped errors', async () => {
+    const { repoRoot, ctx } = await fixture()
+    const result = await eligibleResult('fictional-runner verify', repoRoot)
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue(result)
+    const verdict = await evaluateGatedAction(
+      ctx,
+      patchedDeps({
+        auditEvents: [],
+        onExecute: async () => {
+          throw new Error('contained_execution_docker_daemon_unavailable')
+        },
+      }),
+      { kind: 'shell', cwd: path.join(repoRoot, 'app'), command: 'fictional-runner verify' },
+    )
+
+    expect(verdict).toMatchObject({
+      permission: 'deny',
+      reason: 'contained_execution_boundary_failed',
+    })
+    expect(verdict.approvalId).toBeUndefined()
+  })
+
   it('fails closed without approval when mirror setup is unavailable', async () => {
     const { repoRoot, ctx } = await fixture()
     const result = await eligibleResult('fictional-runner verify', repoRoot)
@@ -726,7 +815,7 @@ describe('contained unknown execution gate integration', () => {
           approvalWrites += 1
         },
         onMirror: async () => {
-          throw new Error('contained_execution_mirror_limits_invalid')
+          throw new ContainedExecutionFailureError('contained_execution_mirror_limits_invalid')
         },
       }),
       { kind: 'shell', cwd: path.join(repoRoot, 'app'), command: 'fictional-runner verify' },

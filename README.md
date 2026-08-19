@@ -181,8 +181,8 @@ an image automatically and always uses network `none`.
 Belay copies the current workspace to a bounded metadata-free mirror, mounts only that mirror in
 the container at the original guest path, and discards it after one run. Workspace changes are
 discarded; there is no diff/apply or host replay. Guest output is scrubbed and retained only as
-16 KiB tails. A nonzero guest exit is reported as contained failure and does not create an
-approval.
+16 KiB tails. This boundary scrub is mandatory even when ordinary audit `redaction.*` options are
+disabled. A nonzero guest exit is reported as contained failure and does not create an approval.
 
 In audit mode Belay's contained route reports `wouldMediate` and performs no contained execution:
 it reads no attestation and runs neither a mirror nor a container. The gate returns `allow`, so the
@@ -347,7 +347,6 @@ belay metrics                    # would-block / verdict summary
 belay report                     # audit log report
 belay recover [advice] [--command "rm important.ts"] # advisory candidates only
 belay recover status                          # checkpoint backend, eligibility, and state counts
-belay metrics                                 # gate + recovery operational metrics (schema v4)
 belay recover list                            # proven repo-local recovery points
 belay recover show <checkpoint-id>
 belay recover apply <checkpoint-id>           # signed OOB exact one-shot approval required

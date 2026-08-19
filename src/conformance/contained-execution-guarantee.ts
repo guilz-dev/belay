@@ -1,3 +1,6 @@
+import { OUTPUT_TAIL_LIMIT_BYTES } from '../core/bounded-output.js'
+import { CONTAINED_EXECUTION_APPROVAL_FALLBACK_REASONS } from '../core/contained-execution/policy.js'
+
 /**
  * Normative contained-execution capability contract.
  *
@@ -36,7 +39,11 @@ export interface ContainedUnknownExecutionGuarantee {
     mirror: 'file_copy'
     startsAtMostOnce: true
     workspaceChanges: 'discard'
-    output: 'scrubbed-16KiB-tails'
+    output: {
+      scrub: 'mandatory'
+      tailBytes: 16384
+      userRedactionCanDisable: false
+    }
     audit: 'safe-metadata-only'
   }
   attestation: {
@@ -66,10 +73,7 @@ export interface ContainedUnknownExecutionGuarantee {
     cleanupConfirmed: true
   }
   fallback: {
-    approvalOnly: readonly [
-      'contained_execution_docker_substrate_unavailable',
-      'contained_execution_docker_daemon_unavailable',
-    ]
+    approvalOnly: typeof CONTAINED_EXECUTION_APPROVAL_FALLBACK_REASONS
   }
   failure: {
     /** Every setup failure other than the exact approval fallback set denies before host replay. */
@@ -142,7 +146,11 @@ export const CONTAINED_UNKNOWN_EXECUTION_GUARANTEE: ContainedUnknownExecutionGua
     mirror: 'file_copy',
     startsAtMostOnce: true,
     workspaceChanges: 'discard',
-    output: 'scrubbed-16KiB-tails',
+    output: {
+      scrub: 'mandatory',
+      tailBytes: OUTPUT_TAIL_LIMIT_BYTES,
+      userRedactionCanDisable: false,
+    },
     audit: 'safe-metadata-only',
   },
   attestation: {
@@ -172,10 +180,7 @@ export const CONTAINED_UNKNOWN_EXECUTION_GUARANTEE: ContainedUnknownExecutionGua
     cleanupConfirmed: true,
   },
   fallback: {
-    approvalOnly: [
-      'contained_execution_docker_substrate_unavailable',
-      'contained_execution_docker_daemon_unavailable',
-    ],
+    approvalOnly: CONTAINED_EXECUTION_APPROVAL_FALLBACK_REASONS,
   },
   failure: {
     setup: {
