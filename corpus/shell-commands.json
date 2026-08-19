@@ -134,10 +134,10 @@
   },
   {
     "kind": "shell",
-    "category": "accepted-benign",
+    "category": "provably-benign",
     "command": "tsc --noEmit",
-    "verdict": "allow_flagged",
-    "reason": "local_mutation"
+    "verdict": "allow",
+    "reason": "read_only"
   },
   {
     "kind": "shell",

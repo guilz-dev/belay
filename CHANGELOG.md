@@ -23,6 +23,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   probe state, backend/resource-kind counts, and cohort recovery metrics.
 - **Read-class corpus coverage** — `gh pr list` joins the existing `gh pr view`,
   `gh pr diff`, and `gh api` read paths as unique `provably-benign` hard gates.
+- **`tsc --noEmit` provably-benign promotion** — typecheck-only invocations without
+  declared output paths pass silently as `read_only`; build invocations with `--outDir`
+  or `--outFile` remain flagged local mutations.
 
 ### Changed
 
