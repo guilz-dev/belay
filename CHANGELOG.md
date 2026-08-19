@@ -21,9 +21,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   metrics are observational only and do not affect `readyForEnforce`.
 - **`belay doctor` and `belay recover status`** — report file-checkpoint eligibility, isolation
   probe state, backend/resource-kind counts, and cohort recovery metrics.
+- **Read-class corpus coverage** — `gh pr list` joins the existing `gh pr view`,
+  `gh pr diff`, and `gh api` read paths as unique `provably-benign` hard gates.
 
 ### Changed
 
+- **Standing-allow fully inert at runtime** — legacy standing-allow files remain
+  readable and revocable, but shell, tool, and subagent gate decisions no longer
+  consult them (environments that relied on tool/subagent standing entries will see
+  asks return until exact approval or a resource-scoped grant is used). Exact
+  one-shot approvals and resource-scoped grants remain the only runtime exceptions.
+- **Benign probe core terminology (ADR-005)** — structural-suite availability probes
+  rename `must-allow-commands` to `benign-probe-cores` so test fixtures are not
+  mistaken for shell authority.
 - **Recovery v2 documentation closeout** — README, SECURITY, ROADMAP, CONTEXT, guarantee table,
   and the file-checkpoint implementation plan now describe clean Git, dirty Git, and non-Git
   checkpoint recovery as delivered and separately opt-in. CoW backends remain future work.

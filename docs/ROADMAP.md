@@ -113,23 +113,32 @@ widening anything.*
 *Exit:* adversarial FN=0 and benign FP=0 both enforced in CI; a dogfood stretch
 with no regretted miss and few enough asks to keep enforce mode on.
 
-### Horizon 1 — Precision you can feel (in progress)
+### Horizon 1 — Precision you can feel (code delivered; dogfood exit in progress)
 
 *Turn Dial 1: convert "assumed reversible" into "proven reversible," and stop
 re-asking what a human already blessed.*
 
-- **L2 substrate — git-worktree, dirty-Git file-checkpoint, and non-Git file-checkpoint
-  recovery delivered as separately opt-in.** CoW snapshot backends remain future work.
-- **Exact approval/grant ergonomics** without restoring shell standing-allow authority.
-  Repeated false positives must be fixed in EffectPlan semantics; intentional exceptions
-  remain one-shot or resource-scoped.
-- **Tier1 judge improvements** — prompt/model calibration to erase residual
-  read-class false positives without touching the FN line.
-- **Latency budget** kept invisible (prewarm, keep-alive) so precision never costs
-  perceptible delay.
+- **L2 substrate — delivered (Recovery v2, opt-in).** Clean Git `git_worktree`,
+  dirty-Git and non-Git `file_checkpoint`, durable checkpoints, signed restore,
+  and recovery metrics schema v4. CoW snapshot backends remain future work.
+- **Exact approval/grant infrastructure — delivered.** Shell, tool, and subagent
+  standing-allow records are inert at runtime; legacy files remain revocable via
+  `belay standing-allow revoke`. Repeated false positives must still be fixed in
+  EffectPlan semantics; intentional exceptions remain one-shot or resource-scoped
+  exact grants. Harvest promotion of `accepted-benign` cases continues separately
+  under read-class precision.
+- **Read-class precision — in progress.** Residual read-class friction is driven
+  down through PolicyEngine semantics, labeled corpus hard gates, and harvest
+  review (`provably-benign` promotion). Shadow judge calibration remains
+  observational only.
+- **Latency budget — partially delivered.** Judge session transport and gate CI
+  p95 budgets ship; optional Ollama prewarm on `beforeSubmitPrompt` remains
+  future work because the sync gate does not call Tier1.
 
-*Exit:* measured silent-pass approaching ~98% with FP near zero and **no FN
-regression**; the H4/H5 residuals from CONCEPT §10 measurably shrunk.
+*Exit (measurement, not a single release):* measured silent-pass approaching ~98%
+with FP near zero and **no FN regression** in real dogfood; the H4/H5 residuals
+from CONCEPT §10 are named and measurably shrunk. Hard CI gates (adversarial
+FN=0, provably-benign FP=0) already enforce the safety floor.
 
 ### Horizon 2 — Many channels, one floor (next/later)
 
@@ -186,7 +195,7 @@ turning the floor back into a fence:
 |-------|------|--------------|
 | **L4** Human approval | final backstop for residual uncertainty | Done (reused); refined in H3 (OOB signed) |
 | **L3** Prediction | noise reduction, not a boundary | Rebuilt as Tier0+Tier1 in H0; sharpened in H1 |
-| **L2** Observation | judge on measured snapshots + durable repo-local checkpoint | H1 phase 1 delivered → H3 (transactional everywhere) |
+| **L2** Observation | judge on measured snapshots + durable repo-local checkpoint | **Delivered (Recovery v2, opt-in)** → H3 (transactional everywhere) |
 | **L1** Containment | deny-all egress/sandbox boundary | H3 |
 
 Belay today combines the default L3+L4 guardrail with an opt-in partial L2

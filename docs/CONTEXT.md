@@ -22,13 +22,17 @@ authorization model. It complements
 - **Contained execution capability** — A separate, fresh signed Docker proof used only to run one
   eligible `unknown_local_effect` in a discarded copy-only workspace mirror. It is not a grant
   materialization or L1-full capability.
+- **Benign probe core** — A test-only command fixture used to generate false-positive probes and
+  structural availability expectations. It never grants runtime authority; only the resulting
+  `EffectPlan` and PolicyEngine projection can authorize a shell action.
 
 ## Invariants
 
 1. Hook gate decisions are **deterministic**. Sync LLM judge is not on the gate path.
 2. **EffectPlan authority**: normalized shell actions are authorized only from their
-   canonical effects. Legacy command lists, overrides, corpus entries, and shell
-   standing-allow state are inert. Command allowlists are product-incompatible
+   canonical effects. Legacy command lists, overrides, corpus entries, and standing-allow
+   state (shell, tool, subagent) are inert at runtime. Command allowlists are
+   product-incompatible
    ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)).
 3. **Network**: payload-free reads allow. External mutation, explicit payload/file/secret
    sends, and ambiguous network effects require approval.

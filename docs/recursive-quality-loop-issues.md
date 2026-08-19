@@ -1,6 +1,6 @@
 # Recursive Quality Loop — Issue Breakdown
 
-Status: **Historical implementation breakdown**. Shell standing-allow/catalog authority was
+Status: **Historical implementation breakdown**. Standing-allow/catalog authority was
 retired after the EffectPlan authority cutover; corpus categories are CI expectations only.
 Related: [`recursive-quality-loop.md`](./recursive-quality-loop.md) · [`CONCEPT.md`](./CONCEPT.md) · [`ROADMAP.md`](./ROADMAP.md) · [`adr/ADR-002-concept-conformance.md`](./adr/ADR-002-concept-conformance.md)
 
@@ -228,13 +228,14 @@ label from overriding partial, opaque, or newly expanded effects.
 
 **Scope**
 
-- Keep legacy standing state readable/revocable for compatibility, but inert for shell decisions.
+- Keep legacy standing state readable/revocable for compatibility, but inert for shell, tool,
+  and subagent gate decisions.
 - Keep one-shot approval and resource-scoped grant paths exact, leased, revocable, and audited.
 - Add tests proving corpus labels and legacy standing entries cannot override an authoritative ask.
 
 **Definition of done**
 
-- Shell standing entries never change a runtime verdict.
+- Legacy standing-allow entries (shell, tool, subagent) never change a runtime verdict.
 - Exact approval/grant authorization still succeeds for its matching request.
 - Corpus expectations remain enforced in CI.
 

@@ -78,6 +78,13 @@
   },
   {
     "kind": "shell",
+    "category": "provably-benign",
+    "command": "gh pr list",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
     "category": "accepted-benign",
     "command": "touch notes.txt",
     "verdict": "allow_flagged",

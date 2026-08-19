@@ -135,12 +135,13 @@ Belay is a layered hook gate, not a static denylist. Higher layers are opt-in.
 | Layer | Role | Enabled by |
 |-------|------|------------|
 | **L1** Containment | Egress proxy, sandbox capability broker | `egress` / `sandbox` config |
-| **L2** Observation | Transactional git-worktree diff | `policy.transactional` |
+| **L2** Observation | Transactional mirror and durable checkpoint observation | `policy.transactional` |
 | **L3** Prediction | Policy rules + command heuristics | default |
 | **L4** Approval | Human one-shot / scoped approvals | default |
 
 - Normalized shell authorization uses only canonical `EffectPlan` requirements.
-  Command lists, legacy overrides, corpus labels, and shell standing allows are inert.
+  Command lists, legacy overrides, corpus labels, and legacy standing-allow records for shell,
+  tool, and subagent actions are inert at runtime.
 - Payload-free reads are `allow`; reversible repository-local writes (including implicit
   download output) are `allow_flagged`. Outside-repository writes, external mutation,
   explicit payload/file/secret sends, high-stakes effects, and partial/indeterminate plans

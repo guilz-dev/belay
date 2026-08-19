@@ -1,9 +1,9 @@
 /**
- * Structural-suite MUST-ALLOW CI expectations.
+ * Structural-suite benign probe cores.
  * These commands guard classifier availability in tests and never grant runtime authority.
  * @see src/__tests__/verdict/structural-suite.test.ts
  */
-export const MUST_ALLOW_SHELL_COMMANDS = [
+export const BENIGN_PROBE_CORES = [
   'npm test',
   'npm run build',
   'pnpm test',

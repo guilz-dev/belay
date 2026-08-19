@@ -84,7 +84,9 @@ replace the EffectPlan decision for normalized shell actions.
 
 Normalized shell authorization is `EffectPlan` → PolicyEngine → projection
 ([ADR-004](./adr/ADR-004-effectplan-shell-authority.md)). Legacy command allow/deny lists,
-corpus catalogs, and shell standing-allow records cannot change that projection.
+corpus catalogs, and legacy standing-allow records (shell, tool, subagent) cannot change
+runtime authorization. Tool and subagent gates ignore standing-allow files the same way;
+exact one-shot approvals and resource-scoped grants remain the only exceptions.
 
 Payload-free network reads with no other effects are `allow`; explicit payload/file/secret
 sends and remote mutation require approval. A bare `wget` is `allow_flagged` because its

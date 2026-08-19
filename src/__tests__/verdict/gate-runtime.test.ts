@@ -7,9 +7,10 @@ import {
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
 } from '../../adapters/shared/gate-runtime.js'
-import { mergeConfig } from '../../core/config.js'
+import { belayStateDir, mergeConfig } from '../../core/config.js'
 import { buildShellEffectPlan } from '../../core/effect-ir/index.js'
 import * as gateEngine from '../../core/gate-engine.js'
+import { standingAllowFile } from '../../core/standing-allow.js'
 import { PACKAGE_VERSION } from '../../version.js'
 
 describe('gate-runtime integration', () => {
@@ -180,6 +181,79 @@ describe('gate-runtime integration', () => {
       cwd: repoRoot,
       command: 'git status',
     })
+
+    expect(verdict.permission).toBe('deny')
+    expect(auditEvents[0]?.reason).not.toBe('standing_allow')
+    expect(auditEvents[0]?.standingAllowSource).toBeUndefined()
+  })
+
+  it.each([
+    { kind: 'tool' as const, label: 'tool' },
+    { kind: 'subagent' as const, label: 'subagent' },
+  ])('does not let a legacy standing-allow override $label gate decisions', async ({ kind }) => {
+    const fingerprint = `${kind}-standing-allow-fp`
+    vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
+      verdict: 'deny_pending_approval',
+      reason: 'unknown_local_effect',
+      summary: kind === 'tool' ? 'Read' : 'delegate',
+      fingerprint,
+      assessment: {
+        reversibility: 'reversible',
+        external: false,
+        blastRadius: 'none',
+        confidence: 0.5,
+        signals: ['unknown_local_effect'],
+      },
+    })
+
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), `belay-${kind}-standing-allow-gate-`))
+    const configPath = path.join(repoRoot, '.belay', 'config.json')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(configPath, `${JSON.stringify(enforceConfig, null, 2)}\n`, 'utf8')
+
+    const standingPath = standingAllowFile(enforceConfig, cursorLayout.repoLocalStateDir(repoRoot))
+    await mkdir(belayStateDir(enforceConfig, cursorLayout.repoLocalStateDir(repoRoot)), {
+      recursive: true,
+    })
+    await writeFile(
+      standingPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          entries: [
+            {
+              kind,
+              fingerprint,
+              source: 'operator',
+              reason: 'test',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              expiresAt: '2099-01-01T00:00:00.000Z',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    const verdict = await evaluateGatedAction(
+      ctx,
+      patchedDeps,
+      kind === 'tool'
+        ? { kind, cwd: repoRoot, toolName: 'Read' }
+        : { kind, cwd: repoRoot, payload: { prompt: 'delegate' } },
+    )
 
     expect(verdict.permission).toBe('deny')
     expect(auditEvents[0]?.reason).not.toBe('standing_allow')

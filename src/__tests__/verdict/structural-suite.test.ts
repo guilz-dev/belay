@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { verdict } from '../../core/verdict/verdict.js'
-import { MUST_ALLOW_SHELL_COMMANDS } from '../../corpus/must-allow-commands.js'
+import { BENIGN_PROBE_CORES } from '../../corpus/benign-probe-cores.js'
 import { ALL_STRUCTURAL_WRAPPERS, CATASTROPHIC_CORES } from '../../corpus/mutators.js'
 import { verdictTestContext } from './helpers.js'
 
-const MUST_ALLOW = [...MUST_ALLOW_SHELL_COMMANDS]
+const BENIGN_PROBE_CORES_LIST = [...BENIGN_PROBE_CORES]
 
 const MUST_ASK_LEDGER = [
   'echo x >> .env',
@@ -45,8 +45,8 @@ describe('structural suite', () => {
     })
   })
 
-  describe('MUST-ALLOW routines', () => {
-    it.each(MUST_ALLOW)('%s → allow', async (command) => {
+  describe('benign probe cores → allow', () => {
+    it.each(BENIGN_PROBE_CORES_LIST)('%s → allow', async (command) => {
       const result = await verdict(command, context)
       expect(result.permission, `false deny for routine: ${command}`).toBe('allow')
     })
