@@ -63,8 +63,8 @@ describe('corpus evaluation', () => {
     }
     expect(counts).toEqual({
       'must-ask': 37,
-      'provably-benign': 22,
-      'accepted-benign': 16,
+      'provably-benign': 23,
+      'accepted-benign': 15,
     })
 
     const provablyBenign = cases.filter((entry) => entry.category === 'provably-benign')

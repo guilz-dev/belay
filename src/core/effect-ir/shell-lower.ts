@@ -875,13 +875,10 @@ function decodeBelay(args: string[], repoRoot: string, segment: string): ShellEf
 }
 
 function decodeTsc(args: string[], cwd: string, segment: string): ShellEffectRequirement[] {
-  const inspect =
+  const metadataOnly =
     args.length > 0 && args.every((arg) => ['--help', '--version', '-h', '-v'].includes(arg))
-  const requirements = [
-    processRequirement('tsc', inspect ? 'inspect' : 'spawn', segment, [
-      inspect ? 'process.inspect.tsc_metadata' : 'process.known_local_spawn',
-    ]),
-  ]
+  const requirements: ShellEffectRequirement[] = []
+  let hasOutput = false
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? ''
     const inline = arg.match(/^--(?:outDir|outFile)=(.+)$/)?.[1]
@@ -891,11 +888,23 @@ function decodeTsc(args: string[], cwd: string, segment: string): ShellEffectReq
     if (!output) {
       continue
     }
+    hasOutput = true
     addWriteEffects(requirements, resolvePathOperand(output, cwd), segment, ['tsc.output'])
     if (separate) {
       index += 1
     }
   }
+  const typecheckOnly = args.includes('--noEmit') && !hasOutput
+  const inspect = metadataOnly || typecheckOnly
+  requirements.unshift(
+    processRequirement('tsc', inspect ? 'inspect' : 'spawn', segment, [
+      metadataOnly
+        ? 'process.inspect.tsc_metadata'
+        : typecheckOnly
+          ? 'process.inspect.tsc_typecheck'
+          : 'process.known_local_spawn',
+    ]),
+  )
   return requirements
 }
 

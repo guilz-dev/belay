@@ -128,6 +128,19 @@ function filterRoutinePathTargets(head: string, targets: string[]): string[] {
   return targets.filter((target) => looksLikePathToken(target))
 }
 
+function tscDeclaresOutputPaths(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? ''
+    if (/^--(?:outDir|outFile)=/.test(arg)) {
+      return true
+    }
+    if ((arg === '--outDir' || arg === '--outFile') && args[index + 1]) {
+      return true
+    }
+  }
+  return false
+}
+
 function extractFilePathOperands(tokens: string[]): string[] {
   const redirects = extractRedirectTargets(tokens)
   const args: string[] = [...redirects]
@@ -244,6 +257,16 @@ export function analyzeShellCommandSemantics(
 
   if (head === 'rsync') {
     return classifyRsync(tokens)
+  }
+
+  if (head === 'tsc' && tokens.includes('--noEmit') && !tscDeclaresOutputPaths(tokens.slice(1))) {
+    return {
+      effect: 'read_only',
+      pathTargets: [],
+      signals: ['tsc.typecheck'],
+      normalizedKey: segment.key,
+      isReadOnly: true,
+    }
   }
 
   let effect: VerdictEffect = 'unknown'

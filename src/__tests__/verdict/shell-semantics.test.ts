@@ -41,11 +41,21 @@ describe('shell semantics integration', () => {
     expect(result.permission).toBe('allow')
   })
 
-  it('allows tsc --noEmit without path operands', () => {
+  it('allows tsc --noEmit without path operands', async () => {
     const segment = parseSegment('tsc --noEmit')
     const semantics = analyzeShellCommandSemantics(segment.tokens, segment, cwd)
-    expect(semantics.effect).toBe('local_mutation')
+    expect(semantics.effect).toBe('read_only')
     expect(semantics.pathTargets).toEqual([])
+
+    const result = await classifyShell('tsc --noEmit', cwd, repoRoot, config)
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('read_only')
+  })
+
+  it('still flags tsc builds that declare output paths', async () => {
+    const result = await classifyShell('tsc --outDir dist', cwd, repoRoot, config)
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('local_mutation')
   })
 
   it('treats grep and jq as read-only', () => {
