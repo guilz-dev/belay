@@ -54,12 +54,26 @@ To restore the legacy two-step UX (approve, then always retry manually), set
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
 
-**Do not use command allowlists** (`overrides.allow`, standing shell lists) to fix blocks.
+**Do not use command allowlists** (`overrides.allow`) or legacy standing-allow records
+(shell, tool, or subagent) to fix blocks; none of them change runtime authorization.
 Improve EffectPlan semantics, approve once with `/belay-approve`, or use an exact
 resource-scoped grant. See ADR-005 in the belay repository.
 For install health and audit visibility, use `/belay status` or `belay status`.
 For audit-only summary, use `/belay report` or `belay report`.
 For recovery advice after a block, use `/belay recover` or `belay recover`.
+
+## Contained unknown execution
+
+When an operator has explicitly enabled Docker contained execution, an eligible repository-local
+`unknown_local_effect` may run once in a disposable mirror instead of using a command allowlist.
+The route has no network, never mounts the source workspace or control plane, discards all guest
+changes, and always applies mandatory credential scrubbing to its 16 KiB stdout/stderr tails.
+
+If Belay reports that the contained capability, image, or Docker substrate no longer matches, ask
+the operator to run `belay session start`; do not silently run it from this skill. Only typed Docker
+substrate/daemon unavailability returns to the normal one-shot approval flow. Missing or stale
+capability/image, mirror/lease, create/inspect/start, timeout, and cleanup failures deny without
+approval or host replay.
 
 ## Install or repair
 
@@ -79,4 +93,5 @@ Do not run init, config, or doctor implicitly from this skill — only when the 
 | Status / dogfood / audit visibility | `belay status` |
 | Audit summary (read-only) | `belay report` |
 | Recovery advice (advisory only) | `belay recover` |
+| Refresh contained Docker attestation | `belay session start` |
 | Approve once | `belay approve <id>` |

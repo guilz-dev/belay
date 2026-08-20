@@ -66,6 +66,7 @@ const GH_READ_COMMANDS = new Set([
   'repo view',
   'run list',
   'run view',
+  'search code',
   'workflow list',
   'workflow view',
 ])

@@ -3,10 +3,11 @@
 Status: **Directional** (themes and horizons, not committed dates)
 Authoritative concept: [`CONCEPT.md`](./CONCEPT.md) · Architecture decision: [`adr/ADR-001-layered-enforcement.md`](./adr/ADR-001-layered-enforcement.md) · Conformance discipline: [`adr/ADR-002-concept-conformance.md`](./adr/ADR-002-concept-conformance.md)
 
-> The near-term *execution order* lives in [`CONCEPT.md` §12](./CONCEPT.md),
-> which deliberately commits only to "the next one." This document is the layer above that: the
-> mission, the dials we turn to reach it, and the directional horizons. It does
-> not promise version numbers or dates.
+> The current execution frontier is
+> [Issue #72 — Horizon 1 dogfood exit](https://github.com/guilz-dev/belay/issues/72).
+> [`CONCEPT.md` §12](./CONCEPT.md) is the historical build order. This document is
+> the layer above both: the mission, the dials we turn to reach it, and the
+> directional horizons. It does not promise version numbers or dates.
 
 ---
 
@@ -129,8 +130,9 @@ re-asking what a human already blessed.*
   under read-class precision.
 - **Read-class precision — in progress.** Residual read-class friction is driven
   down through PolicyEngine semantics, labeled corpus hard gates, and harvest
-  review (`provably-benign` promotion). Shadow judge calibration remains
-  observational only.
+  review (`provably-benign` promotion). The active execution frontier is
+  [Issue #72](https://github.com/guilz-dev/belay/issues/72). Shadow judge
+  calibration remains observational only.
 - **Latency budget — partially delivered.** Judge session transport and gate CI
   p95 budgets ship; optional Ollama prewarm on `beforeSubmitPrompt` remains
   future work because the sync gate does not call Tier1.

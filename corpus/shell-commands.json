@@ -443,6 +443,18 @@
   {
     "kind": "shell",
     "category": "provably-benign",
+    "command": "gh search code \"freeword\" repo:guilz-dev/belay path:src",
+    "verdict": "allow"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "gh api \"repos/guilz-dev/belay/contents/src?ref=main\" --jq \".content\" | base64 -d | sed -n \"1,40p\"",
+    "verdict": "allow"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "lsof -iTCP -sTCP:LISTEN",
     "verdict": "allow"
   },

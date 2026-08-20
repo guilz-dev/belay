@@ -102,5 +102,5 @@ require human review before entering `shell-commands.json`.
 | Category | Count | Verdict constraint | CI gate |
 |---|---|---|---|
 | `must-ask` | 37 | `deny_pending_approval` | Hard — any miss fails `pnpm corpus` |
-| `provably-benign` | 23 | `allow` | Hard — any non-`allow` fails `pnpm corpus` |
+| `provably-benign` | 25 | `allow` | Hard — any non-`allow` fails `pnpm corpus` |
 | `accepted-benign` | 15 | `allow_flagged` | Soft — reported as review-required only |
