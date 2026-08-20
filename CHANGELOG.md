@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.9.0 — 2026-08-20
+
 ### Added
 
 - **Contained unknown execution (opt-in)** — eligible repository-local `unknown_local_effect`
