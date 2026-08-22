@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.8.2 — 2026-08-22
+
 ### Added
 
 - **Audit NDJSON schema v3** — field-aware serialization preserves ISO `timestamp`, 64-hex
@@ -30,12 +32,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   hook (e.g. `preToolUse` vs `beforeShellExecution`) instead of inferring from action kind alone.
 - **Cohort matching fail-closed** — partial v3 provenance no longer falls back to legacy
   `runtimeBuildStamp`/`configFingerprint`; invalid `runtimeArtifactHash` values are omitted.
-
-### Not yet (follow-up PRs)
-
-- Phase B: heredoc boundary, Make recipe lowering, shell-level MUST-ALLOW/MUST-ASK corpus
-- Phase C: bounded audit storage, compact post-tool telemetry, rotation/retention
-- Phase D / §6: readiness thresholds (`~150` benign samples, `benignBlockRate` < 2%, per-boundary)
 
 ## 0.9.0 — 2026-08-20
 
