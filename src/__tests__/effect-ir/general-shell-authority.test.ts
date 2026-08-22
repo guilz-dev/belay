@@ -163,12 +163,26 @@ describe('general shell dogfood behavior', () => {
     'gh pr view 54',
     'gh pr diff 54',
     'gh api repos/guilz-dev/belay/pulls/54',
+    'gh search code "freeword" repo:guilz-dev/belay path:src',
+    'gh api "repos/guilz-dev/belay/contents/src?ref=main" --jq ".content" | base64 -d | sed -n "1,40p"',
   ])('allows read-only GitHub CLI calls: %s', async (command) => {
     const repoRoot = '/workspace/project'
     const result = await classify(command, repoRoot, repoRoot)
 
     expect.soft(result.verdict).toBe('allow')
     expect.soft(effectActions(result)).toContain('network.connect')
+  })
+
+  it('keeps gh api fields behind approval when no explicit read method is present', async () => {
+    const repoRoot = '/workspace/project'
+    const result = await classify(
+      'gh api graphql -f query="{ viewer { login } }"',
+      repoRoot,
+      repoRoot,
+    )
+
+    expect.soft(result.verdict).toBe('deny_pending_approval')
+    expect.soft(result.reason).toBe('external_effect')
   })
 
   it('allows git fetch as a flagged network read plus reversible local ref update', async () => {

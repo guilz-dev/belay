@@ -757,6 +757,9 @@ function decodeProcessOrFilesystem(params: {
   if (head === 'sed') {
     return decodeSed(args, cwd, segment)
   }
+  if (head === 'base64' && args.length === 1 && ['-d', '-D', '--decode'].includes(args[0] ?? '')) {
+    return [processRequirement(head, 'inspect', segment, ['process.inspect.base64_stdin'])]
+  }
   if (head === 'node') {
     return decodeNode(args, cwd, segment)
   }

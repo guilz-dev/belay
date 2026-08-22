@@ -69,10 +69,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Container boundary tests (Docker)
-        run: >-
-          pnpm test --
-          src/__tests__/capability/boundary-container-isolation.test.ts
-          src/__tests__/capability/boundary-driver-container.test.ts
+        run: pnpm test:docker
 
   verify-macos:
     runs-on: macos-latest
