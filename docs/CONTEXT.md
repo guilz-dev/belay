@@ -62,6 +62,14 @@ authorization model. It complements
    snapshot and restore outcomes for operational evidence without affecting authorization.
 9. Linked worktrees are repository-local only when their canonical Git common directory
    matches the primary repository. Separate and malformed repositories fail closed.
+10. **Audit log schema v3**: gate writers preserve ISO timestamps, 64-hex fingerprints, and
+    `approvalCorrelationId` through field-aware serialization. Scrub placeholders in correlation
+    fields invalidate metrics joins; legacy placeholder logs should be archived before trusting
+    dogfood readiness ([dogfood audit remediation §P0-1](./dogfood-audit-remediation-2026-08-22.ja.md)).
+11. **Dogfood cohort identity** separates runtime bundle hash (`runtimeArtifactHash`),
+    authorization-relevant config hash (`decisionConfigFingerprint`), and `boundaryProfile`.
+    `mode` and audit display settings do not reset the decision cohort. Readiness still uses a
+    minimum gate-event count today; stricter reviewed-benign thresholds are planned (same doc §6).
 
 ## Policy precedence
 
@@ -90,6 +98,8 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - Opt-in contained unknown execution via a separately attested, copy-only Docker route
 - `belay session start` for boundary attestation
 - Gate sync classification latency budgets (`gate-latency-budget.ts`) and quality-loop ratchet advisories (`sandbox advisories`; PLAN 100ms/500ms tightening is ongoing via floor ratchet)
+- Audit NDJSON schema v3, content-addressed dogfood cohort fields, Cursor shell hook dedupe, and
+  action-aware control-plane read vs mutation policy ([dogfood audit remediation Phase A](./dogfood-audit-remediation-2026-08-22.ja.md))
 
 ## Out of scope (later phases)
 
@@ -97,6 +107,8 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - Seatbelt / Landlock `BoundaryDriver` implementations (types only today)
 - Legacy sync judge transport removal (after one release of shadow observation)
 - Host `spawn(env: process.env)` removal from L3 `host-integration` driver
+- Bounded audit storage, compact post-tool telemetry, and readiness threshold revision (Phase C/D
+  in [dogfood audit remediation](./dogfood-audit-remediation-2026-08-22.ja.md))
 
 ## Layer split (L1 vs L3)
 

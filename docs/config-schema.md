@@ -163,6 +163,52 @@ applied/conflict/rejected outcomes for all-time and active-cohort records. Recov
 observational only; they do not affect authorization, `readyForEnforce`, or automatic feature
 enablement. Older audit records without recovery fields remain readable.
 
+## Audit log (NDJSON schema v3)
+
+Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`
+(`src/core/audit-serialize.ts`). Schema version is implicit v3 (no per-line version field).
+
+### Preserved correlation fields
+
+These fields are written literally and are **not** subject to high-entropy scrubbing:
+
+| Field | Format | Role |
+|-------|--------|------|
+| `timestamp` | ISO-8601 UTC | filters, daily buckets, approval latency |
+| `fingerprint`, `commandFingerprint` | 64 hex | repeat-friction and round-trip joins |
+| `effectIRHash`, `payloadHash`, `configFingerprint` | validated hash strings | forensics |
+| `approvalCorrelationId` | 16 hex | joins ask → approval → replay without storing raw `approvalId` |
+| `runtimeArtifactHash` | 64 hex | content-addressed runtime bundle identity |
+| `decisionConfigFingerprint` | 64 hex | hash of authorization-relevant config only |
+| `boundaryProfile` | string | e.g. `l3-l4-only`, `l1-full-recommended` |
+| `runtimeBuildStamp`, `runtimeVersion` | strings | display metadata; legacy cohort fallback |
+
+Malformed or externally supplied hash/timestamp values are dropped rather than scrubbed in place.
+Raw `approvalId` is never persisted; scrubbed summaries may contain `<approval-id>` placeholders.
+
+CLI events use `timestamp` (not legacy `ts`).
+
+### Active dogfood cohort
+
+Readiness and cohort metrics prefer v3 identity:
+
+```text
+record.runtimeArtifactHash === installedRuntimeArtifactHash
+record.decisionConfigFingerprint === activeDecisionConfigFingerprint
+record.boundaryProfile === activeBoundaryProfile   (when present on the record)
+```
+
+Legacy records without v3 fields match when both `runtimeBuildStamp` and `configFingerprint`
+equal the active installation. `mode`, notification targets, and `audit.logPath` changes do
+**not** alter `decisionConfigFingerprint`; runtime bundle or policy/boundary changes do.
+
+Records with scrub placeholders in correlation fields (`<timestamp>`, `<high-entropy>`,
+`<approval-id>`) are invalid for metrics joins. `belay doctor` warns; `belay upgrade` archives
+such logs to `audit.ndjson.legacy-<timestamp>.ndjson` when placeholders are detected.
+
+Rotation, retention caps, and compact post-tool telemetry are planned (Phase C); the log is
+still unbounded in v0.9.x.
+
 ## `controlPlane`
 
 | Field | Notes |

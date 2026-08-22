@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -23,6 +23,7 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
+import { approvalCorrelationId, serializeAuditRecordV3 } from '../../core/audit-serialize.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
@@ -145,7 +146,7 @@ import type {
   ClassifierOptions,
 } from '../../core/types.js'
 import { egressStatus } from '../../services/egress-service.js'
-import { PACKAGE_VERSION } from '../../version.js'
+import { buildAuditProvenanceFields } from '../../runtime-provenance.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -159,42 +160,16 @@ const RUNTIME_PROVENANCE_KEY = Symbol.for('agent-belay.runtime-provenance')
 interface RuntimeBuildProvenance {
   runtimeVersion?: unknown
   runtimeBuildStamp?: unknown
+  runtimeArtifactHash?: unknown
 }
 
 function auditProvenance(config: BelayConfigV3): Record<string, string> {
   const runtime = (globalThis as Record<PropertyKey, unknown>)[RUNTIME_PROVENANCE_KEY] as
     | RuntimeBuildProvenance
     | undefined
-  const runtimeVersion =
-    typeof runtime?.runtimeVersion === 'string' ? runtime.runtimeVersion : PACKAGE_VERSION
-  const runtimeBuildStamp =
-    typeof runtime?.runtimeBuildStamp === 'string'
-      ? runtime.runtimeBuildStamp
-      : `${PACKAGE_VERSION}@source`
-
-  return {
-    runtimeVersion,
-    runtimeBuildStamp,
-    configFingerprint: hashValue(canonicalStringify(config)),
-  }
+  return buildAuditProvenanceFields(config, runtime)
 }
 
-function preservedContainedAuditMetadata(record: Record<string, unknown>): Record<string, unknown> {
-  const safe: Record<string, unknown> = {}
-  if (record.wouldMediate === true) safe.wouldMediate = true
-  if (typeof record.receiptHash === 'string' && /^[a-f0-9]{64}$/.test(record.receiptHash)) {
-    safe.receiptHash = record.receiptHash
-  }
-  if (typeof record.imageId === 'string' && /^sha256:[a-f0-9]{64}$/.test(record.imageId)) {
-    safe.imageId = record.imageId
-  }
-  if (record.mirrorBackend === 'file_copy') safe.mirrorBackend = record.mirrorBackend
-  if (record.exitCode === null || Number.isSafeInteger(record.exitCode)) {
-    safe.exitCode = record.exitCode
-  }
-  if (typeof record.timedOut === 'boolean') safe.timedOut = record.timedOut
-  return safe
-}
 
 function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
   if (
@@ -208,6 +183,15 @@ function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefi
     return ctx.layout.name
   }
   return undefined
+}
+
+function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
+  const toolInput = payload.tool_input
+  if (!toolInput || typeof toolInput !== 'object') {
+    return ''
+  }
+  const input = toolInput as Record<string, unknown>
+  return typeof input.command === 'string' ? input.command : ''
 }
 
 export interface ApprovalPromptResult {
@@ -289,18 +273,15 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       const provenance = auditProvenance(ctx.config)
       const record: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
+        mode: ctx.config.mode,
         ...event,
         ...provenance,
       }
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment
       }
-      const scrubbed = scrubValue(record, scrubOptionsFromConfig(ctx.config)) as Record<
-        string,
-        unknown
-      >
-      Object.assign(scrubbed, provenance, preservedContainedAuditMetadata(record))
-      await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, {
+      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(ctx.config))
+      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, {
         encoding: 'utf8',
         flag: 'a',
       })
@@ -401,6 +382,10 @@ function gateAuditEventName(kind: GatedActionKind): string {
   return 'subagentGate'
 }
 
+function resolveGateAuditEvent(sourceEvent: string | undefined, kind: GatedActionKind): string {
+  return sourceEvent ?? gateAuditEventName(kind)
+}
+
 async function ensurePendingApproval(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
@@ -457,19 +442,6 @@ async function ensurePendingApproval(
     throw new Error('Failed to persist pending approval')
   }
   return outcome
-}
-
-function approvalCorrelationId(approvalId: string): string {
-  return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
-}
-
-function extractShellCommandFromPayload(payload: Record<string, unknown>): string {
-  const toolInput = payload.tool_input
-  if (!toolInput || typeof toolInput !== 'object') {
-    return ''
-  }
-  const input = toolInput as Record<string, unknown>
-  return typeof input.command === 'string' ? input.command : ''
 }
 
 function deriveWorkspaceRootScopeHint(params: {
@@ -691,10 +663,13 @@ function containedAuditBase(
   kind: GatedActionKind,
   mode: 'enforce' | 'audit',
   result: ClassifyResult,
+  sourceEvent?: string,
 ): Record<string, unknown> {
   const planFields = effectPlanAuditFields(result.effectPlan)
+  const auditEvent = resolveGateAuditEvent(sourceEvent, kind)
   return {
-    event: gateAuditEventName(kind),
+    event: auditEvent,
+    sourceEvent: auditEvent,
     kind,
     fingerprint: result.fingerprint,
     mode,
@@ -894,6 +869,7 @@ export async function evaluateGatedAction(
     command?: string
     payload?: Record<string, unknown>
     toolName?: string
+    sourceEvent?: string
   },
 ): Promise<GateVerdict> {
   let action: GatedAction
@@ -938,7 +914,8 @@ export async function evaluateGatedAction(
       }),
     }
     await deps.appendAudit(ctx, {
-      event: gateAuditEventName(params.kind),
+      event: resolveGateAuditEvent(params.sourceEvent, params.kind),
+      sourceEvent: resolveGateAuditEvent(params.sourceEvent, params.kind),
       kind: params.kind,
       fingerprint: verdict.fingerprint,
       verdict: verdict.verdict,
@@ -1117,6 +1094,7 @@ export async function evaluateGatedAction(
   const scrubbedPayload = fingerprintReplayPayload(params.kind, params.payload, scrubOpts)
 
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
+    sourceEvent: params.sourceEvent,
     predictedAssessment,
     observedAssessment,
     transactionalLayer,
@@ -1245,6 +1223,7 @@ async function gateDecisionToVerdict(
     replayAction?: ReplayActionContext
     classifierOptions?: ClassifierOptions
     scopeHintPayload?: Record<string, unknown>
+    sourceEvent?: string
   } = {},
 ): Promise<GateVerdict> {
   if (!result.effectPlan) {
@@ -1273,8 +1252,10 @@ async function gateDecisionToVerdict(
       (kind === 'shell' ? auditExtras.approvalInput?.input : undefined),
     stateDir,
   })
+  const auditEvent = resolveGateAuditEvent(auditExtras.sourceEvent, kind)
   const gateBase = {
-    event: gateAuditEventName(kind),
+    event: auditEvent,
+    sourceEvent: auditEvent,
     kind,
     fingerprint: result.fingerprint,
     summary: result.normalizedCommand ?? result.summary ?? '',

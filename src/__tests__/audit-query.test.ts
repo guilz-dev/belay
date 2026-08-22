@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,6 +14,10 @@ import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
 
+function testFingerprint(label: string): string {
+  return createHash('sha256').update(label).digest('hex')
+}
+
 describe('audit query', () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -25,7 +30,7 @@ describe('audit query', () => {
       kind: 'shell',
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
-      fingerprint: 'fp1',
+      fingerprint: testFingerprint('fp1'),
       summary: 'make build',
       wouldBlock: true,
       approvalId: 'belay_abc',
@@ -45,7 +50,7 @@ describe('audit query', () => {
       kind: 'shell',
       verdict: 'allow',
       reason: 'approved_once',
-      fingerprint: 'fp1',
+      fingerprint: testFingerprint('fp1'),
       summary: 'make build',
       permission: 'allow',
     },
@@ -55,7 +60,7 @@ describe('audit query', () => {
       kind: 'shell',
       verdict: 'allow',
       reason: 'read_only',
-      fingerprint: 'fp2',
+      fingerprint: testFingerprint('fp2'),
       summary: 'git status',
     },
   ]
@@ -85,7 +90,7 @@ describe('audit query', () => {
           kind: 'shell',
           verdict: 'deny_pending_approval',
           reason: 'unknown_local_effect',
-          fingerprint: 'fp3',
+          fingerprint: testFingerprint('fp3'),
           summary: 'make test',
           wouldBlock: true,
           approvalId: 'belay_def',
@@ -109,7 +114,7 @@ describe('audit query', () => {
         timestamp: '2026-06-01T10:00:00.000Z',
         event: 'beforeShellExecution',
         verdict: 'deny_pending_approval',
-        fingerprint: 'fp-deny',
+        fingerprint: testFingerprint('fp-deny'),
         summary: 'curl https://example.com',
         wouldBlock: true,
       },
@@ -117,7 +122,7 @@ describe('audit query', () => {
         timestamp: '2026-06-01T10:00:30.000Z',
         event: 'beforeShellExecution',
         verdict: 'allow',
-        fingerprint: 'fp-try',
+        fingerprint: testFingerprint('fp-try'),
         summary: 'bash -c "curl https://example.com"',
       },
     ])
@@ -141,7 +146,7 @@ describe('audit query', () => {
           kind: 'shell',
           verdict: 'deny_pending_approval',
           reason: 'external_effect',
-          fingerprint: 'old',
+          fingerprint: testFingerprint('old'),
           summary: 'git push',
           wouldBlock: true,
         }),
@@ -151,7 +156,7 @@ describe('audit query', () => {
           kind: 'shell',
           verdict: 'deny_pending_approval',
           reason: 'external_effect',
-          fingerprint: 'new',
+          fingerprint: testFingerprint('new'),
           summary: 'curl https://example.com',
           wouldBlock: true,
         }),

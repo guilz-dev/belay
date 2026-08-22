@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Audit NDJSON schema v3** — field-aware serialization preserves ISO `timestamp`, 64-hex
+  fingerprints, and `approvalCorrelationId` while scrubbing secrets and raw approval IDs.
+  Gate, CLI, and egress writers share `serializeAuditRecordV3()`.
+- **Content-addressed dogfood cohort** — gate events record `runtimeArtifactHash`,
+  `decisionConfigFingerprint`, and `boundaryProfile`. Readiness matching prefers v3 fields;
+  legacy records fall back to `runtimeBuildStamp` + `configFingerprint`.
+- **Legacy audit archive on upgrade** — when an existing log contains scrub placeholders
+  (`<timestamp>`, `<high-entropy>`, `<approval-id>`), `belay upgrade` renames it to
+  `audit.ndjson.legacy-<timestamp>.ndjson` before collecting a clean v3 cohort.
+
+### Changed
+
+- **Cursor shell hook dedupe** — fresh installs gate shell only via `beforeShellExecution`.
+  `preToolUse: Shell` is removed from managed hooks; `belay upgrade` drops the legacy Belay
+  Shell matcher. `belay doctor` warns on duplicate shell gates or placeholder-corrupted logs.
+- **Control-plane path policy (action-aware)** — reads on Belay hook/config/audit paths and
+  git metadata inspection allow; writes/deletes ask with `effect.control_plane_write`. Secret
+  and credential reads remain ask. See [tier0-retention-ledger](./docs/adr/tier0-retention-ledger.md).
+- **Audit event provenance** — adapters pass `sourceEvent` so audit `event` reflects the host
+  hook (e.g. `preToolUse` vs `beforeShellExecution`) instead of inferring from action kind alone.
+- **Cohort matching fail-closed** — partial v3 provenance no longer falls back to legacy
+  `runtimeBuildStamp`/`configFingerprint`; invalid `runtimeArtifactHash` values are omitted.
+
+### Not yet (follow-up PRs)
+
+- Phase B: heredoc boundary, Make recipe lowering, shell-level MUST-ALLOW/MUST-ASK corpus
+- Phase C: bounded audit storage, compact post-tool telemetry, rotation/retention
+- Phase D / §6: readiness thresholds (`~150` benign samples, `benignBlockRate` < 2%, per-boundary)
+
 ## 0.9.0 — 2026-08-20
 
 ### Added

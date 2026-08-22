@@ -11,7 +11,9 @@
 ## Global Constraints
 
 - Preserve all historical audit records and existing top-level all-time metrics.
-- Match a readiness event only when both `runtimeBuildStamp` and `configFingerprint` equal the active installation.
+- Match a readiness event when v3 cohort fields match the active installation
+  (`runtimeArtifactHash`, `decisionConfigFingerprint`, `boundaryProfile`), or when legacy
+  `runtimeBuildStamp` + `configFingerprint` match for pre-v3 records.
 - Missing installed provenance, legacy records, and partial identity matches must fail closed.
 - Keep `--force` behavior unchanged.
 - Do not change EffectPlan semantics or readiness thresholds.
@@ -28,7 +30,9 @@
 - Test: `src/__tests__/audit-metrics.test.ts`
 
 **Interfaces:**
-- Produces: `AuditCohortIdentity { runtimeBuildStamp: string; configFingerprint: string }`.
+- Produces: `AuditCohortIdentity` with v3 fields (`runtimeArtifactHash`,
+  `decisionConfigFingerprint`, `boundaryProfile`) plus legacy display/fallback fields
+  (`runtimeBuildStamp`, `configFingerprint`).
 - Produces: `readInstalledRuntimeProvenance(corePath): Promise<{ stamp?: string; version?: string }>`.
 - Produces: `resolveActiveAuditCohort(repoRoot, config): Promise<AuditCohortIdentity | null>`.
 - Produces: `AuditMetricsReport.currentCohort` with identity, availability, event counts, and rates.

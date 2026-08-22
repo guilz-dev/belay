@@ -104,17 +104,12 @@ function effectPathIsLocal(target: string, context: EffectRequirementPolicyConte
   )
 }
 
-function effectPathIsHighStakes(target: string, context: EffectRequirementPolicyContext): boolean {
+function effectPathIsSecretOrCredentialPath(
+  target: string,
+  context: EffectRequirementPolicyContext,
+): boolean {
   const resolved = resolveCapabilityPath(target, context.cwd)
   if (HIGH_STAKES_EFFECT_PATHS.some((pattern) => pattern.test(resolved))) {
-    return true
-  }
-  if (
-    context.protectedArtifactRoots?.some((root) => pathWithinRoot(canonicalPath(root), resolved))
-  ) {
-    return true
-  }
-  if (isGitMetadataPath(resolved, context.repoRoot)) {
     return true
   }
   const workspaceMatch = resolveWorkspaceRootMatch(
@@ -128,6 +123,31 @@ function effectPathIsHighStakes(target: string, context: EffectRequirementPolicy
   return matchesSensitivePath(workspaceMatch.relativePath.replaceAll('\\', '/'), [
     ...(context.sensitivePaths ?? []),
   ])
+}
+
+function effectPathIsControlPlaneArtifactPath(
+  target: string,
+  context: EffectRequirementPolicyContext,
+): boolean {
+  const resolved = resolveCapabilityPath(target, context.cwd)
+  return (
+    context.protectedArtifactRoots?.some((root) => pathWithinRoot(canonicalPath(root), resolved)) ??
+    false
+  )
+}
+
+function effectPathIsHighStakes(target: string, context: EffectRequirementPolicyContext): boolean {
+  if (effectPathIsSecretOrCredentialPath(target, context)) {
+    return true
+  }
+  if (effectPathIsControlPlaneArtifactPath(target, context)) {
+    return true
+  }
+  const resolved = resolveCapabilityPath(target, context.cwd)
+  if (isGitMetadataPath(resolved, context.repoRoot)) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -207,14 +227,13 @@ export function evaluateEffectRequirementPolicy(
 
   switch (requirement.action) {
     case 'fs.read':
-      if (
-        requirement.resource.kind === 'path' &&
-        effectPathIsHighStakes(requirement.resource.path, context)
-      ) {
-        return effectDecision('ask', 'high_stakes_path', 'effect.fs_read_high_stakes', [
-          ...signals,
-          'sensitive_path_read',
-        ])
+      if (requirement.resource.kind === 'path') {
+        if (effectPathIsSecretOrCredentialPath(requirement.resource.path, context)) {
+          return effectDecision('ask', 'high_stakes_path', 'effect.fs_read_high_stakes', [
+            ...signals,
+            'sensitive_path_read',
+          ])
+        }
       }
       return effectDecision('allow', 'read_only', 'effect.fs_read', signals)
     case 'fs.write':
@@ -228,6 +247,12 @@ export function evaluateEffectRequirementPolicy(
       }
       if (requirement.resource.kind !== 'path') {
         return effectDecision('ask', 'indeterminate_effect', 'effect.fs_write_unknown', signals)
+      }
+      if (effectPathIsControlPlaneArtifactPath(requirement.resource.path, context)) {
+        return effectDecision('ask', 'control_plane_mutation', 'effect.control_plane_write', [
+          ...signals,
+          'control_plane_path',
+        ])
       }
       if (effectPathIsHighStakes(requirement.resource.path, context)) {
         return effectDecision('ask', 'high_stakes_path', 'effect.fs_write_high_stakes', [

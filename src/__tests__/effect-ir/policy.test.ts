@@ -221,6 +221,68 @@ describe('EffectPlan policy projection', () => {
     })
   })
 
+  it('allows control-plane artifact reads', () => {
+    const controlPlaneContext = {
+      ...context,
+      protectedArtifactRoots: [
+        `${repoRoot}/.cursor/belay.config.json`,
+        `${repoRoot}/.cursor/hooks/belay-runner`,
+        `${repoRoot}/.cursor/belay/audit.ndjson`,
+      ],
+    }
+    expect(
+      evaluate(
+        [requirement('fs.read', { kind: 'path', path: `${repoRoot}/.cursor/belay.config.json` })],
+        {},
+        controlPlaneContext,
+      ).projection,
+    ).toMatchObject({
+      permission: 'allow',
+      hookVerdict: 'allow',
+    })
+    expect(
+      evaluate(
+        [
+          requirement('fs.read', {
+            kind: 'path',
+            path: `${repoRoot}/.cursor/belay/audit.ndjson`,
+          }),
+        ],
+        {},
+        controlPlaneContext,
+      ).projection,
+    ).toMatchObject({
+      permission: 'allow',
+      hookVerdict: 'allow',
+    })
+  })
+
+  it('asks for control-plane artifact writes', () => {
+    const controlPlaneContext = {
+      ...context,
+      protectedArtifactRoots: [`${repoRoot}/.cursor/belay.config.json`],
+    }
+    expect(
+      evaluate(
+        [requirement('fs.write', { kind: 'path', path: `${repoRoot}/.cursor/belay.config.json` })],
+        {},
+        controlPlaneContext,
+      ).authorizationDecision,
+    ).toMatchObject({
+      matchedRule: 'effect.control_plane_write',
+    })
+    expect(
+      evaluate(
+        [requirement('fs.write', { kind: 'path', path: `${repoRoot}/.cursor/belay.config.json` })],
+        {},
+        controlPlaneContext,
+      ).projection,
+    ).toMatchObject({
+      permission: 'ask',
+      hookVerdict: 'deny_pending_approval',
+    })
+  })
+
   it('allows ordinary source reads', () => {
     expect(
       evaluate([requirement('fs.read', { kind: 'path', path: `${repoRoot}/src/index.ts` })])
@@ -477,13 +539,10 @@ describe('EffectPlan policy projection', () => {
     )
   })
 
-  it.each([
-    'fs.read',
-    'fs.write',
-  ] as const)('asks for %s on Git metadata in a separate nested repository', async (action) => {
+  it('allows fs.read on Git metadata in a separate nested repository', async () => {
     const mainRoot = await createRealGitRepository(
       tempDirs,
-      `belay-effect-policy-separate-metadata-${action.replace('.', '-')}-`,
+      'belay-effect-policy-separate-metadata-read-',
     )
     const separateRoot = path.join(mainRoot, 'vendor', 'separate')
     await mkdir(separateRoot, { recursive: true })
@@ -491,23 +550,39 @@ describe('EffectPlan policy projection', () => {
     const mainContext = buildVerdictContext({ cwd: mainRoot, repoRoot: mainRoot, config })
 
     const policy = evaluate(
-      [requirement(action, { kind: 'path', path: path.join(separateRoot, '.git', 'config') })],
+      [requirement('fs.read', { kind: 'path', path: path.join(separateRoot, '.git', 'config') })],
+      {},
+      mainContext,
+    )
+
+    expect(policy.projection.permission).toBe('allow')
+  })
+
+  it('asks for fs.write on Git metadata in a separate nested repository', async () => {
+    const mainRoot = await createRealGitRepository(
+      tempDirs,
+      'belay-effect-policy-separate-metadata-write-',
+    )
+    const separateRoot = path.join(mainRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+    const mainContext = buildVerdictContext({ cwd: mainRoot, repoRoot: mainRoot, config })
+
+    const policy = evaluate(
+      [requirement('fs.write', { kind: 'path', path: path.join(separateRoot, '.git', 'config') })],
       {},
       mainContext,
     )
 
     expect(policy.projection.permission).toBe('ask')
     expect(policy.decisions).toContainEqual(
-      expect.objectContaining({ matchedRule: `effect.${action.replace('.', '_')}_high_stakes` }),
+      expect.objectContaining({ matchedRule: 'effect.fs_write_high_stakes' }),
     )
   })
 
-  it.each([
-    'fs.read',
-    'fs.write',
-  ] as const)('asks for %s on malformed root Git-control metadata', async (action) => {
+  it('allows fs.read on malformed root Git-control metadata', async () => {
     const workspaceRoot = await mkdtemp(
-      path.join(os.tmpdir(), `belay-effect-policy-malformed-${action.replace('.', '-')}-`),
+      path.join(os.tmpdir(), 'belay-effect-policy-malformed-read-'),
     )
     tempDirs.push(workspaceRoot)
     await writeFile(path.join(workspaceRoot, '.git'), 'malformed\n')
@@ -518,14 +593,35 @@ describe('EffectPlan policy projection', () => {
     })
 
     const policy = evaluate(
-      [requirement(action, { kind: 'path', path: path.join(workspaceRoot, '.git', 'config') })],
+      [requirement('fs.read', { kind: 'path', path: path.join(workspaceRoot, '.git') })],
+      {},
+      malformedContext,
+    )
+
+    expect(policy.projection.permission).toBe('allow')
+  })
+
+  it('asks for fs.write on malformed root Git-control metadata', async () => {
+    const workspaceRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-effect-policy-malformed-write-'),
+    )
+    tempDirs.push(workspaceRoot)
+    await writeFile(path.join(workspaceRoot, '.git'), 'malformed\n')
+    const malformedContext = buildVerdictContext({
+      cwd: workspaceRoot,
+      repoRoot: workspaceRoot,
+      config,
+    })
+
+    const policy = evaluate(
+      [requirement('fs.write', { kind: 'path', path: path.join(workspaceRoot, '.git', 'config') })],
       {},
       malformedContext,
     )
 
     expect(policy.projection.permission).toBe('ask')
     expect(policy.decisions).toContainEqual(
-      expect.objectContaining({ matchedRule: `effect.${action.replace('.', '_')}_high_stakes` }),
+      expect.objectContaining({ matchedRule: 'effect.fs_write_high_stakes' }),
     )
   })
 

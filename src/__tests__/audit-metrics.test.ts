@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { formatMetricsReport } from '../commands/metrics.js'
 import {
@@ -20,8 +21,23 @@ import {
 } from '../core/audit-recovery-metrics.js'
 
 const ACTIVE_COHORT = {
+  runtimeArtifactHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  decisionConfigFingerprint: 'active-decision-fingerprint',
+  boundaryProfile: 'l3-l4-only',
   runtimeBuildStamp: '0.8.0@2026-08-14T04:23:49.942Z',
   configFingerprint: 'active-config-fingerprint',
+}
+
+const LEGACY_COHORT = {
+  runtimeArtifactHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  decisionConfigFingerprint: 'old-decision-fingerprint',
+  boundaryProfile: 'l3-l4-only',
+  runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
+  configFingerprint: 'old-config-fingerprint',
+}
+
+function testFingerprint(label: string): string {
+  return createHash('sha256').update(label).digest('hex')
 }
 
 function cohortGate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -225,8 +241,7 @@ describe('audit-metrics', () => {
   it('does not reuse old clean events as active-cohort readiness evidence', () => {
     const oldCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
       cohortGate({
-        runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
-        configFingerprint: 'old-config-fingerprint',
+        ...LEGACY_COHORT,
       }),
     )
 
@@ -251,8 +266,7 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
-        runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
-        configFingerprint: 'old-config-fingerprint',
+        ...LEGACY_COHORT,
       }),
     )
     const currentCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
@@ -275,8 +289,7 @@ describe('audit-metrics', () => {
 
   it('labels all-time history separately from the current readiness cohort', () => {
     const oldEvent = cohortGate({
-      runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
-      configFingerprint: 'old-config-fingerprint',
+      ...LEGACY_COHORT,
     })
     const currentEvent = cohortGate()
 
@@ -301,8 +314,7 @@ describe('audit-metrics', () => {
       reason: 'old_unknown',
       summary: 'old command',
       wouldBlock: true,
-      runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
-      configFingerprint: 'old-config-fingerprint',
+      ...LEGACY_COHORT,
     })
     const currentAsk = cohortGate({
       verdict: 'deny_pending_approval',
@@ -332,7 +344,10 @@ describe('audit-metrics', () => {
     const currentEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () =>
       cohortGate(),
     )
-    const mismatchedConfigEvent = cohortGate({ configFingerprint: 'different-config' })
+    const mismatchedConfigEvent = cohortGate({
+      configFingerprint: 'different-config',
+      decisionConfigFingerprint: 'different-decision-config',
+    })
 
     const report = computeAuditMetrics([...currentEvents, mismatchedConfigEvent], {
       mode: 'audit',
@@ -389,7 +404,7 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
-        fingerprint: 'fp-make',
+        fingerprint: testFingerprint('fp-make'),
         summary: 'make build',
         approvalId: 'ap-1',
         timestamp: '2026-01-01T00:00:00.000Z',
@@ -400,7 +415,7 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
-        fingerprint: 'fp-make',
+        fingerprint: testFingerprint('fp-make'),
         summary: 'make build',
         timestamp: '2026-01-01T00:05:00.000Z',
       },
@@ -437,7 +452,7 @@ describe('audit-metrics', () => {
     expect(report.approvalRatioByReason[0]?.approvalRate).toBe(0.5)
     expect(report.repeatedFingerprintAsks).toEqual([
       {
-        fingerprint: 'fp-make',
+        fingerprint: testFingerprint('fp-make'),
         summary: 'make build',
         reason: 'unknown_local_effect',
         askCount: 2,
@@ -452,7 +467,7 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'missing_trusted_cwd',
         wouldBlock: true,
-        fingerprint: 'fp-cwd',
+        fingerprint: testFingerprint('fp-cwd'),
       },
       {
         event: 'beforeShellExecution',
@@ -460,7 +475,7 @@ describe('audit-metrics', () => {
         reason: 'unknown_local_effect',
         wouldBlock: true,
         judgeFallbackReason: 'eval_timeout',
-        fingerprint: 'fp-timeout',
+        fingerprint: testFingerprint('fp-timeout'),
       },
       {
         event: 'beforeShellExecution',
@@ -468,14 +483,14 @@ describe('audit-metrics', () => {
         reason: 'unknown_local_effect',
         wouldBlock: true,
         judgeFallbackReason: 'cursor_cli_unavailable',
-        fingerprint: 'fp-fallback',
+        fingerprint: testFingerprint('fp-fallback'),
       },
       {
         event: 'beforeShellExecution',
         verdict: 'deny_pending_approval',
         reason: 'external_effect',
         wouldBlock: true,
-        fingerprint: 'fp-real',
+        fingerprint: testFingerprint('fp-real'),
       },
     ].map(toAuditRecord)
 
@@ -521,7 +536,7 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'read_only',
         wouldBlock: true,
-        fingerprint: 'fp-repeat',
+        fingerprint: testFingerprint('fp-repeat'),
         summary: 'git status',
       },
       {
@@ -529,14 +544,14 @@ describe('audit-metrics', () => {
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
-        fingerprint: 'fp-repeat',
+        fingerprint: testFingerprint('fp-repeat'),
         summary: 'make build',
       },
     ].map(toAuditRecord)
 
     expect(computeRepeatedFingerprintAsks(records)).toEqual([
       {
-        fingerprint: 'fp-repeat',
+        fingerprint: testFingerprint('fp-repeat'),
         summary: 'make build',
         reason: 'unknown_local_effect',
         askCount: 2,
@@ -565,6 +580,7 @@ describe('audit-metrics', () => {
   })
 
   it('formats repeated fingerprint asks in metrics output', () => {
+    const fingerprint = testFingerprint('short-fp')
     const formatted = formatMetricsReport(
       computeAuditMetrics(
         [
@@ -573,7 +589,7 @@ describe('audit-metrics', () => {
             verdict: 'deny_pending_approval',
             reason: 'read_only',
             wouldBlock: true,
-            fingerprint: 'short-fp',
+            fingerprint,
             summary: 'git status',
           },
           {
@@ -581,7 +597,7 @@ describe('audit-metrics', () => {
             verdict: 'deny_pending_approval',
             reason: 'read_only',
             wouldBlock: true,
-            fingerprint: 'short-fp',
+            fingerprint,
             summary: 'git status',
           },
         ].map(toAuditRecord),
@@ -589,8 +605,7 @@ describe('audit-metrics', () => {
     )
 
     expect(formatted).toContain('Repeated fingerprint asks')
-    expect(formatted).toContain('x2 short-fp: git status')
-    expect(formatted).not.toContain('short-fp…')
+    expect(formatted).toContain(`x2 ${fingerprint.slice(0, 12)}…: git status`)
   })
 
   it('recommends exact Effect remediation instead of standing command lists', () => {
@@ -602,7 +617,7 @@ describe('audit-metrics', () => {
           verdict: 'deny_pending_approval',
           reason: 'unknown_local_effect',
           wouldBlock: true,
-          fingerprint: 'fp-repeat',
+          fingerprint: testFingerprint('fp-repeat'),
           summary: 'make build',
           ...ACTIVE_COHORT,
         },
@@ -612,7 +627,7 @@ describe('audit-metrics', () => {
           verdict: 'deny_pending_approval',
           reason: 'unknown_local_effect',
           wouldBlock: true,
-          fingerprint: 'fp-repeat',
+          fingerprint: testFingerprint('fp-repeat'),
           summary: 'make build',
           ...ACTIVE_COHORT,
         },

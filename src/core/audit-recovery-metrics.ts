@@ -1,6 +1,7 @@
 import type { AuditCohortIdentity } from './audit-metrics.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
+import { matchesAuditCohort } from '../runtime-provenance.js'
 
 const RESTORE_EVENTS = new Set(['recoveryApplied', 'recoveryConflict', 'recoveryRejected'])
 
@@ -73,10 +74,7 @@ function isRecoveryRestoreRecord(record: AuditRecord): boolean {
 }
 
 function matchesCohort(record: AuditRecord, cohort: AuditCohortIdentity): boolean {
-  return (
-    record.runtimeBuildStamp === cohort.runtimeBuildStamp &&
-    record.configFingerprint === cohort.configFingerprint
-  )
+  return matchesAuditCohort(record, cohort)
 }
 
 function emptySnapshotMetrics(): RecoverySnapshotMetrics {

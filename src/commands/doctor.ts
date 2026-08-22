@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
+import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
@@ -18,6 +19,7 @@ import {
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
+import { matchesAuditCohort } from '../runtime-provenance.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
   boundaryAttestationPath,
@@ -235,6 +237,11 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`)
         }
       }
+      if (hasDuplicateCursorShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
+        warnings.push(
+          'Duplicate Cursor shell gates detected (beforeShellExecution + preToolUse Shell). Run belay upgrade to remove the legacy Shell matcher.',
+        )
+      }
     } else if (adapterName === 'codex') {
       // Codex hooks live in TOML (.codex/config.toml). Verify belay's managed command strings
       // are present in the rendered TOML block.
@@ -346,12 +353,18 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const metrics = await metricsProject({ targetDir: repoRoot })
     const cohortIdentity = metrics.currentCohort.identity
     const cohortAuditRecords = cohortIdentity
-      ? auditRecords.filter(
-          (record) =>
-            record.runtimeBuildStamp === cohortIdentity.runtimeBuildStamp &&
-            record.configFingerprint === cohortIdentity.configFingerprint,
-        )
+      ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
       : []
+    const auditSample = auditRecords.slice(0, 200).map((record) => JSON.stringify(record)).join('\n')
+    if (
+      auditSample.includes('"<timestamp>"') ||
+      auditSample.includes('"<high-entropy>"') ||
+      auditSample.includes('"<approval-id>"')
+    ) {
+      warnings.push(
+        'Audit log contains scrub placeholders in correlation fields (<timestamp>, <high-entropy>, <approval-id>). Historical metrics are unreliable until a schema v3 cohort is collected.',
+      )
+    }
     const auditVisibility = summarizeAuditVisibility(cohortAuditRecords)
     const drift = detectFenceDrift(auditVisibility, {
       threshold: loadedConfig.policy.fenceWarnThreshold,

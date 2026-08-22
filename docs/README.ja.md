@@ -27,7 +27,7 @@ Belay は **Cursor**、**Claude Code**、**Codex（実験的）** の 3 エー�
 
 | 役割 | belay hook | Cursor | Claude Code | Codex |
 | --- | --- | --- | --- | --- |
-| シェル・ツール・ファイル変更のゲート | `belay-tool-gate` | `beforeShellExecution`, `preToolUse` | `PreToolUse` | `PreToolUse` |
+| シェル・ツール・ファイル変更のゲート | `belay-tool-gate` | `beforeShellExecution`（shell）、`preToolUse`（Write/Delete 等） | `PreToolUse` | `PreToolUse` |
 | サブエージェント起動のゲート | `belay-tool-gate` | `subagentStart` | （`PreToolUse` 経由） | `SubagentStart` |
 | ワンショット承認 | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
 | 監査ログ | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
@@ -42,7 +42,11 @@ npx @guilz-dev/belay init                     # Cursor（既定）
 ```
 
 承認・判定は `.cursor/belay/audit.ndjson`、`.claude/belay/audit.ndjson`、
-`.codex/belay/audit.ndjson` のいずれかに記録されます（アダプター依存）。
+`.codex/belay/audit.ndjson` のいずれかに記録されます（アダプター依存）。v3 以降は ISO
+`timestamp` と fingerprint が保持され、dogfood readiness は active cohort（runtime bundle +
+判定設定 + boundary profile）だけを数えます。旧ログに scrub プレースホルダー
+（`<timestamp>` 等）が残る場合は `belay upgrade` で legacy ファイルへ切り離してから新 cohort
+を収集してください（[dogfood 監査 remediation](./dogfood-audit-remediation-2026-08-22.ja.md)）。
 
 スキルだけを入れた場合（`npx skills add`）は UX 補助のみで、**hook による強制は有効になりません**。
 `belay config`（対話）または `belay init` でフロアを入れてください。

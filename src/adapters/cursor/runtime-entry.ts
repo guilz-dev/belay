@@ -78,6 +78,7 @@ export async function runShellGateHook() {
       kind: 'shell',
       cwd,
       command,
+      sourceEvent: 'beforeShellExecution',
     })
     jsonResponse(gateVerdictToCursorResponse(verdict))
   } catch {
@@ -102,6 +103,7 @@ export async function runToolGateHook(eventName: string) {
         kind: 'subagent',
         cwd,
         payload,
+        sourceEvent: eventName,
       })
       jsonResponse(gateVerdictToCursorResponse(verdict))
       return
@@ -113,6 +115,7 @@ export async function runToolGateHook(eventName: string) {
         cwd,
         payload,
         toolName,
+        sourceEvent: eventName,
       })
       jsonResponse(gateVerdictToCursorResponse(verdict))
       return
@@ -124,6 +127,7 @@ export async function runToolGateHook(eventName: string) {
         cwd,
         payload,
         toolName,
+        sourceEvent: eventName,
       })
       jsonResponse(gateVerdictToCursorResponse(verdict))
       return
@@ -134,6 +138,7 @@ export async function runToolGateHook(eventName: string) {
         kind: 'subagent',
         cwd,
         payload,
+        sourceEvent: eventName,
       })
       jsonResponse(gateVerdictToCursorResponse(verdict))
       return

@@ -8,8 +8,9 @@ import {
   repoLocalStateDirFor,
 } from './config-io.js'
 import { scrubOptionsFromConfig } from './core/config.js'
+import { serializeAuditRecordV3 } from './core/audit-serialize.js'
+import { resolveActiveAuditCohort } from './runtime-provenance.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
-import { scrubValue } from './core/scrub.js'
 import {
   clearEgressDaemonState,
   createEgressApprovalStore,
@@ -44,9 +45,24 @@ async function main(): Promise<void> {
     },
     async onAudit(event) {
       await mkdir(path.dirname(auditPath), { recursive: true })
-      const record = { timestamp: new Date().toISOString(), ...event }
-      const scrubbed = scrubValue(record, scrubOptionsFromConfig(config))
-      await writeFile(auditPath, `${JSON.stringify(scrubbed)}\n`, { encoding: 'utf8', flag: 'a' })
+      const cohort = await resolveActiveAuditCohort(repoRoot, config)
+      const record = {
+        timestamp: new Date().toISOString(),
+        ...(cohort
+          ? {
+              runtimeBuildStamp: cohort.runtimeBuildStamp,
+              ...(cohort.runtimeArtifactHash
+                ? { runtimeArtifactHash: cohort.runtimeArtifactHash }
+                : {}),
+              decisionConfigFingerprint: cohort.decisionConfigFingerprint,
+              boundaryProfile: cohort.boundaryProfile,
+              configFingerprint: cohort.configFingerprint,
+            }
+          : {}),
+        ...event,
+      }
+      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(config))
+      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, { encoding: 'utf8', flag: 'a' })
     },
   })
 

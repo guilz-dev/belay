@@ -14,6 +14,7 @@ import {
   mergeAndWriteConfig,
   writeConfigFile,
 } from './config-io.js'
+import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
 import {
   type BelayJudgeConfig,
@@ -105,6 +106,7 @@ export async function initCursorProject(
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
+  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
   return { repoRoot, withSkill }
 }
 
@@ -129,6 +131,7 @@ export async function upgradeCursorProject(
   }
 
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
+  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
   return { repoRoot }
 }
 

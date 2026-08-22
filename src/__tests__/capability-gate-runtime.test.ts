@@ -13,6 +13,7 @@ import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
 import { mintGrantForApprovedRecord } from '../core/capability/approval-v3.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { approvalCorrelationId } from '../core/audit-serialize.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
@@ -656,8 +657,9 @@ describe('capability gate runtime', () => {
     expect(auditRecords.at(-1)).toMatchObject({
       reason: 'capability_grant_unavailable',
       grantBundleFailureReason: 'cardinality_mismatch',
-      approvalId: '<approval-id>',
+      approvalCorrelationId: approvalCorrelationId(String(replay.approvalId)),
     })
+    expect(auditRecords.at(-1)?.approvalId).toBeUndefined()
   })
 
   it('deduplicates concurrent pending approvals atomically', async () => {
