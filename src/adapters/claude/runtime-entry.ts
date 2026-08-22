@@ -206,6 +206,7 @@ export async function runShellGateHook() {
       command,
       payload,
       toolName: 'Bash',
+      sourceEvent: 'PreToolUse',
     })
     jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
   } catch {
@@ -309,6 +310,7 @@ export async function runToolGateHook(_eventName: string) {
       cwd,
       payload: normalizedPayload,
       toolName,
+      sourceEvent: 'PreToolUse',
     })
     jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
   } catch {

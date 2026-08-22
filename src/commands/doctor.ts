@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
+import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -45,7 +46,7 @@ import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import { isGitWorktreeAvailable } from '../core/transactional/git-worktree.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
-import { readInstalledRuntimeProvenance } from '../runtime-provenance.js'
+import { matchesAuditCohort, readInstalledRuntimeProvenance } from '../runtime-provenance.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
@@ -235,6 +236,11 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`)
         }
       }
+      if (hasDuplicateCursorShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
+        warnings.push(
+          'Duplicate Cursor shell gates detected (beforeShellExecution + preToolUse Shell). Run belay upgrade to remove the legacy Shell matcher.',
+        )
+      }
     } else if (adapterName === 'codex') {
       // Codex hooks live in TOML (.codex/config.toml). Verify belay's managed command strings
       // are present in the rendered TOML block.
@@ -346,12 +352,21 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const metrics = await metricsProject({ targetDir: repoRoot })
     const cohortIdentity = metrics.currentCohort.identity
     const cohortAuditRecords = cohortIdentity
-      ? auditRecords.filter(
-          (record) =>
-            record.runtimeBuildStamp === cohortIdentity.runtimeBuildStamp &&
-            record.configFingerprint === cohortIdentity.configFingerprint,
-        )
+      ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
       : []
+    const auditSample = auditRecords
+      .slice(0, 200)
+      .map((record) => JSON.stringify(record))
+      .join('\n')
+    if (
+      auditSample.includes('"<timestamp>"') ||
+      auditSample.includes('"<high-entropy>"') ||
+      auditSample.includes('"<approval-id>"')
+    ) {
+      warnings.push(
+        'Audit log contains scrub placeholders in correlation fields (<timestamp>, <high-entropy>, <approval-id>). Historical metrics are unreliable until a schema v3 cohort is collected.',
+      )
+    }
     const auditVisibility = summarizeAuditVisibility(cohortAuditRecords)
     const drift = detectFenceDrift(auditVisibility, {
       threshold: loadedConfig.policy.fenceWarnThreshold,

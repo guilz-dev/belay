@@ -1,3 +1,4 @@
+import { matchesAuditCohort } from '../runtime-provenance.js'
 import {
   bucketGateEventsByDay,
   computeApprovalLatencyStats,
@@ -32,6 +33,10 @@ import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 export const MIN_GATE_EVENTS_FOR_ENFORCE = 20
 
 export interface AuditCohortIdentity {
+  runtimeArtifactHash: string
+  decisionConfigFingerprint: string
+  boundaryProfile: string
+  /** Display / forensics metadata — not used for v3 cohort matching when artifact hash is present. */
   runtimeBuildStamp: string
   configFingerprint: string
 }
@@ -229,11 +234,7 @@ export function computeAuditMetrics(
 
   const activeCohort = options.activeCohort ?? null
   const cohortRecords = activeCohort
-    ? auditRecords.filter(
-        (record) =>
-          record.runtimeBuildStamp === activeCohort.runtimeBuildStamp &&
-          record.configFingerprint === activeCohort.configFingerprint,
-      )
+    ? auditRecords.filter((record) => matchesAuditCohort(record, activeCohort))
     : []
   const cohortGateRecords = cohortRecords.filter((record) => {
     const event = typeof record.event === 'string' ? record.event : ''

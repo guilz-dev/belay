@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import { harvestReportFromNdjson } from '../commands/harvest.js'
@@ -9,6 +10,10 @@ import {
   extractHarvestCandidates,
   filterRecordsForHarvest,
 } from '../core/harvest.js'
+
+function testFingerprint(label: string): string {
+  return createHash('sha256').update(label).digest('hex')
+}
 
 function shellDeny(params: Record<string, unknown>) {
   return toAuditRecord({
@@ -24,18 +29,18 @@ describe('harvest', () => {
   it('separates availability-caused asks from benign candidates', () => {
     const records = [
       shellDeny({
-        fingerprint: 'fp-avail',
+        fingerprint: testFingerprint('fp-avail'),
         summary: 'git status',
         reason: 'unknown_local_effect',
         judgeFallbackReason: 'eval_timeout',
       }),
       shellDeny({
-        fingerprint: 'fp-classifier',
+        fingerprint: testFingerprint('fp-classifier'),
         summary: 'git status',
         reason: 'unknown_local_effect',
       }),
       shellDeny({
-        fingerprint: 'fp-classifier',
+        fingerprint: testFingerprint('fp-classifier'),
         summary: 'git status',
         reason: 'unknown_local_effect',
       }),
@@ -44,15 +49,19 @@ describe('harvest', () => {
     const report = buildHarvestReport(records)
     expect(report.availabilityQueue).toHaveLength(1)
     expect(report.availabilityQueue[0]?.availabilitySignal).toBe('judge_timeout')
-    expect(report.candidates.some((entry) => entry.fingerprint === 'fp-avail')).toBe(false)
-    expect(report.candidates.some((entry) => entry.fingerprint === 'fp-classifier')).toBe(true)
+    expect(
+      report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-avail')),
+    ).toBe(false)
+    expect(
+      report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-classifier')),
+    ).toBe(true)
   })
 
   it('keeps paired deny rows when --since filters only the approval event', () => {
     const records = [
       shellDeny({
         timestamp: '2026-01-01T00:00:00.000Z',
-        fingerprint: 'fp-since-pair',
+        fingerprint: testFingerprint('fp-since-pair'),
         summary: 'pnpm test',
         reason: 'unknown_local_effect',
         approvalId: 'belay_since_pair',
@@ -76,7 +85,7 @@ describe('harvest', () => {
     const records = [
       shellDeny({
         timestamp: '2026-01-01T00:00:00.000Z',
-        fingerprint: 'fp-list-path',
+        fingerprint: testFingerprint('fp-list-path'),
         summary: 'pnpm test',
         reason: 'unknown_local_effect',
         approvalId: 'belay_list123',
@@ -98,7 +107,7 @@ describe('harvest', () => {
     const records = [
       shellDeny({
         timestamp: '2026-01-01T00:00:00.000Z',
-        fingerprint: 'fp-trip',
+        fingerprint: testFingerprint('fp-trip'),
         summary: 'pnpm test',
         reason: 'unknown_local_effect',
         approvalId: 'belay_abc123',
@@ -120,7 +129,7 @@ describe('harvest', () => {
   it('tags read-style shell commands as static-signal candidates', () => {
     const records = [
       shellDeny({
-        fingerprint: 'fp-read',
+        fingerprint: testFingerprint('fp-read'),
         summary: 'git diff --stat',
         reason: 'unknown_local_effect',
       }),
@@ -207,7 +216,7 @@ describe('harvest', () => {
       kind: 'shell',
       verdict: 'deny_pending_approval',
       wouldBlock: true,
-      fingerprint: 'fp',
+      fingerprint: testFingerprint('fp'),
       summary: 'git status',
       reason: 'missing_trusted_cwd',
     })}\n`

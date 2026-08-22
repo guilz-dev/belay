@@ -1,3 +1,8 @@
+import {
+  isValidApprovalCorrelationId,
+  isValidAuditFingerprint,
+  isValidAuditTimestamp,
+} from './audit-serialize.js'
 import type { ApprovalRoundTrip, AuditFilter, AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
 
@@ -10,11 +15,28 @@ export function toAuditRecord(value: Record<string, unknown>): AuditRecord {
 }
 
 export function parseTimestamp(value?: string): number | null {
-  if (!value) {
+  if (!value || !isValidAuditTimestamp(value)) {
     return null
   }
   const parsed = Date.parse(value)
   return Number.isNaN(parsed) ? null : parsed
+}
+
+export function auditFingerprint(record: AuditRecord): string | undefined {
+  if (typeof record.fingerprint !== 'string' || !isValidAuditFingerprint(record.fingerprint)) {
+    return undefined
+  }
+  return record.fingerprint
+}
+
+export function auditApprovalCorrelationId(record: AuditRecord): string | undefined {
+  if (
+    typeof record.approvalCorrelationId === 'string' &&
+    isValidApprovalCorrelationId(record.approvalCorrelationId)
+  ) {
+    return record.approvalCorrelationId
+  }
+  return undefined
 }
 
 export function isGateRecord(record: AuditRecord): boolean {
@@ -123,30 +145,40 @@ export function filterAuditRecords(
 
 export function buildApprovalRoundTrips(records: AuditRecord[]): ApprovalRoundTrip[] {
   const trips: ApprovalRoundTrip[] = []
+  const pendingByCorrelationId = new Map<string, ApprovalRoundTrip>()
   const pendingByApprovalId = new Map<string, ApprovalRoundTrip>()
   const pendingByFingerprint = new Map<string, ApprovalRoundTrip>()
 
   for (const record of records) {
     const timestamp = record.timestamp ?? ''
-    if (isGateRecord(record) && inferWouldBlock(record) && record.fingerprint) {
+    const fingerprint = auditFingerprint(record)
+    const correlationId = auditApprovalCorrelationId(record)
+
+    if (isGateRecord(record) && inferWouldBlock(record) && fingerprint) {
       const trip: ApprovalRoundTrip = {
         denyTimestamp: timestamp,
-        fingerprint: record.fingerprint,
+        fingerprint,
         reason: record.reason ?? 'unknown',
         summary: record.summary ?? '',
         kind: record.kind ?? 'unknown',
         approvalId: record.approvalId,
+        approvalCorrelationId: correlationId,
       }
       trips.push(trip)
-      if (record.approvalId) {
+      if (correlationId) {
+        pendingByCorrelationId.set(correlationId, trip)
+      }
+      if (record.approvalId && !String(record.approvalId).startsWith('<')) {
         pendingByApprovalId.set(record.approvalId, trip)
       }
-      pendingByFingerprint.set(record.fingerprint, trip)
+      pendingByFingerprint.set(fingerprint, trip)
       continue
     }
 
-    if (isApprovalRecorded(record) && record.approvalId) {
-      const trip = pendingByApprovalId.get(record.approvalId)
+    if (isApprovalRecorded(record)) {
+      const trip =
+        (correlationId ? pendingByCorrelationId.get(correlationId) : undefined) ??
+        (record.approvalId ? pendingByApprovalId.get(record.approvalId) : undefined)
       if (trip) {
         trip.approvalTimestamp = timestamp
         const denyMs = parseTimestamp(trip.denyTimestamp)
@@ -161,10 +193,12 @@ export function buildApprovalRoundTrips(records: AuditRecord[]): ApprovalRoundTr
     if (
       isGateRecord(record) &&
       record.reason === 'approved_once' &&
-      record.fingerprint &&
+      fingerprint &&
       record.permission === 'allow'
     ) {
-      const trip = pendingByFingerprint.get(record.fingerprint)
+      const trip = correlationId
+        ? pendingByCorrelationId.get(correlationId)
+        : pendingByFingerprint.get(fingerprint)
       if (trip) {
         trip.executeTimestamp = timestamp
       }

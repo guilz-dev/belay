@@ -75,6 +75,7 @@ export interface ApprovalRoundTrip {
   approvalTimestamp?: string
   executeTimestamp?: string
   approvalId?: string
+  approvalCorrelationId?: string
   fingerprint: string
   reason: string
   summary: string

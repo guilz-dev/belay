@@ -122,7 +122,13 @@ approved shell action first, then lets the remaining prompt continue. CLI replay
 
 Approvals are one-shot and expire after 15 minutes by default. Every decision is
 written to `.cursor/belay/audit.ndjson`, `.claude/belay/audit.ndjson`, or
-`.codex/belay/audit.ndjson` (depending on the adapter).
+`.codex/belay/audit.ndjson` (depending on the adapter). Schema v3 preserves ISO
+timestamps, fingerprints, and `approvalCorrelationId` for metrics joins. Dogfood
+readiness counts only the active cohort (runtime bundle + authorization-relevant
+config + boundary profile); legacy placeholder logs should be archived via
+`belay upgrade` before trusting readiness. See
+[config schema — audit log](./docs/config-schema.md#audit-log-ndjson-schema-v3) and
+[dogfood audit remediation](./docs/dogfood-audit-remediation-2026-08-22.ja.md).
 
 In **audit mode** (`mode: "audit"`), would-be denials are recorded
 (`wouldBlock: true`) but execution still continues, and no approval IDs are

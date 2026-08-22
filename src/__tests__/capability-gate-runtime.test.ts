@@ -9,6 +9,7 @@ import {
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
+import { approvalCorrelationId } from '../core/audit-serialize.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
 import { mintGrantForApprovedRecord } from '../core/capability/approval-v3.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
@@ -65,6 +66,36 @@ describe('capability gate runtime', () => {
   afterEach(async () => {
     delete process.env.BELAY_DETERMINISTIC_JUDGE
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('canonicalizes host gate event names while preserving the source event', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-event-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = brokerInactiveConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = {
+      ...createDefaultGateRuntimeDeps(),
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'git status',
+      sourceEvent: 'PreToolUse',
+    })
+
+    expect(auditEvents).toHaveLength(1)
+    expect(auditEvents[0]).toMatchObject({ event: 'preToolUse', sourceEvent: 'PreToolUse' })
   })
 
   it('does not let a standing path allowlist override effect policy', async () => {
@@ -656,8 +687,9 @@ describe('capability gate runtime', () => {
     expect(auditRecords.at(-1)).toMatchObject({
       reason: 'capability_grant_unavailable',
       grantBundleFailureReason: 'cardinality_mismatch',
-      approvalId: '<approval-id>',
+      approvalCorrelationId: approvalCorrelationId(String(replay.approvalId)),
     })
+    expect(auditRecords.at(-1)?.approvalId).toBeUndefined()
   })
 
   it('deduplicates concurrent pending approvals atomically', async () => {

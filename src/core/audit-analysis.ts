@@ -1,4 +1,4 @@
-import { inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
+import { auditFingerprint, inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
 import type {
   ApprovalRoundTrip,
   AuditRecord,
@@ -45,7 +45,7 @@ export function detectBypassAttempts(
   for (const record of records) {
     const timestampMs = parseTimestamp(record.timestamp) ?? 0
 
-    if (isGateRecord(record) && inferWouldBlock(record) && record.fingerprint) {
+    if (isGateRecord(record) && inferWouldBlock(record) && auditFingerprint(record)) {
       recentDenies.push({ timestampMs, record })
       continue
     }
@@ -300,11 +300,14 @@ export function computeRepeatedFingerprintAsks(
   >()
 
   for (const record of records) {
-    if (!isGateRecord(record) || !inferWouldBlock(record) || !record.fingerprint) {
+    if (!isGateRecord(record) || !inferWouldBlock(record)) {
       continue
     }
 
-    const fingerprint = record.fingerprint
+    const fingerprint = auditFingerprint(record)
+    if (!fingerprint) {
+      continue
+    }
     const existing = grouped.get(fingerprint)
     if (existing) {
       existing.askCount += 1

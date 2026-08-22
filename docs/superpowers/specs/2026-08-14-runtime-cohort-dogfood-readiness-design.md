@@ -29,9 +29,20 @@ and does not protect other repositories.
 ### 2. Select the active runtime/config cohort automatically
 
 Keep the full audit log for historical reporting, while calculating dogfood
-readiness only from gate evidence whose `runtimeBuildStamp` and
-`configFingerprint` match the active installation and configuration. This is
-the recommended approach because the safe behavior is automatic and
+readiness only from gate evidence whose cohort identity matches the active
+installation. As of audit schema v3 (2026-08-22 remediation), matching prefers:
+
+- `runtimeArtifactHash` — content hash of the installed runtime bundle
+- `decisionConfigFingerprint` — hash of authorization-relevant config (excludes
+  `mode`, audit paths, judge, notifications)
+- `boundaryProfile` — when recorded on the event
+
+Legacy records without v3 fields fall back to the original pair:
+
+- `runtimeBuildStamp`
+- `configFingerprint`
+
+This is the recommended approach because the safe behavior is automatic and
 fail-closed.
 
 ### 3. Require an explicit metrics filter
@@ -45,18 +56,30 @@ to omitted or incorrect filters and expands the CLI surface unnecessarily.
 ### Active cohort identity
 
 Introduce a focused runtime-provenance helper that reads the active adapter's
-installed `core.mjs` and returns its package version and build stamp. Reuse the
-same canonical configuration hashing used by the gate runtime to derive the
-active `configFingerprint`.
+installed `core.mjs` and returns its package version, build stamp, and
+`RUNTIME_ARTIFACT_HASH`. Reuse `hashDecisionConfig()` for the active
+`decisionConfigFingerprint` and `resolveBoundaryProfile()` for
+`boundaryProfile`. The full config object hash (`configFingerprint`) remains
+for forensics and legacy fallback.
 
-The readiness cohort is the set of audit records for which both fields match:
+The readiness cohort is the set of audit records that match the active identity.
+v3 gate events match when:
+
+```text
+record.runtimeArtifactHash === installedRuntimeArtifactHash
+record.decisionConfigFingerprint === activeDecisionConfigFingerprint
+record.boundaryProfile === activeBoundaryProfile   (when present)
+```
+
+Legacy records without v3 fields match when:
 
 ```text
 record.runtimeBuildStamp === installedRuntimeBuildStamp
 record.configFingerprint === activeConfigFingerprint
 ```
 
-Version-only or unrecorded legacy events never qualify. If the installed
+Version-only or unrecorded legacy events never qualify. Records with scrub
+placeholders in correlation fields are excluded from joins. If the installed
 runtime identity cannot be read, readiness remains false rather than falling
 back to all-time data.
 
@@ -134,7 +157,16 @@ CLI that cannot select a cohort; it is not part of the patched cutover.
 ## Non-goals
 
 - Adding arbitrary time-range or runtime-selection CLI flags.
-- Deleting or migrating historical audit records.
-- Changing EffectPlan semantics or readiness thresholds.
+- Deleting or migrating historical audit records (except renaming placeholder-corrupted logs
+  to `*.legacy-*.ndjson` on upgrade).
+- Changing EffectPlan semantics.
 - Changing the semantics of `--force`.
 - Automatically promoting any repository to enforce mode.
+
+### Readiness thresholds (deferred)
+
+The original 0.8.0 design kept existing `MIN_GATE_EVENTS_FOR_ENFORCE` semantics.
+[Dogfood audit remediation §6](../../dogfood-audit-remediation-2026-08-22.ja.md) proposes
+stricter reviewed-benign criteria (`~150` samples, `benignBlockRate` < 2%, per-boundary).
+Those threshold changes are **not** part of the runtime-cohort selector itself and remain
+future work (Phase D).

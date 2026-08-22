@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { BelayConfigV3 } from './core/config.js'
+import { hashValue } from './core/fingerprint.js'
 import { PACKAGE_VERSION } from './version.js'
 
 function inlineJson(value: unknown): string {
@@ -64,17 +65,21 @@ export async function renderRuntimeCore(
   adapter: 'cursor' | 'claude' | 'codex' = 'cursor',
 ): Promise<string> {
   const bundle = await readRuntimeBundle(adapter)
-  const runtimeBuildStamp = `${PACKAGE_VERSION}@${new Date().toISOString()}`
+  const withoutStamp = bundle
+    .replace(/^export const RUNTIME_BUILD_STAMP = .*;\n/gm, '')
+    .replace(/^export const RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
+    .replace(/^export const RUNTIME_ARTIFACT_HASH = .*;\n/gm, '')
+    .replace(/^var RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
+    .replace(/\n {2}RUNTIME_PACKAGE_VERSION,\n/, '\n')
+  const runtimeArtifactHash = hashValue(withoutStamp)
+  const runtimeBuildStamp = `${PACKAGE_VERSION}@${runtimeArtifactHash.slice(0, 16)}`
   const stamp = `export const RUNTIME_BUILD_STAMP = ${JSON.stringify(runtimeBuildStamp)};\n`
+  const artifactHashLine = `export const RUNTIME_ARTIFACT_HASH = ${JSON.stringify(runtimeArtifactHash)};\n`
   const versionLine = `export const RUNTIME_PACKAGE_VERSION = ${JSON.stringify(PACKAGE_VERSION)};\n`
   const provenance = `globalThis[Symbol.for("agent-belay.runtime-provenance")] = ${JSON.stringify({
     runtimeVersion: PACKAGE_VERSION,
     runtimeBuildStamp,
+    runtimeArtifactHash,
   })};\n`
-  const withoutStamp = bundle
-    .replace(/^export const RUNTIME_BUILD_STAMP = .*;\n/gm, '')
-    .replace(/^export const RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
-    .replace(/^var RUNTIME_PACKAGE_VERSION = .*;\n/gm, '')
-    .replace(/\n {2}RUNTIME_PACKAGE_VERSION,\n/, '\n')
-  return `${versionLine}${stamp}${provenance}${withoutStamp}`
+  return `${versionLine}${artifactHashLine}${stamp}${provenance}${withoutStamp}`
 }

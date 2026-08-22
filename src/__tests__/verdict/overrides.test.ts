@@ -60,7 +60,7 @@ describe('config overrides', () => {
       { controlPlaneDir },
     )
     expect(result.verdict).toBe('deny_pending_approval')
-    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.reason).toBe('control_plane_mutation')
   })
 })
 
@@ -73,6 +73,6 @@ describe('protected artifact roots', () => {
     const { verdict } = await import('../../core/verdict/verdict.js')
     const result = await verdict(`tee ${controlPlaneDir}/pending-approvals.json`, ctx)
     expect(result.permission).toBe('ask')
-    expect(result.reason).toBe('tier1_catastrophic')
+    expect(result.reason).toBe('control_plane_mutation')
   })
 })

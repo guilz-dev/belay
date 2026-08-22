@@ -87,6 +87,19 @@ describe('installer scope (T29)', () => {
     expect(config.installScope).toBe('global')
   })
 
+  it('keeps the runtime artifact cohort stable across a same-bundle upgrade', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    const before = (await metricsProject({ targetDir: repoRoot })).currentCohort.identity
+
+    await upgradeProject({ targetDir: repoRoot })
+    const after = (await metricsProject({ targetDir: repoRoot })).currentCohort.identity
+
+    expect(before?.runtimeArtifactHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(after?.runtimeArtifactHash).toBe(before?.runtimeArtifactHash)
+    expect(after?.runtimeBuildStamp).toBe(before?.runtimeBuildStamp)
+  })
+
   it('global scope uses absolute runner paths in hooks.json', async () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()

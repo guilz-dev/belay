@@ -74,14 +74,6 @@ export function getManagedHookEntries(
       definition: {
         command: toolGate,
         placement: 'prepend',
-        matcher: 'Shell',
-      },
-    },
-    {
-      event: 'preToolUse',
-      definition: {
-        command: toolGate,
-        placement: 'prepend',
         matcher: 'Write',
       },
     },
