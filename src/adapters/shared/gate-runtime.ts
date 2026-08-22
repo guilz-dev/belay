@@ -145,8 +145,8 @@ import type {
   Assessment,
   ClassifierOptions,
 } from '../../core/types.js'
-import { egressStatus } from '../../services/egress-service.js'
 import { buildAuditProvenanceFields } from '../../runtime-provenance.js'
+import { egressStatus } from '../../services/egress-service.js'
 import { protectedArtifactRoots } from '../layouts/protected-paths.js'
 import type { AdapterLayout } from '../layouts/types.js'
 
@@ -169,7 +169,6 @@ function auditProvenance(config: BelayConfigV3): Record<string, string> {
     | undefined
   return buildAuditProvenanceFields(config, runtime)
 }
-
 
 function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
   if (
@@ -383,7 +382,20 @@ function gateAuditEventName(kind: GatedActionKind): string {
 }
 
 function resolveGateAuditEvent(sourceEvent: string | undefined, kind: GatedActionKind): string {
-  return sourceEvent ?? gateAuditEventName(kind)
+  if (!sourceEvent) {
+    return gateAuditEventName(kind)
+  }
+  switch (sourceEvent.toLowerCase()) {
+    case 'beforeshellexecution':
+      return 'beforeShellExecution'
+    case 'pretooluse':
+      return 'preToolUse'
+    case 'subagentstart':
+    case 'subagentgate':
+      return 'subagentGate'
+    default:
+      return gateAuditEventName(kind)
+  }
 }
 
 async function ensurePendingApproval(
@@ -666,10 +678,11 @@ function containedAuditBase(
   sourceEvent?: string,
 ): Record<string, unknown> {
   const planFields = effectPlanAuditFields(result.effectPlan)
-  const auditEvent = resolveGateAuditEvent(sourceEvent, kind)
+  const rawSourceEvent = sourceEvent ?? gateAuditEventName(kind)
+  const auditEvent = resolveGateAuditEvent(rawSourceEvent, kind)
   return {
     event: auditEvent,
-    sourceEvent: auditEvent,
+    sourceEvent: rawSourceEvent,
     kind,
     fingerprint: result.fingerprint,
     mode,
@@ -690,12 +703,13 @@ async function mediateContainedUnknownExecution(params: {
   action: GatedAction
   command: string
   result: ClassifyResult
+  sourceEvent?: string
 }): Promise<GateVerdict | null> {
-  const { ctx, deps, action, command } = params
+  const { ctx, deps, action, command, sourceEvent } = params
   const result = { ...params.result, wouldMediate: true }
   if (ctx.config.mode === 'audit') {
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, result),
+      ...containedAuditBase(action.kind, ctx.config.mode, result, sourceEvent),
       verdict: result.verdict,
       reason: result.reason,
       wouldBlock: true,
@@ -774,7 +788,7 @@ async function mediateContainedUnknownExecution(params: {
       reason,
     }
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, failedResult),
+      ...containedAuditBase(action.kind, ctx.config.mode, failedResult, sourceEvent),
       verdict: failedResult.verdict,
       reason,
       wouldBlock: true,
@@ -819,7 +833,7 @@ async function mediateContainedUnknownExecution(params: {
     mediatedExecution,
   }
   await deps.appendAudit(ctx, {
-    ...containedAuditBase(action.kind, ctx.config.mode, mediatedResult),
+    ...containedAuditBase(action.kind, ctx.config.mode, mediatedResult, sourceEvent),
     verdict: mediatedResult.verdict,
     reason,
     wouldBlock: false,
@@ -913,9 +927,10 @@ export async function evaluateGatedAction(
         effectFree: false,
       }),
     }
+    const sourceEvent = params.sourceEvent ?? gateAuditEventName(params.kind)
     await deps.appendAudit(ctx, {
-      event: resolveGateAuditEvent(params.sourceEvent, params.kind),
-      sourceEvent: resolveGateAuditEvent(params.sourceEvent, params.kind),
+      event: resolveGateAuditEvent(sourceEvent, params.kind),
+      sourceEvent,
       kind: params.kind,
       fingerprint: verdict.fingerprint,
       verdict: verdict.verdict,
@@ -988,6 +1003,7 @@ export async function evaluateGatedAction(
       action,
       command: action.command,
       result: predicted,
+      sourceEvent: params.sourceEvent,
     })
     if (mediated) {
       return mediated
@@ -1252,10 +1268,11 @@ async function gateDecisionToVerdict(
       (kind === 'shell' ? auditExtras.approvalInput?.input : undefined),
     stateDir,
   })
-  const auditEvent = resolveGateAuditEvent(auditExtras.sourceEvent, kind)
+  const sourceEvent = auditExtras.sourceEvent ?? gateAuditEventName(kind)
+  const auditEvent = resolveGateAuditEvent(sourceEvent, kind)
   const gateBase = {
     event: auditEvent,
-    sourceEvent: auditEvent,
+    sourceEvent,
     kind,
     fingerprint: result.fingerprint,
     summary: result.normalizedCommand ?? result.summary ?? '',

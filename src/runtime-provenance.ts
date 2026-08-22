@@ -4,10 +4,10 @@ import path from 'node:path'
 import { getAdapterLayout } from './adapters/layouts/index.js'
 import { resolveScopedPaths } from './adapters/layouts/scope.js'
 import { resolveAdapterName } from './config-io.js'
-import { resolveBoundaryProfile } from './core/capability/boundary-profile.js'
 import type { AuditCohortIdentity } from './core/audit-metrics.js'
-import type { BelayConfigV3 } from './core/config.js'
 import { isValidAuditFingerprint } from './core/audit-serialize.js'
+import { resolveBoundaryProfile } from './core/capability/boundary-profile.js'
+import type { BelayConfigV3 } from './core/config.js'
 import { hashDecisionConfig } from './core/decision-config-fingerprint.js'
 import { canonicalStringify, hashValue } from './core/fingerprint.js'
 import { PACKAGE_VERSION } from './version.js'
@@ -72,12 +72,13 @@ export function matchesAuditCohort(
   const boundaryProfile =
     typeof record.boundaryProfile === 'string' ? record.boundaryProfile : undefined
   const hasPartialV3Field =
-    artifactHash !== undefined || decisionFingerprint !== undefined
+    artifactHash !== undefined || decisionFingerprint !== undefined || boundaryProfile !== undefined
 
   if (hasPartialV3Field) {
     if (
       !artifactHash ||
       !decisionFingerprint ||
+      !boundaryProfile ||
       !isValidAuditFingerprint(artifactHash)
     ) {
       return false
@@ -88,7 +89,7 @@ export function matchesAuditCohort(
     ) {
       return false
     }
-    if (boundaryProfile && boundaryProfile !== cohort.boundaryProfile) {
+    if (boundaryProfile !== cohort.boundaryProfile) {
       return false
     }
     return true

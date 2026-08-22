@@ -7,8 +7,8 @@ import { scrubOptionsFromConfig } from './config.js'
 
 export {
   AUDIT_SCHEMA_VERSION,
-  approvalCorrelationId,
   appendAuditRecord,
+  approvalCorrelationId,
   isValidAuditFingerprint,
   isValidAuditTimestamp,
   parseAuditNdjsonLine,

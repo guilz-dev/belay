@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { bucketGateEventsByDay, computeRepeatedFingerprintAsks } from '../core/audit-analysis.js'
 import {
   appendAuditRecord,
   approvalCorrelationId,
@@ -12,10 +13,8 @@ import {
   parseAuditNdjsonLine,
   serializeAuditRecordV3,
 } from '../core/audit-io.js'
-import { DEFAULT_REDACTION_V3 } from '../core/config.js'
-import { bucketGateEventsByDay } from '../core/audit-analysis.js'
 import { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord } from '../core/audit-query.js'
-import { computeRepeatedFingerprintAsks } from '../core/audit-analysis.js'
+import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 
 const tempDirs: string[] = []
 
@@ -88,24 +87,32 @@ describe('serializeAuditRecordV3', () => {
     const fp1 = createHash('sha256').update('one').digest('hex')
     const fp2 = createHash('sha256').update('two').digest('hex')
 
-    await appendAuditRecord(auditPath, {
-      timestamp: '2026-08-22T10:00:00.000Z',
-      event: 'beforeShellExecution',
-      kind: 'shell',
-      verdict: 'deny_pending_approval',
-      wouldBlock: true,
-      fingerprint: fp1,
-      summary: 'first',
-    }, scrubOptions)
-    await appendAuditRecord(auditPath, {
-      timestamp: '2026-08-22T11:00:00.000Z',
-      event: 'beforeShellExecution',
-      kind: 'shell',
-      verdict: 'deny_pending_approval',
-      wouldBlock: true,
-      fingerprint: fp2,
-      summary: 'second',
-    }, scrubOptions)
+    await appendAuditRecord(
+      auditPath,
+      {
+        timestamp: '2026-08-22T10:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: fp1,
+        summary: 'first',
+      },
+      scrubOptions,
+    )
+    await appendAuditRecord(
+      auditPath,
+      {
+        timestamp: '2026-08-22T11:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: fp2,
+        summary: 'second',
+      },
+      scrubOptions,
+    )
 
     const raw = await readFile(auditPath, 'utf8')
     const records = raw

@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
-import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
+import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -19,7 +19,6 @@ import {
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
-import { matchesAuditCohort } from '../runtime-provenance.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
   boundaryAttestationPath,
@@ -47,7 +46,7 @@ import { probeFileCloneStrategy } from '../core/transactional/file-clone.js'
 import { isGitWorktreeAvailable } from '../core/transactional/git-worktree.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { resolveNodeBinary } from '../node-resolution.js'
-import { readInstalledRuntimeProvenance } from '../runtime-provenance.js'
+import { matchesAuditCohort, readInstalledRuntimeProvenance } from '../runtime-provenance.js'
 import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
@@ -355,7 +354,10 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const cohortAuditRecords = cohortIdentity
       ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
       : []
-    const auditSample = auditRecords.slice(0, 200).map((record) => JSON.stringify(record)).join('\n')
+    const auditSample = auditRecords
+      .slice(0, 200)
+      .map((record) => JSON.stringify(record))
+      .join('\n')
     if (
       auditSample.includes('"<timestamp>"') ||
       auditSample.includes('"<high-entropy>"') ||

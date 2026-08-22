@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
-
-import type { ScrubOptions } from './types.js'
 import { scrubString, scrubValue } from './scrub.js'
+import type { ScrubOptions } from './types.js'
 
 export const AUDIT_SCHEMA_VERSION = 3
 

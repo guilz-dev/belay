@@ -61,9 +61,7 @@ describe('cursor hook dedupe', () => {
     await upgradeCursorProject({ targetDir: repoRoot })
     const upgraded = await readJson(hooksPath)
 
-    expect(hasDuplicateCursorShellGates(upgraded, process.platform, hooksDir, repoRoot)).toBe(
-      false,
-    )
+    expect(hasDuplicateCursorShellGates(upgraded, process.platform, hooksDir, repoRoot)).toBe(false)
     expect(
       upgraded.hooks.preToolUse.some((entry: { matcher?: string }) => entry.matcher === 'Shell'),
     ).toBe(false)

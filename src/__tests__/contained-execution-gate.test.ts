@@ -184,6 +184,7 @@ describe('contained unknown execution gate integration', () => {
       kind: 'shell',
       cwd: path.join(repoRoot, 'app'),
       command: 'fictional-runner verify',
+      sourceEvent: 'PreToolUse',
     })
 
     const auditGuarantee = CONTAINED_UNKNOWN_EXECUTION_GUARANTEE.audit
@@ -208,7 +209,12 @@ describe('contained unknown execution gate integration', () => {
     })
     expect(verdict.approvalId).toBeUndefined()
     expect(auditEvents).toHaveLength(1)
-    expect(auditEvents[0]).toMatchObject({ wouldMediate: true, permission: 'allow' })
+    expect(auditEvents[0]).toMatchObject({
+      event: 'preToolUse',
+      sourceEvent: 'PreToolUse',
+      wouldMediate: true,
+      permission: 'allow',
+    })
     const raw = await readFile(path.join(repoRoot, ctx.config.audit.logPath), 'utf8')
     expect(raw).toContain('"wouldMediate":true')
     expect(raw).not.toContain('fictional-runner verify')

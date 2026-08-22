@@ -49,8 +49,12 @@ describe('harvest', () => {
     const report = buildHarvestReport(records)
     expect(report.availabilityQueue).toHaveLength(1)
     expect(report.availabilityQueue[0]?.availabilitySignal).toBe('judge_timeout')
-    expect(report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-avail'))).toBe(false)
-    expect(report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-classifier'))).toBe(true)
+    expect(
+      report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-avail')),
+    ).toBe(false)
+    expect(
+      report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-classifier')),
+    ).toBe(true)
   })
 
   it('keeps paired deny rows when --since filters only the approval event', () => {

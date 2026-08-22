@@ -7,10 +7,10 @@ import {
   loadConfigFile,
   repoLocalStateDirFor,
 } from './config-io.js'
-import { scrubOptionsFromConfig } from './core/config.js'
 import { serializeAuditRecordV3 } from './core/audit-serialize.js'
-import { resolveActiveAuditCohort } from './runtime-provenance.js'
+import { scrubOptionsFromConfig } from './core/config.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
+import { resolveActiveAuditCohort } from './runtime-provenance.js'
 import {
   clearEgressDaemonState,
   createEgressApprovalStore,

@@ -1,17 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
-import { hashDecisionConfig } from '../core/decision-config-fingerprint.js'
 import { mergeConfig } from '../core/config.js'
-import {
-  matchesAuditCohort,
-  resolveRuntimeArtifactHash,
-} from '../runtime-provenance.js'
+import { hashDecisionConfig } from '../core/decision-config-fingerprint.js'
+import { matchesAuditCohort, resolveRuntimeArtifactHash } from '../runtime-provenance.js'
+import { renderRuntimeCore } from '../templates.js'
 
 describe('decision config fingerprint', () => {
   it('keeps decisionConfigFingerprint stable when only mode changes', () => {
     const enforce = mergeConfig({ mode: 'enforce' })
-    const observe = mergeConfig({ mode: 'observe' })
-    expect(hashDecisionConfig(enforce)).toBe(hashDecisionConfig(observe))
+    const audit = mergeConfig({ ...enforce, mode: 'audit' })
+    expect(hashDecisionConfig(enforce)).toBe(hashDecisionConfig(audit))
+  })
+
+  it('keeps decisionConfigFingerprint stable for inert overrides and operator-only settings', () => {
+    const baseline = mergeConfig({})
+    const operatorOnly = mergeConfig({
+      ...baseline,
+      mode: 'audit',
+      audit: { logPath: '.cursor/belay/other.ndjson', includeAssessment: false },
+      notifications: { webhookUrl: 'https://example.com/hook' },
+      overrides: { allow: ['git status'], external: ['curl'] },
+    })
+
+    expect(hashDecisionConfig(operatorOnly)).toBe(hashDecisionConfig(baseline))
   })
 
   it('changes decisionConfigFingerprint when authorization-relevant fields change', () => {
@@ -25,6 +36,17 @@ describe('decision config fingerprint', () => {
     expect(resolveRuntimeArtifactHash(valid)).toBe(valid)
     expect(resolveRuntimeArtifactHash('abc123deadbeef')).toBeUndefined()
     expect(resolveRuntimeArtifactHash(undefined)).toBeUndefined()
+  })
+
+  it('changes runtimeArtifactHash when the adapter runtime bundle changes', async () => {
+    const cursorRuntime = await renderRuntimeCore('cursor')
+    const claudeRuntime = await renderRuntimeCore('claude')
+    const artifactHash = (runtime: string) =>
+      runtime.match(/RUNTIME_ARTIFACT_HASH\s*=\s*"([a-f0-9]{64})"/)?.[1]
+
+    expect(artifactHash(cursorRuntime)).toMatch(/^[a-f0-9]{64}$/)
+    expect(artifactHash(claudeRuntime)).toMatch(/^[a-f0-9]{64}$/)
+    expect(artifactHash(cursorRuntime)).not.toBe(artifactHash(claudeRuntime))
   })
 })
 
@@ -77,6 +99,17 @@ describe('matchesAuditCohort boundary profile', () => {
     expect(
       matchesAuditCohort(
         {
+          decisionConfigFingerprint: cohort.decisionConfigFingerprint,
+          runtimeBuildStamp: cohort.runtimeBuildStamp,
+          configFingerprint: cohort.configFingerprint,
+        },
+        cohort,
+      ),
+    ).toBe(false)
+    expect(
+      matchesAuditCohort(
+        {
+          runtimeArtifactHash: cohort.runtimeArtifactHash,
           decisionConfigFingerprint: cohort.decisionConfigFingerprint,
           runtimeBuildStamp: cohort.runtimeBuildStamp,
           configFingerprint: cohort.configFingerprint,

@@ -1,4 +1,4 @@
-import { inferWouldBlock, isGateRecord, parseTimestamp, auditFingerprint } from './audit-query.js'
+import { auditFingerprint, inferWouldBlock, isGateRecord, parseTimestamp } from './audit-query.js'
 import type {
   ApprovalRoundTrip,
   AuditRecord,

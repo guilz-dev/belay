@@ -1,7 +1,7 @@
+import { matchesAuditCohort } from '../runtime-provenance.js'
 import type { AuditCohortIdentity } from './audit-metrics.js'
 import type { AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
-import { matchesAuditCohort } from '../runtime-provenance.js'
 
 const RESTORE_EVENTS = new Set(['recoveryApplied', 'recoveryConflict', 'recoveryRejected'])
 

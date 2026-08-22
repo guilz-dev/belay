@@ -211,7 +211,7 @@ export async function runToolGateHook(eventName: string) {
         kind === 'shell' ? extractString(normalizedPayload.tool_input, 'command') : undefined,
       payload: normalizedPayload,
       toolName,
-      sourceEvent: 'PreToolUse',
+      sourceEvent: eventName,
     })
     jsonResponse(gateVerdictToCodexPreToolUseResponse(verdict))
   } catch {

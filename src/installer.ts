@@ -14,8 +14,8 @@ import {
   mergeAndWriteConfig,
   writeConfigFile,
 } from './config-io.js'
-import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
+import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
 import {
   type BelayJudgeConfig,
   isFreshConfigInput,

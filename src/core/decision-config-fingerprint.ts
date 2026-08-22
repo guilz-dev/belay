@@ -10,6 +10,7 @@ export function hashDecisionConfig(config: BelayConfigV3): string {
     judge: _judge,
     redaction: _redaction,
     installScope: _installScope,
+    overrides: _overrides,
     tokenPrefix: _tokenPrefix,
     approvalTtlMinutes: _approvalTtlMinutes,
     ...decisionRelevant

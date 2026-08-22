@@ -1,6 +1,10 @@
+import {
+  isValidApprovalCorrelationId,
+  isValidAuditFingerprint,
+  isValidAuditTimestamp,
+} from './audit-serialize.js'
 import type { ApprovalRoundTrip, AuditFilter, AuditRecord } from './audit-types.js'
 import { GATE_EVENTS } from './audit-types.js'
-import { isValidAuditFingerprint, isValidAuditTimestamp, isValidApprovalCorrelationId } from './audit-serialize.js'
 
 export function toAuditRecord(value: Record<string, unknown>): AuditRecord {
   const record = { ...value } as AuditRecord
@@ -192,7 +196,9 @@ export function buildApprovalRoundTrips(records: AuditRecord[]): ApprovalRoundTr
       fingerprint &&
       record.permission === 'allow'
     ) {
-      const trip = pendingByFingerprint.get(fingerprint)
+      const trip = correlationId
+        ? pendingByCorrelationId.get(correlationId)
+        : pendingByFingerprint.get(fingerprint)
       if (trip) {
         trip.executeTimestamp = timestamp
       }

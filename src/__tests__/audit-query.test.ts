@@ -79,6 +79,119 @@ describe('audit query', () => {
     expect(summarizeRoundTrips(trips)[0]).toContain('approved')
   })
 
+  it('uses approval correlation before fingerprint for approved-once execution', () => {
+    const fingerprint = testFingerprint('same-command')
+    const firstCorrelation = '1111111111111111'
+    const secondCorrelation = '2222222222222222'
+    const trips = buildApprovalRoundTrips([
+      {
+        timestamp: '2026-06-01T10:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId: firstCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:01:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId: firstCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:02:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId: secondCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:03:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId: secondCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:04:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'approved_once',
+        permission: 'allow',
+        fingerprint,
+        approvalCorrelationId: firstCorrelation,
+      },
+    ])
+
+    expect(
+      trips.find((trip) => trip.approvalCorrelationId === firstCorrelation)?.executeTimestamp,
+    ).toBe('2026-06-01T10:04:00.000Z')
+    expect(
+      trips.find((trip) => trip.approvalCorrelationId === secondCorrelation)?.executeTimestamp,
+    ).toBeUndefined()
+  })
+
+  it('does not fall back to fingerprint when an approved-once correlation is unmatched', () => {
+    const fingerprint = testFingerprint('same-command')
+    const firstCorrelation = '1111111111111111'
+    const secondCorrelation = '2222222222222222'
+    const trips = buildApprovalRoundTrips([
+      {
+        timestamp: '2026-06-01T10:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId: firstCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:01:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId: firstCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:02:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId: secondCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:03:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId: secondCorrelation,
+      },
+      {
+        timestamp: '2026-06-01T10:04:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'approved_once',
+        permission: 'allow',
+        fingerprint,
+        approvalCorrelationId: '3333333333333333',
+      },
+    ])
+
+    expect(trips.every((trip) => trip.executeTimestamp === undefined)).toBe(true)
+  })
+
   it('detects noisy rules with high approval rate', () => {
     const trips = buildApprovalRoundTrips(records)
     const noisy = detectNoisyRules(
