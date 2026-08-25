@@ -330,6 +330,126 @@ describe('general shell semantic lowering', () => {
     })
   })
 
+  it('lowers ruby minitest invocations without indeterminate effects', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'ruby -Itest test/upgrade_script_contract_test.rb',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:ruby-minitest',
+    })
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'process.exec',
+          resource: { kind: 'executable', command: 'ruby', operation: 'spawn' },
+        }),
+        expect.objectContaining({
+          action: 'fs.read',
+          resource: {
+            kind: 'path',
+            path: path.join(workspace, 'test/upgrade_script_contract_test.rb'),
+          },
+        }),
+      ]),
+    )
+    expect(collectRequirements(plan.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it('lowers bundle exec rubocop without indeterminate effects', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'bundle exec rubocop test/upgrade_script_contract_test.rb',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:bundle-rubocop',
+    })
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'process.exec',
+        resource: { kind: 'executable', command: 'rubocop', operation: 'inspect' },
+      }),
+    )
+    expect(collectRequirements(plan.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it('lowers chained ruby minitest and rubocop without indeterminate effects', () => {
+    const plan = lowerShellEffectPlan({
+      command:
+        'ruby -Itest test/upgrade_script_contract_test.rb && bundle exec rubocop test/upgrade_script_contract_test.rb',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:ruby-rubocop-chain',
+    })
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it('keeps arbitrary ruby scripts indeterminate', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'ruby script.rb',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:ruby-script',
+    })
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it('keeps repo-outside minitest scripts indeterminate', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'ruby -Itest /tmp/evil_test.rb',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:ruby-outside-repo',
+    })
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'indeterminate',
+        evidence: expect.objectContaining({
+          signals: expect.arrayContaining(['process.ruby_outside_repo']),
+        }),
+      }),
+    )
+  })
+
+  it.each([
+    ['set -e', 'fixture:set-e'],
+    ['set -o pipefail', 'fixture:set-pipefail'],
+    ['wait', 'fixture:wait'],
+    ['exit 0', 'fixture:exit'],
+  ])('lowers make recipe shell control builtin: %s', (command, fingerprint) => {
+    const plan = lowerShellEffectPlan({
+      command,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: fingerprint,
+    })
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it('keeps dynamic wait targets indeterminate', () => {
+    const plan = lowerShellEffectPlan({
+      command: 'wait $!',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:wait-dynamic',
+    })
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
   it.each([
     ['pwd', 'pwd'],
     ['which node', 'which'],
@@ -490,6 +610,10 @@ describe('general shell semantic lowering', () => {
     ['make -n test', 'allow'],
     ['bin/rails routes', 'allow'],
     ['bundle exec rubocop --version', 'allow'],
+    ['bundle exec rubocop test/upgrade_script_contract_test.rb', 'allow'],
+    ['bundle exec rubocop -A test/upgrade_script_contract_test.rb', 'allow_flagged'],
+    ['ruby -Itest test/upgrade_script_contract_test.rb', 'allow_flagged'],
+    ['ruby -e "puts 1"', 'deny_pending_approval'],
   ])('projects structural local operation semantics: %s', async (command, expected) => {
     const { classifyShell } = await import('../../core/verdict/adapter.js')
     const { mergeConfig } = await import('../../core/config.js')

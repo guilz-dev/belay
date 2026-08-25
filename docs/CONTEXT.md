@@ -109,6 +109,7 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - Host `spawn(env: process.env)` removal from L3 `host-integration` driver
 - Bounded audit storage, compact post-tool telemetry, and readiness threshold revision (Phase C/D
   in [dogfood audit remediation](./dogfood-audit-remediation-2026-08-22.ja.md))
+- Active dogfood install roster: [docs/ops/dogfood-install-targets.md](./ops/dogfood-install-targets.md)
 
 ## Layer split (L1 vs L3)
 

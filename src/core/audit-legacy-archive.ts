@@ -17,6 +17,16 @@ export function auditLogHasLegacyScrubPlaceholders(sample: string): boolean {
   return LEGACY_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(sample))
 }
 
+export function auditRecordHasLegacyCorrelationPlaceholders(
+  record: Record<string, unknown>,
+): boolean {
+  return (
+    record.timestamp === '<timestamp>' ||
+    record.fingerprint === '<high-entropy>' ||
+    record.approvalId === '<approval-id>'
+  )
+}
+
 async function auditFileHasLegacyScrubPlaceholders(auditPath: string): Promise<boolean> {
   const handle = await open(auditPath, 'r')
   const buffer = Buffer.allocUnsafe(AUDIT_SCAN_CHUNK_BYTES)

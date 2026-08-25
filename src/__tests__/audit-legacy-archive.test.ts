@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   archiveLegacyAuditLogIfNeeded,
   auditLogHasLegacyScrubPlaceholders,
+  auditRecordHasLegacyCorrelationPlaceholders,
 } from '../core/audit-legacy-archive.js'
 import { mergeConfig } from '../core/config.js'
 
@@ -24,6 +25,21 @@ describe('audit legacy archive', () => {
     expect(auditLogHasLegacyScrubPlaceholders('{"approvalCorrelationId":"deadbeefdeadbeef"}')).toBe(
       false,
     )
+  })
+
+  it('detects legacy correlation placeholders on gate records only', () => {
+    expect(
+      auditRecordHasLegacyCorrelationPlaceholders({
+        timestamp: '<timestamp>',
+        fingerprint: 'abc',
+      }),
+    ).toBe(true)
+    expect(
+      auditRecordHasLegacyCorrelationPlaceholders({
+        timestamp: '2026-08-24T00:00:00.000Z',
+        actionSnapshot: { payloadHash: '<high-entropy>' },
+      }),
+    ).toBe(false)
   })
 
   it('archives audit logs that contain legacy scrub placeholders', async () => {

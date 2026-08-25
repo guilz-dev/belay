@@ -17,4 +17,6 @@ export const BENIGN_PROBE_CORES = [
   'make -n test',
   'bin/rails routes',
   'bundle exec rubocop --version',
+  'bundle exec rubocop test/upgrade_script_contract_test.rb',
+  'ruby -Itest test/upgrade_script_contract_test.rb',
 ] as const

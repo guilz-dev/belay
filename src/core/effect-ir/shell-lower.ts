@@ -2,12 +2,14 @@ import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
 import { inspectGitResourceIdentity } from '../git-resource-identity.js'
+import { canonicalPath, pathWithinRoot } from '../path-utils.js'
 import { isFdDuplication, isRedirectOperator, tokenizeShell } from '../shell-tokenizer.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
   extractRecursiveScript,
+  extractDockerComposeRunScript,
   isCommandInspection,
   isDynamicRecursiveEvaluation,
   parseSegment,
@@ -324,6 +326,32 @@ function lowerSegment(
     return shellSegment(commandRedacted, head, requirements, 'recursive', signals)
   }
 
+  const dockerComposeScript = extractDockerComposeRunScript(tokens)
+  if (dockerComposeScript && opacity !== 'opaque' && opacity !== 'unparseable') {
+    requirements.push(
+      processRequirement(head, 'spawn', commandRedacted, ['process.docker_compose_run']),
+    )
+    const nested = lowerTopLevelSegments(dockerComposeScript, {
+      ...context,
+      command: dockerComposeScript,
+      env,
+      depth: context.depth + 1,
+    })
+    for (const nestedSegment of nested) {
+      requirements.push(
+        ...nestedSegment.requirements.map((entry) =>
+          withInnerProvenance(entry, dockerComposeScript, head, commandRedacted),
+        ),
+      )
+      for (const signal of nestedSegment.signals) {
+        signals.add(signal)
+      }
+      opacity = joinNestedOpacity(opacity, nestedSegment)
+    }
+    signals.add('process.docker_compose_run')
+    return shellSegment(commandRedacted, head, requirements, 'recursive', signals)
+  }
+
   const launcher = resolveLauncherRecipe({
     tokens,
     cwd: context.cwd,
@@ -577,6 +605,146 @@ function railsReadOnlySubcommand(args: string[]): boolean {
   return RAILS_READ_ONLY_SUBCOMMANDS.has(subcommand)
 }
 
+function isRubyTestScript(scriptPath: string): boolean {
+  const base = path.basename(scriptPath)
+  return base.endsWith('_test.rb') || base.endsWith('_spec.rb')
+}
+
+function parseRubyTestInvocation(
+  args: string[],
+): { includePaths: string[]; scriptPath: string } | null {
+  const includePaths: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? ''
+    if (arg === '-e' || arg === '-r') {
+      return null
+    }
+    if (arg === '-I') {
+      const includePath = args[index + 1]
+      if (!includePath) {
+        return null
+      }
+      includePaths.push(includePath)
+      index += 1
+      continue
+    }
+    if (arg.startsWith('-I') && arg.length > 2) {
+      includePaths.push(arg.slice(2))
+      continue
+    }
+    if (arg.startsWith('-')) {
+      if (arg === '-n') {
+        if (!args[index + 1]) {
+          return null
+        }
+        index += 1
+        continue
+      }
+      if (arg.startsWith('-n')) {
+        continue
+      }
+      return null
+    }
+    if (isRubyTestScript(arg)) {
+      return { includePaths, scriptPath: arg }
+    }
+    return null
+  }
+  return null
+}
+
+function isRubocopMutating(args: string[]): boolean {
+  return args.some(
+    (arg) =>
+      arg === '-A' ||
+      arg === '-a' ||
+      arg === '--auto-correct' ||
+      arg === '--autocorrect' ||
+      arg.startsWith('--auto-correct-all') ||
+      arg.startsWith('--autocorrect-all'),
+  )
+}
+
+function isRspecDryRun(args: string[]): boolean {
+  return args.some((arg) => arg === '--dry-run' || arg.startsWith('--dry-run='))
+}
+
+function decodeBundleExecInner(
+  innerHead: string,
+  innerArgs: string[],
+  segment: string,
+): ShellEffectRequirement[] | null {
+  const innerBase = executableBaseName(innerHead)
+  if (innerBase === 'rubocop') {
+    const mutating = isRubocopMutating(innerArgs)
+    return [
+      processRequirement(
+        innerHead,
+        mutating ? 'spawn' : 'inspect',
+        segment,
+        mutating ? ['process.linter.mutating'] : ['process.inspect.linter'],
+      ),
+    ]
+  }
+  if (innerBase === 'rspec') {
+    return [
+      processRequirement(
+        innerHead,
+        isRspecDryRun(innerArgs) ? 'inspect' : 'spawn',
+        segment,
+        isRspecDryRun(innerArgs)
+          ? ['process.inspect.test_runner']
+          : ['process.test_runner.rspec'],
+      ),
+    ]
+  }
+  return null
+}
+
+function decodeRuby(
+  args: string[],
+  cwd: string,
+  repoRoot: string,
+  segment: string,
+): ShellEffectRequirement[] {
+  const parsed = parseRubyTestInvocation(args)
+  if (!parsed) {
+    return unsupportedProcess('ruby', segment, 'process.ruby_grammar_incomplete')
+  }
+  const scriptPath = resolvePathOperand(parsed.scriptPath, cwd)
+  if (!pathWithinRoot(canonicalPath(repoRoot), canonicalPath(scriptPath))) {
+    return unsupportedProcess('ruby', segment, 'process.ruby_outside_repo')
+  }
+  for (const includePath of parsed.includePaths) {
+    const resolvedInclude = resolvePathOperand(includePath, cwd)
+    if (!pathWithinRoot(canonicalPath(repoRoot), canonicalPath(resolvedInclude))) {
+      return unsupportedProcess('ruby', segment, 'process.ruby_outside_repo')
+    }
+  }
+  const lowered = [
+    processRequirement('ruby', 'spawn', segment, ['process.test_runner.minitest']),
+    requirement(
+      'fs.read',
+      'fs.read',
+      { kind: 'path', path: scriptPath },
+      segment,
+      ['ruby.minitest_script_read'],
+    ),
+  ]
+  for (const includePath of parsed.includePaths) {
+    lowered.push(
+      requirement(
+        'fs.read',
+        'fs.read',
+        { kind: 'path', path: resolvePathOperand(includePath, cwd) },
+        segment,
+        ['ruby.minitest_load_path_read'],
+      ),
+    )
+  }
+  return lowered
+}
+
 function decodeRuntimeMetadataProcess(
   head: string,
   args: string[],
@@ -602,6 +770,10 @@ function decodeRuntimeMetadataProcess(
           ]),
         ]
       }
+      const bundleExecInner = decodeBundleExecInner(innerHead, innerArgs, segment)
+      if (bundleExecInner) {
+        return bundleExecInner
+      }
     }
     return null
   }
@@ -622,6 +794,74 @@ function decodeRuntimeMetadataProcess(
   return null
 }
 
+function decodeSetBuiltin(args: string[]): boolean {
+  let index = 0
+  while (index < args.length) {
+    const arg = args[index] ?? ''
+    if (arg === '--') {
+      index += 1
+      continue
+    }
+    if (arg === '-o' || arg === '+o') {
+      if (!args[index + 1]) {
+        return false
+      }
+      index += 2
+      continue
+    }
+    if (/^[-+][A-Za-z0-9]+$/.test(arg)) {
+      index += 1
+      continue
+    }
+    return false
+  }
+  return true
+}
+
+function decodeShellControlBuiltin(
+  head: string,
+  args: string[],
+): ShellEffectRequirement[] | null {
+  if (head === 'set') {
+    return decodeSetBuiltin(args) ? [] : null
+  }
+  if (head === 'wait') {
+    if (args.length === 0 || args.every((arg) => /^\d+$/.test(arg))) {
+      return []
+    }
+    return null
+  }
+  if (head === 'exit') {
+    if (args.length === 0 || (args.length === 1 && /^-?\d+$/.test(args[0] ?? ''))) {
+      return []
+    }
+    return null
+  }
+  return null
+}
+
+function decodeDockerComposeRun(
+  head: string,
+  args: string[],
+  segment: string,
+): ShellEffectRequirement[] | null {
+  let composeArgs: string[] | null = null
+  let command = head
+  if (head === 'docker-compose') {
+    composeArgs = args
+  } else if (head === 'docker' && args[0] === 'compose') {
+    composeArgs = args.slice(1)
+    command = 'docker'
+  }
+  if (!composeArgs) {
+    return null
+  }
+  if (composeArgs.includes('run')) {
+    return [processRequirement(command, 'spawn', segment, ['process.docker_compose_run'])]
+  }
+  return unsupportedProcess(command, segment, 'process.docker_compose_grammar_incomplete')
+}
+
 function decodeProcessOrFilesystem(params: {
   tokens: string[]
   head: string
@@ -632,6 +872,15 @@ function decodeProcessOrFilesystem(params: {
 }): ShellEffectRequirement[] {
   const { tokens, head, env, cwd, repoRoot, segment } = params
   const args = tokens.slice(1)
+
+  if (tokens.length > 0 && tokens.every((token) => ENV_PREFIX_PATTERN.test(token))) {
+    return []
+  }
+
+  const shellControl = decodeShellControlBuiltin(head, args)
+  if (shellControl) {
+    return shellControl
+  }
 
   if (isCommandInspection(tokens)) {
     return [processRequirement(head, 'inspect', segment, ['process.inspect.command_lookup'])]
@@ -738,6 +987,19 @@ function decodeProcessOrFilesystem(params: {
   const runtimeMetadata = decodeRuntimeMetadataProcess(head, args, segment)
   if (runtimeMetadata) {
     return runtimeMetadata
+  }
+  if (head === 'ruby') {
+    return decodeRuby(args, cwd, repoRoot, segment)
+  }
+  if (head === 'rubocop' || head === 'rspec') {
+    const decoded = decodeBundleExecInner(head, args, segment)
+    if (decoded) {
+      return decoded
+    }
+  }
+  const dockerCompose = decodeDockerComposeRun(head, args, segment)
+  if (dockerCompose) {
+    return dockerCompose
   }
   if ((head === 'npm' || head === 'pnpm') && args.length === 1 && isMetadataOnlyArgv(args)) {
     return [processRequirement(head, 'inspect', segment, ['process.inspect.package_manager'])]

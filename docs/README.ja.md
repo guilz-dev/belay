@@ -112,6 +112,16 @@ npx skills add guilz-dev/belay --skill belay -a codex -y
 
 ---
 
+## 運用
+
+| 文書 | 内容 |
+| --- | --- |
+| [ops/dogfood-install-targets.ja.md](./ops/dogfood-install-targets.ja.md) | **dogfood 導入先リポジトリ一覧**（upgrade 対象の正本） |
+| [ops/releasing.md](./ops/releasing.md) | npm / GitHub リリース手順 |
+| [dogfood-audit-remediation-2026-08-22.ja.md](./dogfood-audit-remediation-2026-08-22.ja.md) | 監査ログ remediation（Phase A 実装済み） |
+
+---
+
 ## ロードマップ・履歴
 
 | 文書 | 内容 |

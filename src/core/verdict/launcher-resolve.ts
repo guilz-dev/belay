@@ -1,6 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
+import {
+  expandMakeExpression,
+  normalizeMakeRecipeLine,
+  parseMakefileVariables,
+  parsePhonyTargets,
+} from './makefile-expand.js'
+
 const MAX_RESOLVE_DEPTH = 8
 const PNPM_BUILTIN_COMMANDS = new Set([
   'add',
@@ -172,10 +179,9 @@ interface MakeTarget {
   opaquePrerequisites: boolean
 }
 
-function parseMakefileRecipes(makefilePath: string): Map<string, MakeTarget> {
+function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
   const targets = new Map<string, MakeTarget>()
   try {
-    const content = readFileSync(makefilePath, 'utf8')
     const lines = content.split('\n')
     let currentTarget: string | null = null
     let recipeLines: string[] = []
@@ -241,7 +247,20 @@ function parseMakefileRecipes(makefilePath: string): Map<string, MakeTarget> {
   return targets
 }
 
-function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): LauncherResolution {
+function parseMakefileRecipes(makefilePath: string): Map<string, MakeTarget> {
+  try {
+    return parseMakefileRecipeContent(readFileSync(makefilePath, 'utf8'))
+  } catch {
+    return new Map()
+  }
+}
+
+function resolveMakeRecipe(
+  cwd: string,
+  repoRoot: string,
+  target: string,
+  cliVars: Readonly<Record<string, string>> = {},
+): LauncherResolution {
   const candidates = ['Makefile', 'makefile', 'GNUmakefile']
   let makefilePath: string | null = null
   let searchDir = path.resolve(cwd)
@@ -262,7 +281,10 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
   if (!makefilePath) {
     return { recipes: [], opaque: true, reason: 'unknown_local_effect' }
   }
-  const targets = parseMakefileRecipes(makefilePath)
+  const makefileContent = readFileSync(makefilePath, 'utf8')
+  const makefileVars = parseMakefileVariables(makefileContent)
+  const phonyTargets = parsePhonyTargets(makefileContent)
+  const targets = parseMakefileRecipeContent(makefileContent)
   if (!targets.has(target)) {
     return { recipes: [], opaque: true, reason: 'make_target_undefined' }
   }
@@ -288,7 +310,17 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
         return false
       }
     }
-    recipeLines.push(...entry.recipes)
+    // When the requested target has its own recipes, treat those as the
+    // authorization authority. Skip .PHONY / `_`-prefixed prerequisite
+    // recipes (e.g. `_start_test_deps` docker-compose up) so setup-only
+    // side effects do not obscure the target's direct command.
+    const skipPhonyPrerequisiteRecipes =
+      name !== target &&
+      (phonyTargets.has(name) || name.startsWith('_')) &&
+      (targets.get(target)?.recipes.length ?? 0) > 0
+    if (!skipPhonyPrerequisiteRecipes) {
+      recipeLines.push(...entry.recipes)
+    }
     visiting.delete(name)
     visited.add(name)
     return true
@@ -296,15 +328,24 @@ function resolveMakeRecipe(cwd: string, repoRoot: string, target: string): Launc
   if (!collect(target)) {
     return { recipes: recipeLines, opaque: true, reason: 'make_dependency_cycle' }
   }
+  const expandedRecipes: string[] = []
   for (const line of recipeLines) {
-    if (/\$\(/.test(line) || /\$\{/.test(line)) {
+    const normalized = normalizeMakeRecipeLine(line)
+    const expanded = expandMakeExpression(normalized, cliVars, makefileVars)
+    if (expanded === null) {
       return { recipes: recipeLines, opaque: true, reason: 'make_recipe_dynamic' }
+    }
+    expandedRecipes.push(expanded)
+  }
+  for (const line of expandedRecipes) {
+    if (/\$\(/.test(line) || /\$\{/.test(line)) {
+      return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_dynamic' }
     }
   }
   if (opaquePrerequisites) {
-    return { recipes: recipeLines, opaque: true, reason: 'make_prerequisite_dynamic' }
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_prerequisite_dynamic' }
   }
-  return { recipes: recipeLines, opaque: false, reason: 'make_recipe_resolved' }
+  return { recipes: expandedRecipes, opaque: false, reason: 'make_recipe_resolved' }
 }
 
 export function resolveLauncherRecipe(params: {
@@ -341,8 +382,28 @@ export function resolveLauncherRecipe(params: {
     return resolution
   }
 
-  if (tokens[0] === 'make' && tokens[1] && !tokens[1].startsWith('-')) {
-    return resolveMakeRecipe(params.cwd, params.repoRoot, tokens[1])
+  if (tokens[0] === 'make') {
+    if (tokens.includes('-n') || tokens.includes('--dry-run')) {
+      return null
+    }
+    let target: string | null = null
+    const cliVars: Record<string, string> = {}
+    for (const token of tokens.slice(1)) {
+      if (token.startsWith('-')) {
+        continue
+      }
+      const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(token)
+      if (assignment) {
+        cliVars[assignment[1] ?? ''] = assignment[2] ?? ''
+        continue
+      }
+      if (!target) {
+        target = token
+      }
+    }
+    if (target) {
+      return resolveMakeRecipe(params.cwd, params.repoRoot, target, cliVars)
+    }
   }
 
   if (tokens[0] === 'pnpm' && tokens[1] === 'exec' && tokens[2]) {
