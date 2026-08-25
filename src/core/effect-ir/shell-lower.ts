@@ -49,6 +49,7 @@ export interface LowerShellEffectPlanParams {
 
 interface LowerContext extends LowerShellEffectPlanParams {
   depth: number
+  allowShellControlBuiltins?: boolean
 }
 
 /**
@@ -57,7 +58,7 @@ interface LowerContext extends LowerShellEffectPlanParams {
  * permission/verdict.
  */
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
-  const context: LowerContext = { ...params, depth: 0 }
+  const context: LowerContext = { ...params, depth: 0, allowShellControlBuiltins: true }
   const segments = lowerTopLevelSegments(params.command, context)
   return buildShellEffectPlan({
     inputFingerprint: params.inputFingerprint,
@@ -308,6 +309,7 @@ function lowerSegment(
       command: recursiveScript,
       env,
       depth: context.depth + 1,
+      allowShellControlBuiltins: false,
     })
     for (const nestedSegment of nested) {
       requirements.push(
@@ -336,6 +338,7 @@ function lowerSegment(
       command: dockerComposeScript,
       env,
       depth: context.depth + 1,
+      allowShellControlBuiltins: false,
     })
     for (const nestedSegment of nested) {
       requirements.push(
@@ -375,6 +378,7 @@ function lowerSegment(
         command: recipe,
         env,
         depth: context.depth + 1,
+        allowShellControlBuiltins: true,
       })
       for (const nestedSegment of nested) {
         requirements.push(
@@ -430,6 +434,7 @@ function lowerSegment(
           cwd: context.cwd,
           repoRoot: context.repoRoot,
           segment: commandRedacted,
+          allowShellControlBuiltins: context.allowShellControlBuiltins === true,
         }),
       )
     }
@@ -853,17 +858,24 @@ function decodeProcessOrFilesystem(params: {
   cwd: string
   repoRoot: string
   segment: string
+  allowShellControlBuiltins: boolean
 }): ShellEffectRequirement[] {
-  const { tokens, head, env, cwd, repoRoot, segment } = params
+  const { tokens, head, env, cwd, repoRoot, segment, allowShellControlBuiltins } = params
   const args = tokens.slice(1)
 
-  if (tokens.length > 0 && tokens.every((token) => ENV_PREFIX_PATTERN.test(token))) {
+  if (
+    allowShellControlBuiltins &&
+    tokens.length > 0 &&
+    tokens.every((token) => ENV_PREFIX_PATTERN.test(token))
+  ) {
     return []
   }
 
-  const shellControl = decodeShellControlBuiltin(head, args)
-  if (shellControl) {
-    return shellControl
+  if (allowShellControlBuiltins) {
+    const shellControl = decodeShellControlBuiltin(head, args)
+    if (shellControl) {
+      return shellControl
+    }
   }
 
   if (isCommandInspection(tokens)) {
