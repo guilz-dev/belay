@@ -8,7 +8,6 @@ import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { cleanupOrphanApprovalState } from '../cleanup-orphans.js'
-import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
 import {
   approvedApprovalsPath,
   belayStateDir,
@@ -19,6 +18,7 @@ import {
   writeConfigFile,
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
+import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
@@ -368,8 +368,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
       : []
     const gateDecisionRecords = cohortAuditRecords.filter(
-      (record) =>
-        record.kind === 'shell' || record.kind === 'tool' || record.kind === 'subagent',
+      (record) => record.kind === 'shell' || record.kind === 'tool' || record.kind === 'subagent',
     )
     if (
       gateDecisionRecords

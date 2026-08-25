@@ -19,7 +19,11 @@ TEST_DOCKER_RUN = docker-compose run --rm test
   it('expands $(or $(ARGS),spec) with CLI ARGS', () => {
     const variables = parseMakefileVariables('TEST_RSPEC_ARGS = $(or $(ARGS),spec)\n')
     expect(
-      expandMakeExpression('$(TEST_RSPEC_ARGS)', { ARGS: 'spec/makefile/upgrade_harness_spec.rb' }, variables),
+      expandMakeExpression(
+        '$(TEST_RSPEC_ARGS)',
+        { ARGS: 'spec/makefile/upgrade_harness_spec.rb' },
+        variables,
+      ),
     ).toBe('spec/makefile/upgrade_harness_spec.rb')
   })
 
@@ -30,10 +34,12 @@ TEST_DOCKER_RUN = docker-compose run --rm test
   })
 
   it('expands braced makefile variables including PWD', () => {
+    const pwdVariable = '$' + '{PWD}'
+    const appComposeVariable = '$' + '{APP_COMPOSE_FILE}'
     const variables = parseMakefileVariables(
-      'APP_COMPOSE_FILE=${PWD}/docker-compose.development.yml\n',
+      `APP_COMPOSE_FILE=${pwdVariable}/docker-compose.development.yml\n`,
     )
-    expect(expandMakeExpression('${APP_COMPOSE_FILE}', {}, variables)).toBe(
+    expect(expandMakeExpression(appComposeVariable, {}, variables)).toBe(
       './docker-compose.development.yml',
     )
   })

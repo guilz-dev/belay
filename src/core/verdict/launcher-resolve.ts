@@ -247,14 +247,6 @@ function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
   return targets
 }
 
-function parseMakefileRecipes(makefilePath: string): Map<string, MakeTarget> {
-  try {
-    return parseMakefileRecipeContent(readFileSync(makefilePath, 'utf8'))
-  } catch {
-    return new Map()
-  }
-}
-
 function resolveMakeRecipe(
   cwd: string,
   repoRoot: string,

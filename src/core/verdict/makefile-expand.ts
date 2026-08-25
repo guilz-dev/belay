@@ -35,11 +35,7 @@ export function parsePhonyTargets(content: string): Set<string> {
 
 export function normalizeMakeRecipeLine(line: string): string {
   let normalized = line.trim()
-  while (
-    normalized.startsWith('@') ||
-    normalized.startsWith('-') ||
-    normalized.startsWith('+')
-  ) {
+  while (normalized.startsWith('@') || normalized.startsWith('-') || normalized.startsWith('+')) {
     normalized = normalized.slice(1).trimStart()
   }
   return normalized
@@ -96,9 +92,7 @@ function expandMakeValue(
       if (selected === null) {
         const fallback = parts.at(-1)?.trim()
         selected =
-          fallback === undefined
-            ? ''
-            : expandMakeValue(fallback, cliVars, makefileVars, depth + 1)
+          fallback === undefined ? '' : expandMakeValue(fallback, cliVars, makefileVars, depth + 1)
       }
       if (selected === null) {
         return null
@@ -124,9 +118,7 @@ function expandMakeValue(
     if (bracedMatch) {
       const [fullMatch, name] = bracedMatch
       const resolved =
-        name === 'PWD'
-          ? '.'
-          : resolveMakeVariable(name ?? '', cliVars, makefileVars, depth + 1)
+        name === 'PWD' ? '.' : resolveMakeVariable(name ?? '', cliVars, makefileVars, depth + 1)
       if (resolved === null) {
         return null
       }

@@ -142,15 +142,9 @@ describe('launcher-resolve', () => {
     tempDirs.push(dir)
     await writeFile(
       path.join(dir, 'Makefile'),
-      [
-        '.PHONY: _prepare',
-        '',
-        '_prepare:',
-        '\techo prepared',
-        '',
-        'deploy: _prepare',
-        '',
-      ].join('\n'),
+      ['.PHONY: _prepare', '', '_prepare:', '\techo prepared', '', 'deploy: _prepare', ''].join(
+        '\n',
+      ),
     )
 
     const resolution = resolveLauncherRecipe({

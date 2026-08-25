@@ -8,8 +8,8 @@ import { decodeEgressEffects } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
-  extractRecursiveScript,
   extractDockerComposeRunScript,
+  extractRecursiveScript,
   isCommandInspection,
   isDynamicRecursiveEvaluation,
   parseSegment,
@@ -665,10 +665,6 @@ function isRubocopMutating(args: string[]): boolean {
   )
 }
 
-function isRspecDryRun(args: string[]): boolean {
-  return args.some((arg) => arg === '--dry-run' || arg.startsWith('--dry-run='))
-}
-
 function decodeBundleExecInner(
   innerHead: string,
   innerArgs: string[],
@@ -687,16 +683,11 @@ function decodeBundleExecInner(
     ]
   }
   if (innerBase === 'rspec') {
-    return [
-      processRequirement(
-        innerHead,
-        isRspecDryRun(innerArgs) ? 'inspect' : 'spawn',
-        segment,
-        isRspecDryRun(innerArgs)
-          ? ['process.inspect.test_runner']
-          : ['process.test_runner.rspec'],
-      ),
-    ]
+    const targetArgs = innerArgs.filter((arg) => !arg.startsWith('-'))
+    if (targetArgs.length === 0) {
+      return null
+    }
+    return [processRequirement(innerHead, 'spawn', segment, ['process.test_runner.rspec'])]
   }
   return null
 }
@@ -723,13 +714,9 @@ function decodeRuby(
   }
   const lowered = [
     processRequirement('ruby', 'spawn', segment, ['process.test_runner.minitest']),
-    requirement(
-      'fs.read',
-      'fs.read',
-      { kind: 'path', path: scriptPath },
-      segment,
-      ['ruby.minitest_script_read'],
-    ),
+    requirement('fs.read', 'fs.read', { kind: 'path', path: scriptPath }, segment, [
+      'ruby.minitest_script_read',
+    ]),
   ]
   for (const includePath of parsed.includePaths) {
     lowered.push(
@@ -818,10 +805,7 @@ function decodeSetBuiltin(args: string[]): boolean {
   return true
 }
 
-function decodeShellControlBuiltin(
-  head: string,
-  args: string[],
-): ShellEffectRequirement[] | null {
+function decodeShellControlBuiltin(head: string, args: string[]): ShellEffectRequirement[] | null {
   if (head === 'set') {
     return decodeSetBuiltin(args) ? [] : null
   }

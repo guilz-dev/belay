@@ -19,15 +19,7 @@ describe('extractDockerComposeRunScript', () => {
 
   it('extracts inner script from docker compose run', () => {
     expect(
-      extractDockerComposeRunScript([
-        'docker',
-        'compose',
-        'run',
-        'app',
-        'sh',
-        '-c',
-        'pnpm test',
-      ]),
+      extractDockerComposeRunScript(['docker', 'compose', 'run', 'app', 'sh', '-c', 'pnpm test']),
     ).toBe('pnpm test')
   })
 
