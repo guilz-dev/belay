@@ -28,32 +28,34 @@ async function readJson(filePath: string) {
 }
 
 describe('cursor hook dedupe', () => {
-  it('detects legacy Shell preToolUse gate duplication', () => {
+  it('detects duplicate Shell preToolUse gate entries', () => {
     const repoRoot = '/tmp/project'
     const hooksDir = `${repoRoot}/.cursor/hooks`
-    const legacy = legacyManagedShellPreToolUseEntry(process.platform, hooksDir, repoRoot)
+    const shellEntry = legacyManagedShellPreToolUseEntry(process.platform, hooksDir, repoRoot)
     const hooks = {
       version: 1,
       hooks: {
-        preToolUse: [legacy],
+        preToolUse: [shellEntry, shellEntry],
       },
     }
 
     expect(hasDuplicateCursorShellGates(hooks, process.platform, hooksDir, repoRoot)).toBe(true)
     expect(
-      mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot).hooks.preToolUse,
-    ).not.toEqual(expect.arrayContaining([expect.objectContaining({ matcher: 'Shell' })]))
+      mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot).hooks.preToolUse?.filter(
+        (entry) => entry.matcher === 'Shell',
+      ),
+    ).toHaveLength(1)
   })
 
-  it('removes legacy Shell preToolUse gate on upgrade', async () => {
+  it('dedupes duplicate Shell preToolUse gates on upgrade', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
 
     const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
     const hooks = await readJson(hooksPath)
-    const legacy = legacyManagedShellPreToolUseEntry(process.platform, hooksDir, repoRoot)
-    hooks.hooks.preToolUse = [legacy, ...(hooks.hooks.preToolUse ?? [])]
+    const shellEntry = legacyManagedShellPreToolUseEntry(process.platform, hooksDir, repoRoot)
+    hooks.hooks.preToolUse = [shellEntry, shellEntry, ...(hooks.hooks.preToolUse ?? [])]
     await writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`, 'utf8')
 
     expect(hasDuplicateCursorShellGates(hooks, process.platform, hooksDir, repoRoot)).toBe(true)
@@ -63,8 +65,8 @@ describe('cursor hook dedupe', () => {
 
     expect(hasDuplicateCursorShellGates(upgraded, process.platform, hooksDir, repoRoot)).toBe(false)
     expect(
-      upgraded.hooks.preToolUse.some((entry: { matcher?: string }) => entry.matcher === 'Shell'),
-    ).toBe(false)
+      upgraded.hooks.preToolUse.filter((entry: { matcher?: string }) => entry.matcher === 'Shell'),
+    ).toHaveLength(1)
     expect(upgraded.hooks.beforeShellExecution).toHaveLength(1)
   })
 })

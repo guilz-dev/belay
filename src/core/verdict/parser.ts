@@ -400,6 +400,37 @@ export function extractRecursiveScript(tokens: string[]): string | null {
   return null
 }
 
+export function extractDockerComposeRunScript(tokens: string[]): string | null {
+  const head = normalizeHead(tokens[0] ?? '')
+  const usesCompose =
+    head === 'docker-compose' || (head === 'docker' && (tokens[1] ?? '') === 'compose')
+  if (!usesCompose) {
+    return null
+  }
+  if (!tokens.includes('run')) {
+    return null
+  }
+  const runIndex = tokens.indexOf('run')
+  const tail = tokens.slice(runIndex + 1)
+  for (let index = 0; index < tail.length; index += 1) {
+    const shellHead = normalizeHead(tail[index] ?? '')
+    if (!SHELL_INTERPRETERS.has(shellHead)) {
+      continue
+    }
+    const flag = tail[index + 1] ?? ''
+    if (flag !== '-lc' && flag !== '-c') {
+      continue
+    }
+    const body = tail
+      .slice(index + 2)
+      .join(' ')
+      .replace(/^['"]|['"]$/g, '')
+      .trim()
+    return body || null
+  }
+  return null
+}
+
 /**
  * True when a recursive script is evaluated from a command argument rather
  * than expanded from a static launcher recipe. Callers use this semantic fact

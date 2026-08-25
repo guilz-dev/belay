@@ -18,6 +18,7 @@ import {
   writeConfigFile,
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
+import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
@@ -140,6 +141,18 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           : 'Install scope: project',
       )
       notes.push(`Config mode: ${loadedConfig.mode}`)
+      const dogfoodActive =
+        loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny'
+      const allGatesDisabled =
+        !loadedConfig.gates.shell &&
+        !loadedConfig.gates.toolShell &&
+        !loadedConfig.gates.fileMutation &&
+        !loadedConfig.gates.subagent
+      if (dogfoodActive && allGatesDisabled) {
+        issues.push(
+          'Dogfood audit mode is active but all gates are disabled; gate events will not be recorded. Enable gates.shell, gates.toolShell, gates.fileMutation, and/or gates.subagent.',
+        )
+      }
       notes.push(
         'Verdict engine (Tier0 + Tier1; location × opacity × effect × confidence). Audit records include schemaVersion 2 axes when available.',
       )
@@ -238,7 +251,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
       if (hasDuplicateCursorShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
         warnings.push(
-          'Duplicate Cursor shell gates detected (beforeShellExecution + preToolUse Shell). Run belay upgrade to remove the legacy Shell matcher.',
+          'Duplicate Cursor Shell preToolUse gates detected. Run belay upgrade to dedupe managed hooks.',
         )
       }
     } else if (adapterName === 'codex') {
@@ -354,17 +367,16 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const cohortAuditRecords = cohortIdentity
       ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
       : []
-    const auditSample = auditRecords
-      .slice(0, 200)
-      .map((record) => JSON.stringify(record))
-      .join('\n')
+    const gateDecisionRecords = cohortAuditRecords.filter(
+      (record) => record.kind === 'shell' || record.kind === 'tool' || record.kind === 'subagent',
+    )
     if (
-      auditSample.includes('"<timestamp>"') ||
-      auditSample.includes('"<high-entropy>"') ||
-      auditSample.includes('"<approval-id>"')
+      gateDecisionRecords
+        .slice(0, 200)
+        .some((record) => auditRecordHasLegacyCorrelationPlaceholders(record))
     ) {
       warnings.push(
-        'Audit log contains scrub placeholders in correlation fields (<timestamp>, <high-entropy>, <approval-id>). Historical metrics are unreliable until a schema v3 cohort is collected.',
+        'Gate audit records contain scrub placeholders in correlation fields (<timestamp>, <high-entropy>, <approval-id>). Historical metrics are unreliable until a schema v3 cohort is collected.',
       )
     }
     const auditVisibility = summarizeAuditVisibility(cohortAuditRecords)

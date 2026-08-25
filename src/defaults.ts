@@ -94,6 +94,15 @@ export function getManagedHookEntries(
       },
     },
     {
+      event: 'preToolUse',
+      definition: {
+        command: toolGate,
+        placement: 'prepend',
+        // Agent Shell tool (preToolUse) — distinct from terminal beforeShellExecution.
+        matcher: 'Shell',
+      },
+    },
+    {
       event: 'subagentStart',
       definition: {
         command: subagentGate,

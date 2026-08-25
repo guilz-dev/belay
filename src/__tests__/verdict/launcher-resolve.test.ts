@@ -106,6 +106,82 @@ describe('launcher-resolve', () => {
     expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json', 'curl https://evil.example'])
   })
 
+  it('resolves make test-fast with ARGS assignment', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-test-fast-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        '.PHONY: _start_test_deps test-fast',
+        'TEST_RSPEC_ARGS = $(or $(ARGS),spec)',
+        'TEST_DOCKER_RUN = docker-compose run --rm test',
+        '',
+        '_start_test_deps:',
+        '\t@for c in db redis; do docker start $$c; done',
+        '',
+        'test-fast: _start_test_deps',
+        '\t$(TEST_DOCKER_RUN) /bin/bash -lc "bundle exec rspec $(TEST_RSPEC_ARGS)"',
+        '',
+      ].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'test-fast', 'ARGS=spec/makefile/upgrade_harness_spec.rb'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution?.opaque).toBe(false)
+    expect(resolution?.recipes).toEqual([
+      'docker-compose run --rm test /bin/bash -lc "bundle exec rspec spec/makefile/upgrade_harness_spec.rb"',
+    ])
+  })
+
+  it('keeps prerequisite recipes when the target has no direct recipes', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-prereq-only-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      ['.PHONY: _prepare', '', '_prepare:', '\techo prepared', '', 'deploy: _prepare', ''].join(
+        '\n',
+      ),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'deploy'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution?.opaque).toBe(false)
+    expect(resolution?.recipes).toEqual(['echo prepared'])
+  })
+
+  it('allows make test-fast with expanded docker-compose rspec recipe', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-test-fast-verdict-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        '.PHONY: test-fast',
+        'TEST_RSPEC_ARGS = $(or $(ARGS),spec)',
+        'TEST_DOCKER_RUN = docker-compose run --rm test',
+        '',
+        'test-fast: _start_test_deps',
+        '\t$(TEST_DOCKER_RUN) /bin/bash -lc "bundle exec rspec $(TEST_RSPEC_ARGS)"',
+        '',
+      ].join('\n'),
+    )
+
+    const result = await verdict('make test-fast ARGS="spec/makefile/upgrade_harness_spec.rb"', {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+    expect(result.permission).toBe('allow')
+    expect(result.reason).not.toBe('unknown_local_effect')
+  })
+
   it('classifies npm forwarded args against the effective invocation', async () => {
     const result = await verdict('npm run build -- --outDir /tmp/belay-launcher-published', ctx)
     expect(result.permission).toBe('ask')

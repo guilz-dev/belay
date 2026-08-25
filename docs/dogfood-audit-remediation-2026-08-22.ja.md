@@ -1,7 +1,7 @@
 # Dogfood 監査ログの問題分析と具体的な対応
 
 - 作成日: 2026-08-22
-- 対象リポジトリ: `guilz-dev/belay`
+- 対象リポジトリ: [dogfood 導入先一覧](./ops/dogfood-install-targets.ja.md)（本分析の主ログは `guilz-dev/belay` の `.cursor/belay/audit.ndjson`）
 - 対象ログ: `.cursor/belay/audit.ndjson`
 - 対象ランタイム: 主に `0.9.0`。ただしログには provenance のない旧イベントと
   `0.8.1` のイベントが混在する
@@ -28,8 +28,10 @@ action が二重記録されているためである。
 
 ## 2. 調査範囲と観測事実
 
-追加探索では `/Users/kaz/product` 配下に別の有効な Belay 監査ログは見つからなかった。
-したがって分析対象は `.cursor/belay/audit.ndjson` のみである。
+追加探索（2026-08-22 時点）では `/Users/kaz/product` 配下の他リポに有効な監査ログは
+scheduling-editor 等に限られ、**本書の定量分析**は `guilz-dev/belay` の
+`.cursor/belay/audit.ndjson` のみを対象とした。導入先の正本一覧は
+[dogfood 導入先](./ops/dogfood-install-targets.ja.md) を参照。
 
 ### 2.1 ログの物理状態
 
@@ -316,6 +318,9 @@ NDJSON 完全性を保つ。
 | `pnpm lint` | allow / `allow_flagged` | package script を `biome` まで解決済み |
 | `pnpm typecheck` | allow / `allow_flagged` | `tsc --noEmit` を inspect と認識済み |
 | `git status --porcelain` | allow | read-only Git grammar |
+| `ruby -Itest test/*_test.rb` | allow / `allow_flagged` | minitest test runner grammar |
+| `bundle exec rubocop <path>` | allow | linter inspect grammar |
+| `make test-fast ARGS="spec/…"` | allow / `allow_flagged` | Make 変数展開 + docker-compose run 再帰 |
 | `gh pr checks 73` | allow | payload-free network read |
 | `make verify-parallel` | ask / `unknown_local_effect` | 現行でも再現する |
 | Node/Python heredoc | ask / `unknown_local_effect` | 任意コードなので ask 自体は妥当 |
@@ -326,9 +331,10 @@ NDJSON 完全性を保つ。
 ### 4.1 `make verify-parallel` の実原因
 
 Makefile の recipe は `@set -e`、subshell、background process、`$$!`、`wait`、`exit` を使う。
-[`resolveMakeRecipe()`](../src/core/verdict/launcher-resolve.ts) は recipe text を取得できるが、
-Make の先頭 `@` を除去せず、shell lowering は `@set`、`(pnpm`、`wait`、`exit` を
-`process.grammar_unknown` とする。
+[`resolveMakeRecipe()`](../src/core/verdict/launcher-resolve.ts) は recipe text を取得できる。
+Make の先頭 `@` / `-` / `+` は [`normalizeMakeRecipeLine()`](../src/core/verdict/makefile-expand.ts) で除去する。
+単独の `set -e`、`wait`、`exit` は shell control builtin として lower する。
+subshell、background process、`wait $!` など PID 依存が残る場合は indeterminate を維持する。
 
 対応は executable 名の allowlist ではなく、次の順に行う。
 

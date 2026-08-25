@@ -18,8 +18,8 @@ function mergeHookEntry(
   return [...filtered, expected]
 }
 
-/** Legacy Belay-managed Shell preToolUse gate duplicated beforeShellExecution. */
-export function legacyManagedShellPreToolUseEntry(
+/** Managed Shell preToolUse gate for Cursor Agent Shell tool invocations. */
+export function managedShellPreToolUseEntry(
   platform: NodeJS.Platform,
   hooksDir: string,
   repoRoot: string,
@@ -29,7 +29,7 @@ export function legacyManagedShellPreToolUseEntry(
     (entry) => entry.event === 'preToolUse' && entry.definition.matcher === 'Write',
   )?.definition
   if (!referencePreToolUse) {
-    throw new Error('managed hook definitions missing for legacy Shell migration')
+    throw new Error('managed hook definitions missing for Shell preToolUse gate')
   }
   return {
     command: referencePreToolUse.command,
@@ -37,25 +37,8 @@ export function legacyManagedShellPreToolUseEntry(
   }
 }
 
-export function removeLegacyManagedShellPreToolUse(
-  hooks: HooksFile,
-  platform: NodeJS.Platform,
-  hooksDir: string,
-  repoRoot: string,
-): HooksFile {
-  const legacy = legacyManagedShellPreToolUseEntry(platform, hooksDir, repoRoot)
-  const preToolUse = hooks.hooks.preToolUse
-  if (!Array.isArray(preToolUse)) {
-    return hooks
-  }
-  return {
-    ...hooks,
-    hooks: {
-      ...hooks.hooks,
-      preToolUse: preToolUse.filter((entry) => !entryMatches(entry, legacy)),
-    },
-  }
-}
+/** @deprecated Use {@link managedShellPreToolUseEntry}. */
+export const legacyManagedShellPreToolUseEntry = managedShellPreToolUseEntry
 
 export function mergeCursorHooksFile(
   current: HooksFile,
@@ -63,15 +46,9 @@ export function mergeCursorHooksFile(
   hooksDir: string,
   repoRoot: string,
 ): HooksFile {
-  const withoutLegacyShell = removeLegacyManagedShellPreToolUse(
-    current,
-    platform,
-    hooksDir,
-    repoRoot,
-  )
   const next: HooksFile = {
-    version: withoutLegacyShell.version || 1,
-    hooks: { ...withoutLegacyShell.hooks },
+    version: current.version || 1,
+    hooks: { ...current.hooks },
   }
   const managedEntries = getManagedHookEntries(platform, hooksDir, repoRoot)
   for (const { event, definition } of managedEntries) {
@@ -93,10 +70,11 @@ export function hasDuplicateCursorShellGates(
   hooksDir: string,
   repoRoot: string,
 ): boolean {
-  const legacy = legacyManagedShellPreToolUseEntry(platform, hooksDir, repoRoot)
+  const shellEntry = managedShellPreToolUseEntry(platform, hooksDir, repoRoot)
   const preToolUse = hooks.hooks.preToolUse
   if (!Array.isArray(preToolUse)) {
     return false
   }
-  return preToolUse.some((entry) => entryMatches(entry, legacy))
+  const shellMatches = preToolUse.filter((entry) => entryMatches(entry, shellEntry))
+  return shellMatches.length > 1
 }
