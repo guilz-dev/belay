@@ -99,7 +99,6 @@ function scriptResult(interpreter: string, token: WordToken | undefined): Recurs
 }
 
 function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocation {
-  let sawNonScriptOption = false
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--') return { kind: 'none' }
@@ -109,7 +108,6 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
       if (!operand || operand.startsWith('-')) {
         return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
       }
-      sawNonScriptOption = true
       index += 1
       continue
     }
@@ -120,13 +118,15 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
     }
     if (flags.every((flag) => SHELL_SHORT_OPTIONS.has(flag))) {
       if (!flags.includes('c')) continue
-      return sawNonScriptOption
-        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-        : scriptResult(interpreter, words[index + 1])
+      return scriptResult(interpreter, words[index + 1])
     }
-    if (flags.every((flag) => SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag))) {
-      sawNonScriptOption = true
-      continue
+    if (
+      flags.every(
+        (flag) => SHELL_SHORT_OPTIONS.has(flag) || SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag),
+      ) &&
+      flags.some((flag) => SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag))
+    ) {
+      return { kind: 'none' }
     }
     return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
   }
@@ -138,14 +138,11 @@ function decodeSeparated(
   interpreter: string,
   profile: SeparatedProfile,
 ): RecursiveInvocation {
-  let sawOrdinaryOption = false
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
     if (profile.scriptOptions.has(option)) {
-      return sawOrdinaryOption
-        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-        : scriptResult(interpreter, words[index + 1])
+      return scriptResult(interpreter, words[index + 1])
     }
     if (profile.terminalOptions.has(option)) return { kind: 'none' }
     if (profile.terminalValueOptions.has(option)) {
@@ -156,7 +153,6 @@ function decodeSeparated(
       return { kind: 'none' }
     }
     if (profile.flagOptions.has(option)) {
-      sawOrdinaryOption = true
       continue
     }
     if (profile.valueOptions.has(option)) {
@@ -164,7 +160,6 @@ function decodeSeparated(
       if (!operand || operand.startsWith('-')) {
         return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
       }
-      sawOrdinaryOption = true
       index += 1
       continue
     }
@@ -173,7 +168,6 @@ function decodeSeparated(
         (prefix) => option.startsWith(prefix) && option.length > prefix.length,
       )
     ) {
-      sawOrdinaryOption = true
       continue
     }
     return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }

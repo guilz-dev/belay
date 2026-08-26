@@ -126,6 +126,11 @@ type RecursiveInvocation =
 - `node`: `-e`、`--eval`、`--eval=SCRIPT`
 - `ruby`、`perl`、`osascript`: `-e`
 
+既存の有効なinvocationをfalse BLOCKへ退行させないため、profileがoptionの意味とoperand
+arityを明示できる既知optionは、script optionより前でも位置どおりに消費してよい。
+この既知option集合はinterpreterごとに分離し、別interpreterへ流用しない。no-execや
+module実行のように後続argvがinline scriptではないと確定するoptionは`none`とする。
+
 script optionは最初のfile／positional operandより前にある場合だけ有効とする。
 profileがoperand数を確定できない未知optionは`indeterminate`とする。script operandが
 欠けた場合も`indeterminate`とし、空文字scriptは有効な`static` invocationとして表す。

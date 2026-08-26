@@ -219,7 +219,7 @@ export type RecursiveInvocation =
   | { kind: 'indeterminate'; interpreter: string; signal: 'shell.interpreter_argv_incomplete' | 'shell.interpreter_option_unknown' }
 ```
 
-Profiles: shell family accepts `-c` and short groups made only from `c`, `l`, `e`, `x`, and `u` when the group contains `c`; Python accepts `-c`; Node accepts `-e`, `--eval`, and `--eval=SCRIPT`; Ruby/Perl/osascript accept `-e`. Stop at `--` or the first positional/file operand. Any other pre-positional option returns `indeterminate`; this intentionally prefers a false BLOCK over guessing whether an option consumes an operand. Missing script operands also return `indeterminate`.
+Profiles: shell family accepts `-c` and short groups made only from `c`, `l`, `e`, `x`, and `u` when the group contains `c`; Python accepts `-c`; Node accepts `-e`, `--eval`, and `--eval=SCRIPT`; Ruby/Perl/osascript accept `-e`. Stop at `--` or the first positional/file operand. To preserve existing valid invocations, an interpreter-specific profile may consume additional known options only when it models their exact operand arity and whether they terminate inline-script scanning; do not share these compatibility options across interpreters. Any unknown pre-positional option returns `indeterminate`; this intentionally prefers a false BLOCK over guessing whether an option consumes an operand. Missing script operands also return `indeterminate`.
 
 - [ ] **Step 4: Replace shared flag scans with compatibility adapters**
 

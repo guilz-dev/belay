@@ -70,15 +70,29 @@ describe('decodeRecursiveInvocation', () => {
   })
 
   it.each([
-    `bash +O extglob -c 'set -e'`,
     `fish -O extglob -c 'set -e'`,
-    `python -u -c 'print(1)'`,
     `node --check --eval 'console.log(1)'`,
-    `ruby -Itest -e 'puts 1'`,
   ])('does not promote an ordinary pre-positional option into supported recursive argv: %s', (command) => {
     expect(decodeRecursiveInvocation(lexShell(command).tokens)).toMatchObject({
       kind: 'indeterminate',
       signal: 'shell.interpreter_option_unknown',
+    })
+  })
+
+  it.each([
+    [`bash +O extglob -c 'set -e'`, 'set -e'],
+    [`python -u -c 'print(1)'`, 'print(1)'],
+    [`ruby -Itest -e 'puts 1'`, 'puts 1'],
+  ])('continues through interpreter-specific options with known arity: %s', (command, script) => {
+    expect(decodeRecursiveInvocation(lexShell(command).tokens)).toMatchObject({
+      kind: 'static',
+      script,
+    })
+  })
+
+  it('treats shell no-exec mode as an ordinary non-recursive invocation', () => {
+    expect(decodeRecursiveInvocation(lexShell(`bash -n -c 'rm -rf .git'`).tokens)).toEqual({
+      kind: 'none',
     })
   })
 
