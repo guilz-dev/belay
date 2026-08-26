@@ -3,8 +3,13 @@ import {
   findCommandSubstitutions,
   findStructuralCommandSubstitutions,
 } from '../shell-substitution.js'
-import { commandKey, tokenizeShell } from '../shell-tokenizer.js'
+import { commandKey, type ShellToken, tokenizeShell } from '../shell-tokenizer.js'
 import { detectUnparseableShell } from '../shell-unparseable.js'
+import {
+  decodeRecursiveInvocation,
+  type RecursiveInvocation,
+  shellTokensFromValues,
+} from './recursive-invocation.js'
 import type { VerdictOpacity } from './types.js'
 
 const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
@@ -12,7 +17,6 @@ const MAX_WRAPPER_PEEL_DEPTH = 32
 
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])
 const CODE_INTERPRETERS = new Set(['python', 'python3', 'node', 'ruby', 'perl', 'osascript'])
-const SCRIPT_FLAGS = new Set(['-c', '-lc', '-e', '--eval'])
 const INTERPRETER_SCRIPT_EXTENSIONS = new Set([
   '.js',
   '.mjs',
@@ -375,15 +379,19 @@ export function extractRecursiveScript(tokens: string[]): string | null {
     return body || null
   }
 
-  if (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) {
-    const flagIndex = filtered.findIndex((token) => SCRIPT_FLAGS.has(token))
-    if (flagIndex !== -1) {
-      const body = filtered[flagIndex + 1] ?? ''
-      return body || null
-    }
-  }
+  const invocation = decodeRecursiveInvocation(
+    shellTokensFromValues(filtered, { detectExpansion: false }),
+  )
+  return invocation.kind === 'static' ? invocation.script || null : null
+}
 
-  return null
+export function decodeRecursiveInvocationTokens(
+  tokens: readonly ShellToken[],
+): RecursiveInvocation {
+  const values = tokens.map((token) => token.value)
+  const { tokens: filtered, opaque } = peelTransparentWrappers(values)
+  if (opaque) return { kind: 'none' }
+  return decodeRecursiveInvocation(tokens.slice(values.length - filtered.length))
 }
 
 export function extractDockerComposeRunScript(tokens: string[]): string | null {
@@ -427,10 +435,7 @@ export function isDynamicRecursiveEvaluation(tokens: string[]): boolean {
   if (head === 'eval') {
     return true
   }
-  return (
-    (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) &&
-    filtered.some((token) => SCRIPT_FLAGS.has(token))
-  )
+  return decodeRecursiveInvocation(shellTokensFromValues(filtered)).kind !== 'none'
 }
 
 export function isCommandInspection(tokens: string[]): boolean {
@@ -451,8 +456,7 @@ export function isBareInterpreter(tokens: string[]): boolean {
   if (!SHELL_INTERPRETERS.has(head) && !CODE_INTERPRETERS.has(head)) {
     return false
   }
-  const hasScriptFlag = peeled.some((token) => SCRIPT_FLAGS.has(token))
-  if (hasScriptFlag) {
+  if (decodeRecursiveInvocation(shellTokensFromValues(peeled)).kind !== 'none') {
     return false
   }
   const args = peeled.slice(1)
