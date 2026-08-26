@@ -49,7 +49,6 @@ export interface LowerShellEffectPlanParams {
 
 interface LowerContext extends LowerShellEffectPlanParams {
   depth: number
-  allowShellControlBuiltins?: boolean
 }
 
 /**
@@ -58,7 +57,7 @@ interface LowerContext extends LowerShellEffectPlanParams {
  * permission/verdict.
  */
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
-  const context: LowerContext = { ...params, depth: 0, allowShellControlBuiltins: true }
+  const context: LowerContext = { ...params, depth: 0 }
   const segments = lowerTopLevelSegments(params.command, context)
   return buildShellEffectPlan({
     inputFingerprint: params.inputFingerprint,
@@ -216,9 +215,14 @@ function lowerSegment(
   const environment = extractEnvironment(rawTokens, context.env)
   const env = environment.env
   const parsed = parseSegment(command)
-  const tokens = stripRedirects(environment.commandTokens ?? parsed.tokens).map((token) =>
-    expandKnownVariables(token, env),
-  )
+  const parsedTokens = environment.commandTokens ?? parsed.tokens
+  const tokens = stripRedirects(
+    parsedTokens.length === 0 &&
+      rawTokens.length > 0 &&
+      rawTokens.every((token) => ENV_PREFIX_PATTERN.test(token))
+      ? rawTokens
+      : parsedTokens,
+  ).map((token) => expandKnownVariables(token, env))
   const head = path.basename(tokens[0] ?? parsed.head)
   let opacity = segmentOpacity(command)
   const signals = new Set<string>()
@@ -309,7 +313,6 @@ function lowerSegment(
       command: recursiveScript,
       env,
       depth: context.depth + 1,
-      allowShellControlBuiltins: false,
     })
     for (const nestedSegment of nested) {
       requirements.push(
@@ -338,7 +341,6 @@ function lowerSegment(
       command: dockerComposeScript,
       env,
       depth: context.depth + 1,
-      allowShellControlBuiltins: false,
     })
     for (const nestedSegment of nested) {
       requirements.push(
@@ -378,7 +380,6 @@ function lowerSegment(
         command: recipe,
         env,
         depth: context.depth + 1,
-        allowShellControlBuiltins: true,
       })
       for (const nestedSegment of nested) {
         requirements.push(
@@ -434,7 +435,6 @@ function lowerSegment(
           cwd: context.cwd,
           repoRoot: context.repoRoot,
           segment: commandRedacted,
-          allowShellControlBuiltins: context.allowShellControlBuiltins === true,
         }),
       )
     }
@@ -858,24 +858,17 @@ function decodeProcessOrFilesystem(params: {
   cwd: string
   repoRoot: string
   segment: string
-  allowShellControlBuiltins: boolean
 }): ShellEffectRequirement[] {
-  const { tokens, head, env, cwd, repoRoot, segment, allowShellControlBuiltins } = params
+  const { tokens, head, env, cwd, repoRoot, segment } = params
   const args = tokens.slice(1)
 
-  if (
-    allowShellControlBuiltins &&
-    tokens.length > 0 &&
-    tokens.every((token) => ENV_PREFIX_PATTERN.test(token))
-  ) {
+  if (tokens.length > 0 && tokens.every((token) => ENV_PREFIX_PATTERN.test(token))) {
     return []
   }
 
-  if (allowShellControlBuiltins) {
-    const shellControl = decodeShellControlBuiltin(head, args)
-    if (shellControl) {
-      return shellControl
-    }
+  const shellControl = decodeShellControlBuiltin(head, args)
+  if (shellControl) {
+    return shellControl
   }
 
   if (isCommandInspection(tokens)) {

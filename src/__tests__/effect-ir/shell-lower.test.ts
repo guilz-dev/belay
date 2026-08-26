@@ -438,6 +438,39 @@ describe('general shell semantic lowering', () => {
     )
   })
 
+  it.each([
+    ["sh -c 'set -e'", 'fixture:recursive-set-e'],
+    ["sh -c 'FOO=bar'", 'fixture:recursive-env-only'],
+    ["docker compose run app sh -c 'exit 0'", 'fixture:compose-exit'],
+  ])('MUST-ALLOW: lowers static nested shell control without uncertainty: %s', (command, fingerprint) => {
+    const plan = lowerShellEffectPlan({
+      command,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: fingerprint,
+    })
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
+  it.each([
+    ["sh -c 'wait $!'", 'fixture:recursive-wait-dynamic'],
+    ["docker compose run app sh -c 'exit nope'", 'fixture:compose-exit-invalid'],
+  ])('MUST-ASK: keeps uncertain nested shell control indeterminate: %s', (command, fingerprint) => {
+    const plan = lowerShellEffectPlan({
+      command,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: fingerprint,
+    })
+    expect(plan.completeness).toBe('partial')
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
   it('keeps dynamic wait targets indeterminate', () => {
     const plan = lowerShellEffectPlan({
       command: 'wait $!',
