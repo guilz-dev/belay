@@ -4,8 +4,68 @@ import type { ShellToken } from '../shell-tokenizer.js'
 
 const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])
 const PYTHON_INTERPRETERS = new Set(['python', 'python3'])
-const EVAL_INTERPRETERS = new Set(['ruby', 'perl', 'osascript'])
 const SHELL_SHORT_OPTIONS = new Set(['c', 'l', 'e', 'x', 'u'])
+const SHELL_NON_SCRIPT_SHORT_OPTIONS = new Set(['n'])
+const SHELL_TERMINAL_OPTIONS = new Set(['--help', '--version'])
+const SHELL_VALUE_OPTIONS = new Set(['-O', '+O', '--init-file', '--rcfile'])
+const NODE_TERMINAL_OPTIONS = new Set(['-h', '--help', '--help-all', '-v', '--version'])
+const NODE_FILE_OPTIONS = new Set(['-c', '--check'])
+
+interface SeparatedProfile {
+  scriptOptions: ReadonlySet<string>
+  terminalOptions: ReadonlySet<string>
+  flagOptions: ReadonlySet<string>
+  valueOptions: ReadonlySet<string>
+  attachedValuePrefixes: readonly string[]
+}
+
+const PYTHON_PROFILE: SeparatedProfile = {
+  scriptOptions: new Set(['-c']),
+  terminalOptions: new Set(['-h', '--help', '-V', '-VV', '--version']),
+  flagOptions: new Set([
+    '-b',
+    '-bb',
+    '-B',
+    '-d',
+    '-E',
+    '-I',
+    '-O',
+    '-OO',
+    '-P',
+    '-q',
+    '-s',
+    '-S',
+    '-u',
+    '-v',
+    '-x',
+  ]),
+  valueOptions: new Set(['-m', '-W', '-X']),
+  attachedValuePrefixes: ['-W', '-X'],
+}
+
+const RUBY_PROFILE: SeparatedProfile = {
+  scriptOptions: new Set(['-e']),
+  terminalOptions: new Set(['-h', '--help', '-v', '--version', '--copyright']),
+  flagOptions: new Set(['-d', '--debug', '-w']),
+  valueOptions: new Set(['-I']),
+  attachedValuePrefixes: ['-I'],
+}
+
+const PERL_PROFILE: SeparatedProfile = {
+  scriptOptions: new Set(['-e']),
+  terminalOptions: new Set(['-h', '--help', '-v', '--version']),
+  flagOptions: new Set([]),
+  valueOptions: new Set(['-I']),
+  attachedValuePrefixes: ['-I'],
+}
+
+const OSASCRIPT_PROFILE: SeparatedProfile = {
+  scriptOptions: new Set(['-e']),
+  terminalOptions: new Set(['-h', '--help']),
+  flagOptions: new Set([]),
+  valueOptions: new Set(['-l']),
+  attachedValuePrefixes: [],
+}
 
 export type RecursiveInvocation =
   | { kind: 'static'; interpreter: string; script: string }
@@ -37,16 +97,24 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--') return { kind: 'none' }
+    if (SHELL_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
+    if (SHELL_VALUE_OPTIONS.has(option)) {
+      const operand = words[index + 1]?.value
+      if (!operand || operand.startsWith('-')) {
+        return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+      }
+      index += 1
+      continue
+    }
     if (!option.startsWith('-') || option === '-') return { kind: 'none' }
     const flags = [...option.slice(1)]
-    if (flags.length === 0 || !flags.every((flag) => SHELL_SHORT_OPTIONS.has(flag))) {
-      const laterScriptFlag = words.slice(index + 1).some((word) => {
-        const laterFlags = [...word.value.slice(1)]
-        return word.value.startsWith('-') && laterFlags.includes('c')
-      })
-      return laterScriptFlag
-        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-        : { kind: 'none' }
+    if (
+      flags.length === 0 ||
+      !flags.every(
+        (flag) => SHELL_SHORT_OPTIONS.has(flag) || SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag),
+      )
+    ) {
+      return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
     }
     if (flags.includes('c')) return scriptResult(interpreter, words[index + 1])
   }
@@ -56,39 +124,52 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
 function decodeSeparated(
   words: WordToken[],
   interpreter: string,
-  scriptOptions: ReadonlySet<string>,
+  profile: SeparatedProfile,
 ): RecursiveInvocation {
-  const option = words[1]?.value
-  if (!option || option === '--' || !option.startsWith('-') || option === '-') {
-    return { kind: 'none' }
+  for (let index = 1; index < words.length; index += 1) {
+    const option = words[index]?.value ?? ''
+    if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
+    if (profile.scriptOptions.has(option)) return scriptResult(interpreter, words[index + 1])
+    if (profile.terminalOptions.has(option)) return { kind: 'none' }
+    if (profile.flagOptions.has(option)) continue
+    if (profile.valueOptions.has(option)) {
+      const operand = words[index + 1]?.value
+      if (!operand || operand.startsWith('-')) {
+        return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+      }
+      if (option === '-m') return { kind: 'none' }
+      index += 1
+      continue
+    }
+    if (
+      profile.attachedValuePrefixes.some(
+        (prefix) => option.startsWith(prefix) && option.length > prefix.length,
+      )
+    ) {
+      continue
+    }
+    return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
   }
-  if (scriptOptions.has(option)) return scriptResult(interpreter, words[2])
-  return words.slice(2).some((word) => scriptOptions.has(word.value))
-    ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-    : { kind: 'none' }
+  return { kind: 'none' }
 }
 
 function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocation {
-  const option = words[1]?.value
-  if (!option || option === '--' || !option.startsWith('-') || option === '-') {
-    return { kind: 'none' }
-  }
-  if (option === '-e' || option === '--eval') return scriptResult(interpreter, words[2])
-  if (option.startsWith('--eval=')) {
-    const script = option.slice('--eval='.length)
-    if (words[1]?.parts.some((part) => part.hasExpansion)) {
-      return { kind: 'dynamic', interpreter, signal: 'shell.script_expanded' }
+  for (let index = 1; index < words.length; index += 1) {
+    const option = words[index]?.value ?? ''
+    if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
+    if (option === '-e' || option === '--eval') return scriptResult(interpreter, words[index + 1])
+    if (option.startsWith('--eval=')) {
+      const script = option.slice('--eval='.length)
+      if (words[index]?.parts.some((part) => part.hasExpansion)) {
+        return { kind: 'dynamic', interpreter, signal: 'shell.script_expanded' }
+      }
+      return { kind: 'static', interpreter, script }
     }
-    return { kind: 'static', interpreter, script }
+    if (NODE_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
+    if (NODE_FILE_OPTIONS.has(option)) continue
+    return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
   }
-  const laterEval = words
-    .slice(2)
-    .some(
-      (word) => word.value === '-e' || word.value === '--eval' || word.value.startsWith('--eval='),
-    )
-  return laterEval
-    ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-    : { kind: 'none' }
+  return { kind: 'none' }
 }
 
 function decodeEval(words: WordToken[]): RecursiveInvocation {
@@ -112,12 +193,12 @@ export function decodeRecursiveInvocation(tokens: readonly ShellToken[]): Recurs
   if (interpreter === 'eval') return decodeEval(words)
   if (SHELL_INTERPRETERS.has(interpreter)) return decodeShell(words, interpreter)
   if (PYTHON_INTERPRETERS.has(interpreter)) {
-    return decodeSeparated(words, interpreter, new Set(['-c']))
+    return decodeSeparated(words, interpreter, PYTHON_PROFILE)
   }
   if (interpreter === 'node') return decodeNode(words, interpreter)
-  if (EVAL_INTERPRETERS.has(interpreter)) {
-    return decodeSeparated(words, interpreter, new Set(['-e']))
-  }
+  if (interpreter === 'ruby') return decodeSeparated(words, interpreter, RUBY_PROFILE)
+  if (interpreter === 'perl') return decodeSeparated(words, interpreter, PERL_PROFILE)
+  if (interpreter === 'osascript') return decodeSeparated(words, interpreter, OSASCRIPT_PROFILE)
   return { kind: 'none' }
 }
 

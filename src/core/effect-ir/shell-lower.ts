@@ -268,7 +268,7 @@ function lowerSegment(
     opacity = joinEffectOpacity(opacity, 'opaque')
   }
 
-  if (context.depth >= MAX_LOWER_DEPTH) {
+  if (context.depth > MAX_LOWER_DEPTH) {
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
         'shell.lower_depth_exceeded',
@@ -1850,12 +1850,7 @@ function stripRedirects(tokens: string[]): string[] {
       stripped.push(token)
       continue
     }
-    if (token.includes('>') || token.includes('<')) {
-      const inline = token.replace(/^\d*(?:>>?|<<?|<>|>\|)/, '')
-      if (!inline) {
-        index += 1
-      }
-    }
+    index += 1
   }
   return stripped
 }

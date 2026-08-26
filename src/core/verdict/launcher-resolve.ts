@@ -346,13 +346,12 @@ export function resolveLauncherRecipe(params: {
   repoRoot: string
   depth: number
 }): LauncherResolution | null {
-  if (params.depth >= MAX_RESOLVE_DEPTH) {
-    return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
-  }
-
   const tokens = params.tokens
   const scriptName = npmScriptName(tokens)
   if (scriptName) {
+    if (params.depth >= MAX_RESOLVE_DEPTH) {
+      return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
+    }
     const resolution = resolveNpmRecipe(
       params.cwd,
       params.repoRoot,
@@ -375,6 +374,9 @@ export function resolveLauncherRecipe(params: {
   }
 
   if (tokens[0] === 'make') {
+    if (params.depth >= MAX_RESOLVE_DEPTH) {
+      return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
+    }
     if (tokens.includes('-n') || tokens.includes('--dry-run')) {
       return null
     }

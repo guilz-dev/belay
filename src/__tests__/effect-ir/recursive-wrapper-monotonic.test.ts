@@ -35,19 +35,27 @@ describe('recursive wrapper monotonicity', () => {
 
   it('fails closed immediately beyond the recursive lowering depth boundary', () => {
     const supported = lowerShellEffectPlan({
-      command: nestShell('set -e', 7),
+      command: nestShell('git status', 8),
       cwd,
       repoRoot,
       inputFingerprint: 'depth-supported',
     })
     const exceeded = lowerShellEffectPlan({
-      command: nestShell('set -e', 8),
+      command: nestShell('git status', 9),
       cwd,
       repoRoot,
       inputFingerprint: 'depth-exceeded',
     })
 
     expect(supported.completeness).toBe('complete')
+    expect(collectRequirements(supported.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'process.exec',
+        evidence: expect.objectContaining({
+          signals: expect.arrayContaining(['git.status']),
+        }),
+      }),
+    )
     expect(exceeded.completeness).toBe('partial')
     expect(collectRequirements(exceeded.root)).toContainEqual(
       expect.objectContaining({

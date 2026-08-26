@@ -24,6 +24,7 @@ import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
+const FILE_CHECKPOINT_TEST_TIMEOUT_MS = 15_000
 
 async function createGitRepo(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-'))
@@ -335,7 +336,9 @@ describe('transactional runner', () => {
     await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('# dirty\n')
   })
 
-  it('restores an already-dirty file to its pre-command bytes', async () => {
+  it('restores an already-dirty file to its pre-command bytes', {
+    timeout: FILE_CHECKPOINT_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
     const predicted = await classifyShellCore('printf changed > README.md', repoRoot, repoRoot, {
@@ -376,7 +379,9 @@ describe('transactional runner', () => {
     )
   })
 
-  it('changes a clean tracked file without touching unrelated dirty state', async () => {
+  it('changes a clean tracked file without touching unrelated dirty state', {
+    timeout: FILE_CHECKPOINT_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'clean.txt'), 'clean baseline\n')
     await execFileAsync('git', ['add', 'clean.txt'], { cwd: repoRoot })
@@ -423,7 +428,9 @@ describe('transactional runner', () => {
     )
   })
 
-  it('discards risky dirty-git diffs without mutating the real workspace', async () => {
+  it('discards risky dirty-git diffs without mutating the real workspace', {
+    timeout: FILE_CHECKPOINT_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
     const predicted = await classifyShellCore('rm README.md', repoRoot, repoRoot, {
@@ -466,7 +473,9 @@ describe('transactional runner', () => {
     )
   })
 
-  it('fails closed when the dirty source changes between execution and apply', async () => {
+  it('fails closed when the dirty source changes between execution and apply', {
+    timeout: FILE_CHECKPOINT_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty baseline\n')
     const predicted = await classifyShellCore('touch safe-dirty.txt', repoRoot, repoRoot, {

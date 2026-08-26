@@ -11,6 +11,7 @@ import { GATE_LATENCY_BUDGET } from '../../corpus/gate-latency-budget.js'
 const repoRoot = '/workspace/project'
 const cwd = path.join(repoRoot, 'src')
 const config = mergeConfig({})
+const NON_SHELL_LATENCY_SAMPLE_COUNT = 20
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) {
@@ -47,7 +48,7 @@ describe('gate sync classification latency budget', () => {
     await classifyShell('echo warmup', cwd, repoRoot, config)
 
     const toolDurations: number[] = []
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < NON_SHELL_LATENCY_SAMPLE_COUNT; i += 1) {
       const started = performance.now()
       await classifyToolUse(
         {
@@ -62,7 +63,7 @@ describe('gate sync classification latency budget', () => {
     }
 
     const subagentDurations: number[] = []
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < NON_SHELL_LATENCY_SAMPLE_COUNT; i += 1) {
       const started = performance.now()
       classifySubagent(
         {

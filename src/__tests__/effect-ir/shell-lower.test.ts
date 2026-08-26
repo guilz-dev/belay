@@ -460,6 +460,25 @@ describe('general shell semantic lowering', () => {
     )
   })
 
+  it('MUST-ALLOW: preserves static recursive effects before an &> redirect', () => {
+    const plan = lowerShellEffectPlan({
+      command: `sh -c "git status" &>log`,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:recursive-output-redirect',
+    })
+
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'process.exec',
+        evidence: expect.objectContaining({
+          signals: expect.arrayContaining(['git.status']),
+        }),
+      }),
+    )
+  })
+
   it('distinguishes an empty recursive script from a missing script operand', () => {
     const empty = lowerShellEffectPlan({
       command: `sh -c ''`,
@@ -493,6 +512,7 @@ describe('general shell semantic lowering', () => {
     'python -c',
     'docker compose --future value run app sh -c ok',
     'docker compose run --rm',
+    'docker compose run app python --future value',
   ])('fails closed on incomplete recursive argv: %s', (command) => {
     const plan = lowerShellEffectPlan({
       command,

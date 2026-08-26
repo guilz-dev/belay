@@ -19,6 +19,8 @@ const tier1Catastrophic = {
   reason: 'remote_destructive',
 }
 
+const CLI_PROCESS_TEST_TIMEOUT_MS = 15_000
+
 function mockFetch(responseBody: unknown): typeof fetch {
   return async () =>
     new Response(JSON.stringify(responseBody), {
@@ -237,7 +239,9 @@ describe('T15 openai-compatible provider parity', () => {
     expect(gated.permission).toBe('ask')
   })
 
-  it('createJudgeFromConfig selects cursor-cli without endpoint when CLI is available', async () => {
+  it('createJudgeFromConfig selects cursor-cli without endpoint when CLI is available', {
+    timeout: CLI_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const config = normalizeConfig({
       ...DEFAULT_CONFIG_V4,
       judge: {
