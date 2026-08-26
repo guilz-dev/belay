@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Local git worktrees
+.worktrees/
+
 # Build output
 dist/
 *.tsbuildinfo
