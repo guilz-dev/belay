@@ -32,6 +32,7 @@ describe('decodeDockerComposeRun', () => {
 
   it.each([
     `docker compose --future value run app sh -c ok`,
+    `docker compose run -e=RAILS_ENV=test app sh -c ok`,
     `docker compose run --entrypoint`,
     `docker compose run --rm`,
   ])('fails closed on unknown or incomplete Compose argv: %s', (command) => {

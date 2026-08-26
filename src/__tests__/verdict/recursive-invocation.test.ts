@@ -6,7 +6,6 @@ import { decodeRecursiveInvocation } from '../../core/verdict/recursive-invocati
 describe('decodeRecursiveInvocation', () => {
   it.each([
     [`bash -ec 'set -e'`, { kind: 'static', interpreter: 'bash', script: 'set -e' }],
-    [`bash +O extglob -c 'set -e'`, { kind: 'static', interpreter: 'bash', script: 'set -e' }],
     [`python -c 'print(1)'`, { kind: 'static', interpreter: 'python', script: 'print(1)' }],
     [
       `node --eval='console.log(1)'`,
@@ -66,6 +65,19 @@ describe('decodeRecursiveInvocation', () => {
     ).toEqual({
       kind: 'indeterminate',
       interpreter: 'python',
+      signal: 'shell.interpreter_option_unknown',
+    })
+  })
+
+  it.each([
+    `bash +O extglob -c 'set -e'`,
+    `fish -O extglob -c 'set -e'`,
+    `python -u -c 'print(1)'`,
+    `node --check --eval 'console.log(1)'`,
+    `ruby -Itest -e 'puts 1'`,
+  ])('does not promote an ordinary pre-positional option into supported recursive argv: %s', (command) => {
+    expect(decodeRecursiveInvocation(lexShell(command).tokens)).toMatchObject({
+      kind: 'indeterminate',
       signal: 'shell.interpreter_option_unknown',
     })
   })

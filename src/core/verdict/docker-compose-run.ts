@@ -84,7 +84,9 @@ function parseOptions(
     const arity = options.get(name)
     if (arity === undefined) return { kind: 'indeterminate' }
     if (equalsIndex !== -1) {
-      if (arity !== 1 || equalsIndex === value.length - 1) return { kind: 'indeterminate' }
+      if (!value.startsWith('--') || arity !== 1 || equalsIndex === value.length - 1) {
+        return { kind: 'indeterminate' }
+      }
       index += 1
       continue
     }

@@ -14,6 +14,7 @@ const NODE_FILE_OPTIONS = new Set(['-c', '--check'])
 interface SeparatedProfile {
   scriptOptions: ReadonlySet<string>
   terminalOptions: ReadonlySet<string>
+  terminalValueOptions: ReadonlySet<string>
   flagOptions: ReadonlySet<string>
   valueOptions: ReadonlySet<string>
   attachedValuePrefixes: readonly string[]
@@ -22,6 +23,7 @@ interface SeparatedProfile {
 const PYTHON_PROFILE: SeparatedProfile = {
   scriptOptions: new Set(['-c']),
   terminalOptions: new Set(['-h', '--help', '-V', '-VV', '--version']),
+  terminalValueOptions: new Set(['-m']),
   flagOptions: new Set([
     '-b',
     '-bb',
@@ -39,13 +41,14 @@ const PYTHON_PROFILE: SeparatedProfile = {
     '-v',
     '-x',
   ]),
-  valueOptions: new Set(['-m', '-W', '-X']),
+  valueOptions: new Set(['-W', '-X']),
   attachedValuePrefixes: ['-W', '-X'],
 }
 
 const RUBY_PROFILE: SeparatedProfile = {
   scriptOptions: new Set(['-e']),
   terminalOptions: new Set(['-h', '--help', '-v', '--version', '--copyright']),
+  terminalValueOptions: new Set([]),
   flagOptions: new Set(['-d', '--debug', '-w']),
   valueOptions: new Set(['-I']),
   attachedValuePrefixes: ['-I'],
@@ -54,6 +57,7 @@ const RUBY_PROFILE: SeparatedProfile = {
 const PERL_PROFILE: SeparatedProfile = {
   scriptOptions: new Set(['-e']),
   terminalOptions: new Set(['-h', '--help', '-v', '--version']),
+  terminalValueOptions: new Set([]),
   flagOptions: new Set([]),
   valueOptions: new Set(['-I']),
   attachedValuePrefixes: ['-I'],
@@ -62,6 +66,7 @@ const PERL_PROFILE: SeparatedProfile = {
 const OSASCRIPT_PROFILE: SeparatedProfile = {
   scriptOptions: new Set(['-e']),
   terminalOptions: new Set(['-h', '--help']),
+  terminalValueOptions: new Set([]),
   flagOptions: new Set([]),
   valueOptions: new Set(['-l']),
   attachedValuePrefixes: [],
@@ -94,29 +99,36 @@ function scriptResult(interpreter: string, token: WordToken | undefined): Recurs
 }
 
 function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocation {
+  let sawNonScriptOption = false
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--') return { kind: 'none' }
     if (SHELL_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
-    if (SHELL_VALUE_OPTIONS.has(option)) {
+    if (interpreter === 'bash' && SHELL_VALUE_OPTIONS.has(option)) {
       const operand = words[index + 1]?.value
       if (!operand || operand.startsWith('-')) {
         return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
       }
+      sawNonScriptOption = true
       index += 1
       continue
     }
     if (!option.startsWith('-') || option === '-') return { kind: 'none' }
     const flags = [...option.slice(1)]
-    if (
-      flags.length === 0 ||
-      !flags.every(
-        (flag) => SHELL_SHORT_OPTIONS.has(flag) || SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag),
-      )
-    ) {
+    if (flags.length === 0) {
       return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
     }
-    if (flags.includes('c')) return scriptResult(interpreter, words[index + 1])
+    if (flags.every((flag) => SHELL_SHORT_OPTIONS.has(flag))) {
+      if (!flags.includes('c')) continue
+      return sawNonScriptOption
+        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+        : scriptResult(interpreter, words[index + 1])
+    }
+    if (flags.every((flag) => SHELL_NON_SCRIPT_SHORT_OPTIONS.has(flag))) {
+      sawNonScriptOption = true
+      continue
+    }
+    return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
   }
   return { kind: 'none' }
 }
@@ -126,18 +138,33 @@ function decodeSeparated(
   interpreter: string,
   profile: SeparatedProfile,
 ): RecursiveInvocation {
+  let sawOrdinaryOption = false
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
-    if (profile.scriptOptions.has(option)) return scriptResult(interpreter, words[index + 1])
+    if (profile.scriptOptions.has(option)) {
+      return sawOrdinaryOption
+        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+        : scriptResult(interpreter, words[index + 1])
+    }
     if (profile.terminalOptions.has(option)) return { kind: 'none' }
-    if (profile.flagOptions.has(option)) continue
+    if (profile.terminalValueOptions.has(option)) {
+      const operand = words[index + 1]?.value
+      if (!operand || operand.startsWith('-')) {
+        return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+      }
+      return { kind: 'none' }
+    }
+    if (profile.flagOptions.has(option)) {
+      sawOrdinaryOption = true
+      continue
+    }
     if (profile.valueOptions.has(option)) {
       const operand = words[index + 1]?.value
       if (!operand || operand.startsWith('-')) {
         return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
       }
-      if (option === '-m') return { kind: 'none' }
+      sawOrdinaryOption = true
       index += 1
       continue
     }
@@ -146,6 +173,7 @@ function decodeSeparated(
         (prefix) => option.startsWith(prefix) && option.length > prefix.length,
       )
     ) {
+      sawOrdinaryOption = true
       continue
     }
     return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
@@ -154,11 +182,19 @@ function decodeSeparated(
 }
 
 function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocation {
+  let sawOrdinaryOption = false
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
-    if (option === '-e' || option === '--eval') return scriptResult(interpreter, words[index + 1])
+    if (option === '-e' || option === '--eval') {
+      return sawOrdinaryOption
+        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+        : scriptResult(interpreter, words[index + 1])
+    }
     if (option.startsWith('--eval=')) {
+      if (sawOrdinaryOption) {
+        return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+      }
       const script = option.slice('--eval='.length)
       if (words[index]?.parts.some((part) => part.hasExpansion)) {
         return { kind: 'dynamic', interpreter, signal: 'shell.script_expanded' }
@@ -166,7 +202,10 @@ function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocatio
       return { kind: 'static', interpreter, script }
     }
     if (NODE_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
-    if (NODE_FILE_OPTIONS.has(option)) continue
+    if (NODE_FILE_OPTIONS.has(option)) {
+      sawOrdinaryOption = true
+      continue
+    }
     return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
   }
   return { kind: 'none' }

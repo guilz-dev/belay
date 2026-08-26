@@ -217,7 +217,7 @@ function lowerSegment(
 ): ShellEffectSegment {
   const commandRedacted = redactCommand(command)
   const lexed = lexShell(command)
-  const rawTokens = tokenizeShell(command)
+  const rawTokens = lexed.tokens.map((token) => token.value)
   const environment = extractEnvironment(rawTokens, context.env)
   const env = environment.env
   const parsed = parseSegment(command)
