@@ -57,10 +57,6 @@ export function peelTransparentWrappers(tokens: string[]): {
   let peelDepth = 0
 
   while (current.length > 0) {
-    if (peelDepth >= MAX_WRAPPER_PEEL_DEPTH) {
-      return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
-    }
-    peelDepth += 1
     while (current.length > 0 && ENV_PREFIX_PATTERN.test(current[0] ?? '')) {
       current.shift()
     }
@@ -71,6 +67,10 @@ export function peelTransparentWrappers(tokens: string[]): {
     const head = normalizeHead(current[0] ?? '')
     if (head === 'xargs') {
       encounteredXargs = true
+      if (peelDepth >= MAX_WRAPPER_PEEL_DEPTH) {
+        return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
+      }
+      peelDepth += 1
       const wrapper = peelXargsWrapper(current)
       if (wrapper.kind === 'opaque') {
         xargsStdinOpaque = current.length === 1
@@ -88,6 +88,10 @@ export function peelTransparentWrappers(tokens: string[]): {
     if (!wrapper) {
       break
     }
+    if (peelDepth >= MAX_WRAPPER_PEEL_DEPTH) {
+      return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
+    }
+    peelDepth += 1
     if (wrapper.kind === 'opaque') {
       return { tokens: current, xargsStdinOpaque: false, encounteredXargs, opaque: true }
     }

@@ -40,7 +40,13 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
     if (!option.startsWith('-') || option === '-') return { kind: 'none' }
     const flags = [...option.slice(1)]
     if (flags.length === 0 || !flags.every((flag) => SHELL_SHORT_OPTIONS.has(flag))) {
-      return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+      const laterScriptFlag = words.slice(index + 1).some((word) => {
+        const laterFlags = [...word.value.slice(1)]
+        return word.value.startsWith('-') && laterFlags.includes('c')
+      })
+      return laterScriptFlag
+        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+        : { kind: 'none' }
     }
     if (flags.includes('c')) return scriptResult(interpreter, words[index + 1])
   }
@@ -57,7 +63,9 @@ function decodeSeparated(
     return { kind: 'none' }
   }
   if (scriptOptions.has(option)) return scriptResult(interpreter, words[2])
-  return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+  return words.slice(2).some((word) => scriptOptions.has(word.value))
+    ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+    : { kind: 'none' }
 }
 
 function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocation {
@@ -73,7 +81,27 @@ function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocatio
     }
     return { kind: 'static', interpreter, script }
   }
-  return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+  const laterEval = words
+    .slice(2)
+    .some(
+      (word) => word.value === '-e' || word.value === '--eval' || word.value.startsWith('--eval='),
+    )
+  return laterEval
+    ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+    : { kind: 'none' }
+}
+
+function decodeEval(words: WordToken[]): RecursiveInvocation {
+  const arguments_ = words.slice(1)
+  if (arguments_.length === 0) return { kind: 'none' }
+  if (arguments_.some((word) => word.parts.some((part) => part.hasExpansion))) {
+    return { kind: 'dynamic', interpreter: 'eval', signal: 'shell.script_expanded' }
+  }
+  return {
+    kind: 'static',
+    interpreter: 'eval',
+    script: arguments_.map((word) => word.value).join(' '),
+  }
 }
 
 export function decodeRecursiveInvocation(tokens: readonly ShellToken[]): RecursiveInvocation {
@@ -81,6 +109,7 @@ export function decodeRecursiveInvocation(tokens: readonly ShellToken[]): Recurs
   const words = tokens.filter((token): token is WordToken => token.kind === 'word')
   const interpreter = normalizeInterpreter(words[0]?.value ?? '')
   if (!interpreter) return { kind: 'none' }
+  if (interpreter === 'eval') return decodeEval(words)
   if (SHELL_INTERPRETERS.has(interpreter)) return decodeShell(words, interpreter)
   if (PYTHON_INTERPRETERS.has(interpreter)) {
     return decodeSeparated(words, interpreter, new Set(['-c']))

@@ -46,6 +46,19 @@ describe('decodeRecursiveInvocation', () => {
     expect(decodeRecursiveInvocation(lexShell(command).tokens).kind).toBe('dynamic')
   })
 
+  it('decodes eval argv and rejects outer-shell expansion', () => {
+    expect(decodeRecursiveInvocation(lexShell('eval echo ok').tokens)).toEqual({
+      kind: 'static',
+      interpreter: 'eval',
+      script: 'echo ok',
+    })
+    expect(decodeRecursiveInvocation(lexShell('eval "$COMMAND"').tokens)).toEqual({
+      kind: 'dynamic',
+      interpreter: 'eval',
+      signal: 'shell.script_expanded',
+    })
+  })
+
   it('fails closed on an unknown option before the script boundary', () => {
     expect(
       decodeRecursiveInvocation(lexShell(`python --future value -c 'print(1)'`).tokens),
@@ -54,5 +67,14 @@ describe('decodeRecursiveInvocation', () => {
       interpreter: 'python',
       signal: 'shell.interpreter_option_unknown',
     })
+  })
+
+  it.each([
+    'node --version',
+    'python --version',
+    'ruby --version',
+    'bash -n script.sh',
+  ])('leaves a non-script interpreter invocation to ordinary decoding: %s', (command) => {
+    expect(decodeRecursiveInvocation(lexShell(command).tokens)).toEqual({ kind: 'none' })
   })
 })
