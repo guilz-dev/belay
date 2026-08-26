@@ -5,6 +5,7 @@ import {
 } from '../shell-substitution.js'
 import { commandKey, type ShellToken, tokenizeShell } from '../shell-tokenizer.js'
 import { detectUnparseableShell } from '../shell-unparseable.js'
+import { decodeDockerComposeRunValues } from './docker-compose-run.js'
 import {
   decodeRecursiveInvocation,
   type RecursiveInvocation,
@@ -395,30 +396,8 @@ export function decodeRecursiveInvocationTokens(
 }
 
 export function extractDockerComposeRunScript(tokens: string[]): string | null {
-  const head = normalizeHead(tokens[0] ?? '')
-  const usesCompose =
-    head === 'docker-compose' || (head === 'docker' && (tokens[1] ?? '') === 'compose')
-  if (!usesCompose) {
-    return null
-  }
-  if (!tokens.includes('run')) {
-    return null
-  }
-  const runIndex = tokens.indexOf('run')
-  const tail = tokens.slice(runIndex + 1)
-  for (let index = 0; index < tail.length; index += 1) {
-    const shellHead = normalizeHead(tail[index] ?? '')
-    if (!SHELL_INTERPRETERS.has(shellHead)) {
-      continue
-    }
-    const flag = tail[index + 1] ?? ''
-    if (flag !== '-lc' && flag !== '-c') {
-      continue
-    }
-    const body = tail[index + 2] ?? ''
-    return body || null
-  }
-  return null
+  const invocation = decodeDockerComposeRunValues(tokens)
+  return invocation.kind === 'recursive' ? invocation.script || null : null
 }
 
 /**
