@@ -26,7 +26,10 @@ function evaluateGatedAction(
   const [ctx, deps, action] = args
   const replayAction =
     action.kind === 'shell' && (action.command === 'true' || action.command === 'false')
-      ? { ...action, command: `sh -c 'exit ${action.command === 'true' ? '0' : '1'}'` }
+      ? {
+          ...action,
+          command: `node -e 'process.exit(${action.command === 'true' ? '0' : '1'})'`,
+        }
       : action
   return evaluateGatedActionRuntime(ctx, deps, replayAction)
 }
