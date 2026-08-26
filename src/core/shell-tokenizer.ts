@@ -75,62 +75,180 @@ export function isFdDuplication(token: string): boolean {
   return FD_DUPLICATION_PATTERN.test(token)
 }
 
-export function tokenizeShell(input: string): string[] {
-  const tokens: string[] = []
-  let buffer = ''
-  let quote: string | null = null
-  let escaping = false
+export type ShellQuoteMode = 'unquoted' | 'single' | 'double'
 
-  const flush = () => {
-    if (buffer.length > 0) {
-      tokens.push(buffer)
-      buffer = ''
+export interface ShellWordPart {
+  value: string
+  raw: string
+  start: number
+  end: number
+  quote: ShellQuoteMode
+  hasExpansion: boolean
+}
+
+export type ShellToken =
+  | {
+      kind: 'word'
+      value: string
+      raw: string
+      start: number
+      end: number
+      parts: ShellWordPart[]
     }
+  | { kind: 'operator'; value: string; raw: string; start: number; end: number }
+
+export interface ShellLexResult {
+  tokens: ShellToken[]
+  complete: boolean
+}
+
+export function lexShell(input: string): ShellLexResult {
+  const tokens: ShellToken[] = []
+  let value = ''
+  let wordStart: number | null = null
+  let parts: ShellWordPart[] = []
+  let quote: Exclude<ShellQuoteMode, 'unquoted'> | null = null
+  let quoteStart = -1
+  let quoteHadContent = false
+  let complete = true
+
+  const startWord = (index: number) => {
+    wordStart ??= index
+  }
+  const append = (
+    decoded: string,
+    start: number,
+    end: number,
+    mode: ShellQuoteMode,
+    hasExpansion: boolean,
+  ) => {
+    startWord(start)
+    value += decoded
+    const previous = parts.at(-1)
+    if (
+      previous &&
+      previous.quote === mode &&
+      previous.hasExpansion === hasExpansion &&
+      previous.end === start
+    ) {
+      previous.value += decoded
+      previous.raw += input.slice(start, end)
+      previous.end = end
+      return
+    }
+    parts.push({
+      value: decoded,
+      raw: input.slice(start, end),
+      start,
+      end,
+      quote: mode,
+      hasExpansion,
+    })
+  }
+  const flushWord = (end: number) => {
+    if (wordStart === null) return
+    tokens.push({
+      kind: 'word',
+      value,
+      raw: input.slice(wordStart, end),
+      start: wordStart,
+      end,
+      parts,
+    })
+    value = ''
+    wordStart = null
+    parts = []
+  }
+  const pushOperator = (token: string, start: number, end: number) => {
+    tokens.push({ kind: 'operator', value: token, raw: input.slice(start, end), start, end })
   }
 
   for (let index = 0; index < input.length; index += 1) {
-    const char = input[index]
-    if (escaping) {
-      buffer += char
-      escaping = false
-      continue
-    }
-    if (char === '\\') {
-      escaping = true
-      continue
-    }
-    if (quote) {
-      if (char === quote) {
+    const char = input[index] ?? ''
+
+    if (quote === 'single') {
+      if (char === "'") {
+        if (!quoteHadContent) append('', quoteStart, index + 1, 'single', false)
         quote = null
       } else {
-        buffer += char
+        append(char, index, index + 1, 'single', false)
+        quoteHadContent = true
       }
       continue
     }
-    if (char === '"' || char === "'") {
-      quote = char
+
+    if (quote === 'double') {
+      if (char === '"') {
+        if (!quoteHadContent) append('', quoteStart, index + 1, 'double', false)
+        quote = null
+        continue
+      }
+      if (char === '\\') {
+        const next = input[index + 1]
+        if (next === undefined) {
+          append('\\', index, index + 1, 'double', false)
+          complete = false
+          continue
+        }
+        if (next === '$' || next === '`' || next === '"' || next === '\\' || next === '\n') {
+          append(next === '\n' ? '' : next, index, index + 2, 'double', false)
+          quoteHadContent = true
+          index += 1
+          continue
+        }
+        append('\\', index, index + 1, 'double', false)
+        quoteHadContent = true
+        continue
+      }
+      append(char, index, index + 1, 'double', char === '$' || char === '`')
+      quoteHadContent = true
+      continue
+    }
+
+    if (char === "'" || char === '"') {
+      startWord(index)
+      quote = char === "'" ? 'single' : 'double'
+      quoteStart = index
+      quoteHadContent = false
+      continue
+    }
+    if (char === '\\') {
+      const next = input[index + 1]
+      if (next === undefined) {
+        append('\\', index, index + 1, 'unquoted', false)
+        complete = false
+        continue
+      }
+      append(next, index, index + 2, 'unquoted', false)
+      index += 1
       continue
     }
     const operator = readShellOperator(input, index)
     if (operator) {
-      flush()
-      tokens.push(operator.token)
+      flushWord(index)
+      pushOperator(operator.token, index, index + operator.length)
       index += operator.length - 1
       continue
     }
     if (char === '\n' || char === '\r') {
-      flush()
-      tokens.push(';')
+      flushWord(index)
+      pushOperator(';', index, index + 1)
       continue
     }
     if (/\s/.test(char)) {
-      flush()
+      flushWord(index)
       continue
     }
-    buffer += char
+    append(char, index, index + 1, 'unquoted', char === '$' || char === '`')
   }
-  flush()
-  return tokens
+
+  if (quote !== null) complete = false
+  flushWord(input.length)
+  return { tokens, complete }
+}
+
+export function tokenizeShell(input: string): string[] {
+  return lexShell(input).tokens.map((token) => token.value)
 }
 
 export function normalizeShellCommand(
