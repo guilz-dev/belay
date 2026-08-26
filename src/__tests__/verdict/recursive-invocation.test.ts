@@ -71,7 +71,7 @@ describe('decodeRecursiveInvocation', () => {
 
   it.each([
     `fish -O extglob -c 'set -e'`,
-    `node --check --eval 'console.log(1)'`,
+    `dash --version`,
   ])('does not promote an ordinary pre-positional option into supported recursive argv: %s', (command) => {
     expect(decodeRecursiveInvocation(lexShell(command).tokens)).toMatchObject({
       kind: 'indeterminate',
@@ -113,6 +113,7 @@ describe('decodeRecursiveInvocation', () => {
     'python --version',
     'ruby --version',
     'bash -n script.sh',
+    `node --check --eval 'console.log(1)'`,
   ])('leaves a non-script interpreter invocation to ordinary decoding: %s', (command) => {
     expect(decodeRecursiveInvocation(lexShell(command).tokens)).toEqual({ kind: 'none' })
   })

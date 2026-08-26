@@ -6,7 +6,11 @@ const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish'])
 const PYTHON_INTERPRETERS = new Set(['python', 'python3'])
 const SHELL_SHORT_OPTIONS = new Set(['c', 'l', 'e', 'x', 'u'])
 const SHELL_NON_SCRIPT_SHORT_OPTIONS = new Set(['n'])
-const SHELL_TERMINAL_OPTIONS = new Set(['--help', '--version'])
+const SHELL_TERMINAL_OPTIONS = new Map<string, ReadonlySet<string>>([
+  ['bash', new Set(['--help', '--version'])],
+  ['zsh', new Set(['--version'])],
+  ['fish', new Set(['-h', '--help', '-v', '--version'])],
+])
 const SHELL_VALUE_OPTIONS = new Set(['-O', '+O', '--init-file', '--rcfile'])
 const NODE_TERMINAL_OPTIONS = new Set(['-h', '--help', '--help-all', '-v', '--version'])
 const NODE_FILE_OPTIONS = new Set(['-c', '--check'])
@@ -102,7 +106,7 @@ function decodeShell(words: WordToken[], interpreter: string): RecursiveInvocati
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]?.value ?? ''
     if (option === '--') return { kind: 'none' }
-    if (SHELL_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
+    if (SHELL_TERMINAL_OPTIONS.get(interpreter)?.has(option)) return { kind: 'none' }
     if (interpreter === 'bash' && SHELL_VALUE_OPTIONS.has(option)) {
       const operand = words[index + 1]?.value
       if (!operand || operand.startsWith('-')) {
@@ -176,33 +180,21 @@ function decodeSeparated(
 }
 
 function decodeNode(words: WordToken[], interpreter: string): RecursiveInvocation {
-  let sawOrdinaryOption = false
-  for (let index = 1; index < words.length; index += 1) {
-    const option = words[index]?.value ?? ''
-    if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
-    if (option === '-e' || option === '--eval') {
-      return sawOrdinaryOption
-        ? { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-        : scriptResult(interpreter, words[index + 1])
-    }
-    if (option.startsWith('--eval=')) {
-      if (sawOrdinaryOption) {
-        return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
-      }
-      const script = option.slice('--eval='.length)
-      if (words[index]?.parts.some((part) => part.hasExpansion)) {
-        return { kind: 'dynamic', interpreter, signal: 'shell.script_expanded' }
-      }
-      return { kind: 'static', interpreter, script }
-    }
-    if (NODE_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
-    if (NODE_FILE_OPTIONS.has(option)) {
-      sawOrdinaryOption = true
-      continue
-    }
-    return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
+  const option = words[1]?.value ?? ''
+  if (option === '--' || !option.startsWith('-') || option === '-') return { kind: 'none' }
+  if (option === '-e' || option === '--eval') {
+    return scriptResult(interpreter, words[2])
   }
-  return { kind: 'none' }
+  if (option.startsWith('--eval=')) {
+    const script = option.slice('--eval='.length)
+    if (words[1]?.parts.some((part) => part.hasExpansion)) {
+      return { kind: 'dynamic', interpreter, signal: 'shell.script_expanded' }
+    }
+    return { kind: 'static', interpreter, script }
+  }
+  if (NODE_TERMINAL_OPTIONS.has(option)) return { kind: 'none' }
+  if (NODE_FILE_OPTIONS.has(option)) return { kind: 'none' }
+  return { kind: 'indeterminate', interpreter, signal: 'shell.interpreter_option_unknown' }
 }
 
 function decodeEval(words: WordToken[]): RecursiveInvocation {
