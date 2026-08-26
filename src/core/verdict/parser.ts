@@ -369,7 +369,6 @@ export function extractRecursiveScript(tokens: string[]): string | null {
     return null
   }
   const head = normalizeHead(filtered[0] ?? '')
-  const second = filtered[1] ?? ''
 
   if (head === 'eval') {
     const body = filtered.slice(1).join(' ').trim()
@@ -379,22 +378,9 @@ export function extractRecursiveScript(tokens: string[]): string | null {
   if (SHELL_INTERPRETERS.has(head) || CODE_INTERPRETERS.has(head)) {
     const flagIndex = filtered.findIndex((token) => SCRIPT_FLAGS.has(token))
     if (flagIndex !== -1) {
-      const body = filtered
-        .slice(flagIndex + 1)
-        .join(' ')
-        .replace(/^['"]|['"]$/g, '')
-        .trim()
+      const body = filtered[flagIndex + 1] ?? ''
       return body || null
     }
-  }
-
-  if (head === 'bash' && (second === '-lc' || second === '-c')) {
-    const body = filtered
-      .slice(2)
-      .join(' ')
-      .replace(/^['"]|['"]$/g, '')
-      .trim()
-    return body || null
   }
 
   return null
@@ -421,11 +407,7 @@ export function extractDockerComposeRunScript(tokens: string[]): string | null {
     if (flag !== '-lc' && flag !== '-c') {
       continue
     }
-    const body = tail
-      .slice(index + 2)
-      .join(' ')
-      .replace(/^['"]|['"]$/g, '')
-      .trim()
+    const body = tail[index + 2] ?? ''
     return body || null
   }
   return null

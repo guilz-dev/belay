@@ -442,6 +442,11 @@ describe('general shell semantic lowering', () => {
     ["sh -c 'set -e'", 'fixture:recursive-set-e'],
     ["sh -c 'FOO=bar'", 'fixture:recursive-env-only'],
     ["docker compose run app sh -c 'exit 0'", 'fixture:compose-exit'],
+    ['sh -c \'sh -c "set -e"\'', 'fixture:double-recursive-set-e'],
+    [
+      'sh -c \'docker compose run --rm app sh -lc "bundle exec rspec spec/models/user_spec.rb"\'',
+      'fixture:recursive-compose-rspec',
+    ],
   ])('MUST-ALLOW: lowers static nested shell control without uncertainty: %s', (command, fingerprint) => {
     const plan = lowerShellEffectPlan({
       command,
@@ -458,6 +463,7 @@ describe('general shell semantic lowering', () => {
   it.each([
     ["sh -c 'wait $!'", 'fixture:recursive-wait-dynamic'],
     ["docker compose run app sh -c 'exit nope'", 'fixture:compose-exit-invalid'],
+    ['sh -c \'sh -c "wait $!"\'', 'fixture:double-recursive-wait-dynamic'],
   ])('MUST-ASK: keeps uncertain nested shell control indeterminate: %s', (command, fingerprint) => {
     const plan = lowerShellEffectPlan({
       command,
