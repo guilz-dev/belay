@@ -1,7 +1,7 @@
 # Shell argv境界解析と構造化tokenの段階導入 Design
 
 Date: 2026-08-26
-Status: Approved in chat; pending written-spec review
+Status: Approved
 
 ## 背景
 
