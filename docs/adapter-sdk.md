@@ -61,6 +61,12 @@ configuration, approval state, or audit log for the action. Use the hook process
 the host-specific fallback when the payload supplies no usable action directory; it must not
 override a supplied action directory.
 
+For Cursor `preToolUse: Shell`, use `tool_input.working_directory` before the top-level `cwd` and
+`workspace_roots` fields. Do not interpret a same-named nested argument from another tool as an
+action directory: non-Shell tools use only the top-level host context fields and then the hook
+process fallback. This prevents arbitrary tool arguments from selecting another repository's
+configuration or approval state.
+
 Exported from `agent-belay`:
 
 ```typescript
