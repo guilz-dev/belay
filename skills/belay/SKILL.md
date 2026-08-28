@@ -54,6 +54,11 @@ To restore the legacy two-step UX (approve, then always retry manually), set
 For why it was blocked, use `/belay why <command>` or `belay explain --command "<command>"`.
 For the latest pending ask, use `/belay explain` or `belay explain`.
 
+If `belay status` or `belay report` shows `Host denied after Belay allow`, the denial came from
+the editor/agent host after Belay returned allow. There is no Belay approval ID to approve. Keep
+host protection in Belay audit mode and approve only the exact host prompt when execution is
+intended.
+
 **Do not use command allowlists** (`overrides.allow`) or legacy standing-allow records
 (shell, tool, or subagent) to fix blocks; none of them change runtime authorization.
 Improve EffectPlan semantics, approve once with `/belay-approve`, or use an exact

@@ -38,6 +38,7 @@ export async function reportProject(options: ReportOptions = {}): Promise<AuditV
 }
 
 export function formatReport(report: AuditVisibilityReport): string {
+  const recentHostDenials = report.recentHostDenials ?? []
   const lines = [
     `belay report for ${report.repoRoot}`,
     `Audit log: ${report.auditLogPath}`,
@@ -46,6 +47,7 @@ export function formatReport(report: AuditVisibilityReport): string {
     ...formatAskBreakdown(report),
     `Flag (allow_flagged): ${report.flagCount}`,
     `Allow (silent pass): ${report.allowCount}`,
+    `Host denied after Belay allow: ${report.hostDeniedAfterAllowCount ?? 0}`,
     `Silent-pass rate: ${(report.silentPassRate * 100).toFixed(1)}%`,
     '',
   ]
@@ -62,6 +64,16 @@ export function formatReport(report: AuditVisibilityReport): string {
     lines.push('Notes:')
     for (const note of report.notes) {
       lines.push(`- ${note}`)
+    }
+    lines.push('')
+  }
+
+  if (recentHostDenials.length > 0) {
+    lines.push('Host denials after Belay allow:')
+    for (const denial of recentHostDenials) {
+      const when = denial.failureTimestamp ?? 'unknown-time'
+      const detail = denial.errorMessage ? ` — ${denial.errorMessage}` : ''
+      lines.push(`- [${when}] ${denial.summary}${detail}`)
     }
     lines.push('')
   }

@@ -2,6 +2,25 @@ import type { GatedActionKind } from './gate-contract.js'
 import { scrubValue } from './scrub.js'
 import type { ScrubOptions } from './types.js'
 
+export function redactToolInvocationId(value: unknown, rawToolUseId?: string): unknown {
+  if (typeof value === 'string') {
+    return rawToolUseId ? value.replaceAll(rawToolUseId, '<tool-use-id>') : value
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactToolInvocationId(item, rawToolUseId))
+  }
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value)) {
+      if (key !== 'tool_use_id') {
+        result[key] = redactToolInvocationId(child, rawToolUseId)
+      }
+    }
+    return result
+  }
+  return value
+}
+
 /** Subagent fingerprint input — must match classify-subagent `fingerprintSource`. */
 export function subagentFingerprintSource(
   payload: Record<string, unknown>,
@@ -47,14 +66,18 @@ export function fingerprintReplayPayload(
   if (!payload) {
     return undefined
   }
+  const replayPayload = redactToolInvocationId(
+    payload,
+    typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined,
+  ) as Record<string, unknown>
   if (kind === 'tool') {
-    const toolInput = payload.tool_input
+    const toolInput = replayPayload.tool_input
     if (toolInput && typeof toolInput === 'object') {
       return scrubValue(toolInput, scrubOptions) as Record<string, unknown>
     }
   }
   if (kind === 'subagent') {
-    return subagentFingerprintSource(payload, scrubOptions) as Record<string, unknown>
+    return subagentFingerprintSource(replayPayload, scrubOptions) as Record<string, unknown>
   }
-  return scrubValue(payload, scrubOptions) as Record<string, unknown>
+  return scrubValue(replayPayload, scrubOptions) as Record<string, unknown>
 }

@@ -164,6 +164,19 @@ export function getManagedHookEntries(
       },
     },
     {
+      event: 'postToolUseFailure',
+      definition: {
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-audit',
+          'postToolUseFailure',
+        ),
+        placement: 'append',
+      },
+    },
+    {
       event: 'stop',
       definition: {
         command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-audit', 'stop'),

@@ -63,13 +63,21 @@ authorization model. It complements
 9. Linked worktrees are repository-local only when their canonical Git common directory
    matches the primary repository. Separate and malformed repositories fail closed.
 10. **Audit log schema v3**: gate writers preserve ISO timestamps, 64-hex fingerprints, and
-    `approvalCorrelationId` through field-aware serialization. Scrub placeholders in correlation
-    fields invalidate metrics joins; legacy placeholder logs should be archived before trusting
-    dogfood readiness ([dogfood audit remediation §P0-1](./dogfood-audit-remediation-2026-08-22.ja.md)).
+    `approvalCorrelationId` / `toolInvocationCorrelationId` through field-aware serialization.
+    Tool invocation correlation is a one-way hash; raw host `tool_use_id` values are not audit or
+    replay data. Scrub placeholders in correlation fields invalidate metrics joins; legacy
+    placeholder logs should be archived before trusting dogfood readiness
+    ([dogfood audit remediation §P0-1](./dogfood-audit-remediation-2026-08-22.ja.md)).
 11. **Dogfood cohort identity** separates runtime bundle hash (`runtimeArtifactHash`),
     authorization-relevant config hash (`decisionConfigFingerprint`), and `boundaryProfile`.
     `mode` and audit display settings do not reset the decision cohort. Readiness still uses a
     minimum gate-event count today; stricter reviewed-benign thresholds are planned (same doc §6).
+12. **Host execution policy is a separate decision boundary**: an editor or agent host may deny an
+    invocation after Belay returned `permission: allow`. A correlated host
+    `permission_denied` is operational evidence, not a Belay ask and not a reason to mint a Belay
+    approval. Status/report expose this distinction without changing EffectPlan authority. In
+    Belay audit mode, retain the host protection or approve only the exact host prompt; do not
+    weaken the host globally on the strength of an audit-only Belay decision.
 
 ## Policy precedence
 

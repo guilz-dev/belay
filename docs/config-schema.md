@@ -178,13 +178,17 @@ These fields are written literally and are **not** subject to high-entropy scrub
 | `fingerprint`, `commandFingerprint` | 64 hex | repeat-friction and round-trip joins |
 | `effectIRHash`, `payloadHash`, `configFingerprint` | validated hash strings | forensics |
 | `approvalCorrelationId` | 16 hex | joins ask → approval → replay without storing raw `approvalId` |
+| `toolInvocationCorrelationId` | 16 hex | joins a gate decision to host completion/failure without storing raw `tool_use_id` |
 | `runtimeArtifactHash` | 64 hex | content-addressed runtime bundle identity |
 | `decisionConfigFingerprint` | 64 hex | hash of authorization-relevant config only |
 | `boundaryProfile` | string | e.g. `l3-l4-only`, `l1-full-recommended` |
 | `runtimeBuildStamp`, `runtimeVersion` | strings | display metadata; legacy cohort fallback |
 
 Malformed or externally supplied hash/timestamp values are dropped rather than scrubbed in place.
-Raw `approvalId` is never persisted; scrubbed summaries may contain `<approval-id>` placeholders.
+Raw `approvalId` and `tool_use_id` are never persisted; scrubbed summaries may contain
+`<approval-id>` placeholders. Cursor `postToolUseFailure` records preserve the normalized
+`failureType`, `toolName`, and scrubbed `errorMessage`; report/status count
+`permission_denied` only when the correlated Belay gate record allowed the action.
 
 CLI events use `timestamp` (not legacy `ts`).
 

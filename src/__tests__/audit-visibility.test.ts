@@ -88,6 +88,95 @@ describe('audit visibility (T-V1)', () => {
     expect(summary.recentAsks[2]?.summary).toBe('docker push myapp')
   })
 
+  it('separates Cursor permission denials that happen after a Belay allow', () => {
+    const records = [
+      {
+        timestamp: '2026-01-01T00:00:00.000Z',
+        event: 'preToolUse',
+        kind: 'shell',
+        verdict: 'allow_flagged',
+        permission: 'allow',
+        wouldBlock: false,
+        reason: 'local_mutation',
+        summary: 'make test-fast ARGS="spec/example_spec.rb:74"',
+        fingerprint: 'a'.repeat(64),
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-01T00:00:00.100Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        toolName: 'Shell',
+        failureType: 'permission_denied',
+        errorMessage: 'Command denied by Cursor Run Mode',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        event: 'preToolUse',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        permission: 'allow',
+        wouldBlock: true,
+        reason: 'unknown_local_effect',
+        summary: 'opaque command',
+        fingerprint: 'b'.repeat(64),
+        toolInvocationCorrelationId: '2222222222222222',
+      },
+      {
+        timestamp: '2026-01-01T00:00:01.100Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        toolName: 'Shell',
+        failureType: 'permission_denied',
+        toolInvocationCorrelationId: '2222222222222222',
+      },
+    ].map((entry) => toAuditRecord(entry))
+
+    const summary = summarizeAuditVisibility(records)
+
+    expect(summary.hostDeniedAfterAllowCount).toBe(1)
+    expect(summary.recentHostDenials).toEqual([
+      expect.objectContaining({
+        summary: 'make test-fast ARGS="spec/example_spec.rb:74"',
+        errorMessage: 'Command denied by Cursor Run Mode',
+      }),
+    ])
+    const text = formatReport({
+      repoRoot: '/repo',
+      auditLogPath: '/repo/belay/audit.ndjson',
+      warnings: [],
+      notes: [],
+      ...summary,
+    })
+    expect(text).toContain('Host denied after Belay allow: 1')
+    expect(text).toContain('make test-fast ARGS="spec/example_spec.rb:74"')
+  })
+
+  it('formats legacy visibility reports without host-denial fields', () => {
+    const text = formatReport({
+      repoRoot: '/repo',
+      auditLogPath: '/repo/audit.ndjson',
+      warnings: [],
+      notes: [],
+      gateEvents: 0,
+      askCount: 0,
+      enforceAskCount: 0,
+      auditAskCount: 0,
+      unknownModeAskCount: 0,
+      flagCount: 0,
+      allowCount: 0,
+      silentPassRate: 0,
+      recentAsks: [],
+    })
+
+    expect(text).toContain('Host denied after Belay allow: 0')
+  })
+
   it('infers audit tiers with saved confidence first, then reason fallback', () => {
     expect(
       inferAuditTier(toAuditRecord({ reason: 'tier0_external', confidence: 'deterministic' })),

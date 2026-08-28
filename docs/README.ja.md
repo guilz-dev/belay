@@ -30,7 +30,7 @@ Belay は **Cursor**、**Claude Code**、**Codex（実験的）** の 3 エー�
 | シェル・ツール・ファイル変更のゲート | `belay-tool-gate` | `beforeShellExecution`（shell）、`preToolUse`（Write/Delete 等） | `PreToolUse` | `PreToolUse` |
 | サブエージェント起動のゲート | `belay-tool-gate` | `subagentStart` | （`PreToolUse` 経由） | `SubagentStart` |
 | ワンショット承認 | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
-| 監査ログ | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
+| 監査ログ | `belay-audit` | `postToolUse`, `postToolUseFailure`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
 
 クイックスタート例:
 
