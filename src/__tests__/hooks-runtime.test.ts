@@ -225,6 +225,59 @@ describe('generated hook runtime', () => {
     })
   })
 
+  it('does not use a non-Shell nested working directory for config or approval state', async () => {
+    const parentRoot = await initIsolatedRepo()
+    const childRoot = path.join(parentRoot, 'linked-workspace')
+    await initProject({ targetDir: childRoot })
+    const childConfig = mergeConfig({
+      ...(await loadConfigFile(childRoot)),
+      mode: 'enforce',
+      controlPlane: {
+        enabled: true,
+        configDir: path.join(childRoot, '.belay-cp'),
+        integrity: 'hash-pinned',
+      },
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+    })
+    await writeFile(
+      path.join(childRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(childConfig, null, 2)}\n`,
+    )
+
+    const result = await runRunner(
+      parentRoot,
+      'belay-tool-gate',
+      {
+        tool_name: 'Write',
+        tool_input: {
+          path: '../outside.txt',
+          content: 'blocked',
+          working_directory: childRoot,
+        },
+        cwd: parentRoot,
+        workspace_roots: [parentRoot, childRoot],
+      },
+      ['preToolUse'],
+      parentRoot,
+    )
+
+    expect(JSON.parse(result.stdout)).toMatchObject({ permission: 'deny' })
+    const parentConfig = await loadConfigFile(parentRoot)
+    const parentPending = await loadApprovalState(
+      parentRoot,
+      'pending-approvals.json',
+      parentConfig,
+    )
+    expect(parentPending.approvals).toHaveLength(1)
+    expect(parentPending.approvals[0]).toMatchObject({
+      kind: 'tool',
+      repoRoot: parentRoot,
+      cwd: parentRoot,
+    })
+    const childPending = await loadApprovalState(childRoot, 'pending-approvals.json', childConfig)
+    expect(childPending.approvals).toHaveLength(0)
+  })
+
   it('replays the exact denied shell action from an approval-only prompt', async () => {
     process.env.BELAY_TEST_APPROVAL_REPLAY = '1'
     const repoRoot = await initIsolatedRepo()

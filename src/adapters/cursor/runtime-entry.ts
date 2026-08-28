@@ -50,6 +50,27 @@ export function resolveCursorActionCwd(payload: Record<string, unknown>, fallbac
   return path.resolve(toolInputWorkingDirectory ?? topLevelCwd ?? workspaceRoot ?? fallback)
 }
 
+function resolveCursorToolActionCwd(
+  payload: Record<string, unknown>,
+  fallback: string,
+  eventName: string,
+  toolName: string,
+): string {
+  if (eventName === 'preToolUse' && toolName === 'Shell') {
+    return resolveCursorActionCwd(payload, fallback)
+  }
+
+  const toolInput = payload.tool_input
+  if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+    return resolveCursorActionCwd(payload, fallback)
+  }
+  const { working_directory: _workingDirectory, ...withoutWorkingDirectory } = toolInput as Record<
+    string,
+    unknown
+  >
+  return resolveCursorActionCwd({ ...payload, tool_input: withoutWorkingDirectory }, fallback)
+}
+
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
   const repoRoot = findRepoRoot(cwd, cursorLayout)
   const configPath = cursorLayout.configPath(repoRoot)
@@ -112,10 +133,10 @@ export async function runShellGateHook() {
 export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const cwd = resolveCursorActionCwd(payload, process.cwd())
+    const toolName = String(payload.tool_name ?? '')
+    const cwd = resolveCursorToolActionCwd(payload, process.cwd(), eventName, toolName)
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
-    const toolName = String(payload.tool_name ?? '')
 
     if (isSubagentEvent(payload, eventName)) {
       const verdict = await evaluateGatedAction(ctx, deps, {
