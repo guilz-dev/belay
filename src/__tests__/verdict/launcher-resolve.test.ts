@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { collectRequirements } from '../../core/effect-ir/build.js'
 import { innerRecipeFromPeel, peelPackageExecArgv } from '../../core/effect-ir/package-exec.js'
 import { resolveLauncherRecipe } from '../../core/verdict/launcher-resolve.js'
 import { verdict } from '../../core/verdict/verdict.js'
@@ -208,12 +209,14 @@ describe('launcher-resolve', () => {
     })
   })
 
-  it('retains every known recipe when a dependency cycle is detected', async () => {
+  it('expands and classifies known recipes when a dependency cycle is detected', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-cycle-'))
     tempDirs.push(dir)
     await writeFile(
       path.join(dir, 'Makefile'),
       [
+        'RUN = curl https://example.test',
+        '',
         'all: first',
         '\techo all',
         '',
@@ -221,7 +224,7 @@ describe('launcher-resolve', () => {
         '\techo first',
         '',
         'second: first',
-        '\techo second',
+        '\t$(RUN)',
         '',
       ].join('\n'),
     )
@@ -233,10 +236,22 @@ describe('launcher-resolve', () => {
       depth: 0,
     })
     expect(resolution).toMatchObject({
-      recipes: ['echo second', 'echo first', 'echo all'],
+      recipes: ['curl https://example.test', 'echo first', 'echo all'],
       opaque: true,
       reason: 'make_dependency_cycle',
     })
+
+    const result = await verdict('make all', { ...ctx, cwd: dir, repoRoot: dir })
+    const requirements = result.effectPlan ? collectRequirements(result.effectPlan.root) : []
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(
+      requirements.some(
+        (requirement) =>
+          requirement.action === 'network.connect' &&
+          requirement.resource.kind === 'network' &&
+          requirement.resource.host === 'example.test',
+      ),
+    ).toBe(true)
   })
 
   it('retains static recipes when a prerequisite expression is dynamic', async () => {

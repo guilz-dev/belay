@@ -309,9 +309,6 @@ function resolveMakeRecipe(
     visited.add(name)
   }
   collect(target)
-  if (hasDependencyCycle) {
-    return { recipes: recipeLines, opaque: true, reason: 'make_dependency_cycle' }
-  }
   const expandedRecipes: string[] = []
   for (const line of recipeLines) {
     const normalized = normalizeMakeRecipeLine(line)
@@ -325,6 +322,9 @@ function resolveMakeRecipe(
     if (/\$\(/.test(line) || /\$\{/.test(line)) {
       return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_dynamic' }
     }
+  }
+  if (hasDependencyCycle) {
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_dependency_cycle' }
   }
   if (hasDynamicPrerequisite) {
     return { recipes: expandedRecipes, opaque: true, reason: 'make_prerequisite_dynamic' }
