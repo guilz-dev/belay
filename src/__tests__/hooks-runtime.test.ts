@@ -13,6 +13,7 @@ import {
   pendingApprovalsPath,
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
+import { scrubString } from '../core/scrub.js'
 import { initProject } from '../installer.js'
 import { PACKAGE_VERSION } from '../version.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
@@ -197,10 +198,31 @@ describe('generated hook runtime', () => {
       kind: 'shell',
       input: 'make guarded',
       inputKind: 'shell',
+      repoRoot: childRoot,
+      cwd: childRoot,
     })
-    expect(await readFile(await auditLogPath(childRoot), 'utf8')).toContain(
-      'docker push example/guarded:latest',
-    )
+    const auditLines = (await readFile(await auditLogPath(childRoot), 'utf8')).trim().split('\n')
+    const auditRecord = JSON.parse(auditLines.at(-1) ?? '{}') as Record<string, unknown>
+    expect(auditRecord).toMatchObject({
+      actionSnapshot: {
+        kind: 'shell',
+        cwd: scrubString(childRoot, { ...childConfig.redaction, maskHighEntropyStrings: true }),
+        normalizedAction: 'make guarded',
+      },
+      effectPlanRequestActions: expect.arrayContaining(['network.connect']),
+      effectPlanRequirements: expect.arrayContaining([
+        expect.objectContaining({
+          action: 'network.connect',
+          resource: {
+            kind: 'network',
+            host: 'registry',
+            protocol: 'container-registry',
+            mode: 'mutate',
+            payload: 'present',
+          },
+        }),
+      ]),
+    })
   })
 
   it('replays the exact denied shell action from an approval-only prompt', async () => {
