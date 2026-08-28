@@ -1,3 +1,4 @@
+import path from 'node:path'
 import process from 'node:process'
 import { cursorLayout } from '../layouts/cursor.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
@@ -29,6 +30,24 @@ async function readStdinJson(): Promise<Record<string, unknown>> {
 
 function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+function nonEmptyPathString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+export function resolveCursorActionCwd(payload: Record<string, unknown>, fallback: string): string {
+  const toolInput = payload.tool_input
+  const toolInputWorkingDirectory =
+    toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
+      ? nonEmptyPathString((toolInput as Record<string, unknown>).working_directory)
+      : undefined
+  const topLevelCwd = nonEmptyPathString(payload.cwd)
+  const workspaceRoot = Array.isArray(payload.workspace_roots)
+    ? payload.workspace_roots.map(nonEmptyPathString).find(Boolean)
+    : undefined
+
+  return path.resolve(toolInputWorkingDirectory ?? topLevelCwd ?? workspaceRoot ?? fallback)
 }
 
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
@@ -71,7 +90,7 @@ export async function runShellGateHook() {
   try {
     const payload = await readStdinJson()
     const command = String(payload.command ?? '').trim()
-    const cwd = String(payload.cwd ?? process.cwd()).trim() || process.cwd()
+    const cwd = resolveCursorActionCwd(payload, process.cwd())
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const verdict = await evaluateGatedAction(ctx, deps, {
@@ -93,7 +112,7 @@ export async function runShellGateHook() {
 export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const cwd = process.cwd()
+    const cwd = resolveCursorActionCwd(payload, process.cwd())
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const toolName = String(payload.tool_name ?? '')

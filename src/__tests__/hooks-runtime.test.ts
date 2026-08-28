@@ -1,9 +1,11 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { resolveCursorActionCwd } from '../adapters/cursor/runtime-entry.js'
 import {
   approvedApprovalsPath,
   loadApprovalState,
@@ -18,6 +20,7 @@ import { classifyShellGated } from './helpers/shell-classify.js'
 const tempDirs: string[] = []
 const tempFiles: string[] = []
 const HOST_RUNTIME_PROCESS_TEST_TIMEOUT_MS = 15_000
+const execFileAsync = promisify(execFile)
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-runtime-'))
@@ -56,11 +59,12 @@ async function runRunner(
   hookName: string,
   payload: unknown,
   extraArgs: string[] = [],
+  cwd = repoRoot,
 ) {
   const runnerPath = path.join(repoRoot, '.cursor', 'hooks', 'belay-runner')
   const args = [hookName, ...extraArgs]
   const child = spawn(runnerPath, args, {
-    cwd: repoRoot,
+    cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   const stdout: Buffer[] = []
@@ -102,6 +106,101 @@ describe('generated hook runtime', () => {
     delete process.env.BELAY_TEST_APPROVAL_REPLAY
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
     await Promise.all(tempFiles.splice(0).map((file) => rm(file, { force: true })))
+  })
+
+  it.each([
+    [
+      'Shell tool working directory',
+      { tool_input: { working_directory: 'shell-action' } },
+      path.resolve('shell-action'),
+    ],
+    ['top-level cwd', { cwd: 'top-level-action' }, path.resolve('top-level-action')],
+    [
+      'first non-empty workspace root',
+      { workspace_roots: ['', 1, null, 'workspace-action', 'later-workspace'] },
+      path.resolve('workspace-action'),
+    ],
+    ['fallback', {}, path.resolve('fallback-action')],
+    [
+      'malformed nested tool input',
+      { tool_input: 'not-an-object', cwd: 'top-level-action' },
+      path.resolve('top-level-action'),
+    ],
+    [
+      'empty higher-precedence values',
+      {
+        tool_input: { working_directory: '' },
+        cwd: '',
+        workspace_roots: ['', false, 'workspace-action'],
+      },
+      path.resolve('workspace-action'),
+    ],
+    [
+      'all source values differ',
+      {
+        tool_input: { working_directory: 'shell-action' },
+        cwd: 'top-level-action',
+        workspace_roots: ['workspace-action'],
+      },
+      path.resolve('shell-action'),
+    ],
+  ])('resolves Cursor action cwd from %s', (_caseName, payload, expected) => {
+    expect(resolveCursorActionCwd(payload, 'fallback-action')).toBe(expected)
+  })
+
+  it('uses the Shell action working directory for Make policy and approval state', async () => {
+    const parentRoot = await initIsolatedRepo()
+    const childRoot = path.join(parentRoot, 'linked-workspace')
+    await initProject({ targetDir: childRoot })
+    await execFileAsync('git', ['init', '--quiet'], { cwd: parentRoot })
+    await execFileAsync('git', ['init', '--quiet'], { cwd: childRoot })
+    const childConfig = mergeConfig({
+      ...(await loadConfigFile(childRoot)),
+      mode: 'enforce',
+      controlPlane: {
+        enabled: true,
+        configDir: path.join(childRoot, '.belay-cp'),
+        integrity: 'hash-pinned',
+      },
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+    })
+    await writeFile(
+      path.join(childRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(childConfig, null, 2)}\n`,
+    )
+    await writeFile(path.join(parentRoot, 'Makefile'), 'harmless:\n\t@printf parent\\n\n')
+    await writeFile(
+      path.join(childRoot, 'Makefile'),
+      'guarded: container-push\n\ncontainer-push:\n\tdocker push example/guarded:latest\n',
+    )
+
+    const result = await runRunner(
+      parentRoot,
+      'belay-tool-gate',
+      {
+        tool_name: 'Shell',
+        tool_input: {
+          command: 'make guarded',
+          working_directory: childRoot,
+        },
+        cwd: parentRoot,
+        workspace_roots: [parentRoot, childRoot],
+      },
+      ['preToolUse'],
+      parentRoot,
+    )
+
+    expect(JSON.parse(result.stdout)).toMatchObject({ permission: 'deny' })
+    const pending = await loadApprovalState(childRoot, 'pending-approvals.json', childConfig)
+    expect(pending.approvals).toHaveLength(1)
+    expect(pending.approvals[0]).toMatchObject({
+      kind: 'shell',
+      input: 'make guarded',
+      inputKind: 'shell',
+    })
+    expect(await readFile(await auditLogPath(childRoot), 'utf8')).toContain(
+      'docker push example/guarded:latest',
+    )
   })
 
   it('replays the exact denied shell action from an approval-only prompt', async () => {
