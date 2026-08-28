@@ -41,12 +41,12 @@ describe('freelance dogfood grammar regression', () => {
     expect(result.reason).toBe('unknown_local_effect')
   })
 
-  it('requires approval when test-fast starts its Docker prerequisites', async () => {
+  it('requires approval when the incident test-fast command exposes its Docker prerequisite', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-freelance-fixture-'))
     tempDirs.push(dir)
     await cp(fixtureDir, dir, { recursive: true })
 
-    const result = await verdict('make test-fast ARGS="spec/makefile/upgrade_harness_spec.rb"', {
+    const result = await verdict('make test-fast ARGS="spec/requests/api/v1/project_spec.rb:74"', {
       ...ctx,
       cwd: dir,
       repoRoot: dir,
@@ -56,7 +56,10 @@ describe('freelance dogfood grammar regression', () => {
       requirements.some(
         (requirement) =>
           requirement.action === 'indeterminate' &&
-          requirement.evidence.signals.includes('launcher.make_recipe_dynamic'),
+          requirement.evidence.signals.includes('launcher.make_recipe_dynamic') &&
+          requirement.provenances?.some((provenance) =>
+            provenance.innerCommand?.includes('docker start'),
+          ),
       ),
     ).toBe(true)
     expect(result.permission).toBe('ask')

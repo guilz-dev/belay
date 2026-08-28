@@ -78,6 +78,11 @@ authorization model. It complements
     approval. Status/report expose this distinction without changing EffectPlan authority. In
     Belay audit mode, retain the host protection or approve only the exact host prompt; do not
     weaken the host globally on the strength of an audit-only Belay decision.
+13. **Action working directory and Make authority**: an action's working directory comes from the
+    host action payload, not the hook process working directory. For `make`, every statically known
+    prerequisite recipe participates in the `EffectPlan` before the requested target's recipe.
+    `.PHONY` declarations and `_`-prefixed target names have no policy meaning; policy evaluates
+    the resulting effects, not Make target names.
 
 ## Policy precedence
 
