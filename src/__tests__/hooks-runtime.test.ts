@@ -17,6 +17,7 @@ import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
 const tempFiles: string[] = []
+const HOST_RUNTIME_PROCESS_TEST_TIMEOUT_MS = 15_000
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-runtime-'))
@@ -155,7 +156,9 @@ describe('generated hook runtime', () => {
     expect(record.runtimeBuildStamp).not.toBe(`${PACKAGE_VERSION}@source`)
   })
 
-  it('resumes the host turn after an approval-only prompt', async () => {
+  it('resumes the host turn after an approval-only prompt', {
+    timeout: HOST_RUNTIME_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await initIsolatedRepo()
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {

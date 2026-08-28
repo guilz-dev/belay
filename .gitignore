@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+.pnpm-store/
+
+# Local git worktrees
+.worktrees/
 
 # Build output
 dist/

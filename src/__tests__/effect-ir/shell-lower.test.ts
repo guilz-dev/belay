@@ -460,6 +460,72 @@ describe('general shell semantic lowering', () => {
     )
   })
 
+  it('MUST-ALLOW: preserves static recursive effects before an &> redirect', () => {
+    const plan = lowerShellEffectPlan({
+      command: `sh -c "git status" &>log`,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:recursive-output-redirect',
+    })
+
+    expect(plan.completeness).toBe('complete')
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'process.exec',
+        evidence: expect.objectContaining({
+          signals: expect.arrayContaining(['git.status']),
+        }),
+      }),
+    )
+  })
+
+  it('distinguishes an empty recursive script from a missing script operand', () => {
+    const empty = lowerShellEffectPlan({
+      command: `sh -c ''`,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:empty-recursive-script',
+    })
+    const missing = lowerShellEffectPlan({
+      command: 'sh -c',
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: 'fixture:missing-recursive-script',
+    })
+
+    expect(empty.completeness).toBe('complete')
+    expect(collectRequirements(empty.root)).not.toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+    expect(missing.completeness).toBe('partial')
+    expect(collectRequirements(missing.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'indeterminate',
+        evidence: expect.objectContaining({
+          signals: expect.arrayContaining(['shell.interpreter_argv_incomplete']),
+        }),
+      }),
+    )
+  })
+
+  it.each([
+    'python -c',
+    'docker compose --future value run app sh -c ok',
+    'docker compose run --rm',
+    'docker compose run app python --future value',
+  ])('fails closed on incomplete recursive argv: %s', (command) => {
+    const plan = lowerShellEffectPlan({
+      command,
+      cwd: workspace,
+      repoRoot: workspace,
+      inputFingerprint: `fixture:${command}`,
+    })
+    expect(plan.completeness).toBe('partial')
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({ action: 'indeterminate' }),
+    )
+  })
+
   it.each([
     ["sh -c 'wait $!'", 'fixture:recursive-wait-dynamic'],
     ["docker compose run app sh -c 'exit nope'", 'fixture:compose-exit-invalid'],
