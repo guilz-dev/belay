@@ -43,6 +43,7 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
 }
 
 export function formatStatusReport(report: StatusReport): string {
+  const recentHostDenials = report.visibility.recentHostDenials ?? []
   const { health } = report
   const lines = [
     `belay status for ${report.repoRoot}`,
@@ -76,6 +77,7 @@ export function formatStatusReport(report: StatusReport): string {
     ...formatAskBreakdown(report.visibility, '  '),
     `  Flag (allow_flagged): ${report.visibility.flagCount}`,
     `  Allow (silent pass): ${report.visibility.allowCount}`,
+    `  Host denied after Belay allow: ${report.visibility.hostDeniedAfterAllowCount ?? 0}`,
     `  Silent-pass rate: ${(report.visibility.silentPassRate * 100).toFixed(1)}%`,
     '',
   ]
@@ -92,6 +94,16 @@ export function formatStatusReport(report: StatusReport): string {
     lines.push('Audit notes:')
     for (const note of report.visibility.notes) {
       lines.push(`- ${note}`)
+    }
+    lines.push('')
+  }
+
+  if (recentHostDenials.length > 0) {
+    lines.push('Host denials after Belay allow:')
+    for (const denial of recentHostDenials.slice(0, 5)) {
+      const when = denial.failureTimestamp ?? 'unknown-time'
+      const detail = denial.errorMessage ? ` — ${denial.errorMessage}` : ''
+      lines.push(`- [${when}] ${denial.summary}${detail}`)
     }
     lines.push('')
   }

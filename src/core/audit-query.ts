@@ -39,6 +39,16 @@ export function auditApprovalCorrelationId(record: AuditRecord): string | undefi
   return undefined
 }
 
+export function auditToolInvocationCorrelationId(record: AuditRecord): string | undefined {
+  if (
+    typeof record.toolInvocationCorrelationId === 'string' &&
+    isValidApprovalCorrelationId(record.toolInvocationCorrelationId)
+  ) {
+    return record.toolInvocationCorrelationId
+  }
+  return undefined
+}
+
 export function isGateRecord(record: AuditRecord): boolean {
   return typeof record.event === 'string' && GATE_EVENTS.has(record.event)
 }

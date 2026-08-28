@@ -24,6 +24,7 @@ const PRESERVED_HASH_FIELDS = new Set([
 const PRESERVED_LITERAL_FIELDS = new Set([
   'timestamp',
   'approvalCorrelationId',
+  'toolInvocationCorrelationId',
   'runtimeVersion',
   'runtimeBuildStamp',
   'boundaryProfile',
@@ -48,6 +49,10 @@ const SCRUBBED_CONTAINER_FIELDS = new Set([
 
 export function approvalCorrelationId(approvalId: string): string {
   return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
+}
+
+export function toolInvocationCorrelationId(toolUseId: string): string {
+  return createHash('sha256').update(toolUseId).digest('hex').slice(0, 16)
 }
 
 export function isValidApprovalCorrelationId(value: string): boolean {
@@ -76,7 +81,18 @@ function isValidPreservedHashField(field: string, value: string): boolean {
 }
 
 function scrubAuditContainer(value: unknown, options: ScrubOptions): unknown {
-  return scrubValue(value, {
+  const withoutRawToolIds = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(withoutRawToolIds)
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(
+        Object.entries(input)
+          .filter(([key]) => key !== 'tool_use_id')
+          .map(([key, child]) => [key, withoutRawToolIds(child)]),
+      )
+    }
+    return input
+  }
+  return scrubValue(withoutRawToolIds(value), {
     ...options,
     maskHighEntropyStrings: true,
   })
@@ -100,7 +116,7 @@ function serializeAuditField(key: string, value: unknown, options: ScrubOptions)
       return value
     }
     if (
-      key === 'approvalCorrelationId' &&
+      (key === 'approvalCorrelationId' || key === 'toolInvocationCorrelationId') &&
       typeof value === 'string' &&
       isValidApprovalCorrelationId(value)
     ) {
@@ -179,7 +195,13 @@ export function serializeAuditRecordV3(
   }
 
   for (const [key, value] of Object.entries(record)) {
-    if (key === 'timestamp' || key === 'ts' || key === 'approvalId' || key === 'schemaVersion') {
+    if (
+      key === 'timestamp' ||
+      key === 'ts' ||
+      key === 'approvalId' ||
+      key === 'tool_use_id' ||
+      key === 'schemaVersion'
+    ) {
       continue
     }
     const next = serializeAuditField(key, value, options)

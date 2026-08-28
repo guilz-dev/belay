@@ -12,6 +12,7 @@ import {
   isValidAuditTimestamp,
   parseAuditNdjsonLine,
   serializeAuditRecordV3,
+  toolInvocationCorrelationId,
 } from '../core/audit-io.js'
 import { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord } from '../core/audit-query.js'
 import { DEFAULT_REDACTION_V3 } from '../core/config.js'
@@ -63,6 +64,22 @@ describe('serializeAuditRecordV3', () => {
     expect(serialized.approvalCorrelationId).toBe(approvalCorrelationId(approvalId))
     expect(JSON.stringify(serialized)).not.toContain(approvalId)
     expect(JSON.stringify(serialized)).toContain('<approval-id>')
+  })
+
+  it('preserves a one-way tool invocation correlation without storing the raw tool use ID', () => {
+    const rawToolUseId = 'abc123'
+    const serialized = serializeAuditRecordV3(
+      {
+        timestamp: '2026-08-22T05:00:00.000Z',
+        tool_use_id: rawToolUseId,
+        toolInvocationCorrelationId: toolInvocationCorrelationId(rawToolUseId),
+        replayContext: { payload: { tool_use_id: rawToolUseId } },
+      },
+      scrubOptions,
+    )
+
+    expect(serialized.toolInvocationCorrelationId).toBe('6ca13d52ca70c883')
+    expect(JSON.stringify(serialized)).not.toContain(rawToolUseId)
   })
 
   it('rejects malformed hash fields and scrubs them', () => {

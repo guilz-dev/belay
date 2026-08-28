@@ -23,7 +23,11 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
-import { approvalCorrelationId, serializeAuditRecordV3 } from '../../core/audit-serialize.js'
+import {
+  approvalCorrelationId,
+  serializeAuditRecordV3,
+  toolInvocationCorrelationId,
+} from '../../core/audit-serialize.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
@@ -130,7 +134,7 @@ import {
   recoveryFailClosedResult,
   recoveryFailReasonFromSkip,
 } from '../../core/recovery/fail-closed.js'
-import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
+import { fingerprintReplayPayload, redactToolInvocationId } from '../../core/replay-scrub.js'
 import {
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   isTransactionalEligible,
@@ -932,6 +936,9 @@ export async function evaluateGatedAction(
       event: resolveGateAuditEvent(sourceEvent, params.kind),
       sourceEvent,
       kind: params.kind,
+      ...(typeof params.payload?.tool_use_id === 'string'
+        ? { toolInvocationCorrelationId: toolInvocationCorrelationId(params.payload.tool_use_id) }
+        : {}),
       fingerprint: verdict.fingerprint,
       verdict: verdict.verdict,
       reason: verdict.reason,
@@ -1111,6 +1118,10 @@ export async function evaluateGatedAction(
 
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     sourceEvent: params.sourceEvent,
+    toolInvocationCorrelationId:
+      typeof params.payload?.tool_use_id === 'string'
+        ? toolInvocationCorrelationId(params.payload.tool_use_id)
+        : undefined,
     predictedAssessment,
     observedAssessment,
     transactionalLayer,
@@ -1240,6 +1251,7 @@ async function gateDecisionToVerdict(
     classifierOptions?: ClassifierOptions
     scopeHintPayload?: Record<string, unknown>
     sourceEvent?: string
+    toolInvocationCorrelationId?: string
   } = {},
 ): Promise<GateVerdict> {
   if (!result.effectPlan) {
@@ -1274,6 +1286,9 @@ async function gateDecisionToVerdict(
     event: auditEvent,
     sourceEvent,
     kind,
+    ...(auditExtras.toolInvocationCorrelationId
+      ? { toolInvocationCorrelationId: auditExtras.toolInvocationCorrelationId }
+      : {}),
     fingerprint: result.fingerprint,
     summary: result.normalizedCommand ?? result.summary ?? '',
     assessment: result.assessment,
@@ -1875,12 +1890,26 @@ export async function appendObservedAudit(
   eventName: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  const rawToolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
+  const summaryPayload = redactToolInvocationId(payload, rawToolUseId) as Record<string, unknown>
   await deps.appendAudit(ctx, {
     event: eventName,
     kind: 'audit',
     verdict: 'allow',
     reason: 'observed',
-    summary: canonicalStringify(payload),
+    ...(rawToolUseId
+      ? { toolInvocationCorrelationId: toolInvocationCorrelationId(rawToolUseId) }
+      : {}),
+    ...(typeof summaryPayload.tool_name === 'string' ? { toolName: summaryPayload.tool_name } : {}),
+    ...(typeof summaryPayload.failure_type === 'string'
+      ? { failureType: summaryPayload.failure_type }
+      : {}),
+    ...(typeof summaryPayload.error_message === 'string'
+      ? { errorMessage: summaryPayload.error_message }
+      : {}),
+    ...(typeof payload.duration === 'number' ? { durationMs: payload.duration } : {}),
+    ...(typeof payload.is_interrupt === 'boolean' ? { isInterrupt: payload.is_interrupt } : {}),
+    summary: canonicalStringify(summaryPayload),
   })
 }
 

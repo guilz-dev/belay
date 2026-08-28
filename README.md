@@ -44,7 +44,7 @@ equivalent lifecycle points:
 | Gate shell / tools / file mutations | `belay-tool-gate` | `beforeShellExecution`, `preToolUse` | `PreToolUse` | `PreToolUse` |
 | Gate subagent launches | `belay-tool-gate` | `subagentStart` | (via `PreToolUse`) | `SubagentStart` |
 | One-shot approvals | `belay-before-submit` | `beforeSubmitPrompt` | `UserPromptSubmit` | `UserPromptSubmit` |
-| Audit log | `belay-audit` | `postToolUse`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
+| Audit log | `belay-audit` | `postToolUse`, `postToolUseFailure`, `stop`, `sessionEnd` | `PostToolUse` | `PostToolUse` |
 
 ## Why
 

@@ -5,15 +5,16 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
+  appendObservedAudit,
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
-import { approvalCorrelationId } from '../core/audit-serialize.js'
+import { approvalCorrelationId, serializeAuditRecordV3 } from '../core/audit-serialize.js'
 import { fsScopeAllowlistPath } from '../core/capability/allowlist.js'
 import { mintGrantForApprovedRecord } from '../core/capability/approval-v3.js'
 import { recordCapabilityApproval } from '../core/capability-approval.js'
-import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from '../core/config.js'
+import { type BelayConfigV3, DEFAULT_CONFIG_V3, scrubOptionsFromConfig } from '../core/config.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
@@ -96,6 +97,65 @@ describe('capability gate runtime', () => {
 
     expect(auditEvents).toHaveLength(1)
     expect(auditEvents[0]).toMatchObject({ event: 'preToolUse', sourceEvent: 'PreToolUse' })
+  })
+
+  it('correlates a Cursor permission denial with the Belay gate decision that preceded it', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-host-denial-'))
+    tempDirs.push(repoRoot)
+    await mkdir(path.join(repoRoot, '.git'))
+    const config = brokerInactiveConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = {
+      ...createDefaultGateRuntimeDeps(),
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+    const toolUseId = 'tool_12345678-1234-1234-1234-123456789abc'
+    const payload = {
+      tool_name: 'Shell',
+      tool_use_id: toolUseId,
+      tool_input: { command: 'git status' },
+      cwd: repoRoot,
+    }
+
+    await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      payload,
+      toolName: 'Shell',
+      sourceEvent: 'preToolUse',
+    })
+    await appendObservedAudit(ctx, deps, 'postToolUseFailure', {
+      ...payload,
+      failure_type: 'permission_denied',
+      error_message: `Command denied for ${toolUseId} by Cursor Run Mode`,
+      duration: 12,
+      is_interrupt: false,
+    })
+
+    expect(auditEvents).toHaveLength(2)
+    expect(auditEvents[0]?.toolInvocationCorrelationId).toMatch(/^[a-f0-9]{16}$/)
+    expect(auditEvents[1]).toMatchObject({
+      event: 'postToolUseFailure',
+      failureType: 'permission_denied',
+      toolName: 'Shell',
+      toolInvocationCorrelationId: auditEvents[0]?.toolInvocationCorrelationId,
+    })
+    expect(auditEvents[0]?.toolInvocationCorrelationId).not.toBe(toolUseId)
+    expect(auditEvents[1]?.summary).not.toContain(toolUseId)
+    expect(
+      JSON.stringify(serializeAuditRecordV3(auditEvents[0] ?? {}, scrubOptionsFromConfig(config))),
+    ).not.toContain(toolUseId)
+    expect(
+      JSON.stringify(serializeAuditRecordV3(auditEvents[1] ?? {}, scrubOptionsFromConfig(config))),
+    ).not.toContain(toolUseId)
   })
 
   it('does not let a standing path allowlist override effect policy', async () => {

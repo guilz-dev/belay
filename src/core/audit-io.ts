@@ -13,6 +13,7 @@ export {
   isValidAuditTimestamp,
   parseAuditNdjsonLine,
   serializeAuditRecordV3,
+  toolInvocationCorrelationId,
 } from './audit-serialize.js'
 
 export async function appendCliAuditEvent(

@@ -80,6 +80,36 @@ async function managedHooksPresent(
   return managedEntries.every(({ definition }) => content.includes(definition.command))
 }
 
+async function cursorRunModeRiskSignal(
+  homeDir: string,
+  belayMode: string,
+  env: Partial<Pick<NodeJS.ProcessEnv, 'CURSOR_CONFIG_DIR' | 'XDG_CONFIG_HOME'>>,
+): Promise<string | null> {
+  const cursorConfigDir = env.CURSOR_CONFIG_DIR?.trim()
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
+  const configPath = cursorConfigDir
+    ? path.join(cursorConfigDir, 'cli-config.json')
+    : xdgConfigHome
+      ? path.join(xdgConfigHome, 'cursor', 'cli-config.json')
+      : path.join(homeDir, '.cursor', 'cli-config.json')
+  if (!existsSync(configPath)) {
+    return null
+  }
+  try {
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as { approvalMode?: unknown }
+    if (config.approvalMode !== 'allowlist' && config.approvalMode !== 'auto-review') {
+      return null
+    }
+    const auditGuidance =
+      belayMode === 'audit'
+        ? ' Belay is in audit mode; keep the Cursor protection or approve the exact host prompt, and do not switch Cursor to unrestricted until Belay enforce mode and fail-closed hook health are verified.'
+        : ' If Belay is intended to be authoritative, verify fail-closed hook health before configuring Cursor unrestricted mode.'
+    return `Cursor approval mode is ${config.approvalMode}; Cursor can deny shell actions after Belay allows them. Such a denial is a host-policy denial, not a Belay approval.${auditGuidance}`
+  } catch {
+    return null
+  }
+}
+
 /** Lightweight floor check without judge doctor / sandbox probes. */
 export async function isBelayFloorInstalled(
   options: { targetDir?: string; adapter?: AdapterName } = {},
@@ -167,6 +197,19 @@ export async function collectHealthSnapshot(
         additionalRiskSignals.push(
           'cloud judge enabled: redacted command text may be sent to an external provider',
         )
+      }
+      if (adapter === 'cursor') {
+        const cursorRunModeRisk = await cursorRunModeRiskSignal(
+          options.homeDir ?? os.homedir(),
+          layered.config.mode,
+          options.cursorConfigEnv ?? {
+            CURSOR_CONFIG_DIR: process.env.CURSOR_CONFIG_DIR,
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          },
+        )
+        if (cursorRunModeRisk) {
+          additionalRiskSignals.push(cursorRunModeRisk)
+        }
       }
     } catch {
       configPresent = false

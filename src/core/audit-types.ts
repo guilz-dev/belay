@@ -16,6 +16,10 @@ export interface AuditRecord {
   fingerprint?: string
   summary?: string
   approvalId?: string
+  toolInvocationCorrelationId?: string
+  toolName?: string
+  failureType?: string
+  errorMessage?: string
   wouldBlock?: boolean
   judgeFallbackReason?: string
   permission?: string

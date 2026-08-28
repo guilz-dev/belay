@@ -1,4 +1,5 @@
 import {
+  auditToolInvocationCorrelationId,
   filterAuditRecords,
   inferWouldBlock,
   isApprovalRecorded,
@@ -17,6 +18,13 @@ export interface RecentAskEntry {
   tier: AuditTier
 }
 
+export interface RecentHostDenialEntry {
+  gateTimestamp?: string
+  failureTimestamp?: string
+  summary: string
+  errorMessage: string
+}
+
 export interface AuditVisibilitySummary {
   gateEvents: number
   askCount: number
@@ -27,6 +35,8 @@ export interface AuditVisibilitySummary {
   allowCount: number
   silentPassRate: number
   recentAsks: RecentAskEntry[]
+  hostDeniedAfterAllowCount: number
+  recentHostDenials: RecentHostDenialEntry[]
 }
 
 export const DEFAULT_SILENT_PASS_THRESHOLD = 0.5
@@ -98,8 +108,14 @@ export function summarizeAuditVisibility(
   let flagCount = 0
   let allowCount = 0
   const recentAsks: RecentAskEntry[] = []
+  const allowedByInvocation = new Map<string, AuditRecord>()
+  const recentHostDenials: RecentHostDenialEntry[] = []
 
   for (const record of gateRecords) {
+    const invocationId = auditToolInvocationCorrelationId(record)
+    if (invocationId && !inferWouldBlock(record) && record.permission === 'allow') {
+      allowedByInvocation.set(invocationId, record)
+    }
     if (inferWouldBlock(record)) {
       askCount += 1
       const recordMode = recordStringField(record, 'mode')
@@ -125,9 +141,31 @@ export function summarizeAuditVisibility(
     }
   }
 
+  for (const record of filtered) {
+    if (record.event !== 'postToolUseFailure' || record.failureType !== 'permission_denied') {
+      continue
+    }
+    const invocationId = auditToolInvocationCorrelationId(record)
+    const gate = invocationId ? allowedByInvocation.get(invocationId) : undefined
+    if (!gate) {
+      continue
+    }
+    recentHostDenials.push({
+      gateTimestamp: gate.timestamp,
+      failureTimestamp: record.timestamp,
+      summary: typeof gate.summary === 'string' ? gate.summary : '',
+      errorMessage: typeof record.errorMessage === 'string' ? record.errorMessage : '',
+    })
+  }
+
   recentAsks.sort((left, right) => {
     const leftMs = parseTimestamp(left.timestamp) ?? 0
     const rightMs = parseTimestamp(right.timestamp) ?? 0
+    return rightMs - leftMs
+  })
+  recentHostDenials.sort((left, right) => {
+    const leftMs = parseTimestamp(left.failureTimestamp) ?? 0
+    const rightMs = parseTimestamp(right.failureTimestamp) ?? 0
     return rightMs - leftMs
   })
 
@@ -144,6 +182,8 @@ export function summarizeAuditVisibility(
     allowCount,
     silentPassRate,
     recentAsks: recentAsks.slice(0, recentAskLimit),
+    hostDeniedAfterAllowCount: recentHostDenials.length,
+    recentHostDenials: recentHostDenials.slice(0, recentAskLimit),
   }
 }
 

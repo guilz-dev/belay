@@ -22,7 +22,7 @@ export type {
 } from './core/types.js'
 
 import type { InstallScope } from './adapters/layouts/scope.js'
-import type { RecentAskEntry } from './core/audit-summary.js'
+import type { RecentAskEntry, RecentHostDenialEntry } from './core/audit-summary.js'
 import type {
   BelayEgressConfig,
   BelayOverridesConfig,
@@ -125,6 +125,10 @@ export interface StatusOptions {
 export interface HealthSnapshotOptions {
   targetDir?: string
   adapter?: AdapterName
+  /** Override the host home directory when inspecting adapter-level execution settings. */
+  homeDir?: string
+  /** Override Cursor config-path environment variables for deterministic host inspection. */
+  cursorConfigEnv?: Partial<Pick<NodeJS.ProcessEnv, 'CURSOR_CONFIG_DIR' | 'XDG_CONFIG_HOME'>>
 }
 
 export interface HealthSnapshot {
@@ -214,6 +218,8 @@ export interface AuditVisibilityReport {
   allowCount: number
   silentPassRate: number
   recentAsks: RecentAskEntry[]
+  hostDeniedAfterAllowCount?: number
+  recentHostDenials?: RecentHostDenialEntry[]
   warnings: string[]
   notes: string[]
 }
