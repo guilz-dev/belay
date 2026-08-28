@@ -106,7 +106,7 @@ describe('launcher-resolve', () => {
     expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json', 'curl https://evil.example'])
   })
 
-  it('resolves make test-fast with ARGS assignment', async () => {
+  it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-test-fast-'))
     tempDirs.push(dir)
     await writeFile(
@@ -117,7 +117,7 @@ describe('launcher-resolve', () => {
         'TEST_DOCKER_RUN = docker-compose run --rm test',
         '',
         '_start_test_deps:',
-        '\t@for c in db redis; do docker start $$c; done',
+        '\tmkdir -p build && touch build/prepared',
         '',
         'test-fast: _start_test_deps',
         '\t$(TEST_DOCKER_RUN) /bin/bash -lc "bundle exec rspec $(TEST_RSPEC_ARGS)"',
@@ -133,8 +133,133 @@ describe('launcher-resolve', () => {
     })
     expect(resolution?.opaque).toBe(false)
     expect(resolution?.recipes).toEqual([
+      'mkdir -p build && touch build/prepared',
       'docker-compose run --rm test /bin/bash -lc "bundle exec rspec spec/makefile/upgrade_harness_spec.rb"',
     ])
+  })
+
+  it('keeps every static prerequisite in dependency order, including shared prerequisites once', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-prerequisite-order-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        'all: first second',
+        '\techo all',
+        '',
+        'first: shared',
+        '\techo first',
+        '',
+        'second: shared',
+        '\techo second',
+        '',
+        'shared:',
+        '\techo shared',
+        '',
+      ].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'all'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution).toMatchObject({
+      recipes: ['echo shared', 'echo first', 'echo second', 'echo all'],
+      opaque: false,
+    })
+  })
+
+  it('retains known recipes and is opaque when a prerequisite target is missing', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-missing-prerequisite-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      ['build: generated.txt', '\techo build', ''].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'build'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution).toMatchObject({ recipes: ['echo build'], opaque: true })
+    expect(resolution?.reason).toBe('make_prerequisite_undefined')
+  })
+
+  it('treats an existing non-target prerequisite as a known recipe-less leaf', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-file-prerequisite-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'input.txt'), 'source')
+    await writeFile(path.join(dir, 'Makefile'), ['build: input.txt', '\techo build', ''].join('\n'))
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'build'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution).toMatchObject({
+      recipes: ['echo build'],
+      opaque: false,
+      reason: 'make_recipe_resolved',
+    })
+  })
+
+  it('retains every known recipe when a dependency cycle is detected', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-cycle-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        'all: first',
+        '\techo all',
+        '',
+        'first: second',
+        '\techo first',
+        '',
+        'second: first',
+        '\techo second',
+        '',
+      ].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'all'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution).toMatchObject({
+      recipes: ['echo second', 'echo first', 'echo all'],
+      opaque: true,
+      reason: 'make_dependency_cycle',
+    })
+  })
+
+  it('retains static recipes when a prerequisite expression is dynamic', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-dynamic-prerequisite-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      ['build: static $(DYNAMIC_INPUT)', '\techo build', '', 'static:', '\techo static', ''].join(
+        '\n',
+      ),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'build'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+    expect(resolution).toMatchObject({
+      recipes: ['echo static', 'echo build'],
+      opaque: true,
+      reason: 'make_prerequisite_dynamic',
+    })
   })
 
   it('keeps prerequisite recipes when the target has no direct recipes', async () => {
@@ -163,9 +288,12 @@ describe('launcher-resolve', () => {
     await writeFile(
       path.join(dir, 'Makefile'),
       [
-        '.PHONY: test-fast',
+        '.PHONY: _start_test_deps test-fast',
         'TEST_RSPEC_ARGS = $(or $(ARGS),spec)',
         'TEST_DOCKER_RUN = docker-compose run --rm test',
+        '',
+        '_start_test_deps:',
+        '\t:',
         '',
         'test-fast: _start_test_deps',
         '\t$(TEST_DOCKER_RUN) /bin/bash -lc "bundle exec rspec $(TEST_RSPEC_ARGS)"',
