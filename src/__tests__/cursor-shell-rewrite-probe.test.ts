@@ -19,12 +19,8 @@ async function createTempDir() {
 }
 
 function isProcessRunning(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
+  const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' })
+  return result.status === 0 && !result.stdout.trim().startsWith('Z')
 }
 
 afterEach(async () => {
@@ -163,6 +159,31 @@ describe('Cursor Shell rewrite probe transcript parser', () => {
     }
   })
 
+  processGroupIt('keeps the group SIGKILL fallback after the direct child exits', async () => {
+    const { runCommandCapture } = await probeModule()
+    const directory = await createTempDir()
+    const grandchildPidPath = path.join(directory, 'detached-grandchild.pid')
+    const childProgram = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: 'ignore' })",
+      `writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid))`,
+      'setInterval(() => {}, 1000)',
+    ].join('; ')
+
+    const result = await runCommandCapture(process.execPath, ['-e', childProgram], {
+      timeoutMs: 100,
+    })
+    const grandchildPid = Number(await readFile(grandchildPidPath, 'utf8'))
+
+    try {
+      expect(result.timedOut).toBe(true)
+      expect(isProcessRunning(grandchildPid)).toBe(false)
+    } finally {
+      if (isProcessRunning(grandchildPid)) process.kill(grandchildPid, 'SIGKILL')
+    }
+  })
+
   it('accepts only explicit authenticated JSON status', async () => {
     const { isExplicitlyAuthenticated } = await probeModule()
 
@@ -178,6 +199,13 @@ describe('Cursor Shell rewrite probe transcript parser', () => {
     expect(
       isExplicitlyAuthenticated({
         code: 1,
+        stdout: '{"isAuthenticated":true,"status":"authenticated"}',
+      }),
+    ).toBe(false)
+    expect(
+      isExplicitlyAuthenticated({
+        code: 0,
+        timedOut: true,
         stdout: '{"isAuthenticated":true,"status":"authenticated"}',
       }),
     ).toBe(false)

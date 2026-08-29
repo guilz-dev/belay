@@ -109,7 +109,7 @@ export function parseStreamJsonTranscript(transcript) {
 
 /** Return true only for the documented, complete authenticated status response. */
 export function isExplicitlyAuthenticated(result) {
-  if (result.code !== 0) return false
+  if (result.code !== 0 || result.timedOut === true) return false
   try {
     const status = JSON.parse(result.stdout)
     return status?.isAuthenticated === true && status.status === 'authenticated'
@@ -171,6 +171,17 @@ export function runCommandCapture(command, args, options = {}) {
     let timedOut = false
     let settled = false
     let forceKill = null
+    let resolveForceKill
+    let forceKillDone = Promise.resolve()
+    const processGroupExists = () => {
+      if (process.platform === 'win32' || !child.pid) return false
+      try {
+        process.kill(-child.pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
     const terminate = (signal) => {
       if (process.platform !== 'win32' && child.pid) {
         try {
@@ -182,18 +193,37 @@ export function runCommandCapture(command, args, options = {}) {
       }
       child.kill(signal)
     }
+    const waitForProcessGroupExit = async () => {
+      for (let attempt = 0; attempt < 20 && processGroupExists(); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
     const timeout = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true
           terminate('SIGTERM')
-          forceKill = setTimeout(() => terminate('SIGKILL'), 1_000)
+          forceKillDone = new Promise((resolve) => {
+            resolveForceKill = resolve
+          })
+          forceKill = setTimeout(() => {
+            terminate('SIGKILL')
+            forceKill = null
+            resolveForceKill()
+          }, 1_000)
         }, options.timeoutMs)
       : null
     const settle = async ({ code, signal, error }) => {
       if (settled) return
       settled = true
       if (timeout) clearTimeout(timeout)
-      if (forceKill) clearTimeout(forceKill)
+      if (timedOut && forceKill && processGroupExists()) {
+        await forceKillDone
+        await waitForProcessGroupExit()
+      } else if (forceKill) {
+        clearTimeout(forceKill)
+        forceKill = null
+        resolveForceKill()
+      }
       stdoutFile?.end()
       stderrFile?.end()
       await Promise.all(
