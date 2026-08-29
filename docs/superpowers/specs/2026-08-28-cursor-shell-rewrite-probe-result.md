@@ -1,6 +1,5 @@
 # Cursor Shell rewrite probe result
 
-- Status: **PENDING REVIEW**
 - Invocation: `cursor-agent --print --output-format stream-json --trust --workspace <private temporary workspace> <controlled prompt>`.
 - Cursor executable version captured at preflight: `2026.08.11-e8db854`. Hook payloads report `2026.08.11-e8db854` for Case A and `2026.08.25-3e8eec8` for Cases B--E; this in-run version drift is material evidence, not normalized away.
 - Host platform: macOS host; the harness captured Node platform `darwin`, Darwin kernel `25.5.0`, and architecture `arm64`. It did not capture a macOS product-version string, so the Darwin kernel is not recorded as one.
@@ -51,4 +50,21 @@ All seven actual case processes exited 0 with a successful terminal stream event
 
 ## Review boundaries
 
-These are redacted observations from the one authorized actual run and its separately retained manifest. Raw streams, hook payloads, timestamps, local paths, account information, session/conversation/tool identifiers, tokens, and transcripts remain private. This record makes no terminal transport decision; the version drift, absent execution/output propagation in A--C, untested ticket protocol, unestablished deterministic precedence, and unisolated nonzero-hook execution behavior require Task 4 review.
+These are redacted observations from the one authorized actual run and its separately retained manifest. Raw streams, hook payloads, timestamps, local paths, account information, session/conversation/tool identifiers, tokens, and transcripts remain private.
+
+## Decision
+
+The native Cursor Shell rewrite transport is rejected for this proposal. The decision rule requires every Case A--D transport requirement to pass, while the authenticated actual run established the following decisive failures:
+
+- **A failed execution and stdout propagation:** `beforeShellExecution` received and allowed the mediated replacement, but that command did not execute and its stdout marker did not reach the stream.
+- **B failed exit-status and stderr propagation:** the mediated fixture's exit 37 and stderr marker did not propagate; the original command did not execute.
+- **C proved replacement visibility only:** the secondary hook observed the replacement, but ticket validation without consumption and single runner consumption were not exercised.
+- **D did not establish deterministic precedence:** one competing replacement sequence was detected and denied, but the observation occurred amid hook-payload version drift and cannot establish stable precedence or conflict behavior.
+
+Case E visibly rejected the deny and malformed variants, but execution fail-open behavior for a single nonzero hook remains unresolved. That uncertainty is an additional design risk; it is not needed to reach the decision because Cases A--D already fail their required invariants.
+
+This result is not blocked: the supported-host invocation recorded above was authenticated, ran with permission mode `default`, reached the hooks, and produced complete case evidence. Cursor's official CLI reference says [`--force` force-allows commands unless explicitly denied](https://docs.cursor.com/en/cli/reference/parameters), while its permissions reference says [`--force` is required for writes in print mode](https://docs.cursor.com/cli/reference/permissions). A `--force` run therefore changes the permission regime and is not evidence for the ordinary approval transport evaluated here.
+
+The ordinary exact one-shot approval path remains in place. The native execution proposal is closed without adding its configuration option. This decision does not create ADR-007 or a Workstream C plan and requires no production runtime, adapter SDK, or gate-contract change.
+
+- Terminal status: **NO-GO**
