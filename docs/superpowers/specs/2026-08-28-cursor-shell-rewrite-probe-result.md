@@ -39,16 +39,16 @@ All seven actual case processes exited 0 with a successful terminal stream event
 
 ### Case D -- competing `updated_input`
 
-- Both matching `preToolUse` hooks received the original command. The competing hook ran first and returned the third command; the normal hook then returned the mediated command.
-- `beforeShellExecution` received the third command, not the mediated command, and denied it. The completed Shell result was a visible rejection and no marker was created.
-- For this Cursor configuration, the first `updated_input` response won. The normal hook could detect the loss at `beforeShellExecution` because the received command was not its mediated command, but this one evidence set does not establish a cross-version or cross-scope ordering guarantee.
+- In this one run/configuration, the competing-mode `preToolUse` log and response came first, the normal-mode log and response came second, and both hooks received the original command.
+- `beforeShellExecution` then received the third command, not the mediated command, and denied it. The completed Shell result was a visible rejection and no marker was created.
+- This is an observed sequence amid the in-run Cursor-version drift only. Deterministic precedence remains unestablished.
 
 ### Case E -- denied and invalid hook responses
 
 - **Deny:** `preToolUse` returned `permission: deny`; there was no `beforeShellExecution` invocation, no marker, and the completed Shell result visibly rejected the original command.
 - **Malformed:** `preToolUse` emitted malformed output; there was no `beforeShellExecution` invocation, no marker, and the completed Shell result visibly rejected the original command. The observed behavior blocked this case rather than executing it.
-- **Nonzero:** `preToolUse` exited nonzero, yet `beforeShellExecution` still received the original command and also exited nonzero. No marker was created, and the completed Shell result rejected the original command with an empty reason. Thus a nonzero `preToolUse` response did not itself prevent downstream secondary-hook delivery in this run.
+- **Nonzero:** `preToolUse` exited nonzero, yet `beforeShellExecution` still received the original command and also exited nonzero. No marker was created, and the completed Shell result rejected the original command with an empty reason. A nonzero `preToolUse` response therefore did not itself prevent downstream secondary-hook delivery in this run; because both hooks exited nonzero, execution fail-open behavior for one failed hook remains unisolated and unresolved.
 
 ## Review boundaries
 
-These are redacted observations from the one authorized actual run and its separately retained manifest. Raw streams, hook payloads, timestamps, local paths, account information, session/conversation/tool identifiers, tokens, and transcripts remain private. This record makes no terminal transport decision; the version drift, absent execution/output propagation in A--C, untested ticket protocol, and single-configuration precedence observation require Task 4 review.
+These are redacted observations from the one authorized actual run and its separately retained manifest. Raw streams, hook payloads, timestamps, local paths, account information, session/conversation/tool identifiers, tokens, and transcripts remain private. This record makes no terminal transport decision; the version drift, absent execution/output propagation in A--C, untested ticket protocol, unestablished deterministic precedence, and unisolated nonzero-hook execution behavior require Task 4 review.
