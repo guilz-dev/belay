@@ -2,10 +2,11 @@
 
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { finished } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url)
@@ -16,6 +17,8 @@ const RESULT_SPEC_PATH = path.join(
 )
 const USER_CURSOR_HOOKS_PATH = path.join(os.homedir(), '.cursor', 'hooks.json')
 const PROBE_PREFIX = 'CURSOR_REWRITE_PROBE'
+const CASE_TIMEOUT_MS = 120_000
+const PREFLIGHT_TIMEOUT_MS = 15_000
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`
@@ -98,7 +101,20 @@ export function parseStreamJsonTranscript(transcript) {
           isError: terminal.is_error ?? terminal.isError ?? null,
         }
       : null,
-    shellCalls: events.flatMap((event) => shellToolCalls(event)),
+    shellCalls: events.flatMap((event) =>
+      event?.type === 'tool_call' && event.subtype === 'completed' ? shellToolCalls(event) : [],
+    ),
+  }
+}
+
+/** Return true only for the documented, complete authenticated status response. */
+export function isExplicitlyAuthenticated(result) {
+  if (result.code !== 0) return false
+  try {
+    const status = JSON.parse(result.stdout)
+    return status?.isAuthenticated === true && status.status === 'authenticated'
+  } catch {
+    return false
   }
 }
 
@@ -132,33 +148,82 @@ async function userCursorHooksFingerprint() {
   }
 }
 
-function run(command, args, options = {}) {
+/**
+ * Capture child output in memory for parsing while simultaneously writing it to evidence files.
+ * The files are therefore useful even if the process later times out.
+ */
+export function runCommandCapture(command, args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
+      detached: process.platform !== 'win32',
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const stdoutFile = options.stdoutPath
+      ? createWriteStream(options.stdoutPath, { mode: 0o600 })
+      : null
+    const stderrFile = options.stderrPath
+      ? createWriteStream(options.stderrPath, { mode: 0o600 })
+      : null
     const stdout = []
     const stderr = []
-    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
-    child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)))
-    child.on('error', (error) =>
-      resolve({ code: null, signal: null, error: error.message, stdout: '', stderr: '' }),
-    )
-    child.on('close', (code, signal) =>
+    let timedOut = false
+    let settled = false
+    let forceKill = null
+    const terminate = (signal) => {
+      if (process.platform !== 'win32' && child.pid) {
+        try {
+          process.kill(-child.pid, signal)
+          return
+        } catch {
+          // Fall through to the direct child if no separate process group exists yet.
+        }
+      }
+      child.kill(signal)
+    }
+    const timeout = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true
+          terminate('SIGTERM')
+          forceKill = setTimeout(() => terminate('SIGKILL'), 1_000)
+        }, options.timeoutMs)
+      : null
+    const settle = async ({ code, signal, error }) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (forceKill) clearTimeout(forceKill)
+      stdoutFile?.end()
+      stderrFile?.end()
+      await Promise.all(
+        [stdoutFile, stderrFile].filter(Boolean).map((stream) => finished(stream).catch(() => {})),
+      )
       resolve({
         code,
         signal,
-        error: null,
+        error,
+        timedOut,
         stdout: Buffer.concat(stdout).toString('utf8'),
         stderr: Buffer.concat(stderr).toString('utf8'),
-      }),
-    )
+      })
+    }
+    child.stdout.on('data', (chunk) => {
+      const buffer = Buffer.from(chunk)
+      stdout.push(buffer)
+      stdoutFile?.write(buffer)
+    })
+    child.stderr.on('data', (chunk) => {
+      const buffer = Buffer.from(chunk)
+      stderr.push(buffer)
+      stderrFile?.write(buffer)
+    })
+    child.on('error', (error) => settle({ code: null, signal: null, error: error.message }))
+    child.on('close', (code, signal) => settle({ code, signal, error: null }))
   })
 }
 
-function hookProgram() {
+export function createProbeHookProgram() {
   return `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs'
 
@@ -174,6 +239,12 @@ process.stdin.on('end', () => {
   try { input = raw ? JSON.parse(raw) : {} } catch { input = { malformedInput: raw } }
   const command = input.command ?? input.tool_input?.command ?? input.toolInput?.command ?? input.input?.command ?? ''
   log({ input, command })
+  const deny = { permission: 'deny', user_message: 'probe denies non-nonce command' }
+  const respond = (response) => { log({ output: response }); process.stdout.write(JSON.stringify(response)) }
+  if (command !== original && command !== mediated) {
+    respond(deny)
+    return
+  }
   if (mode === 'malformed') {
     appendFileSync(eventLog, JSON.stringify({ timestamp: new Date().toISOString(), phase, mode, output: '{malformed' }) + '\\n', { mode: 0o600 })
     process.stdout.write('{malformed')
@@ -188,9 +259,8 @@ process.stdin.on('end', () => {
   if (mode === 'deny') response = { permission: 'deny', user_message: 'probe denies all commands in this case' }
   else if (phase === 'preToolUse' && command === original) response = { permission: 'allow', updated_input: { command: mediated } }
   else if (command === mediated) response = { permission: 'allow' }
-  else response = { permission: 'deny', user_message: 'probe denies non-nonce command' }
-  log({ output: response })
-  process.stdout.write(JSON.stringify(response))
+  else response = deny
+  respond(response)
 })
 `
 }
@@ -242,7 +312,7 @@ async function writeHooks({ caseDir, caseName, nonce, mode, competing = false })
     ].join(' ')
 
   await mkdir(hooksDir, { recursive: true, mode: 0o700 })
-  await writeFile(hookPath, hookProgram(), { mode: 0o700 })
+  await writeFile(hookPath, createProbeHookProgram(), { mode: 0o700 })
   const preToolUse = [{ matcher: 'Shell', command: hookCommand('preToolUse', mode, mediated) }]
   if (competing) {
     preToolUse.push({
@@ -307,17 +377,25 @@ async function runCase(evidenceDir, caseName, configuration) {
     prompt,
   ]
   const startedAt = new Date().toISOString()
-  const result = await run('cursor-agent', args, { cwd: caseDir })
+  const result = await runCommandCapture('cursor-agent', args, {
+    cwd: caseDir,
+    stdoutPath: path.join(caseDir, 'cursor-stdout.ndjson'),
+    stderrPath: path.join(caseDir, 'cursor-stderr.log'),
+    timeoutMs: CASE_TIMEOUT_MS,
+  })
   const finishedAt = new Date().toISOString()
-  await writeFile(path.join(caseDir, 'cursor-stdout.ndjson'), result.stdout, { mode: 0o600 })
-  await writeFile(path.join(caseDir, 'cursor-stderr.log'), result.stderr, { mode: 0o600 })
   const hooks = await readFile(setup.paths.eventLog, 'utf8').catch(() => '')
   const summary = {
     case: caseName,
     startedAt,
     finishedAt,
     command: ['cursor-agent', ...args.slice(0, -1), '<controlled prompt>'],
-    exit: { code: result.code, signal: result.signal, spawnError: result.error },
+    exit: {
+      code: result.code,
+      signal: result.signal,
+      spawnError: result.error,
+      timedOut: result.timedOut,
+    },
     stream: parseStreamJsonTranscript(result.stdout),
     markers: await markerState(setup.paths),
     expectedMarkers: { stdout: setup.stdoutMarker, stderr: setup.stderrMarker },
@@ -333,7 +411,7 @@ async function runCase(evidenceDir, caseName, configuration) {
   return summary
 }
 
-async function evidenceManifest(evidenceDir) {
+async function rawEvidenceManifest(evidenceDir) {
   const entries = []
   async function visit(directory) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -354,11 +432,11 @@ async function evidenceManifest(evidenceDir) {
   return createHash('sha256').update(serialized).digest('hex')
 }
 
-function renderResultSpec(summary) {
-  return `# Cursor Shell rewrite probe result\n\n- Status: **PENDING REVIEW** — live evidence is captured, but this Task 1 harness does not make a GO/NO-GO/BLOCKED decision.\n- Cursor version: \`${redactForCommittedSummary(summary.cursorVersion)}\`\n- OS: \`${redactForCommittedSummary(summary.os)}\`\n- Invocation: \`cursor-agent --print --output-format stream-json --trust --workspace <private temporary workspace> <controlled prompt>\`\n- Evidence directory SHA-256: \`${summary.evidenceHash}\`\n- User-level \`.cursor/hooks.json\`: ${summary.userHooks.exists ? `present (SHA-256 \`${summary.userHooks.sha256}\`)` : 'absent'}; contents were not read into committed output or modified.\n\n## Captured cases\n\n${summary.cases
+export function renderResultSpec(summary) {
+  return `# Cursor Shell rewrite probe result\n\n- Status: **PENDING REVIEW** — live evidence is captured, but this Task 1 harness does not make a GO/NO-GO/BLOCKED decision.\n- Cursor version: \`${redactForCommittedSummary(summary.cursorVersion)}\`\n- OS: \`${redactForCommittedSummary(summary.os)}\`\n- Invocation: \`cursor-agent --print --output-format stream-json --trust --workspace <private temporary workspace> <controlled prompt>\`\n- Raw-evidence manifest SHA-256: \`${summary.rawEvidenceManifestHash}\`\n- User-level \`.cursor/hooks.json\`: ${summary.userHooks.exists ? `present (SHA-256 \`${summary.userHooks.sha256}\`)` : 'absent'}; contents were not read into committed output or modified.\n\n## Captured cases\n\n${summary.cases
     .map(
       (item) =>
-        `- Case ${item.case}: process exit ${item.exit.code ?? 'spawn-error'}; markers ${JSON.stringify(item.markers)}; ${item.hookInvocationCount} hook log entries; stream events ${item.stream.eventCount}, malformed lines ${item.stream.malformedLineCount}.`,
+        `- Case ${item.case}: process exit ${item.exit.code ?? 'spawn-error'}; timed out ${item.exit.timedOut}; markers ${JSON.stringify(item.markers)}; ${item.hookInvocationCount} hook log entries; stream events ${item.stream.eventCount}, malformed lines ${item.stream.malformedLineCount}.`,
     )
     .join(
       '\n',
@@ -379,7 +457,9 @@ async function main() {
     },
   )
 
-  const version = await run('cursor-agent', ['--version'])
+  const version = await runCommandCapture('cursor-agent', ['--version'], {
+    timeoutMs: PREFLIGHT_TIMEOUT_MS,
+  })
   await writeFile(
     path.join(evidenceDir, 'cursor-version.log'),
     `${version.stdout}${version.stderr}`,
@@ -397,7 +477,9 @@ async function main() {
     return 0
   }
 
-  const authentication = await run('cursor-agent', ['status'])
+  const authentication = await runCommandCapture('cursor-agent', ['status', '--format', 'json'], {
+    timeoutMs: PREFLIGHT_TIMEOUT_MS,
+  })
   await writeFile(
     path.join(evidenceDir, 'cursor-authentication-status.log'),
     `${authentication.stdout}${authentication.stderr}`,
@@ -405,7 +487,6 @@ async function main() {
       mode: 0o600,
     },
   )
-  const authText = `${authentication.stdout}\n${authentication.stderr}`
   await writeFile(
     path.join(evidenceDir, 'preflight.json'),
     `${JSON.stringify(
@@ -418,7 +499,7 @@ async function main() {
     )}\n`,
     { mode: 0o600 },
   )
-  if (authentication.code !== 0 || /not authenticated|unauthenticated|log in/iu.test(authText)) {
+  if (!isExplicitlyAuthenticated(authentication)) {
     console.log(
       'SKIP: cursor-agent is not authenticated; no production or user Cursor configuration was changed.',
     )
@@ -434,12 +515,12 @@ async function main() {
   cases.push(await runCase(evidenceDir, 'E-malformed', { mode: 'malformed' }))
   cases.push(await runCase(evidenceDir, 'E-nonzero', { mode: 'nonzero' }))
 
-  const evidenceHash = await evidenceManifest(evidenceDir)
+  const rawEvidenceManifestHash = await rawEvidenceManifest(evidenceDir)
   const summary = {
     cursorVersion: version.stdout.trim() || version.stderr.trim(),
     os: `${process.platform} ${os.release()} ${process.arch}`,
     userHooks,
-    evidenceHash,
+    rawEvidenceManifestHash,
     cases,
   }
   const committedSummary = renderResultSpec(summary)
