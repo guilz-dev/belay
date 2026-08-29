@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { collectRequirements } from '../../core/effect-ir/build.js'
 import { verdict } from '../../core/verdict/verdict.js'
 import { verdictTestContext } from './helpers.js'
 
@@ -40,17 +41,28 @@ describe('freelance dogfood grammar regression', () => {
     expect(result.reason).toBe('unknown_local_effect')
   })
 
-  it('resolves make test-fast from freelance fixture without unknown_local_effect', async () => {
+  it('requires approval when the incident test-fast command exposes its Docker prerequisite', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-freelance-fixture-'))
     tempDirs.push(dir)
     await cp(fixtureDir, dir, { recursive: true })
 
-    const result = await verdict('make test-fast ARGS="spec/makefile/upgrade_harness_spec.rb"', {
+    const result = await verdict('make test-fast ARGS="spec/requests/api/v1/project_spec.rb:74"', {
       ...ctx,
       cwd: dir,
       repoRoot: dir,
     })
-    expect(result.reason).not.toBe('unknown_local_effect')
-    expect(result.effectPlan?.completeness).toBe('complete')
+    const requirements = result.effectPlan ? collectRequirements(result.effectPlan.root) : []
+    expect(
+      requirements.some(
+        (requirement) =>
+          requirement.action === 'indeterminate' &&
+          requirement.evidence.signals.includes('launcher.make_recipe_dynamic') &&
+          requirement.provenances?.some((provenance) =>
+            provenance.innerCommand?.includes('docker start'),
+          ),
+      ),
+    ).toBe(true)
+    expect(result.permission).toBe('ask')
+    expect(result.authorizationDecision?.outcome).toBe('require_approval')
   })
 })
