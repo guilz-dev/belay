@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawn, spawnSync } from 'node:child_process'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -18,9 +18,13 @@ async function createTempDir() {
   return directory
 }
 
-function isProcessRunning(pid: number) {
-  const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' })
-  return result.status === 0 && !result.stdout.trim().startsWith('Z')
+async function waitFor(condition: () => Promise<boolean> | boolean, description: string) {
+  const deadline = Date.now() + 1_000
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`Timed out waiting for ${description}`)
 }
 
 afterEach(async () => {
@@ -84,6 +88,45 @@ describe('Cursor Shell rewrite probe transcript parser', () => {
     })
   })
 
+  it('projects exactly one rejected completed Shell call from Cursor stream-json', async () => {
+    const { parseStreamJsonTranscript } = await probeModule()
+    const command = 'node -e "console.log(\'CURSOR_REWRITE_STDOUT_nonce\')"'
+    const transcript = [
+      JSON.stringify({
+        type: 'tool_call',
+        subtype: 'started',
+        tool_call: { shellToolCall: { args: { command } } },
+      }),
+      JSON.stringify({
+        type: 'tool_call',
+        subtype: 'completed',
+        tool_call: {
+          shellToolCall: {
+            result: {
+              rejected: {
+                command,
+                reason: `sk_live_probe_token ${'r'.repeat(600)}`,
+                evidence: 'agent@example.com',
+              },
+            },
+          },
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false }),
+    ].join('\n')
+
+    const parsed = parseStreamJsonTranscript(transcript)
+
+    expect(parsed.shellCalls).toHaveLength(1)
+    expect(parsed.shellCalls[0]).toMatchObject({
+      command,
+      outcome: 'rejected',
+      rejection: { evidence: '<redacted-email>' },
+    })
+    expect(parsed.shellCalls[0].rejection.reason).toContain('<redacted-token>')
+    expect(parsed.shellCalls[0].rejection.reason.length).toBeLessThanOrEqual(512)
+  })
+
   it('emits valid deny JSON for non-nonce commands in malformed and nonzero modes', async () => {
     const { createProbeHookProgram } = await probeModule()
     const directory = await createTempDir()
@@ -113,76 +156,65 @@ describe('Cursor Shell rewrite probe transcript parser', () => {
     }
   })
 
-  it('captures child output as it arrives and records a case timeout', async () => {
+  it('captures child output into evidence files as it arrives', async () => {
     const { runCommandCapture } = await probeModule()
     const directory = await createTempDir()
     const stdoutPath = path.join(directory, 'stdout.ndjson')
     const stderrPath = path.join(directory, 'stderr.log')
     const result = await runCommandCapture(
       process.execPath,
-      [
-        '-e',
-        "process.stdout.write('early stdout\\n'); process.stderr.write('early stderr\\n'); setTimeout(() => {}, 1000)",
-      ],
-      { stdoutPath, stderrPath, timeoutMs: 50 },
+      ['-e', "process.stdout.write('early stdout\\n'); process.stderr.write('early stderr\\n')"],
+      { stdoutPath, stderrPath },
     )
 
-    expect(result.timedOut).toBe(true)
+    expect(result.timedOut).toBe(false)
     await expect(readFile(stdoutPath, 'utf8')).resolves.toBe('early stdout\n')
     await expect(readFile(stderrPath, 'utf8')).resolves.toBe('early stderr\n')
   })
 
   const processGroupIt = process.platform === 'win32' ? it.skip : it
-  processGroupIt('terminates a timed-out child process group', async () => {
-    const { runCommandCapture } = await probeModule()
-    const directory = await createTempDir()
-    const grandchildPidPath = path.join(directory, 'grandchild.pid')
-    const childProgram = [
-      "const { spawn } = require('node:child_process')",
-      "const { writeFileSync } = require('node:fs')",
-      "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: 'ignore' })",
-      `writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid))`,
-      "process.on('SIGTERM', () => {})",
-      'setInterval(() => {}, 1000)',
-    ].join('; ')
+  processGroupIt(
+    'terminates a ready POSIX process-group descendant with SIGTERM then SIGKILL',
+    async () => {
+      const { terminateProbeProcessGroup } = await probeModule()
+      const directory = await createTempDir()
+      const grandchildReadyPath = path.join(directory, 'grandchild.ready')
+      const grandchildTermAckPath = path.join(directory, 'grandchild.term')
+      const grandchildAfterKillPath = path.join(directory, 'grandchild.after-kill')
+      const childProgram = [
+        "const { spawn } = require('node:child_process')",
+        `const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify("const { writeFileSync } = require('node:fs'); const [readyPath, termAckPath, afterKillPath] = process.argv.slice(1); process.on('SIGTERM', () => { writeFileSync(termAckPath, 'term'); setTimeout(() => writeFileSync(afterKillPath, 'unexpected'), 100) }); writeFileSync(readyPath, 'ready'); setInterval(() => {}, 1000)")}, ${JSON.stringify(grandchildReadyPath)}, ${JSON.stringify(grandchildTermAckPath)}, ${JSON.stringify(grandchildAfterKillPath)}], { stdio: 'ignore' })`,
+        'setInterval(() => {}, 1000)',
+      ].join('; ')
+      const child = spawn(process.execPath, ['-e', childProgram], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      await waitFor(async () => {
+        try {
+          return (await readFile(grandchildReadyPath, 'utf8')) === 'ready'
+        } catch {
+          return false
+        }
+      }, 'grandchild SIGTERM handler readiness')
 
-    const result = await runCommandCapture(process.execPath, ['-e', childProgram], {
-      timeoutMs: 100,
-    })
-    const grandchildPid = Number(await readFile(grandchildPidPath, 'utf8'))
-
-    try {
-      expect(result.timedOut).toBe(true)
-      expect(isProcessRunning(grandchildPid)).toBe(false)
-    } finally {
-      if (isProcessRunning(grandchildPid)) process.kill(grandchildPid, 'SIGKILL')
-    }
-  })
-
-  processGroupIt('keeps the group SIGKILL fallback after the direct child exits', async () => {
-    const { runCommandCapture } = await probeModule()
-    const directory = await createTempDir()
-    const grandchildPidPath = path.join(directory, 'detached-grandchild.pid')
-    const childProgram = [
-      "const { spawn } = require('node:child_process')",
-      "const { writeFileSync } = require('node:fs')",
-      "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: 'ignore' })",
-      `writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid))`,
-      'setInterval(() => {}, 1000)',
-    ].join('; ')
-
-    const result = await runCommandCapture(process.execPath, ['-e', childProgram], {
-      timeoutMs: 100,
-    })
-    const grandchildPid = Number(await readFile(grandchildPidPath, 'utf8'))
-
-    try {
-      expect(result.timedOut).toBe(true)
-      expect(isProcessRunning(grandchildPid)).toBe(false)
-    } finally {
-      if (isProcessRunning(grandchildPid)) process.kill(grandchildPid, 'SIGKILL')
-    }
-  })
+      try {
+        terminateProbeProcessGroup(child, 'SIGTERM')
+        await waitFor(async () => {
+          try {
+            return (await readFile(grandchildTermAckPath, 'utf8')) === 'term'
+          } catch {
+            return false
+          }
+        }, 'grandchild SIGTERM acknowledgement')
+        terminateProbeProcessGroup(child, 'SIGKILL')
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        await expect(access(grandchildAfterKillPath)).rejects.toThrow()
+      } finally {
+        terminateProbeProcessGroup(child, 'SIGKILL')
+      }
+    },
+  )
 
   it('accepts only explicit authenticated JSON status', async () => {
     const { isExplicitlyAuthenticated } = await probeModule()

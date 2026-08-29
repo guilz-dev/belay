@@ -19,6 +19,7 @@ const USER_CURSOR_HOOKS_PATH = path.join(os.homedir(), '.cursor', 'hooks.json')
 const PROBE_PREFIX = 'CURSOR_REWRITE_PROBE'
 const CASE_TIMEOUT_MS = 120_000
 const PREFLIGHT_TIMEOUT_MS = 15_000
+const MAX_REJECTION_EVIDENCE_CHARS = 512
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`
@@ -49,6 +50,12 @@ function firstNumber(value, paths) {
   return null
 }
 
+function boundedRedactedEvidence(value) {
+  return typeof value === 'string'
+    ? redactForCommittedSummary(value).slice(0, MAX_REJECTION_EVIDENCE_CHARS)
+    : ''
+}
+
 function shellToolCalls(value, found = []) {
   if (!value || typeof value !== 'object') return found
   if (Array.isArray(value)) {
@@ -58,16 +65,30 @@ function shellToolCalls(value, found = []) {
 
   for (const [key, nested] of Object.entries(value)) {
     if (key.toLowerCase().includes('shell') && nested && typeof nested === 'object') {
-      const command = firstString(nested, [['args', 'command'], ['command'], ['input', 'command']])
+      const result = nested.result ?? nested.output ?? nested
+      const rejected = result?.rejected
+      const command =
+        firstString(rejected, [['command']]) ||
+        firstString(nested, [['args', 'command'], ['command'], ['input', 'command']])
       if (command) {
-        const result = nested.result ?? nested.output ?? nested
-        const success = result?.success ?? result
-        found.push({
-          command,
-          stdout: firstString(success, [['stdout'], ['output', 'stdout']]),
-          stderr: firstString(success, [['stderr'], ['output', 'stderr']]),
-          exitCode: firstNumber(success, [['exitCode'], ['exit_code'], ['statusCode']]),
-        })
+        if (rejected && typeof rejected === 'object') {
+          found.push({
+            command,
+            outcome: 'rejected',
+            rejection: {
+              reason: boundedRedactedEvidence(rejected.reason),
+              evidence: boundedRedactedEvidence(rejected.evidence),
+            },
+          })
+        } else {
+          const success = result?.success ?? result
+          found.push({
+            command,
+            stdout: firstString(success, [['stdout'], ['output', 'stdout']]),
+            stderr: firstString(success, [['stderr'], ['output', 'stderr']]),
+            exitCode: firstNumber(success, [['exitCode'], ['exit_code'], ['statusCode']]),
+          })
+        }
       }
     }
     shellToolCalls(nested, found)
@@ -116,6 +137,19 @@ export function isExplicitlyAuthenticated(result) {
   } catch {
     return false
   }
+}
+
+/** Terminate the whole POSIX probe process group, falling back to its direct child elsewhere. */
+export function terminateProbeProcessGroup(child, signal) {
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, signal)
+      return true
+    } catch {
+      // Fall through to the direct child if no separate process group exists yet.
+    }
+  }
+  return child.kill(signal)
 }
 
 function redactForCommittedSummary(value) {
@@ -182,17 +216,6 @@ export function runCommandCapture(command, args, options = {}) {
         return false
       }
     }
-    const terminate = (signal) => {
-      if (process.platform !== 'win32' && child.pid) {
-        try {
-          process.kill(-child.pid, signal)
-          return
-        } catch {
-          // Fall through to the direct child if no separate process group exists yet.
-        }
-      }
-      child.kill(signal)
-    }
     const waitForProcessGroupExit = async () => {
       for (let attempt = 0; attempt < 20 && processGroupExists(); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10))
@@ -201,12 +224,12 @@ export function runCommandCapture(command, args, options = {}) {
     const timeout = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true
-          terminate('SIGTERM')
+          terminateProbeProcessGroup(child, 'SIGTERM')
           forceKillDone = new Promise((resolve) => {
             resolveForceKill = resolve
           })
           forceKill = setTimeout(() => {
-            terminate('SIGKILL')
+            terminateProbeProcessGroup(child, 'SIGKILL')
             forceKill = null
             resolveForceKill()
           }, 1_000)
