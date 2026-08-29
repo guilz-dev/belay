@@ -22,6 +22,8 @@ import {
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
 const GIT_PROCESS_TEST_TIMEOUT_MS = 15_000
+/** Shell-exit budget under load; still well below the 2s background sleep in the pipe test. */
+const SHELL_EXIT_BUDGET_MS = 500
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -71,10 +73,10 @@ describe('transactional git worktree helpers', () => {
     const result = await runShellCommand(
       "printf 'failure detail' >&2; sleep 2 & exit 7",
       process.cwd(),
-      20,
+      SHELL_EXIT_BUDGET_MS,
     )
 
-    expect(Date.now() - startedAt).toBeLessThan(1_500)
+    expect(Date.now() - startedAt).toBeLessThan(SHELL_EXIT_BUDGET_MS)
     expect(result).toMatchObject({
       exitCode: 7,
       timedOut: false,
