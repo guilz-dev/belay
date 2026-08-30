@@ -164,9 +164,9 @@ describe('native Seatbelt boundary probe evidence contract', () => {
 
     it('rejects missing required scalar fields', async () => {
       const { parseCaseRecords } = await probeModule()
-      expect(() =>
-        parseCaseRecords(JSON.stringify({ version: 1, name: 'loopback-tcp' })),
-      ).toThrow('invalid or duplicate Seatbelt probe case record')
+      expect(() => parseCaseRecords(JSON.stringify({ version: 1, name: 'loopback-tcp' }))).toThrow(
+        'invalid or duplicate Seatbelt probe case record',
+      )
     })
   })
 
@@ -195,7 +195,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
     it('returns GO when all load-bearing rules pass', async () => {
       const { REQUIRED_CASE_NAMES, decideProbe } = await probeModule()
       const passing = reportFixture({
-        cases: REQUIRED_CASE_NAMES.map((name) => ({ name, passed: true })),
+        cases: REQUIRED_CASE_NAMES.map((name: string) => ({ name, passed: true })),
         latency: { samples: 30, medianOverheadMs: 80, p95OverheadMs: 220 },
         cleanup: { confirmed: true },
         profile: { forbiddenBroadGrants: [] },
@@ -205,9 +205,9 @@ describe('native Seatbelt boundary probe evidence contract', () => {
 
     it('returns NO-GO when a security case fails', async () => {
       const { decideProbe } = await probeModule()
-      expect(
-        decideProbe(reportFixture({ cases: [{ name: 'loopback-tcp', passed: false }] })),
-      ).toBe('NO-GO')
+      expect(decideProbe(reportFixture({ cases: [{ name: 'loopback-tcp', passed: false }] }))).toBe(
+        'NO-GO',
+      )
     })
 
     it('returns NO-GO when forbidden broad grants are present', async () => {
@@ -311,6 +311,377 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       expect(serialized).not.toContain(secretSentinel)
       expect(serialized).not.toContain('/Users/')
       expect(serialized).not.toContain('/usr/bin/sandbox-exec')
+    })
+  })
+
+  describe('parseOtoolLibraries', () => {
+    it('extracts library references from otool -L stdout', async () => {
+      const { parseOtoolLibraries } = await probeModule()
+      const stdout = [
+        '/opt/homebrew/bin/node:',
+        '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)',
+        '\t@loader_path/../lib/libuv.1.dylib (compatibility version 1.0.0, current version 1.0.0)',
+        '\t/opt/homebrew/opt/libuv/lib/libuv.1.dylib (compatibility version 1.0.0, current version 1.0.0)',
+      ].join('\n')
+
+      expect(parseOtoolLibraries(stdout)).toEqual([
+        '/usr/lib/libSystem.B.dylib',
+        '@loader_path/../lib/libuv.1.dylib',
+        '/opt/homebrew/opt/libuv/lib/libuv.1.dylib',
+      ])
+    })
+
+    it('returns an empty list when no dependency lines are present', async () => {
+      const { parseOtoolLibraries } = await probeModule()
+      expect(parseOtoolLibraries('/opt/homebrew/bin/node:\n')).toEqual([])
+    })
+  })
+
+  describe('resolveLibraryReference', () => {
+    it('resolves @loader_path and @executable_path references', async () => {
+      const { resolveLibraryReference } = await probeModule()
+      const loaderPath = '/opt/homebrew/Cellar/node/22.0.0/bin/node'
+      const executablePath = '/private/var/tmp/belay-native-seatbelt-probe/mirror/node'
+
+      expect(
+        resolveLibraryReference('@loader_path/../lib/libuv.1.dylib', loaderPath, executablePath),
+      ).toBe('/opt/homebrew/Cellar/node/22.0.0/lib/libuv.1.dylib')
+      expect(
+        resolveLibraryReference(
+          '@executable_path/../deps/libfoo.dylib',
+          loaderPath,
+          executablePath,
+        ),
+      ).toBe('/private/var/tmp/belay-native-seatbelt-probe/deps/libfoo.dylib')
+    })
+
+    it('accepts absolute library paths unchanged', async () => {
+      const { resolveLibraryReference } = await probeModule()
+      expect(
+        resolveLibraryReference(
+          '/usr/lib/libSystem.B.dylib',
+          '/opt/homebrew/bin/node',
+          '/opt/homebrew/bin/node',
+        ),
+      ).toBe('/usr/lib/libSystem.B.dylib')
+    })
+
+    it('rejects @rpath, non-absolute resolutions, and unsafe path characters', async () => {
+      const { resolveLibraryReference } = await probeModule()
+      expect(() =>
+        resolveLibraryReference(
+          '@rpath/libnode.dylib',
+          '/opt/homebrew/bin/node',
+          '/opt/homebrew/bin/node',
+        ),
+      ).toThrow('unresolved @rpath library reference')
+      expect(() =>
+        resolveLibraryReference(
+          'librelative.dylib',
+          '/opt/homebrew/bin/node',
+          '/opt/homebrew/bin/node',
+        ),
+      ).toThrow('library reference did not resolve to an absolute path')
+      expect(() =>
+        resolveLibraryReference(
+          '/usr/lib/bad\u0000name.dylib',
+          '/opt/homebrew/bin/node',
+          '/opt/homebrew/bin/node',
+        ),
+      ).toThrow('seatbelt path contains forbidden characters')
+    })
+  })
+
+  describe('resolveRuntimeClosure', () => {
+    it('derives a canonical closure with injected deps', async () => {
+      const { resolveRuntimeClosure } = await probeModule()
+      const canonicalNodePath = '/opt/homebrew/bin/node'
+      const canonicalLibPath = '/opt/homebrew/opt/libuv/lib/libuv.1.dylib'
+      const symlinkNodePath = '/tmp/probe-node-link'
+      const otoolOutput = [
+        `${canonicalNodePath}:`,
+        `\t${canonicalLibPath} (compatibility version 1.0.0, current version 1.0.0)`,
+      ].join('\n')
+      const libOtoolOutput = `${canonicalLibPath}:\n`
+
+      const closure = await resolveRuntimeClosure(symlinkNodePath, {
+        realpath: async (value: string) => (value === symlinkNodePath ? canonicalNodePath : value),
+        stat: async () => ({ isFile: () => true }),
+        sha256File: async (value: string) =>
+          value === canonicalNodePath ? 'node-hash' : 'libuv-hash',
+        runOtool: async (value: string) => ({
+          stdout: value === canonicalNodePath ? otoolOutput : libOtoolOutput,
+        }),
+      })
+
+      expect(closure).toEqual([
+        {
+          path: canonicalNodePath,
+          sha256: 'node-hash',
+          source: 'executable',
+        },
+        {
+          path: canonicalLibPath,
+          sha256: 'libuv-hash',
+          source: 'dependency',
+        },
+      ])
+    })
+
+    it('deduplicates dependencies and tolerates closure cycles', async () => {
+      const { resolveRuntimeClosure } = await probeModule()
+      const left = '/tmp/probe-left.dylib'
+      const right = '/tmp/probe-right.dylib'
+      const calls = new Map([
+        [
+          left,
+          {
+            stdout: `${left}:\n\t${right} (compatibility version 1.0.0, current version 1.0.0)\n`,
+          },
+        ],
+        [
+          right,
+          {
+            stdout: `${right}:\n\t${left} (compatibility version 1.0.0, current version 1.0.0)\n`,
+          },
+        ],
+      ])
+
+      const closure = await resolveRuntimeClosure(left, {
+        realpath: async (value: string) => value,
+        stat: async () => ({ isFile: () => true }),
+        sha256File: async (value: string) => `${value}-hash`,
+        runOtool: async (value: string) => calls.get(value),
+      })
+
+      expect(closure).toEqual([
+        { path: left, sha256: `${left}-hash`, source: 'executable' },
+        { path: right, sha256: `${right}-hash`, source: 'dependency' },
+      ])
+    })
+
+    it('supports spaces and quotes in resolved library paths', async () => {
+      const { resolveRuntimeClosure } = await probeModule()
+      const executablePath = '/tmp/probe exec/node'
+      const quotedLibPath = '/tmp/probe exec/lib "special".dylib'
+      const otoolOutput = [
+        `${executablePath}:`,
+        `\t@loader_path/lib "special".dylib (compatibility version 1.0.0, current version 1.0.0)`,
+      ].join('\n')
+
+      const closure = await resolveRuntimeClosure(executablePath, {
+        realpath: async (value: string) => value,
+        stat: async () => ({ isFile: () => true }),
+        sha256File: async (value: string) => `${value}-hash`,
+        runOtool: async (value: string) => ({
+          stdout: value === executablePath ? otoolOutput : `${quotedLibPath}:\n`,
+        }),
+      })
+
+      expect(closure).toEqual([
+        { path: quotedLibPath, sha256: `${quotedLibPath}-hash`, source: 'dependency' },
+        { path: executablePath, sha256: `${executablePath}-hash`, source: 'executable' },
+      ])
+    })
+
+    it('rejects non-regular files in the closure', async () => {
+      const { resolveRuntimeClosure } = await probeModule()
+      await expect(
+        resolveRuntimeClosure('/tmp/probe-directory', {
+          realpath: async (value: string) => value,
+          stat: async () => ({ isFile: () => false }),
+          sha256File: async () => 'unused',
+          runOtool: async () => ({ stdout: '' }),
+        }),
+      ).rejects.toThrow('runtime closure is not a file')
+    })
+  })
+
+  describe('seatbeltQuote', () => {
+    it('escapes backslashes and double quotes for Seatbelt literals', async () => {
+      const { seatbeltQuote } = await probeModule()
+      expect(seatbeltQuote('/tmp/probe\\path "quoted"')).toBe('"/tmp/probe\\\\path \\"quoted\\""')
+    })
+
+    it('rejects NUL and newline characters', async () => {
+      const { seatbeltQuote } = await probeModule()
+      expect(() => seatbeltQuote('/tmp/bad\u0000path')).toThrow(
+        'seatbelt path contains forbidden characters',
+      )
+      expect(() => seatbeltQuote('/tmp/bad\npath')).toThrow(
+        'seatbelt path contains forbidden characters',
+      )
+    })
+  })
+
+  describe('compileSeatbeltProfile', () => {
+    const systemLiterals = [
+      { path: '/dev/null', operation: 'file-read-data' },
+      { path: '/usr/lib/dyld', operation: 'file-read-data' },
+    ]
+
+    it('compiles a deny-by-default profile with mirror and literal grants only', async () => {
+      const { compileSeatbeltProfile, seatbeltQuote } = await probeModule()
+      const mirrorRoot = '/private/var/tmp/belay-native-seatbelt-probe/mirror'
+      const evidenceDir = '/private/var/tmp/belay-native-seatbelt-probe/evidence'
+      const homeDir = '/Users/probe-user'
+      const canonicalNodePath = '/opt/homebrew/bin/node'
+      const canonicalLibPath = '/opt/homebrew/opt/libuv/lib/libuv.1.dylib'
+
+      const profile = compileSeatbeltProfile({
+        mirrorRoot,
+        evidenceDir,
+        homeDir,
+        systemLiterals,
+        runtimeClosure: [
+          {
+            path: canonicalNodePath,
+            sha256: 'node-hash',
+            source: 'executable',
+          },
+          {
+            path: canonicalLibPath,
+            sha256: 'libuv-hash',
+            source: 'dependency',
+          },
+        ],
+      })
+
+      expect(profile.source).toContain('(version 1)')
+      expect(profile.source).toContain('(deny default)')
+      expect(profile.source).toContain(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
+      expect(profile.source).toContain(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
+      expect(profile.source).toContain(`(allow file-read* (literal ${seatbeltQuote(evidenceDir)}))`)
+      expect(profile.source).toContain(
+        `(allow file-write* (literal ${seatbeltQuote(evidenceDir)}))`,
+      )
+      expect(profile.source).toContain(
+        `(allow file-read-data (literal ${seatbeltQuote('/dev/null')}))`,
+      )
+      expect(profile.source).toContain(
+        `(allow file-read-data (literal ${seatbeltQuote('/usr/lib/dyld')}))`,
+      )
+      expect(profile.source).not.toContain('(allow network*')
+      expect(profile.source).not.toContain(`(subpath ${seatbeltQuote(homeDir)})`)
+      expect(profile.literalExecs).toEqual([canonicalNodePath])
+      expect(profile.literalReads).toEqual(
+        expect.arrayContaining([
+          { path: canonicalLibPath, operation: 'file-read-data' },
+          { path: '/dev/null', operation: 'file-read-data' },
+          { path: '/usr/lib/dyld', operation: 'file-read-data' },
+        ]),
+      )
+      expect(profile.mirrorRoot).toBe(mirrorRoot)
+      expect(profile.forbiddenBroadGrants).toEqual([])
+    })
+
+    it('allows exact literals under /usr/local and /opt/homebrew but rejects broad subpaths', async () => {
+      const { compileSeatbeltProfile, seatbeltQuote } = await probeModule()
+      const homebrewLiteral = '/opt/homebrew/bin/node'
+      const usrLocalLiteral = '/usr/local/lib/libprobe.dylib'
+
+      const exactLiteralProfile = compileSeatbeltProfile({
+        mirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+        evidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+        homeDir: '/Users/probe-user',
+        systemLiterals: [],
+        runtimeClosure: [
+          { path: homebrewLiteral, sha256: 'node-hash', source: 'executable' },
+          { path: usrLocalLiteral, sha256: 'usr-local-hash', source: 'dependency' },
+        ],
+      })
+
+      expect(exactLiteralProfile.source).toContain(
+        `(allow process-exec (literal ${seatbeltQuote(homebrewLiteral)}))`,
+      )
+      expect(exactLiteralProfile.source).toContain(
+        `(allow file-read-data (literal ${seatbeltQuote(usrLocalLiteral)}))`,
+      )
+      expect(exactLiteralProfile.forbiddenBroadGrants).toEqual([])
+
+      for (const subpath of ['/', '/Users/probe-user', '/usr/local', '/opt/homebrew']) {
+        const profile = compileSeatbeltProfile({
+          mirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+          evidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+          homeDir: '/Users/probe-user',
+          systemLiterals: [],
+          runtimeClosure: [{ path: homebrewLiteral, sha256: 'node-hash', source: 'executable' }],
+          requestedSubpathGrants: [{ subpath, operation: 'file-read*' }],
+        })
+
+        expect(profile.forbiddenBroadGrants).toEqual([
+          {
+            role:
+              subpath === '/'
+                ? 'root'
+                : subpath === '/Users/probe-user'
+                  ? 'home'
+                  : subpath === '/usr/local'
+                    ? 'usr-local'
+                    : 'opt-homebrew',
+            operation: 'file-read*',
+            subpath,
+          },
+        ])
+        expect(profile.source).not.toContain(`(subpath ${seatbeltQuote(subpath)})`)
+      }
+    })
+  })
+
+  describe('validateProfileGrantInventory', () => {
+    it('returns GO when every required resource is present in the profile inventory', async () => {
+      const { compileSeatbeltProfile, validateProfileGrantInventory } = await probeModule()
+      const profile = compileSeatbeltProfile({
+        mirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+        evidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+        homeDir: '/Users/probe-user',
+        systemLiterals: [{ path: '/usr/lib/dyld', operation: 'file-read-data' }],
+        runtimeClosure: [
+          {
+            path: '/opt/homebrew/bin/node',
+            sha256: 'node-hash',
+            source: 'executable',
+          },
+        ],
+      })
+
+      expect(
+        validateProfileGrantInventory(profile, {
+          requiredReads: ['/usr/lib/dyld'],
+          requiredExecs: ['/opt/homebrew/bin/node'],
+          requiredMirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+          requiredEvidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+        }),
+      ).toEqual({ status: 'GO' })
+    })
+
+    it('returns NO-GO evidence when a required resource is absent', async () => {
+      const { compileSeatbeltProfile, validateProfileGrantInventory } = await probeModule()
+      const profile = compileSeatbeltProfile({
+        mirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+        evidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+        homeDir: '/Users/probe-user',
+        systemLiterals: [],
+        runtimeClosure: [
+          {
+            path: '/opt/homebrew/bin/node',
+            sha256: 'node-hash',
+            source: 'executable',
+          },
+        ],
+      })
+
+      expect(
+        validateProfileGrantInventory(profile, {
+          requiredReads: ['/usr/lib/dyld'],
+          requiredExecs: ['/opt/homebrew/bin/node'],
+          requiredMirrorRoot: '/private/var/tmp/belay-native-seatbelt-probe/mirror',
+          requiredEvidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
+        }),
+      ).toEqual({
+        status: 'NO-GO',
+        missing: [{ kind: 'read', path: '/usr/lib/dyld' }],
+      })
     })
   })
 })
