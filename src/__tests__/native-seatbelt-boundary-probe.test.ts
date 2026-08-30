@@ -1162,6 +1162,17 @@ describe('native Seatbelt boundary probe lifecycle', () => {
   })
 
   describe('createPrivateFixture', () => {
+    it('uses a short macOS temp prefix that leaves room for the Unix socket path', async () => {
+      const { privateFixtureTempPrefix } = await probeModule()
+      const prefix = privateFixtureTempPrefix(
+        'darwin',
+        '/private/var/folders/cz/very-long-per-user-temporary-directory/T',
+      )
+
+      expect(prefix).toBe('/tmp/belay-native-seatbelt-probe-')
+      expect(path.join(prefix, '123456', 'listeners', 'probe.sock').length).toBeLessThan(104)
+    })
+
     it('returns BLOCKED before fixture work when the host is not darwin', async () => {
       const { createPrivateFixture } = await probeModule()
       const result = await createPrivateFixture({

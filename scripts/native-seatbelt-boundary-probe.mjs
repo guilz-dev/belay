@@ -604,6 +604,11 @@ export function mirrorFixtureManifest(fixture) {
   return fixtureManifest(fixture)
 }
 
+export function privateFixtureTempPrefix(platform, defaultTmpDir) {
+  const tempRoot = platform === 'darwin' ? '/tmp' : defaultTmpDir
+  return path.join(tempRoot, FIXTURE_PREFIX)
+}
+
 export async function createPrivateFixture(deps = {}) {
   const preflight = await runPreflight(deps)
   if (preflight.status === 'BLOCKED') {
@@ -620,7 +625,9 @@ export async function createPrivateFixture(deps = {}) {
   const realpath = deps.realpath ?? fsRealpath
   const localDeps = { mkdir, chmod, writeFile, copyFile, readFile }
 
-  const root = await mkdtemp(path.join(os.tmpdir(), FIXTURE_PREFIX))
+  const root = await mkdtemp(
+    privateFixtureTempPrefix(deps.platform ?? process.platform, os.tmpdir()),
+  )
   let mirrorDir = path.join(root, 'mirror')
   let forbiddenSourceDir = path.join(root, 'forbidden-source')
   let fakeHomeDir = path.join(root, 'fake-home')
