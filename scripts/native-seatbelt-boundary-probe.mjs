@@ -1,12 +1,41 @@
 #!/usr/bin/env node
 
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { realpath as fsRealpath, stat as fsStat } from 'node:fs/promises'
+import { execFile, spawn as nodeSpawn } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
+import {
+  access as fsAccess,
+  appendFile as fsAppendFile,
+  chmod as fsChmod,
+  copyFile as fsCopyFile,
+  mkdir as fsMkdir,
+  mkdtemp as fsMkdtemp,
+  readFile as fsReadFile,
+  realpath as fsRealpath,
+  stat as fsStat,
+  writeFile as fsWriteFile,
+} from 'node:fs/promises'
+import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
+import { finished } from 'node:stream/promises'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+
+const SCRIPT_PATH = fileURLToPath(import.meta.url)
+const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
+const FIXTURE_PREFIX = 'belay-native-seatbelt-probe-'
+export const PROBE_NONCE_ENV = 'BELAY_NATIVE_SEATBELT_PROBE_NONCE'
+const CASE_TIMEOUT_MS = 120_000
+const TIMEOUT_CASE_MS = 4_000
+const SIGKILL_FALLBACK_MS = 1_000
+const POST_CLEANUP_CHECK_MS = 250
+const SYSTEM_LITERALS = Object.freeze([
+  { path: '/dev/null', operation: 'file-read-data' },
+  { path: '/usr/lib/dyld', operation: 'file-read-data' },
+])
 
 export const REQUIRED_CASE_NAMES = Object.freeze([
   'mirror-read-write',
@@ -166,8 +195,13 @@ export function resolveLibraryReference(reference, loaderPath, executablePath) {
   return resolved
 }
 
+function assertNoDocker(value) {
+  if (typeof value === 'string' && value.toLowerCase().includes('docker')) {
+    throw new Error('docker is forbidden in the native Seatbelt probe')
+  }
+}
+
 async function sha256FileDefault(filePath) {
-  const { createReadStream } = await import('node:fs')
   return await new Promise((resolve, reject) => {
     const hash = createHash('sha256')
     const stream = createReadStream(filePath)
@@ -178,6 +212,8 @@ async function sha256FileDefault(filePath) {
 }
 
 async function execFileCapture(command, args) {
+  assertNoDocker(command)
+  for (const arg of args) assertNoDocker(arg)
   const { stdout, stderr } = await execFileAsync(command, args, {
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
@@ -322,4 +358,931 @@ export function validateProfileGrantInventory(profile, inventory) {
     return { status: 'NO-GO', missing }
   }
   return { status: 'GO' }
+}
+
+/** Terminate the whole POSIX probe process group, falling back to its direct child elsewhere. */
+export function terminateProcessGroup(child, signal) {
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, signal)
+      return true
+    } catch {
+      // Fall through to the direct child if no separate process group exists yet.
+    }
+  }
+  return child.kill(signal)
+}
+
+function processGroupExists(pid) {
+  if (process.platform === 'win32' || !pid) return false
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function buildProbeEnv(fixture) {
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    TMPDIR: fixture.root,
+    HOME: fixture.fakeHomeDir,
+    LANG: process.env.LANG ?? 'C',
+    [PROBE_NONCE_ENV]: fixture.nonce,
+  }
+}
+
+export async function runPreflight(deps = {}) {
+  const platform = deps.platform ?? process.platform
+  const host = {
+    platform,
+    supported: platform === 'darwin',
+    productVersion: null,
+    kernel: null,
+    arch: deps.arch?.() ?? os.arch(),
+  }
+
+  if (platform !== 'darwin') {
+    return {
+      status: 'BLOCKED',
+      host,
+      substrate: { available: false, executable: SANDBOX_EXEC, sha256: null },
+      runtimeClosure: [],
+      nodePath: null,
+      nodeSha256: null,
+    }
+  }
+
+  const access = deps.access ?? fsAccess
+  try {
+    await access(SANDBOX_EXEC)
+  } catch {
+    return {
+      status: 'BLOCKED',
+      host,
+      substrate: { available: false, executable: SANDBOX_EXEC, sha256: null },
+      runtimeClosure: [],
+      nodePath: null,
+      nodeSha256: null,
+    }
+  }
+
+  const execFileFn = deps.execFile ?? execFileCapture
+  const swVers = await execFileFn('/usr/bin/sw_vers', ['-productVersion'])
+  const uname = await execFileFn('/usr/bin/uname', ['-a'])
+  host.productVersion = swVers.stdout.trim()
+  host.kernel = uname.stdout.trim().split(/\s+/u)[2] ?? uname.stdout.trim()
+
+  const sha256File = deps.sha256File ?? sha256FileDefault
+  const substrateSha256 = await sha256File(SANDBOX_EXEC)
+  const nodePath = await (deps.realpath ?? fsRealpath)(deps.execPath ?? process.execPath)
+  const resolveClosure = deps.resolveRuntimeClosure ?? resolveRuntimeClosure
+  const runtimeClosure = await resolveClosure(nodePath, {
+    realpath: deps.realpath ?? fsRealpath,
+    stat: deps.stat ?? fsStat,
+    sha256File,
+    runOtool: deps.runOtool ?? ((file) => execFileCapture('/usr/bin/otool', ['-L', file])),
+  })
+
+  const recordedNode = runtimeClosure.find((entry) => entry.source === 'executable')
+  if (!recordedNode || recordedNode.path !== nodePath) {
+    return {
+      status: 'BLOCKED',
+      host,
+      substrate: { available: true, executable: SANDBOX_EXEC, sha256: substrateSha256 },
+      runtimeClosure,
+      nodePath,
+      nodeSha256: null,
+    }
+  }
+
+  return {
+    status: 'READY',
+    host,
+    substrate: { available: true, executable: SANDBOX_EXEC, sha256: substrateSha256 },
+    runtimeClosure,
+    nodePath,
+    nodeSha256: recordedNode.sha256,
+  }
+}
+
+async function writePrivateFile(deps, target, contents, mode = 0o600) {
+  await deps.writeFile(target, contents, {
+    mode,
+    encoding: typeof contents === 'string' ? 'utf8' : undefined,
+  })
+  await deps.chmod(target, mode)
+}
+
+async function ensurePrivateDir(deps, target) {
+  await deps.mkdir(target, { recursive: true, mode: 0o700 })
+  await deps.chmod(target, 0o700)
+}
+
+function fixtureManifest(fixture) {
+  return {
+    version: 1,
+    nonce: fixture.nonce,
+    root: fixture.root,
+    mirrorDir: fixture.mirrorDir,
+    forbiddenSourceDir: fixture.forbiddenSourceDir,
+    fakeHomeDir: fixture.fakeHomeDir,
+    controlPlaneDir: fixture.controlPlaneDir,
+    listenersDir: fixture.listenersDir,
+    evidenceDir: fixture.evidenceDir,
+    mirrorScriptPath: fixture.mirrorScriptPath,
+    sentinels: fixture.sentinels,
+    absoluteForbiddenPath: fixture.absoluteForbiddenPath,
+    tcpPort: fixture.tcpPort,
+    unixSocketPath: fixture.unixSocketPath,
+    postCleanupMarkerPath: fixture.postCleanupMarkerPath,
+  }
+}
+
+export async function createPrivateFixture(deps = {}) {
+  const preflight = await runPreflight(deps)
+  if (preflight.status === 'BLOCKED') {
+    return { blocked: true, preflight }
+  }
+
+  const mkdtemp = deps.mkdtemp ?? fsMkdtemp
+  const mkdir = deps.mkdir ?? fsMkdir
+  const chmod = deps.chmod ?? fsChmod
+  const writeFile = deps.writeFile ?? fsWriteFile
+  const copyFile = deps.copyFile ?? fsCopyFile
+  const readFile = deps.readFile ?? fsReadFile
+  const random = deps.randomBytes ?? randomBytes
+  const localDeps = { mkdir, chmod, writeFile, copyFile, readFile }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), FIXTURE_PREFIX))
+  const mirrorDir = path.join(root, 'mirror')
+  const forbiddenSourceDir = path.join(root, 'forbidden-source')
+  const fakeHomeDir = path.join(root, 'fake-home')
+  const controlPlaneDir = path.join(root, 'control-plane')
+  const listenersDir = path.join(root, 'listeners')
+  const evidenceDir = path.join(root, 'evidence')
+  const absoluteForbiddenPath = path.join(root, 'absolute-forbidden', 'target')
+  const postCleanupMarkerPath = path.join(root, 'post-cleanup-marker')
+  const unixSocketPath = path.join(listenersDir, 'probe.sock')
+
+  for (const directory of [
+    mirrorDir,
+    forbiddenSourceDir,
+    fakeHomeDir,
+    controlPlaneDir,
+    listenersDir,
+    evidenceDir,
+    path.dirname(absoluteForbiddenPath),
+  ]) {
+    await ensurePrivateDir(localDeps, directory)
+  }
+
+  const sentinels = {
+    mirror: random(16).toString('hex'),
+    forbiddenSource: random(16).toString('hex'),
+    homeSecret: random(16).toString('hex'),
+    controlPlane: random(16).toString('hex'),
+    absoluteForbidden: random(16).toString('hex'),
+  }
+
+  await writePrivateFile(localDeps, path.join(mirrorDir, 'mirror-sentinel.txt'), sentinels.mirror)
+  await writePrivateFile(
+    localDeps,
+    path.join(forbiddenSourceDir, 'source-sentinel.txt'),
+    sentinels.forbiddenSource,
+  )
+  await writePrivateFile(localDeps, path.join(fakeHomeDir, '.secret'), sentinels.homeSecret)
+  await writePrivateFile(
+    localDeps,
+    path.join(controlPlaneDir, 'control-sentinel.txt'),
+    sentinels.controlPlane,
+  )
+  await writePrivateFile(localDeps, absoluteForbiddenPath, sentinels.absoluteForbidden)
+
+  const scriptSource = deps.scriptPath ?? SCRIPT_PATH
+  const mirrorScriptPath = path.join(mirrorDir, 'native-seatbelt-boundary-probe.mjs')
+  await copyFile(scriptSource, mirrorScriptPath)
+  await chmod(mirrorScriptPath, 0o600)
+
+  const nonce = random(16).toString('hex')
+  const nodePath = preflight.nodePath
+  const profileCompiled = compileSeatbeltProfile({
+    runtimeClosure: preflight.runtimeClosure,
+    mirrorRoot: mirrorDir,
+    evidenceDir,
+    homeDir: fakeHomeDir,
+    systemLiterals: SYSTEM_LITERALS,
+  })
+  profileCompiled.sourceSha256 = createHash('sha256').update(profileCompiled.source).digest('hex')
+
+  const fixture = {
+    root,
+    mirrorDir,
+    forbiddenSourceDir,
+    fakeHomeDir,
+    controlPlaneDir,
+    listenersDir,
+    evidenceDir,
+    mirrorScriptPath,
+    absoluteForbiddenPath,
+    postCleanupMarkerPath,
+    unixSocketPath,
+    nonce,
+    nodePath,
+    sentinels,
+    preflight,
+    profile: profileCompiled,
+    tcpPort: null,
+    tcpServer: null,
+    unixServer: null,
+    acceptedTcpConnections: 0,
+    acceptedUnixConnections: 0,
+  }
+
+  await writePrivateFile(
+    localDeps,
+    path.join(mirrorDir, 'probe-fixture.json'),
+    JSON.stringify(fixtureManifest(fixture)),
+  )
+
+  if (deps.startListeners !== false) {
+    await startFixtureListeners(fixture, deps)
+  }
+
+  return fixture
+}
+
+async function startFixtureListeners(fixture, deps = {}) {
+  if (deps.startListeners === false) return fixture
+
+  fixture.tcpServer = net.createServer((socket) => {
+    fixture.acceptedTcpConnections += 1
+    socket.end()
+  })
+  await new Promise((resolve, reject) => {
+    fixture.tcpServer.once('error', reject)
+    fixture.tcpServer.listen(0, '127.0.0.1', () => {
+      fixture.tcpPort = fixture.tcpServer.address().port
+      resolve()
+    })
+  })
+
+  fixture.unixServer = net.createServer((socket) => {
+    fixture.acceptedUnixConnections += 1
+    socket.end()
+  })
+  await new Promise((resolve, reject) => {
+    fixture.unixServer.once('error', reject)
+    fixture.unixServer.listen(fixture.unixSocketPath, () => resolve())
+  })
+
+  const manifestPath = path.join(fixture.mirrorDir, 'probe-fixture.json')
+  const writeFile = deps.writeFile ?? fsWriteFile
+  const chmod = deps.chmod ?? fsChmod
+  await writeFile(manifestPath, JSON.stringify(fixtureManifest(fixture)), {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+  await chmod(manifestPath, 0o600)
+  return fixture
+}
+
+async function stopFixtureListeners(fixture) {
+  await Promise.all([
+    fixture.tcpServer
+      ? new Promise((resolve) => fixture.tcpServer.close(() => resolve()))
+      : Promise.resolve(),
+    fixture.unixServer
+      ? new Promise((resolve) => fixture.unixServer.close(() => resolve()))
+      : Promise.resolve(),
+  ])
+}
+
+/**
+ * Capture sandboxed child output in memory while optionally writing evidence files.
+ */
+export function runSandboxedProcessCapture(command, args, options = {}) {
+  assertNoDocker(command)
+  for (const arg of args) assertNoDocker(arg)
+
+  const spawnFn = options.spawn ?? nodeSpawn
+  const terminate = options.terminateProcessGroup ?? terminateProcessGroup
+  const groupExists = options.processGroupExists ?? ((pid) => processGroupExists(pid))
+
+  return new Promise((resolve) => {
+    const child = spawnFn(command, args, {
+      cwd: options.cwd,
+      detached: process.platform !== 'win32',
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const stdoutFile = options.stdoutPath
+      ? createWriteStream(options.stdoutPath, { mode: 0o600 })
+      : null
+    const stderrFile = options.stderrPath
+      ? createWriteStream(options.stderrPath, { mode: 0o600 })
+      : null
+    const stdout = []
+    const stderr = []
+    let timedOut = false
+    let settled = false
+    let forceKill = null
+    let resolveForceKill
+    let forceKillDone = Promise.resolve()
+    const startedAt = performance.now()
+
+    const waitForProcessGroupExit = async () => {
+      for (let attempt = 0; attempt < 20 && groupExists(child.pid); attempt += 1) {
+        await new Promise((wait) => setTimeout(wait, 10))
+      }
+    }
+
+    const timeout = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true
+          terminate(child, 'SIGTERM')
+          forceKillDone = new Promise((wait) => {
+            resolveForceKill = wait
+          })
+          forceKill = setTimeout(() => {
+            terminate(child, 'SIGKILL')
+            forceKill = null
+            resolveForceKill()
+          }, SIGKILL_FALLBACK_MS)
+        }, options.timeoutMs)
+      : null
+
+    const settle = async ({ code, signal, error }) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (timedOut && forceKill && groupExists(child.pid)) {
+        await forceKillDone
+        await waitForProcessGroupExit()
+      } else if (forceKill) {
+        clearTimeout(forceKill)
+        forceKill = null
+        resolveForceKill?.()
+      }
+
+      if (options.postCleanupMarkerPath && timedOut) {
+        await new Promise((wait) => setTimeout(wait, POST_CLEANUP_CHECK_MS))
+        try {
+          const marker = await (options.readFile ?? fsReadFile)(
+            options.postCleanupMarkerPath,
+            'utf8',
+          )
+          if (marker.trim()) {
+            error = error ?? 'post-cleanup descendant marker present'
+          }
+        } catch {
+          // Absence of the marker confirms cleanup.
+        }
+      }
+
+      stdoutFile?.end()
+      stderrFile?.end()
+      await Promise.all(
+        [stdoutFile, stderrFile].filter(Boolean).map((stream) => finished(stream).catch(() => {})),
+      )
+      resolve({
+        code,
+        signal,
+        error,
+        timedOut,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        settledAfterMs: performance.now() - startedAt,
+      })
+    }
+
+    child.stdout?.on('data', (chunk) => {
+      const buffer = Buffer.from(chunk)
+      stdout.push(buffer)
+      stdoutFile?.write(buffer)
+    })
+    child.stderr?.on('data', (chunk) => {
+      const buffer = Buffer.from(chunk)
+      stderr.push(buffer)
+      stderrFile?.write(buffer)
+    })
+    child.on('error', (error) => settle({ code: null, signal: null, error: error.message }))
+    child.on('close', (code, signal) => settle({ code, signal, error: null }))
+  })
+}
+
+export async function runSandboxedCase(fixture, caseName, options = {}) {
+  if (!REQUIRED_CASE_NAMES.includes(caseName)) {
+    throw new Error(`unknown Seatbelt probe case: ${caseName}`)
+  }
+
+  const writeFile = options.deps?.writeFile ?? fsWriteFile
+  const chmod = options.deps?.chmod ?? fsChmod
+  const profilePath = path.join(fixture.evidenceDir, `profile-${caseName}.sb`)
+  await writeFile(profilePath, fixture.profile.source, { encoding: 'utf8', mode: 0o600 })
+  await chmod(profilePath, 0o600)
+
+  const stdoutPath = path.join(fixture.evidenceDir, `${caseName}.stdout`)
+  const stderrPath = path.join(fixture.evidenceDir, `${caseName}.stderr`)
+  const env = buildProbeEnv(fixture)
+  const timeoutMs =
+    options.timeoutMs ?? (caseName === 'timeout-process-group' ? TIMEOUT_CASE_MS : CASE_TIMEOUT_MS)
+  const runProcess =
+    options.deps?.runProcess ??
+    ((command, args, runOptions) =>
+      runSandboxedProcessCapture(command, args, {
+        ...runOptions,
+        terminateProcessGroup: options.deps?.terminateProcessGroup,
+        spawn: options.deps?.spawn,
+        processGroupExists: options.deps?.processGroupExists,
+      }))
+
+  const startedAt = performance.now()
+  const result = await runProcess(
+    SANDBOX_EXEC,
+    [
+      '-p',
+      profilePath,
+      fixture.nodePath,
+      fixture.mirrorScriptPath,
+      '--probe-child',
+      fixture.nonce,
+      caseName,
+    ],
+    {
+      cwd: fixture.root,
+      env,
+      stdoutPath,
+      stderrPath,
+      timeoutMs,
+      postCleanupMarkerPath:
+        caseName === 'timeout-process-group' ? fixture.postCleanupMarkerPath : undefined,
+      readFile: options.deps?.readFile,
+    },
+  )
+
+  return {
+    exitCode: result.code,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    settledAfterMs: result.settledAfterMs ?? performance.now() - startedAt,
+    error: result.error ?? null,
+  }
+}
+
+async function readSentinelHash(deps, target) {
+  try {
+    return await (deps.sha256File ?? sha256FileDefault)(target)
+  } catch {
+    return null
+  }
+}
+
+function outputContainsSentinel(output, sentinel) {
+  return typeof output === 'string' && output.includes(sentinel)
+}
+
+async function readCaseEvidenceRecords(fixture, caseName, readFile = fsReadFile) {
+  const evidencePath = path.join(fixture.evidenceDir, `${caseName}.ndjson`)
+  try {
+    return parseCaseRecords(await readFile(evidencePath, 'utf8'))
+  } catch {
+    return []
+  }
+}
+
+export async function evaluateSandboxedCase(fixture, caseName, runResult, deps = {}) {
+  const readFile = deps.readFile ?? fsReadFile
+  const records = await readCaseEvidenceRecords(fixture, caseName, readFile)
+  const record = records.find((entry) => entry.name === caseName)
+  const evidence = {
+    operationDenied: false,
+    exitCode: runResult.exitCode,
+    signal: runResult.signal,
+    timedOut: runResult.timedOut,
+    markerPresent: false,
+    acceptedConnections: 0,
+    targetUnchanged: true,
+    settledAfterMs: runResult.settledAfterMs,
+  }
+
+  let passed = false
+
+  switch (caseName) {
+    case 'mirror-read-write': {
+      const mirrorOutputPath = path.join(fixture.mirrorDir, 'mirror-output.txt')
+      const before = await readSentinelHash(
+        deps,
+        path.join(fixture.mirrorDir, 'mirror-sentinel.txt'),
+      )
+      const after = await readSentinelHash(
+        deps,
+        path.join(fixture.mirrorDir, 'mirror-sentinel.txt'),
+      )
+      const outputWritten = await readSentinelHash(deps, mirrorOutputPath)
+      evidence.operationDenied = runResult.exitCode !== 0
+      evidence.markerPresent = before !== null && before === after && outputWritten !== null
+      passed =
+        runResult.exitCode === 0 &&
+        evidence.markerPresent &&
+        !outputContainsSentinel(runResult.stdout, fixture.sentinels.mirror)
+      break
+    }
+    case 'source-read-write':
+    case 'home-secret-read-write':
+    case 'control-plane-read-write':
+    case 'absolute-path-read-write': {
+      const paths = {
+        'source-read-write': path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt'),
+        'home-secret-read-write': path.join(fixture.fakeHomeDir, '.secret'),
+        'control-plane-read-write': path.join(fixture.controlPlaneDir, 'control-sentinel.txt'),
+        'absolute-path-read-write': fixture.absoluteForbiddenPath,
+      }
+      const sentinels = {
+        'source-read-write': fixture.sentinels.forbiddenSource,
+        'home-secret-read-write': fixture.sentinels.homeSecret,
+        'control-plane-read-write': fixture.sentinels.controlPlane,
+        'absolute-path-read-write': fixture.sentinels.absoluteForbidden,
+      }
+      const target = paths[caseName]
+      const sentinel = sentinels[caseName]
+      const before = await readSentinelHash(deps, target)
+      const after = await readSentinelHash(deps, target)
+      evidence.operationDenied = runResult.exitCode !== 0 || record?.passed === false
+      evidence.targetUnchanged = before !== null && before === after
+      evidence.markerPresent =
+        outputContainsSentinel(runResult.stdout, sentinel) ||
+        outputContainsSentinel(runResult.stderr, sentinel) ||
+        records.some((entry) => outputContainsSentinel(JSON.stringify(entry), sentinel))
+      passed = evidence.operationDenied && evidence.targetUnchanged && !evidence.markerPresent
+      break
+    }
+    case 'loopback-tcp': {
+      evidence.operationDenied = runResult.exitCode !== 0
+      evidence.acceptedConnections = fixture.acceptedTcpConnections
+      passed =
+        evidence.operationDenied &&
+        evidence.acceptedConnections === 0 &&
+        !outputContainsSentinel(runResult.stdout, fixture.sentinels.forbiddenSource)
+      break
+    }
+    case 'unix-socket': {
+      evidence.operationDenied = runResult.exitCode !== 0
+      evidence.acceptedConnections = fixture.acceptedUnixConnections
+      passed = evidence.operationDenied && evidence.acceptedConnections === 0
+      break
+    }
+    case 'descendant-inheritance': {
+      const forbiddenRecords = records.filter((entry) => entry.name !== 'descendant-inheritance')
+      evidence.operationDenied = forbiddenRecords.every((entry) => entry.passed === false)
+      evidence.markerPresent = forbiddenRecords.some((entry) => entry.markerPresent === true)
+      passed =
+        runResult.exitCode === 0 &&
+        forbiddenRecords.length === 4 &&
+        evidence.operationDenied &&
+        !evidence.markerPresent
+      break
+    }
+    case 'timeout-process-group': {
+      evidence.operationDenied = runResult.timedOut === true
+      evidence.timedOut = runResult.timedOut === true
+      passed =
+        runResult.timedOut === true &&
+        runResult.error === null &&
+        !(await readSentinelHash(deps, fixture.postCleanupMarkerPath))
+      break
+    }
+    case 'output-capture': {
+      evidence.operationDenied = false
+      passed =
+        runResult.exitCode === 37 &&
+        runResult.stdout.includes('probe-stdout-marker') &&
+        runResult.stderr.includes('probe-stderr-marker') &&
+        !runResult.stdout.includes(fixture.sentinels.homeSecret)
+      break
+    }
+    default:
+      passed = false
+  }
+
+  return { name: caseName, passed, evidence }
+}
+
+export async function runLiveProbe(deps = {}) {
+  const fixtureResult = await createPrivateFixture({ ...deps, startListeners: deps.startListeners })
+  if (fixtureResult.blocked) {
+    return {
+      version: 1,
+      status: 'BLOCKED',
+      host: fixtureResult.preflight.host,
+      substrate: fixtureResult.preflight.substrate,
+      runtimeClosure: fixtureResult.preflight.runtimeClosure,
+      profile: {
+        literalReads: [],
+        literalExecs: [],
+        forbiddenBroadGrants: [],
+        sourceSha256: null,
+      },
+      cases: [],
+      latency: { samples: 0, medianOverheadMs: 0, p95OverheadMs: 0 },
+      cleanup: { confirmed: false },
+      evidenceManifestSha256: null,
+      evidenceDir: null,
+    }
+  }
+
+  const fixture = fixtureResult
+  const caseResults = []
+  let cleanupConfirmed = true
+
+  try {
+    for (const caseName of REQUIRED_CASE_NAMES) {
+      const runResult = await runSandboxedCase(fixture, caseName, { deps })
+      const evaluated = await evaluateSandboxedCase(fixture, caseName, runResult, deps)
+      caseResults.push(evaluated)
+      if (caseName === 'timeout-process-group' && !evaluated.passed) {
+        cleanupConfirmed = false
+      }
+    }
+  } finally {
+    await stopFixtureListeners(fixture)
+  }
+
+  const report = {
+    version: 1,
+    status: 'PENDING',
+    host: fixture.preflight.host,
+    substrate: fixture.preflight.substrate,
+    runtimeClosure: fixture.preflight.runtimeClosure,
+    profile: {
+      literalReads: fixture.profile.literalReads,
+      literalExecs: fixture.profile.literalExecs,
+      forbiddenBroadGrants: fixture.profile.forbiddenBroadGrants,
+      sourceSha256: fixture.profile.sourceSha256,
+    },
+    cases: caseResults,
+    latency: { samples: 0, medianOverheadMs: 0, p95OverheadMs: 0 },
+    cleanup: { confirmed: cleanupConfirmed },
+    evidenceManifestSha256: createHash('sha256').update(JSON.stringify(caseResults)).digest('hex'),
+    evidenceDir: fixture.evidenceDir,
+  }
+  report.status = decideProbe(report)
+  return report
+}
+
+async function loadFixtureManifest(mirrorDir) {
+  const manifestPath = path.join(mirrorDir, 'probe-fixture.json')
+  const text = await fsReadFile(manifestPath, 'utf8')
+  return JSON.parse(text)
+}
+
+async function appendCaseEvidence(evidenceDir, caseName, record) {
+  const evidencePath = path.join(evidenceDir, `${caseName}.ndjson`)
+  await fsAppendFile(evidencePath, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+}
+
+async function tryReadFile(filePath) {
+  try {
+    return await fsReadFile(filePath, 'utf8')
+  } catch (error) {
+    return { error: error.code ?? 'read-denied' }
+  }
+}
+
+async function tryWriteFile(filePath, contents) {
+  try {
+    await fsWriteFile(filePath, contents, { mode: 0o600 })
+    return { ok: true }
+  } catch (error) {
+    return { error: error.code ?? 'write-denied' }
+  }
+}
+
+async function runForbiddenOperation(manifest, operationName, readTarget, writeTarget, sentinel) {
+  const readResult = await tryReadFile(readTarget)
+  const writeResult = await tryWriteFile(writeTarget, 'probe-write-attempt')
+  const stdoutSentinel = typeof readResult === 'string' ? readResult.includes(sentinel) : false
+  await appendCaseEvidence(manifest.evidenceDir, operationName, {
+    version: 1,
+    name: operationName,
+    passed: false,
+    markerPresent: stdoutSentinel,
+  })
+  return {
+    denied: typeof readResult !== 'string' && writeResult.error !== undefined,
+    markerPresent: stdoutSentinel,
+  }
+}
+
+export async function runProbeChildEntry(nonce, caseName) {
+  if (process.env[PROBE_NONCE_ENV] !== nonce) {
+    process.exitCode = 91
+    return
+  }
+  if (!REQUIRED_CASE_NAMES.includes(caseName)) {
+    process.exitCode = 92
+    return
+  }
+
+  const mirrorDir = path.dirname(SCRIPT_PATH)
+  const manifest = await loadFixtureManifest(mirrorDir)
+
+  switch (caseName) {
+    case 'mirror-read-write': {
+      const readTarget = path.join(manifest.mirrorDir, 'mirror-sentinel.txt')
+      const writeTarget = path.join(manifest.mirrorDir, 'mirror-output.txt')
+      const contents = await tryReadFile(readTarget)
+      const writeResult = await tryWriteFile(
+        writeTarget,
+        typeof contents === 'string' ? contents : '',
+      )
+      await appendCaseEvidence(manifest.evidenceDir, caseName, {
+        version: 1,
+        name: caseName,
+        passed: typeof contents === 'string' && writeResult.ok === true,
+      })
+      process.exitCode = typeof contents === 'string' && writeResult.ok === true ? 0 : 1
+      return
+    }
+    case 'source-read-write': {
+      const result = await runForbiddenOperation(
+        manifest,
+        caseName,
+        path.join(manifest.forbiddenSourceDir, 'source-sentinel.txt'),
+        path.join(manifest.forbiddenSourceDir, 'probe-write.txt'),
+        manifest.sentinels.forbiddenSource,
+      )
+      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      return
+    }
+    case 'home-secret-read-write': {
+      const result = await runForbiddenOperation(
+        manifest,
+        caseName,
+        path.join(manifest.fakeHomeDir, '.secret'),
+        path.join(manifest.fakeHomeDir, 'probe-write.txt'),
+        manifest.sentinels.homeSecret,
+      )
+      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      return
+    }
+    case 'control-plane-read-write': {
+      const result = await runForbiddenOperation(
+        manifest,
+        caseName,
+        path.join(manifest.controlPlaneDir, 'control-sentinel.txt'),
+        path.join(manifest.controlPlaneDir, 'probe-write.txt'),
+        manifest.sentinels.controlPlane,
+      )
+      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      return
+    }
+    case 'absolute-path-read-write': {
+      const result = await runForbiddenOperation(
+        manifest,
+        caseName,
+        manifest.absoluteForbiddenPath,
+        `${manifest.absoluteForbiddenPath}.probe-write`,
+        manifest.sentinels.absoluteForbidden,
+      )
+      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      return
+    }
+    case 'loopback-tcp': {
+      let denied = true
+      try {
+        await new Promise((resolve) => {
+          const socket = net.connect(manifest.tcpPort, '127.0.0.1')
+          socket.once('connect', () => {
+            denied = false
+            socket.end()
+            resolve()
+          })
+          socket.once('error', () => resolve())
+        })
+      } catch {
+        // Expected denial path.
+      }
+      await appendCaseEvidence(manifest.evidenceDir, caseName, {
+        version: 1,
+        name: caseName,
+        passed: !denied,
+      })
+      process.exitCode = denied ? 1 : 0
+      return
+    }
+    case 'unix-socket': {
+      let denied = true
+      try {
+        await new Promise((resolve) => {
+          const socket = net.connect(manifest.unixSocketPath)
+          socket.once('connect', () => {
+            denied = false
+            socket.end()
+            resolve()
+          })
+          socket.once('error', () => resolve())
+        })
+      } catch {
+        // Expected denial path.
+      }
+      await appendCaseEvidence(manifest.evidenceDir, caseName, {
+        version: 1,
+        name: caseName,
+        passed: !denied,
+      })
+      process.exitCode = denied ? 1 : 0
+      return
+    }
+    case 'descendant-inheritance': {
+      const forbiddenCases = [
+        'source-read-write',
+        'home-secret-read-write',
+        'control-plane-read-write',
+        'loopback-tcp',
+      ]
+      for (const forbiddenCase of forbiddenCases) {
+        await new Promise((resolve) => {
+          const child = nodeSpawn(
+            process.execPath,
+            [manifest.mirrorScriptPath, '--probe-child', nonce, forbiddenCase],
+            {
+              stdio: ['ignore', 'pipe', 'pipe'],
+              env: buildProbeEnv({
+                root: manifest.root,
+                fakeHomeDir: manifest.fakeHomeDir,
+                nonce: manifest.nonce,
+              }),
+            },
+          )
+          child.on('close', () => resolve())
+        })
+      }
+      await appendCaseEvidence(manifest.evidenceDir, caseName, {
+        version: 1,
+        name: caseName,
+        passed: true,
+      })
+      process.exitCode = 0
+      return
+    }
+    case 'timeout-process-group': {
+      const grandchildProgram = [
+        "const { writeFileSync } = require('node:fs')",
+        `const markerPath = ${JSON.stringify(manifest.postCleanupMarkerPath)}`,
+        "process.on('SIGTERM', () => {})",
+        "setInterval(() => { try { writeFileSync(markerPath, 'survived') } catch {} }, 50)",
+      ].join('; ')
+      const child = nodeSpawn(process.execPath, ['-e', grandchildProgram], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      child.unref()
+      process.stdout.write(`spawned:${child.pid}\n`)
+      setInterval(() => {}, 1000)
+      return
+    }
+    case 'output-capture': {
+      process.stdout.write('probe-stdout-marker\n')
+      process.stderr.write('probe-stderr-marker\n')
+      await appendCaseEvidence(manifest.evidenceDir, caseName, {
+        version: 1,
+        name: caseName,
+        passed: true,
+      })
+      process.exitCode = 37
+      return
+    }
+    default:
+      process.exitCode = 93
+  }
+}
+
+async function main() {
+  const childIndex = process.argv.indexOf('--probe-child')
+  if (childIndex !== -1) {
+    const nonce = process.argv[childIndex + 1]
+    const caseName = process.argv[childIndex + 2]
+    await runProbeChildEntry(nonce, caseName)
+    return
+  }
+
+  if (process.argv.includes('--live')) {
+    const report = await runLiveProbe()
+    const redacted = redactProbeReport(report, report.evidenceDir)
+    process.stdout.write(`${JSON.stringify(redacted, null, 2)}\n`)
+  }
+}
+
+const executedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : ''
+if (import.meta.url === executedPath) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    )
+    process.exitCode = 1
+  })
 }

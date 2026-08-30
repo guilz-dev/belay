@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -682,6 +682,303 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         status: 'NO-GO',
         missing: [{ kind: 'read', path: '/usr/lib/dyld' }],
       })
+    })
+  })
+})
+
+describe('native Seatbelt boundary probe lifecycle', () => {
+  const PROBE_NONCE_ENV = 'BELAY_NATIVE_SEATBELT_PROBE_NONCE'
+  const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
+
+  function darwinPreflightDeps(overrides: Record<string, unknown> = {}) {
+    return {
+      platform: 'darwin',
+      access: async () => {},
+      realpath: async (value: string) => value,
+      stat: async () => ({ isFile: () => true }),
+      execFile: async (command: string, args: string[]) => {
+        if (command === '/usr/bin/sw_vers' && args[0] === '-productVersion') {
+          return { stdout: '15.0\n', stderr: '' }
+        }
+        if (command === '/usr/bin/uname' && args[0] === '-a') {
+          return { stdout: 'Darwin probe-host 24.0.0 Darwin Kernel\n', stderr: '' }
+        }
+        throw new Error(`unexpected execFile: ${command} ${args.join(' ')}`)
+      },
+      arch: () => 'arm64',
+      execPath: '/opt/homebrew/bin/node',
+      resolveRuntimeClosure: async () => [
+        { path: '/opt/homebrew/bin/node', sha256: 'node-hash', source: 'executable' },
+        { path: '/usr/lib/libSystem.B.dylib', sha256: 'lib-hash', source: 'dependency' },
+      ],
+      sha256File: async (filePath: string) => `${filePath}-hash`,
+      randomBytes: () => Buffer.from('0123456789abcdef0123456789abcdef', 'hex'),
+      ...overrides,
+    }
+  }
+
+  it('exports lifecycle helpers', async () => {
+    const module = await probeModule()
+    expect(typeof module.createPrivateFixture).toBe('function')
+    expect(typeof module.runSandboxedCase).toBe('function')
+    expect(typeof module.terminateProcessGroup).toBe('function')
+    expect(typeof module.runLiveProbe).toBe('function')
+    expect(typeof module.runSandboxedProcessCapture).toBe('function')
+  })
+
+  describe('createPrivateFixture', () => {
+    it('returns BLOCKED before fixture work when the host is not darwin', async () => {
+      const { createPrivateFixture } = await probeModule()
+      const result = await createPrivateFixture({
+        ...darwinPreflightDeps(),
+        platform: 'linux',
+      })
+      expect(result.blocked).toBe(true)
+      expect(result.preflight.status).toBe('BLOCKED')
+      expect(result.preflight.host.supported).toBe(false)
+    })
+
+    it('returns BLOCKED before fixture work when sandbox-exec is missing', async () => {
+      const { createPrivateFixture } = await probeModule()
+      const result = await createPrivateFixture({
+        ...darwinPreflightDeps(),
+        access: async (target: string) => {
+          if (target === SANDBOX_EXEC) {
+            throw new Error('missing')
+          }
+        },
+      })
+      expect(result.blocked).toBe(true)
+      expect(result.preflight.status).toBe('BLOCKED')
+      expect(result.preflight.substrate.available).toBe(false)
+    })
+
+    it('creates private fixture directories with mode 0700 and files with mode 0600', async () => {
+      const { createPrivateFixture } = await probeModule()
+      const root = await createTempDir()
+
+      const fixture = await createPrivateFixture({
+        ...darwinPreflightDeps(),
+        startListeners: false,
+        mkdtemp: async () => root,
+      })
+
+      expect(fixture.blocked).toBeUndefined()
+      expect(fixture.root).toBe(root)
+      for (const name of [
+        'mirror',
+        'forbidden-source',
+        'fake-home',
+        'control-plane',
+        'listeners',
+        'evidence',
+      ]) {
+        const directoryStat = await stat(path.join(root, name))
+        expect(directoryStat.isDirectory()).toBe(true)
+        expect(directoryStat.mode & 0o777).toBe(0o700)
+      }
+      expect(fixture.mirrorScriptPath).toBe(
+        path.join(root, 'mirror', 'native-seatbelt-boundary-probe.mjs'),
+      )
+      const mirrorScriptStat = await stat(fixture.mirrorScriptPath)
+      expect(mirrorScriptStat.mode & 0o777).toBe(0o600)
+      expect(fixture.nonce).toMatch(/^[0-9a-f]{32}$/u)
+      expect(fixture.profile.source).toContain('(deny default)')
+    })
+
+    it('does not reference docker in injected deps or recorded commands', async () => {
+      const { createPrivateFixture } = await probeModule()
+      const deps = darwinPreflightDeps()
+      const serialized = JSON.stringify(deps)
+      expect(serialized.toLowerCase()).not.toContain('docker')
+
+      const fixture = await createPrivateFixture({
+        ...deps,
+        startListeners: false,
+        mkdtemp: async () => createTempDir(),
+      })
+      expect(JSON.stringify(fixture).toLowerCase()).not.toContain('docker')
+    })
+  })
+
+  describe('runSandboxedCase', () => {
+    async function fixtureWithFakeRunner(
+      runProcess: (
+        command: string,
+        args: string[],
+        options: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>,
+    ) {
+      const { createPrivateFixture, runSandboxedCase } = await probeModule()
+      const spawnCalls: Array<{
+        command: string
+        args: string[]
+        options: Record<string, unknown>
+      }> = []
+      const fixture = await createPrivateFixture({
+        ...darwinPreflightDeps(),
+        startListeners: false,
+      })
+      return {
+        fixture,
+        runSandboxedCase,
+        spawnCalls,
+        runProcess: async (command: string, args: string[], options: Record<string, unknown>) => {
+          spawnCalls.push({ command, args, options })
+          return await runProcess(command, args, options)
+        },
+      }
+    }
+
+    it('spawns sandbox-exec with an explicit environment allowlist and probe-child args', async () => {
+      const { fixture, runSandboxedCase, spawnCalls, runProcess } = await fixtureWithFakeRunner(
+        async () => ({
+          code: 0,
+          signal: null,
+          timedOut: false,
+          stdout: '',
+          stderr: '',
+        }),
+      )
+
+      const result = await runSandboxedCase(fixture, 'mirror-read-write', { deps: { runProcess } })
+
+      expect(result.exitCode).toBe(0)
+      expect(spawnCalls).toHaveLength(1)
+      expect(spawnCalls[0]?.command).toBe(SANDBOX_EXEC)
+      expect(spawnCalls[0]?.args).toEqual(
+        expect.arrayContaining([
+          '-p',
+          expect.stringContaining('profile-mirror-read-write.sb'),
+          fixture.nodePath,
+          fixture.mirrorScriptPath,
+          '--probe-child',
+          fixture.nonce,
+          'mirror-read-write',
+        ]),
+      )
+      expect(Object.keys(spawnCalls[0]?.options.env ?? {}).sort()).toEqual(
+        ['HOME', 'LANG', 'PATH', 'TMPDIR', PROBE_NONCE_ENV].sort(),
+      )
+      const spawnEnv = spawnCalls[0]?.options.env as Record<string, string> | undefined
+      expect(spawnEnv?.[PROBE_NONCE_ENV]).toBe(fixture.nonce)
+      expect(JSON.stringify(spawnCalls[0]).toLowerCase()).not.toContain('docker')
+    })
+
+    const processGroupIt = process.platform === 'win32' ? it.skip : it
+    processGroupIt(
+      'does not settle before the one-second SIGKILL fallback after SIGTERM timeout',
+      async () => {
+        const { runSandboxedProcessCapture, terminateProcessGroup } = await probeModule()
+        const termSignals: string[] = []
+        let groupAlive = true
+        const originalKill = process.kill.bind(process)
+        process.kill = ((pid: number, signal: number | string) => {
+          if (pid === -424242 && signal === 0) {
+            return groupAlive
+          }
+          if (pid === -424242 && signal === 'SIGKILL') {
+            groupAlive = false
+            return true
+          }
+          if (pid === -424242) {
+            return true
+          }
+          return originalKill(pid, signal as NodeJS.Signals)
+        }) as typeof process.kill
+
+        const fakeSpawn = (
+          _command: string,
+          _args: string[],
+          _options: Record<string, unknown>,
+        ) => {
+          const listeners = new Map<string, Array<(...args: unknown[]) => void>>()
+          const child = {
+            pid: 424242,
+            stdout: {
+              on: (event: string, handler: (...args: unknown[]) => void) => {
+                const bucket = listeners.get(`stdout:${event}`) ?? []
+                bucket.push(handler)
+                listeners.set(`stdout:${event}`, bucket)
+              },
+            },
+            stderr: { on: () => {} },
+            on: (event: string, handler: (...args: unknown[]) => void) => {
+              const bucket = listeners.get(event) ?? []
+              bucket.push(handler)
+              listeners.set(event, bucket)
+            },
+            kill: (signal: string) => {
+              termSignals.push(signal)
+              return true
+            },
+          }
+          setTimeout(() => {
+            for (const handler of listeners.get('stdout:data') ?? []) {
+              handler(Buffer.from('ready\n'))
+            }
+            for (const handler of listeners.get('close') ?? []) {
+              handler(null, 'SIGTERM')
+            }
+          }, 4_100)
+          return child
+        }
+
+        try {
+          const startedAt = performance.now()
+          const result = await runSandboxedProcessCapture(process.execPath, ['-e', '0'], {
+            timeoutMs: 4_000,
+            spawn: fakeSpawn,
+            terminateProcessGroup: (child: { pid?: number }, signal: NodeJS.Signals) => {
+              termSignals.push(`group:${signal}`)
+              return terminateProcessGroup(child, signal)
+            },
+          })
+          const settledAfterMs = performance.now() - startedAt
+
+          expect(result.timedOut).toBe(true)
+          expect(result.signal).toBe('SIGTERM')
+          expect(termSignals).toContain('group:SIGTERM')
+          expect(termSignals).toContain('group:SIGKILL')
+          expect(settledAfterMs).toBeGreaterThanOrEqual(4_900)
+        } finally {
+          process.kill = originalKill
+        }
+      },
+      10_000,
+    )
+  })
+
+  describe('runLiveProbe', () => {
+    it('returns a BLOCKED report without spawning sandbox children when preflight fails', async () => {
+      const { runLiveProbe } = await probeModule()
+      const report = await runLiveProbe({
+        ...darwinPreflightDeps(),
+        platform: 'linux',
+      })
+      expect(report.status).toBe('BLOCKED')
+      expect(report.host.supported).toBe(false)
+      expect(report.cases).toEqual([])
+    })
+  })
+
+  describe('terminateProcessGroup', () => {
+    const processGroupIt = process.platform === 'win32' ? it.skip : it
+    processGroupIt('targets the negative pid on POSIX hosts', async () => {
+      const { terminateProcessGroup } = await probeModule()
+      const signals: Array<{ pid: number; signal: string }> = []
+      const originalKill = process.kill.bind(process)
+      process.kill = ((pid: number, signal: string) => {
+        signals.push({ pid, signal })
+        return true
+      }) as typeof process.kill
+
+      try {
+        terminateProcessGroup({ pid: 1234, kill: () => false }, 'SIGTERM')
+        expect(signals).toEqual([{ pid: -1234, signal: 'SIGTERM' }])
+      } finally {
+        process.kill = originalKill
+      }
     })
   })
 })
