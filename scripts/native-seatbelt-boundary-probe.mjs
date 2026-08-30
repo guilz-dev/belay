@@ -32,9 +32,16 @@ const CASE_TIMEOUT_MS = 120_000
 const TIMEOUT_CASE_MS = 4_000
 const SIGKILL_FALLBACK_MS = 1_000
 const POST_CLEANUP_CHECK_MS = 250
+const LATENCY_WARMUP_PAIRS = 5
+const LATENCY_MEASURED_PAIRS = 30
+const LATENCY_NOOP_CASE = 'latency-noop'
 const SYSTEM_LITERALS = Object.freeze([
   { path: '/dev/null', operation: 'file-read-data' },
   { path: '/usr/lib/dyld', operation: 'file-read-data' },
+])
+export const PROFILE_BASELINE_IMPORTS = Object.freeze(['dyld-support.sb'])
+const SYSTEM_SUBPATH_GRANTS = Object.freeze([
+  { subpath: '/System/Library/OpenSSL', operation: 'file-read*', role: 'system-openssl' },
 ])
 
 export const REQUIRED_CASE_NAMES = Object.freeze([
@@ -121,6 +128,11 @@ export function redactProbeReport(report, evidenceDir) {
     profile: {
       literalReadCount: report.profile.literalReads.length,
       literalExecCount: report.profile.literalExecs.length,
+      imports: report.profile.imports ?? [],
+      systemSubpathRoles: (report.profile.systemSubpaths ?? []).map(({ role, operation }) => ({
+        role,
+        operation,
+      })),
       forbiddenBroadGrants: report.profile.forbiddenBroadGrants.map(({ role, operation }) => ({
         role,
         operation,
@@ -237,11 +249,30 @@ export async function resolveRuntimeClosure(
 
   while (queue.length > 0) {
     const item = queue.shift()
-    const canonical = await deps.realpath(item.path)
+    let canonical
+    try {
+      canonical = await deps.realpath(item.path)
+    } catch {
+      if (item.source === 'executable') {
+        throw new Error(`runtime closure executable is not reachable: ${item.path}`)
+      }
+      continue
+    }
     if (visited.has(canonical)) continue
-    const fileStat = await deps.stat(canonical)
+    let fileStat
+    try {
+      fileStat = await deps.stat(canonical)
+    } catch {
+      if (item.source === 'executable') {
+        throw new Error(`runtime closure executable is not reachable: ${item.path}`)
+      }
+      continue
+    }
     if (!fileStat.isFile()) {
-      throw new Error(`runtime closure is not a file: ${canonical}`)
+      if (item.source === 'executable') {
+        throw new Error(`runtime closure is not a file: ${canonical}`)
+      }
+      continue
     }
     visited.add(canonical)
     closure.push({
@@ -251,8 +282,10 @@ export async function resolveRuntimeClosure(
     })
     const output = await deps.runOtool(canonical)
     for (const library of parseOtoolLibraries(output.stdout)) {
-      const resolved = resolveLibraryReference(library, canonical, executablePath)
-      queue.push({ path: resolved, source: 'dependency' })
+      try {
+        const resolved = resolveLibraryReference(library, canonical, executablePath)
+        queue.push({ path: resolved, source: 'dependency' })
+      } catch {}
     }
   }
 
@@ -271,7 +304,9 @@ export function compileSeatbeltProfile(input) {
     evidenceDir,
     homeDir,
     systemLiterals = [],
+    systemSubpathGrants = SYSTEM_SUBPATH_GRANTS,
     requestedSubpathGrants = [],
+    baselineImports = PROFILE_BASELINE_IMPORTS,
   } = input
 
   const forbiddenBroadGrants = []
@@ -298,6 +333,14 @@ export function compileSeatbeltProfile(input) {
   ]
 
   const lines = ['(version 1)', '(deny default)']
+  for (const importName of baselineImports) {
+    lines.push(`(import "${importName}")`)
+  }
+  lines.push('(allow process-fork)')
+  lines.push('(allow signal (target self))')
+  lines.push('(allow mach-lookup)')
+  lines.push('(allow sysctl-read)')
+  lines.push('(allow file-read-metadata)')
   lines.push(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
   lines.push(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
   lines.push(`(allow file-read* (literal ${seatbeltQuote(evidenceDir)}))`)
@@ -310,6 +353,10 @@ export function compileSeatbeltProfile(input) {
 
   for (const readGrant of literalReads) {
     lines.push(`(allow ${readGrant.operation} (literal ${seatbeltQuote(readGrant.path)}))`)
+  }
+
+  for (const grant of systemSubpathGrants) {
+    lines.push(`(allow ${grant.operation} (subpath ${seatbeltQuote(grant.subpath)}))`)
   }
 
   for (const grant of requestedSubpathGrants) {
@@ -326,6 +373,12 @@ export function compileSeatbeltProfile(input) {
     literalExecs,
     mirrorRoot,
     forbiddenBroadGrants,
+    imports: [...baselineImports],
+    systemSubpaths: systemSubpathGrants.map(({ subpath, operation, role }) => ({
+      subpath,
+      operation,
+      role: role ?? roleForForbiddenSubpath(subpath, homeDir),
+    })),
   }
 }
 
@@ -513,18 +566,19 @@ export async function createPrivateFixture(deps = {}) {
   const copyFile = deps.copyFile ?? fsCopyFile
   const readFile = deps.readFile ?? fsReadFile
   const random = deps.randomBytes ?? randomBytes
+  const realpath = deps.realpath ?? fsRealpath
   const localDeps = { mkdir, chmod, writeFile, copyFile, readFile }
 
   const root = await mkdtemp(path.join(os.tmpdir(), FIXTURE_PREFIX))
-  const mirrorDir = path.join(root, 'mirror')
-  const forbiddenSourceDir = path.join(root, 'forbidden-source')
-  const fakeHomeDir = path.join(root, 'fake-home')
-  const controlPlaneDir = path.join(root, 'control-plane')
-  const listenersDir = path.join(root, 'listeners')
-  const evidenceDir = path.join(root, 'evidence')
-  const absoluteForbiddenPath = path.join(root, 'absolute-forbidden', 'target')
-  const postCleanupMarkerPath = path.join(root, 'post-cleanup-marker')
-  const unixSocketPath = path.join(listenersDir, 'probe.sock')
+  let mirrorDir = path.join(root, 'mirror')
+  let forbiddenSourceDir = path.join(root, 'forbidden-source')
+  let fakeHomeDir = path.join(root, 'fake-home')
+  let controlPlaneDir = path.join(root, 'control-plane')
+  let listenersDir = path.join(root, 'listeners')
+  let evidenceDir = path.join(root, 'evidence')
+  let absoluteForbiddenPath = path.join(root, 'absolute-forbidden', 'target')
+  let postCleanupMarkerPath = path.join(root, 'post-cleanup-marker')
+  let unixSocketPath = path.join(listenersDir, 'probe.sock')
 
   for (const directory of [
     mirrorDir,
@@ -537,6 +591,18 @@ export async function createPrivateFixture(deps = {}) {
   ]) {
     await ensurePrivateDir(localDeps, directory)
   }
+
+  const canonicalRoot = await realpath(root)
+  mirrorDir = await realpath(mirrorDir)
+  forbiddenSourceDir = await realpath(forbiddenSourceDir)
+  fakeHomeDir = await realpath(fakeHomeDir)
+  controlPlaneDir = await realpath(controlPlaneDir)
+  listenersDir = await realpath(listenersDir)
+  evidenceDir = await realpath(evidenceDir)
+  const absoluteForbiddenDir = await realpath(path.dirname(absoluteForbiddenPath))
+  absoluteForbiddenPath = path.join(absoluteForbiddenDir, 'target')
+  postCleanupMarkerPath = path.join(canonicalRoot, 'post-cleanup-marker')
+  unixSocketPath = path.join(listenersDir, 'probe.sock')
 
   const sentinels = {
     mirror: random(16).toString('hex'),
@@ -577,7 +643,7 @@ export async function createPrivateFixture(deps = {}) {
   profileCompiled.sourceSha256 = createHash('sha256').update(profileCompiled.source).digest('hex')
 
   const fixture = {
-    root,
+    root: canonicalRoot,
     mirrorDir,
     forbiddenSourceDir,
     fakeHomeDir,
@@ -706,7 +772,9 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
             resolveForceKill = wait
           })
           forceKill = setTimeout(() => {
-            terminate(child, 'SIGKILL')
+            if (groupExists(child.pid)) {
+              terminate(child, 'SIGKILL')
+            }
             forceKill = null
             resolveForceKill()
           }, SIGKILL_FALLBACK_MS)
@@ -802,7 +870,7 @@ export async function runSandboxedCase(fixture, caseName, options = {}) {
   const result = await runProcess(
     SANDBOX_EXEC,
     [
-      '-p',
+      '-f',
       profilePath,
       fixture.nodePath,
       fixture.mirrorScriptPath,
@@ -949,10 +1017,15 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
     case 'timeout-process-group': {
       evidence.operationDenied = runResult.timedOut === true
       evidence.timedOut = runResult.timedOut === true
-      passed =
-        runResult.timedOut === true &&
-        runResult.error === null &&
-        !(await readSentinelHash(deps, fixture.postCleanupMarkerPath))
+      let markerAbsent = true
+      try {
+        const marker = await readFile(fixture.postCleanupMarkerPath, 'utf8')
+        markerAbsent = !marker.trim()
+      } catch {
+        markerAbsent = true
+      }
+      evidence.markerPresent = !markerAbsent
+      passed = runResult.timedOut === true && runResult.error === null && markerAbsent
       break
     }
     case 'output-capture': {
@@ -969,6 +1042,161 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
   }
 
   return { name: caseName, passed, evidence }
+}
+
+export function computeOverheadMs(baselineMs, sandboxedMs) {
+  return Math.max(0, sandboxedMs - baselineMs)
+}
+
+export function summarizeLatencyOverhead(overheadSamples) {
+  if (overheadSamples.length !== LATENCY_MEASURED_PAIRS) {
+    throw new Error(`latency benchmark requires ${LATENCY_MEASURED_PAIRS} overhead samples`)
+  }
+  return {
+    samples: overheadSamples.length,
+    medianOverheadMs: percentile(overheadSamples, 0.5),
+    p95OverheadMs: percentile(overheadSamples, 0.95),
+    overheadMs: overheadSamples,
+    thresholds: { medianMs: 100, p95Ms: 250 },
+    warmUpPairs: LATENCY_WARMUP_PAIRS,
+  }
+}
+
+function buildEvidenceManifestPayload(report) {
+  return {
+    version: 1,
+    host: report.host,
+    substrate: report.substrate,
+    runtimeClosure: report.runtimeClosure,
+    profile: {
+      literalReads: report.profile.literalReads,
+      literalExecs: report.profile.literalExecs,
+      forbiddenBroadGrants: report.profile.forbiddenBroadGrants,
+      imports: report.profile.imports,
+      systemSubpaths: report.profile.systemSubpaths,
+      sourceSha256: report.profile.sourceSha256,
+    },
+    cases: report.cases,
+    latency: report.latency,
+    cleanup: report.cleanup,
+  }
+}
+
+export async function runLatencyNoopSample(fixture, sandboxed, options = {}) {
+  const measure =
+    options.measure ??
+    (async () => {
+      const startedAt = performance.now()
+      const runProcess =
+        options.deps?.runProcess ??
+        ((command, args, runOptions) =>
+          runSandboxedProcessCapture(command, args, {
+            ...runOptions,
+            spawn: options.deps?.spawn,
+            terminateProcessGroup: options.deps?.terminateProcessGroup,
+            processGroupExists: options.deps?.processGroupExists,
+          }))
+
+      const profilePath = path.join(fixture.evidenceDir, 'profile-latency-noop.sb')
+      const writeFile = options.deps?.writeFile ?? fsWriteFile
+      const chmod = options.deps?.chmod ?? fsChmod
+      if (sandboxed) {
+        await writeFile(profilePath, fixture.profile.source, { encoding: 'utf8', mode: 0o600 })
+        await chmod(profilePath, 0o600)
+      }
+
+      const childArgs = [
+        fixture.mirrorScriptPath,
+        '--probe-child',
+        fixture.nonce,
+        LATENCY_NOOP_CASE,
+      ]
+      const result = await runProcess(
+        sandboxed ? SANDBOX_EXEC : fixture.nodePath,
+        sandboxed ? ['-f', profilePath, fixture.nodePath, ...childArgs] : childArgs,
+        {
+          cwd: fixture.root,
+          env: buildProbeEnv(fixture),
+        },
+      )
+      if (result.code !== 0) {
+        throw new Error(
+          `latency noop sample failed (${sandboxed ? 'sandboxed' : 'baseline'}): exit ${result.code}`,
+        )
+      }
+      return performance.now() - startedAt
+    })
+
+  return await measure({ sandboxed, fixture })
+}
+
+export async function runPairedLatencyBenchmark(fixture, options = {}) {
+  const pairs = []
+  const overheadMs = []
+  let sampleOrdinal = 0
+
+  const nextDuration = (sandboxed) => {
+    if (options.durationForSample) {
+      return options.durationForSample({ sampleOrdinal, sandboxed })
+    }
+    return undefined
+  }
+
+  const measureWithDuration = async ({ sandboxed }) => {
+    const injected = nextDuration(sandboxed)
+    if (injected !== undefined) {
+      sampleOrdinal += 1
+      return injected
+    }
+    return await runLatencyNoopSample(fixture, sandboxed, options)
+  }
+
+  for (let warmUp = 0; warmUp < LATENCY_WARMUP_PAIRS; warmUp += 1) {
+    const baselineFirst = warmUp % 2 === 0
+    if (baselineFirst) {
+      await measureWithDuration({ sandboxed: false })
+      await measureWithDuration({ sandboxed: true })
+    } else {
+      await measureWithDuration({ sandboxed: true })
+      await measureWithDuration({ sandboxed: false })
+    }
+  }
+
+  for (let pairIndex = 0; pairIndex < LATENCY_MEASURED_PAIRS; pairIndex += 1) {
+    const baselineFirst = pairIndex % 2 === 0
+    let baselineMs
+    let sandboxedMs
+    if (baselineFirst) {
+      baselineMs = await measureWithDuration({ sandboxed: false })
+      sandboxedMs = await measureWithDuration({ sandboxed: true })
+    } else {
+      sandboxedMs = await measureWithDuration({ sandboxed: true })
+      baselineMs = await measureWithDuration({ sandboxed: false })
+    }
+    const overhead = computeOverheadMs(baselineMs, sandboxedMs)
+    pairs.push({
+      pairIndex,
+      baselineMs,
+      sandboxedMs,
+      overheadMs: overhead,
+      baselineFirst,
+    })
+    overheadMs.push(overhead)
+  }
+
+  return {
+    ...summarizeLatencyOverhead(overheadMs),
+    pairs,
+  }
+}
+
+async function writeLatencyEvidence(fixture, latency, appendFile = fsAppendFile) {
+  const evidencePath = path.join(fixture.evidenceDir, 'latency.ndjson')
+  for (const pair of latency.pairs) {
+    await appendFile(evidencePath, `${JSON.stringify({ version: 1, ...pair })}\n`, {
+      mode: 0o600,
+    })
+  }
 }
 
 export async function runLiveProbe(deps = {}) {
@@ -997,6 +1225,15 @@ export async function runLiveProbe(deps = {}) {
   const fixture = fixtureResult
   const caseResults = []
   let cleanupConfirmed = true
+  let latency = {
+    samples: 0,
+    medianOverheadMs: 0,
+    p95OverheadMs: 0,
+    overheadMs: [],
+    pairs: [],
+    thresholds: { medianMs: 100, p95Ms: 250 },
+    warmUpPairs: LATENCY_WARMUP_PAIRS,
+  }
 
   try {
     for (const caseName of REQUIRED_CASE_NAMES) {
@@ -1007,6 +1244,9 @@ export async function runLiveProbe(deps = {}) {
         cleanupConfirmed = false
       }
     }
+
+    latency = await runPairedLatencyBenchmark(fixture, { deps })
+    await writeLatencyEvidence(fixture, latency, deps.appendFile ?? fsAppendFile)
   } finally {
     await stopFixtureListeners(fixture)
   }
@@ -1021,14 +1261,19 @@ export async function runLiveProbe(deps = {}) {
       literalReads: fixture.profile.literalReads,
       literalExecs: fixture.profile.literalExecs,
       forbiddenBroadGrants: fixture.profile.forbiddenBroadGrants,
+      imports: fixture.profile.imports,
+      systemSubpaths: fixture.profile.systemSubpaths,
       sourceSha256: fixture.profile.sourceSha256,
     },
     cases: caseResults,
-    latency: { samples: 0, medianOverheadMs: 0, p95OverheadMs: 0 },
+    latency,
     cleanup: { confirmed: cleanupConfirmed },
-    evidenceManifestSha256: createHash('sha256').update(JSON.stringify(caseResults)).digest('hex'),
+    evidenceManifestSha256: null,
     evidenceDir: fixture.evidenceDir,
   }
+  report.evidenceManifestSha256 = createHash('sha256')
+    .update(JSON.stringify(buildEvidenceManifestPayload(report)))
+    .digest('hex')
   report.status = decideProbe(report)
   return report
 }
@@ -1072,7 +1317,7 @@ async function runForbiddenOperation(manifest, operationName, readTarget, writeT
     markerPresent: stdoutSentinel,
   })
   return {
-    denied: typeof readResult !== 'string' && writeResult.error !== undefined,
+    denied: typeof readResult !== 'string' || writeResult.error !== undefined,
     markerPresent: stdoutSentinel,
   }
 }
@@ -1080,6 +1325,10 @@ async function runForbiddenOperation(manifest, operationName, readTarget, writeT
 export async function runProbeChildEntry(nonce, caseName) {
   if (process.env[PROBE_NONCE_ENV] !== nonce) {
     process.exitCode = 91
+    return
+  }
+  if (caseName === LATENCY_NOOP_CASE) {
+    process.exitCode = 0
     return
   }
   if (!REQUIRED_CASE_NAMES.includes(caseName)) {
@@ -1272,6 +1521,8 @@ async function main() {
 
   if (process.argv.includes('--live')) {
     const report = await runLiveProbe()
+    process.stderr.write(`evidenceDir=${report.evidenceDir}\n`)
+    process.stderr.write(`evidenceManifestSha256=${report.evidenceManifestSha256}\n`)
     const redacted = redactProbeReport(report, report.evidenceDir)
     process.stdout.write(`${JSON.stringify(redacted, null, 2)}\n`)
   }

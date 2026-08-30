@@ -63,6 +63,7 @@
     "corpus": "pnpm build && node scripts/corpus.mjs",
     "probe:adversarial": "pnpm build && node scripts/adversarial-probe.mjs",
     "probe:cursor-shell-rewrite": "node scripts/cursor-shell-rewrite-probe.mjs",
+    "probe:native-seatbelt-boundary": "node scripts/native-seatbelt-boundary-probe.mjs --live",
     "probe:coverage": "pnpm build && node scripts/coverage-probe.mjs",
     "probe:coverage:repeat": "pnpm build && node scripts/coverage-probe.mjs --repeat 3",
     "corpus:ratchet": "pnpm build && node scripts/corpus-ratchet.mjs"

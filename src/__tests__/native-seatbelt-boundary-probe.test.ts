@@ -234,6 +234,17 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       ).toBe('NO-GO')
     })
 
+    it('returns NO-GO when p95 latency exceeds the budget', async () => {
+      const { decideProbe } = await probeModule()
+      expect(
+        decideProbe(
+          reportFixture({
+            latency: { samples: 30, medianOverheadMs: 80, p95OverheadMs: 251 },
+          }),
+        ),
+      ).toBe('NO-GO')
+    })
+
     it('returns BLOCKED when the host is unsupported', async () => {
       const { decideProbe } = await probeModule()
       expect(decideProbe(reportFixture({ host: { supported: false } }))).toBe('BLOCKED')
@@ -495,6 +506,40 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         }),
       ).rejects.toThrow('runtime closure is not a file')
     })
+
+    it('skips dependency paths that are not reachable on the host', async () => {
+      const { resolveRuntimeClosure } = await probeModule()
+      const executablePath = '/opt/homebrew/bin/node'
+      const reachableLib = '/usr/lib/libSystem.B.dylib'
+      const missingFramework =
+        '/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation'
+      const otoolOutput = [
+        `${executablePath}:`,
+        `\t${missingFramework} (compatibility version 150.0.0, current version 1.0.0)`,
+        `\t${reachableLib} (compatibility version 1.0.0, current version 1.0.0)`,
+      ].join('\n')
+
+      const closure = await resolveRuntimeClosure(executablePath, {
+        realpath: async (value: string) => {
+          if (value === missingFramework) {
+            throw new Error('ENOENT')
+          }
+          return value
+        },
+        stat: async (value: string) => ({
+          isFile: () => value === executablePath || value === reachableLib,
+        }),
+        sha256File: async (value: string) => `${value}-hash`,
+        runOtool: async (value: string) => ({
+          stdout: value === executablePath ? otoolOutput : `${reachableLib}:\n`,
+        }),
+      })
+
+      expect(closure).toEqual([
+        { path: executablePath, sha256: `${executablePath}-hash`, source: 'executable' },
+        { path: reachableLib, sha256: `${reachableLib}-hash`, source: 'dependency' },
+      ])
+    })
   })
 
   describe('seatbeltQuote', () => {
@@ -549,6 +594,8 @@ describe('native Seatbelt boundary probe evidence contract', () => {
 
       expect(profile.source).toContain('(version 1)')
       expect(profile.source).toContain('(deny default)')
+      expect(profile.source).toContain('(import "dyld-support.sb")')
+      expect(profile.source).toContain('(allow process-fork)')
       expect(profile.source).toContain(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
       expect(profile.source).toContain(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
       expect(profile.source).toContain(`(allow file-read* (literal ${seatbeltQuote(evidenceDir)}))`)
@@ -589,6 +636,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
           { path: homebrewLiteral, sha256: 'node-hash', source: 'executable' },
           { path: usrLocalLiteral, sha256: 'usr-local-hash', source: 'dependency' },
         ],
+        systemSubpathGrants: [],
       })
 
       expect(exactLiteralProfile.source).toContain(
@@ -848,7 +896,7 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       expect(spawnCalls[0]?.command).toBe(SANDBOX_EXEC)
       expect(spawnCalls[0]?.args).toEqual(
         expect.arrayContaining([
-          '-p',
+          '-f',
           expect.stringContaining('profile-mirror-read-write.sb'),
           fixture.nodePath,
           fixture.mirrorScriptPath,
@@ -959,6 +1007,90 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       expect(report.status).toBe('BLOCKED')
       expect(report.host.supported).toBe(false)
       expect(report.cases).toEqual([])
+    })
+  })
+
+  describe('paired latency benchmark', () => {
+    it('computes overhead as max(0, sandboxedMs - baselineMs)', async () => {
+      const { computeOverheadMs } = await probeModule()
+      expect(computeOverheadMs(10, 50)).toBe(40)
+      expect(computeOverheadMs(50, 10)).toBe(0)
+      expect(computeOverheadMs(25, 25)).toBe(0)
+    })
+
+    it('uses nearest-rank median and p95 without rounding samples first', async () => {
+      const { summarizeLatencyOverhead } = await probeModule()
+      const overheadMs = Array.from({ length: 30 }, (_, index) => index + 1)
+      const summary = summarizeLatencyOverhead(overheadMs)
+      expect(summary.samples).toBe(30)
+      expect(summary.medianOverheadMs).toBe(15)
+      expect(summary.p95OverheadMs).toBe(29)
+      expect(summary.thresholds).toEqual({ medianMs: 100, p95Ms: 250 })
+      expect(summary.warmUpPairs).toBe(5)
+    })
+
+    it('runs five warm-ups and 30 measured pairs in alternating order', async () => {
+      const { createPrivateFixture, runPairedLatencyBenchmark } = await probeModule()
+      const fixture = await createPrivateFixture({
+        ...darwinPreflightDeps(),
+        startListeners: false,
+      })
+      const callOrder: Array<{ sandboxed: boolean; pairIndex?: number }> = []
+      let sampleOrdinal = 0
+
+      const latency = await runPairedLatencyBenchmark(fixture, {
+        durationForSample: ({ sandboxed }) => {
+          sampleOrdinal += 1
+          const duration = sandboxed ? 20 + sampleOrdinal : 10 + sampleOrdinal
+          callOrder.push({ sandboxed })
+          return duration
+        },
+      })
+
+      expect(callOrder).toHaveLength(5 * 2 + 30 * 2)
+      expect(latency.pairs).toHaveLength(30)
+      expect(latency.overheadMs).toHaveLength(30)
+      for (const [index, pair] of latency.pairs.entries()) {
+        expect(pair.baselineFirst).toBe(index % 2 === 0)
+        expect(pair.overheadMs).toBe(Math.max(0, pair.sandboxedMs - pair.baselineMs))
+      }
+      expect(latency.medianOverheadMs).toBeGreaterThan(0)
+      expect(latency.p95OverheadMs).toBeGreaterThanOrEqual(latency.medianOverheadMs)
+    })
+
+    it('maps 101 ms median overhead to NO-GO through decideProbe', async () => {
+      const { decideProbe, percentile } = await probeModule()
+      const overheadMs = Array.from({ length: 30 }, () => 101)
+      expect(percentile(overheadMs, 0.5)).toBe(101)
+      expect(
+        decideProbe(
+          reportFixture({
+            latency: {
+              samples: 30,
+              medianOverheadMs: 101,
+              p95OverheadMs: 101,
+            },
+          }),
+        ),
+      ).toBe('NO-GO')
+    })
+
+    it('maps 251 ms p95 overhead to NO-GO through decideProbe', async () => {
+      const { decideProbe, percentile } = await probeModule()
+      const overheadMs = Array.from({ length: 28 }, () => 50)
+      overheadMs.push(251, 251)
+      expect(percentile(overheadMs, 0.95)).toBe(251)
+      expect(
+        decideProbe(
+          reportFixture({
+            latency: {
+              samples: 30,
+              medianOverheadMs: 50,
+              p95OverheadMs: 251,
+            },
+          }),
+        ),
+      ).toBe('NO-GO')
     })
   })
 
