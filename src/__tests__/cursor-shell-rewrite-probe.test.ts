@@ -1,7 +1,8 @@
-import { spawn, spawnSync } from 'node:child_process'
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -16,15 +17,6 @@ async function createTempDir() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-shell-rewrite-probe-test-'))
   tempDirs.push(directory)
   return directory
-}
-
-async function waitFor(condition: () => Promise<boolean> | boolean, description: string) {
-  const deadline = Date.now() + 1_000
-  while (Date.now() < deadline) {
-    if (await condition()) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error(`Timed out waiting for ${description}`)
 }
 
 afterEach(async () => {
@@ -174,46 +166,72 @@ describe('Cursor Shell rewrite probe transcript parser', () => {
 
   const processGroupIt = process.platform === 'win32' ? it.skip : it
   processGroupIt(
-    'terminates a ready POSIX process-group descendant with SIGTERM then SIGKILL',
+    'keeps timeout evidence and kills a ready descendant after the direct child exits',
     async () => {
-      const { terminateProbeProcessGroup } = await probeModule()
+      const { runCommandCapture, terminateProbeProcessGroup } = await probeModule()
       const directory = await createTempDir()
-      const grandchildReadyPath = path.join(directory, 'grandchild.ready')
+      const stdoutPath = path.join(directory, 'stdout.ndjson')
+      const stderrPath = path.join(directory, 'stderr.log')
+      const processRecordPath = path.join(directory, 'process-record.json')
       const grandchildTermAckPath = path.join(directory, 'grandchild.term')
-      const grandchildAfterKillPath = path.join(directory, 'grandchild.after-kill')
-      const childProgram = [
-        "const { spawn } = require('node:child_process')",
-        `const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify("const { writeFileSync } = require('node:fs'); const [readyPath, termAckPath, afterKillPath] = process.argv.slice(1); process.on('SIGTERM', () => { writeFileSync(termAckPath, 'term'); setTimeout(() => writeFileSync(afterKillPath, 'unexpected'), 100) }); writeFileSync(readyPath, 'ready'); setInterval(() => {}, 1000)")}, ${JSON.stringify(grandchildReadyPath)}, ${JSON.stringify(grandchildTermAckPath)}, ${JSON.stringify(grandchildAfterKillPath)}], { stdio: 'ignore' })`,
+      const grandchildProgram = [
+        "const { writeFileSync } = require('node:fs')",
+        'const [termAckPath] = process.argv.slice(1)',
+        "process.on('SIGTERM', () => { writeFileSync(termAckPath, 'term') })",
+        "process.stdout.write('ready\\n')",
         'setInterval(() => {}, 1000)',
       ].join('; ')
-      const child = spawn(process.execPath, ['-e', childProgram], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      await waitFor(async () => {
-        try {
-          return (await readFile(grandchildReadyPath, 'utf8')) === 'ready'
-        } catch {
-          return false
-        }
-      }, 'grandchild SIGTERM handler readiness')
+      const childProgram = [
+        "const { spawn } = require('node:child_process')",
+        "const { writeFileSync } = require('node:fs')",
+        `const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify(grandchildProgram)}, ${JSON.stringify(grandchildTermAckPath)}], { stdio: ['ignore', 'pipe', 'ignore'] })`,
+        `grandchild.stdout.once('data', () => { const record = JSON.stringify({ childPid: process.pid, grandchildPid: grandchild.pid }); writeFileSync(${JSON.stringify(processRecordPath)}, record); process.stdout.write(record + '\\n'); process.stdout.write('early stdout\\n'); process.stderr.write('early stderr\\n') })`,
+        'setInterval(() => {}, 1000)',
+      ].join('; ')
+      let childPid: number | null = null
+      let grandchildPid: number | null = null
 
       try {
-        terminateProbeProcessGroup(child, 'SIGTERM')
-        await waitFor(async () => {
-          try {
-            return (await readFile(grandchildTermAckPath, 'utf8')) === 'term'
-          } catch {
-            return false
-          }
-        }, 'grandchild SIGTERM acknowledgement')
-        terminateProbeProcessGroup(child, 'SIGKILL')
-        await new Promise((resolve) => setTimeout(resolve, 150))
-        await expect(access(grandchildAfterKillPath)).rejects.toThrow()
+        const startedAt = performance.now()
+        const result = await runCommandCapture(process.execPath, ['-e', childProgram], {
+          stdoutPath,
+          stderrPath,
+          timeoutMs: 4_000,
+        })
+        const settledAfterMs = performance.now() - startedAt
+        const processRecord = await readFile(processRecordPath, 'utf8')
+        ;({ childPid, grandchildPid } = JSON.parse(processRecord))
+        if (typeof childPid !== 'number' || typeof grandchildPid !== 'number') {
+          throw new Error('ready process record must contain numeric child and grandchild PIDs')
+        }
+
+        expect(result.timedOut).toBe(true)
+        expect(result.signal).toBe('SIGTERM')
+        expect(await readFile(grandchildTermAckPath, 'utf8')).toBe('term')
+        await expect(readFile(stdoutPath, 'utf8')).resolves.toBe(`${processRecord}\nearly stdout\n`)
+        await expect(readFile(stderrPath, 'utf8')).resolves.toBe('early stderr\n')
+        expect(settledAfterMs).toBeGreaterThanOrEqual(4_900)
       } finally {
-        terminateProbeProcessGroup(child, 'SIGKILL')
+        if (childPid === null || grandchildPid === null) {
+          try {
+            ;({ childPid, grandchildPid } = JSON.parse(await readFile(processRecordPath, 'utf8')))
+          } catch {
+            // The timeout path may have ended before the fixture created a descendant.
+          }
+        }
+        if (childPid !== null) {
+          terminateProbeProcessGroup({ pid: childPid, kill: () => false }, 'SIGKILL')
+        }
+        if (grandchildPid !== null) {
+          try {
+            process.kill(grandchildPid, 'SIGKILL')
+          } catch {
+            // The expected path already killed the descendant.
+          }
+        }
       }
     },
+    10_000,
   )
 
   it('accepts only explicit authenticated JSON status', async () => {
