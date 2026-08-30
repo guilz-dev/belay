@@ -254,6 +254,30 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       const { decideProbe } = await probeModule()
       expect(decideProbe(reportFixture({ substrate: { available: false } }))).toBe('BLOCKED')
     })
+
+    it('returns NO-GO when cleanup is not confirmed', async () => {
+      const { decideProbe } = await probeModule()
+      expect(decideProbe(reportFixture({ cleanup: { confirmed: false } }))).toBe('NO-GO')
+    })
+
+    it('never returns GO when the host is unsupported even if other gates pass', async () => {
+      const { REQUIRED_CASE_NAMES, decideProbe } = await probeModule()
+      const unsupportedButOtherwisePassing = reportFixture({
+        host: {
+          supported: false,
+          platform: 'linux',
+          productVersion: null,
+          kernel: null,
+          arch: 'x64',
+        },
+        cases: REQUIRED_CASE_NAMES.map((name: string) => ({ name, passed: true })),
+        latency: { samples: 30, medianOverheadMs: 50, p95OverheadMs: 100 },
+        cleanup: { confirmed: true },
+        profile: { forbiddenBroadGrants: [] },
+      })
+      expect(decideProbe(unsupportedButOtherwisePassing)).not.toBe('GO')
+      expect(decideProbe(unsupportedButOtherwisePassing)).toBe('BLOCKED')
+    })
   })
 
   describe('redactProbeReport', () => {
@@ -598,9 +622,9 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       expect(profile.source).toContain('(allow process-fork)')
       expect(profile.source).toContain(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
       expect(profile.source).toContain(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
-      expect(profile.source).toContain(`(allow file-read* (literal ${seatbeltQuote(evidenceDir)}))`)
+      expect(profile.source).toContain(`(allow file-read* (subpath ${seatbeltQuote(evidenceDir)}))`)
       expect(profile.source).toContain(
-        `(allow file-write* (literal ${seatbeltQuote(evidenceDir)}))`,
+        `(allow file-write* (subpath ${seatbeltQuote(evidenceDir)}))`,
       )
       expect(profile.source).toContain(
         `(allow file-read-data (literal ${seatbeltQuote('/dev/null')}))`,

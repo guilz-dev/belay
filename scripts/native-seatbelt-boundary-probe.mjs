@@ -2,7 +2,7 @@
 
 import { execFile, spawn as nodeSpawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream, writeFileSync as fsWriteFileSync } from 'node:fs'
 import {
   access as fsAccess,
   appendFile as fsAppendFile,
@@ -35,6 +35,7 @@ const POST_CLEANUP_CHECK_MS = 250
 const LATENCY_WARMUP_PAIRS = 5
 const LATENCY_MEASURED_PAIRS = 30
 const LATENCY_NOOP_CASE = 'latency-noop'
+const INTERNAL_CHILD_CASES = Object.freeze(['timeout-grandchild'])
 const SYSTEM_LITERALS = Object.freeze([
   { path: '/dev/null', operation: 'file-read-data' },
   { path: '/usr/lib/dyld', operation: 'file-read-data' },
@@ -282,10 +283,8 @@ export async function resolveRuntimeClosure(
     })
     const output = await deps.runOtool(canonical)
     for (const library of parseOtoolLibraries(output.stdout)) {
-      try {
-        const resolved = resolveLibraryReference(library, canonical, executablePath)
-        queue.push({ path: resolved, source: 'dependency' })
-      } catch {}
+      const resolved = resolveLibraryReference(library, canonical, executablePath)
+      queue.push({ path: resolved, source: 'dependency' })
     }
   }
 
@@ -343,8 +342,8 @@ export function compileSeatbeltProfile(input) {
   lines.push('(allow file-read-metadata)')
   lines.push(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
   lines.push(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
-  lines.push(`(allow file-read* (literal ${seatbeltQuote(evidenceDir)}))`)
-  lines.push(`(allow file-write* (literal ${seatbeltQuote(evidenceDir)}))`)
+  lines.push(`(allow file-read* (subpath ${seatbeltQuote(evidenceDir)}))`)
+  lines.push(`(allow file-write* (subpath ${seatbeltQuote(evidenceDir)}))`)
 
   for (const executablePath of literalExecs) {
     lines.push(`(allow process-exec (literal ${seatbeltQuote(executablePath)}))`)
@@ -401,8 +400,8 @@ export function validateProfileGrantInventory(profile, inventory) {
     missing.push({ kind: 'mirror-root', path: inventory.requiredMirrorRoot })
   }
   if (inventory.requiredEvidenceDir) {
-    const evidenceLiteral = `(literal ${seatbeltQuote(inventory.requiredEvidenceDir)})`
-    if (!profile.source.includes(evidenceLiteral)) {
+    const evidenceSubpath = `(subpath ${seatbeltQuote(inventory.requiredEvidenceDir)})`
+    if (!profile.source.includes(evidenceSubpath)) {
       missing.push({ kind: 'evidence-dir', path: inventory.requiredEvidenceDir })
     }
   }
@@ -1331,7 +1330,7 @@ export async function runProbeChildEntry(nonce, caseName) {
     process.exitCode = 0
     return
   }
-  if (!REQUIRED_CASE_NAMES.includes(caseName)) {
+  if (!REQUIRED_CASE_NAMES.includes(caseName) && !INTERNAL_CHILD_CASES.includes(caseName)) {
     process.exitCode = 92
     return
   }
@@ -1454,7 +1453,7 @@ export async function runProbeChildEntry(nonce, caseName) {
         'loopback-tcp',
       ]
       for (const forbiddenCase of forbiddenCases) {
-        await new Promise((resolve) => {
+        const exitCode = await new Promise((resolve) => {
           const child = nodeSpawn(
             process.execPath,
             [manifest.mirrorScriptPath, '--probe-child', nonce, forbiddenCase],
@@ -1467,28 +1466,42 @@ export async function runProbeChildEntry(nonce, caseName) {
               }),
             },
           )
-          child.on('close', () => resolve())
+          child.on('close', (code) => resolve(code ?? 1))
+        })
+        await appendCaseEvidence(manifest.evidenceDir, caseName, {
+          version: 1,
+          name: forbiddenCase,
+          passed: exitCode === 0,
         })
       }
-      await appendCaseEvidence(manifest.evidenceDir, caseName, {
-        version: 1,
-        name: caseName,
-        passed: true,
-      })
       process.exitCode = 0
       return
     }
+    case 'timeout-grandchild': {
+      process.on('SIGTERM', () => {})
+      setInterval(() => {
+        try {
+          fsWriteFileSync(manifest.postCleanupMarkerPath, 'survived')
+        } catch {
+          // Expected when cleanup succeeds.
+        }
+      }, 50)
+      setInterval(() => {}, 1000)
+      return
+    }
     case 'timeout-process-group': {
-      const grandchildProgram = [
-        "const { writeFileSync } = require('node:fs')",
-        `const markerPath = ${JSON.stringify(manifest.postCleanupMarkerPath)}`,
-        "process.on('SIGTERM', () => {})",
-        "setInterval(() => { try { writeFileSync(markerPath, 'survived') } catch {} }, 50)",
-      ].join('; ')
-      const child = nodeSpawn(process.execPath, ['-e', grandchildProgram], {
-        detached: true,
-        stdio: 'ignore',
-      })
+      const child = nodeSpawn(
+        process.execPath,
+        [manifest.mirrorScriptPath, '--probe-child', nonce, 'timeout-grandchild'],
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: buildProbeEnv({
+            root: manifest.root,
+            fakeHomeDir: manifest.fakeHomeDir,
+            nonce: manifest.nonce,
+          }),
+        },
+      )
       child.unref()
       process.stdout.write(`spawned:${child.pid}\n`)
       setInterval(() => {}, 1000)
