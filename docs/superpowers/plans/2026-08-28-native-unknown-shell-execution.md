@@ -2,6 +2,14 @@
 
 > **Status:** Feasibility-gated. Do not implement the native execution boundary until the Cursor transport probe in this program passes and its design is approved.
 
+> **2026-08-30 status update:** Workstream B ended NO-GO, so the rewritten-Shell Workstream C in
+> this program is closed and must not be implemented. A distinct deny-to-MCP transport is now
+> feasibility-gated by the approved
+> [explicit native execution design](../specs/2026-08-30-explicit-native-unknown-execution-design.md)
+> and [N1 Seatbelt probe plan](./2026-08-30-native-seatbelt-boundary-probe.md). That successor does
+> not revive Shell rewriting and cannot create ADR-007 or a production implementation plan unless
+> both its N1 and N2 probes are GO.
+
 **Goal:** Let Cursor complete eligible unknown repo-local Shell actions through a recoverable native boundary, without Docker, without executing the original command twice, and with a Belay opt-out.
 
 **Why this is a program rather than one implementation plan:** The reported `make test-fast` incident contains two independent defects that can be fixed now. Native unknown execution also depends on a host capability that Belay has not yet proved: replacing a Cursor Shell command while preserving ordinary stdout, stderr, and exit status. Mixing all three changes into one implementation would conceal that dependency and make rollback and review harder.
