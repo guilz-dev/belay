@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -59,6 +59,7 @@ function reportFixture(overrides: Record<string, unknown> = {}) {
         source: 'otool',
       },
     ],
+    runtimeSkippedDependencies: [],
     profile: {
       literalReads: [{ path: '/usr/lib/dyld', operation: 'file-read-data' }],
       literalExecs: [{ path: '/usr/bin/sandbox-exec', operation: 'file-read*' }],
@@ -78,6 +79,7 @@ function reportFixture(overrides: Record<string, unknown> = {}) {
       'output-capture',
     ].map((name) => ({ name, passed: true, evidence: defaultEvidence() })),
     latency: { samples: 30, medianOverheadMs: 80, p95OverheadMs: 220 },
+    timing: { mirrorPreparationMs: 12, caseCommandMs: 34, benchmarkCommandMs: 56 },
     cleanup: { confirmed: true },
     evidenceManifestSha256: 'd'.repeat(64),
   }
@@ -218,6 +220,22 @@ describe('native Seatbelt boundary probe evidence contract', () => {
             profile: {
               forbiddenBroadGrants: [{ role: 'opt-homebrew', operation: 'file-read*' }],
             },
+          }),
+        ),
+      ).toBe('NO-GO')
+    })
+
+    it('returns NO-GO when any runtime dependency was skipped', async () => {
+      const { decideProbe } = await probeModule()
+      expect(
+        decideProbe(
+          reportFixture({
+            runtimeSkippedDependencies: [
+              {
+                path: '/System/Library/Frameworks/CoreFoundation.framework',
+                reason: 'unreachable',
+              },
+            ],
           }),
         ),
       ).toBe('NO-GO')
@@ -591,7 +609,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       { path: '/usr/lib/dyld', operation: 'file-read-data' },
     ]
 
-    it('compiles a deny-by-default profile with mirror and literal grants only', async () => {
+    it('inventories every non-literal baseline grant as broad evidence', async () => {
       const { compileSeatbeltProfile, seatbeltQuote } = await probeModule()
       const mirrorRoot = '/private/var/tmp/belay-native-seatbelt-probe/mirror'
       const evidenceDir = '/private/var/tmp/belay-native-seatbelt-probe/evidence'
@@ -645,7 +663,21 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         ]),
       )
       expect(profile.mirrorRoot).toBe(mirrorRoot)
-      expect(profile.forbiddenBroadGrants).toEqual([])
+      expect(profile.forbiddenBroadGrants).toEqual([
+        {
+          role: 'baseline-import:dyld-support.sb',
+          operation: 'import',
+          source: 'dyld-support.sb',
+        },
+        { role: 'global-mach-lookup', operation: 'mach-lookup' },
+        { role: 'global-sysctl-read', operation: 'sysctl-read' },
+        { role: 'global-file-read-metadata', operation: 'file-read-metadata' },
+        {
+          role: 'system-openssl',
+          operation: 'file-read*',
+          subpath: '/System/Library/OpenSSL',
+        },
+      ])
     })
 
     it('allows exact literals under /usr/local and /opt/homebrew but rejects broad subpaths', async () => {
@@ -663,6 +695,8 @@ describe('native Seatbelt boundary probe evidence contract', () => {
           { path: usrLocalLiteral, sha256: 'usr-local-hash', source: 'dependency' },
         ],
         systemSubpathGrants: [],
+        baselineImports: [],
+        globalGrants: [],
       })
 
       expect(exactLiteralProfile.source).toContain(
@@ -679,6 +713,9 @@ describe('native Seatbelt boundary probe evidence contract', () => {
           evidenceDir: '/private/var/tmp/belay-native-seatbelt-probe/evidence',
           homeDir: '/Users/probe-user',
           systemLiterals: [],
+          systemSubpathGrants: [],
+          baselineImports: [],
+          globalGrants: [],
           runtimeClosure: [{ path: homebrewLiteral, sha256: 'node-hash', source: 'executable' }],
           requestedSubpathGrants: [{ subpath, operation: 'file-read*' }],
         })
@@ -860,6 +897,223 @@ describe('native Seatbelt boundary probe evidence contract', () => {
 
       expect(evaluated.passed).toBe(false)
       expect(evaluated.evidence.targetUnchanged).toBe(false)
+    })
+
+    it('detects creation of the forbidden write target independently of the read sentinel', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        forbiddenSourceDir: '/private/var/tmp/probe/forbidden-source',
+        fakeHomeDir: '/private/var/tmp/probe/fake-home',
+        controlPlaneDir: '/private/var/tmp/probe/control-plane',
+        absoluteForbiddenPath: '/private/var/tmp/probe/absolute-forbidden/target',
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        sentinels: {
+          forbiddenSource: 'source-secret',
+          homeSecret: 'home-secret',
+          controlPlane: 'control-secret',
+          absoluteForbidden: 'absolute-secret',
+        },
+      }
+      const readTarget = path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt')
+      const writeTarget = path.join(fixture.forbiddenSourceDir, 'probe-write.txt')
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'source-read-write',
+        { exitCode: 1, signal: null, timedOut: false, stdout: '', stderr: '', settledAfterMs: 1 },
+        {
+          preHashes: { [readTarget]: 'before-hash', [writeTarget]: null },
+          sha256File: async (target: string) =>
+            target === writeTarget ? 'unexpected-write-hash' : 'before-hash',
+          readFile: async () =>
+            `${JSON.stringify({
+              version: 1,
+              name: 'source-read-write',
+              readDenied: true,
+              writeDenied: true,
+              readLeaked: false,
+              passed: true,
+            })}\n`,
+        },
+      )
+
+      expect(evaluated.passed).toBe(false)
+      expect(evaluated.evidence.targetUnchanged).toBe(false)
+    })
+
+    it('does not accept a generic network process failure without positive child evidence', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        acceptedTcpConnections: 0,
+        sentinels: { forbiddenSource: 'source-secret' },
+      }
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'loopback-tcp',
+        { exitCode: 1, signal: null, timedOut: false, stdout: '', stderr: '', settledAfterMs: 1 },
+        {
+          readFile: async () => {
+            const error = new Error('missing') as NodeJS.ErrnoException
+            error.code = 'ENOENT'
+            throw error
+          },
+        },
+      )
+
+      expect(evaluated.passed).toBe(false)
+      expect(evaluated.evidence.evidenceStatus).toBe('missing')
+    })
+
+    it('requires positive per-operation evidence for descendant inheritance', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        sentinels: {},
+      }
+      const records = [
+        'source-read-write',
+        'home-secret-read-write',
+        'control-plane-read-write',
+        'loopback-tcp',
+      ].map((name) => ({ version: 1, name, passed: false }))
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'descendant-inheritance',
+        { exitCode: 0, signal: null, timedOut: false, stdout: '', stderr: '', settledAfterMs: 1 },
+        { readFile: async () => `${records.map((record) => JSON.stringify(record)).join('\n')}\n` },
+      )
+
+      expect(evaluated.passed).toBe(false)
+    })
+
+    it('fails closed when bounded output evidence could not be persisted', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        sentinels: { homeSecret: 'home-secret' },
+      }
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'output-capture',
+        {
+          exitCode: 37,
+          signal: null,
+          timedOut: false,
+          stdout: 'probe-stdout-marker',
+          stderr: 'probe-stderr-marker',
+          settledAfterMs: 1,
+          error: 'bounded output evidence could not be written',
+        },
+        {
+          readFile: async () =>
+            `${JSON.stringify({ version: 1, name: 'output-capture', passed: true })}\n`,
+        },
+      )
+
+      expect(evaluated.passed).toBe(false)
+      expect(evaluated.evidence.harnessError).toBe('process-capture-error')
+    })
+  })
+
+  describe('cleanup and evidence persistence', () => {
+    it('clears a positive-control heartbeat and confirms it does not reappear', async () => {
+      const { verifyPostCleanupMarker } = await probeModule()
+      const calls: string[] = []
+      let reads = 0
+      const result = await verifyPostCleanupMarker('/private/tmp/marker', {
+        readFile: async () => {
+          reads += 1
+          if (reads === 1) return 'heartbeat'
+          const error = new Error('missing') as NodeJS.ErrnoException
+          error.code = 'ENOENT'
+          throw error
+        },
+        unlink: async () => {
+          calls.push('unlink')
+        },
+        wait: async () => {
+          calls.push('wait')
+        },
+      })
+
+      expect(calls).toEqual(['unlink', 'wait'])
+      expect(result).toEqual({ confirmed: true, markerPresent: false })
+    })
+
+    it('detects a heartbeat that reappears after cleanup', async () => {
+      const { verifyPostCleanupMarker } = await probeModule()
+      const result = await verifyPostCleanupMarker('/private/tmp/marker', {
+        readFile: async () => 'heartbeat',
+        unlink: async () => {},
+        wait: async () => {},
+      })
+
+      expect(result).toEqual({
+        confirmed: false,
+        markerPresent: true,
+        error: 'post-cleanup descendant marker present',
+      })
+    })
+
+    it('reports an uncleared process group instead of relying on the marker alone', async () => {
+      const { waitForProcessGroupExit } = await probeModule()
+      const result = await waitForProcessGroupExit(424244, {
+        processGroupExists: () => true,
+        wait: async () => {},
+        attempts: 2,
+      })
+
+      expect(result).toBe(false)
+    })
+
+    it('writes a reconcilable raw evidence manifest file', async () => {
+      const { writeRawEvidenceManifest } = await probeModule()
+      const evidenceDir = await createTempDir()
+      await writeFile(path.join(evidenceDir, 'case.ndjson'), '{"version":1}\n', { mode: 0o600 })
+
+      const first = await writeRawEvidenceManifest(evidenceDir)
+      const manifest = JSON.parse(
+        await readFile(path.join(evidenceDir, 'evidence-manifest.json'), 'utf8'),
+      )
+      expect(manifest.version).toBe(1)
+      expect(manifest.files).toEqual([expect.objectContaining({ name: 'case.ndjson', bytes: 14 })])
+      expect(first).toMatch(/^[0-9a-f]{64}$/u)
+
+      await writeFile(path.join(evidenceDir, 'case.ndjson'), '{"version":1,"changed":true}\n', {
+        mode: 0o600,
+      })
+      expect(await writeRawEvidenceManifest(evidenceDir)).not.toBe(first)
+    })
+
+    it('persists the full private run inventory before hashing evidence', async () => {
+      const { writePrivateRunEvidence } = await probeModule()
+      const evidenceDir = await createTempDir()
+      const report = reportFixture({
+        runtimeSkippedDependencies: [{ path: '/usr/lib/missing.dylib', reason: 'unreachable' }],
+      })
+
+      await writePrivateRunEvidence(report, evidenceDir)
+      const persisted = JSON.parse(
+        await readFile(path.join(evidenceDir, 'probe-run-private.json'), 'utf8'),
+      )
+      expect(persisted.runtimeSkippedDependencies).toEqual([
+        { path: '/usr/lib/missing.dylib', reason: 'unreachable' },
+      ])
+      expect(persisted.profile).toEqual(report.profile)
+      expect(persisted.timing).toEqual(report.timing)
+    })
+
+    it('scrubs secrets before applying the 16 KiB output tail cap', async () => {
+      const { scrubAndBoundOutput } = await probeModule()
+      const secret = 'probe-secret-value'
+      const output = scrubAndBoundOutput(Buffer.from(`${'x'.repeat(20_000)}${secret}tail-marker`), [
+        secret,
+      ])
+
+      expect(Buffer.byteLength(output)).toBeLessThanOrEqual(16 * 1024)
+      expect(output).not.toContain(secret)
+      expect(output).toContain('[REDACTED]')
+      expect(output).toContain('tail-marker')
     })
   })
 })
@@ -1046,6 +1300,88 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       expect(JSON.stringify(spawnCalls[0]).toLowerCase()).not.toContain('docker')
     })
 
+    it('persists only scrubbed 16 KiB output tails', async () => {
+      const { runSandboxedProcessCapture } = await probeModule()
+      const evidenceDir = await createTempDir()
+      const stdoutPath = path.join(evidenceDir, 'stdout')
+      const stderrPath = path.join(evidenceDir, 'stderr')
+      const secret = 'probe-secret-value'
+      const result = await runSandboxedProcessCapture(
+        process.execPath,
+        [
+          '-e',
+          `process.stdout.write('${'x'.repeat(20_000)}${secret}tail-marker'); process.stderr.write('${secret}')`,
+        ],
+        {
+          stdoutPath,
+          stderrPath,
+          scrubValues: [secret],
+        },
+      )
+
+      const persistedStdout = await readFile(stdoutPath, 'utf8')
+      const persistedStderr = await readFile(stderrPath, 'utf8')
+      expect(result.stdout).toBe(persistedStdout)
+      expect(result.stderr).toBe(persistedStderr)
+      expect(Buffer.byteLength(persistedStdout)).toBeLessThanOrEqual(16 * 1024)
+      expect(persistedStdout).not.toContain(secret)
+      expect(persistedStderr).toBe('[REDACTED]')
+      expect(persistedStdout).toContain('tail-marker')
+    })
+
+    it('uses the clear-and-recheck cleanup proof after a timeout', async () => {
+      const { runSandboxedProcessCapture } = await probeModule()
+      const listeners = new Map<string, Array<(...args: unknown[]) => void>>()
+      const fakeSpawn = () => {
+        const stream = {
+          on: (event: string, handler: (...args: unknown[]) => void) => {
+            const bucket = listeners.get(event) ?? []
+            bucket.push(handler)
+            listeners.set(event, bucket)
+          },
+        }
+        const child = {
+          pid: 424243,
+          stdout: stream,
+          stderr: stream,
+          kill: () => true,
+          on: (event: string, handler: (...args: unknown[]) => void) => {
+            const bucket = listeners.get(event) ?? []
+            bucket.push(handler)
+            listeners.set(event, bucket)
+          },
+        }
+        setTimeout(() => {
+          for (const handler of listeners.get('close') ?? []) handler(null, 'SIGTERM')
+        }, 5)
+        return child
+      }
+      let reads = 0
+      let cleared = false
+      const result = await runSandboxedProcessCapture(process.execPath, ['-e', '0'], {
+        timeoutMs: 1,
+        postCleanupMarkerPath: '/private/tmp/marker',
+        spawn: fakeSpawn,
+        processGroupExists: () => false,
+        terminateProcessGroup: () => true,
+        readFile: async () => {
+          reads += 1
+          if (reads === 1) return 'heartbeat'
+          const error = new Error('missing') as NodeJS.ErrnoException
+          error.code = 'ENOENT'
+          throw error
+        },
+        unlink: async () => {
+          cleared = true
+        },
+        wait: async () => {},
+      })
+
+      expect(result.timedOut).toBe(true)
+      expect(result.error).toBeNull()
+      expect(cleared).toBe(true)
+    })
+
     const processGroupIt = process.platform === 'win32' ? it.skip : it
     processGroupIt(
       'does not settle before the one-second SIGKILL fallback after SIGTERM timeout',
@@ -1140,6 +1476,30 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       expect(report.status).toBe('BLOCKED')
       expect(report.host.supported).toBe(false)
       expect(report.cases).toEqual([])
+    })
+
+    it('preserves a terminal manifest when the live harness fails after execution starts', async () => {
+      const { runLiveProbe } = await probeModule()
+      const root = await createTempDir()
+      const report = await runLiveProbe({
+        ...darwinPreflightDeps(),
+        startListeners: false,
+        mkdtemp: async () => root,
+        stat: async (target: string) => {
+          if (target.startsWith(root)) return await stat(target)
+          return { isFile: () => true }
+        },
+        runProcess: async () => {
+          throw new Error('synthetic case runner failure')
+        },
+      })
+
+      expect(report.status).toBe('NO-GO')
+      expect(report.harnessError).toEqual({ phase: 'case:mirror-read-write', kind: 'Error' })
+      expect(report.evidenceManifestSha256).toMatch(/^[0-9a-f]{64}$/u)
+      expect(
+        await readFile(path.join(root, 'evidence', 'evidence-manifest.json'), 'utf8'),
+      ).toContain('probe-run-private.json')
     })
   })
 

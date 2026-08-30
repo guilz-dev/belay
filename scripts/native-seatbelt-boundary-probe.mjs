@@ -2,7 +2,7 @@
 
 import { execFile, spawn as nodeSpawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream, createWriteStream, writeFileSync as fsWriteFileSync } from 'node:fs'
+import { createReadStream, writeFileSync as fsWriteFileSync } from 'node:fs'
 import {
   access as fsAccess,
   appendFile as fsAppendFile,
@@ -14,12 +14,12 @@ import {
   readFile as fsReadFile,
   realpath as fsRealpath,
   stat as fsStat,
+  unlink as fsUnlink,
   writeFile as fsWriteFile,
 } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { finished } from 'node:stream/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -37,7 +37,7 @@ const LATENCY_WARMUP_PAIRS = 5
 const LATENCY_MEASURED_PAIRS = 30
 const LATENCY_NOOP_CASE = 'latency-noop'
 const INTERNAL_CHILD_CASES = Object.freeze(['timeout-grandchild'])
-const MAX_CAPTURE_BYTES = 64 * 1024
+const MAX_CAPTURE_BYTES = 16 * 1024
 const POST_CLEANUP_MARKER_BASENAME = 'post-cleanup-marker'
 const SYSTEM_LITERALS = Object.freeze([
   { path: '/dev/null', operation: 'file-read-data' },
@@ -46,6 +46,11 @@ const SYSTEM_LITERALS = Object.freeze([
 export const PROFILE_BASELINE_IMPORTS = Object.freeze(['dyld-support.sb'])
 const SYSTEM_SUBPATH_GRANTS = Object.freeze([
   { subpath: '/System/Library/OpenSSL', operation: 'file-read*', role: 'system-openssl' },
+])
+const GLOBAL_GRANTS = Object.freeze([
+  { operation: 'mach-lookup', role: 'global-mach-lookup' },
+  { operation: 'sysctl-read', role: 'global-sysctl-read' },
+  { operation: 'file-read-metadata', role: 'global-file-read-metadata' },
 ])
 
 export const REQUIRED_CASE_NAMES = Object.freeze([
@@ -97,6 +102,7 @@ export function decideProbe(report) {
     report.latency.p95OverheadMs <= 250
   return casesPass &&
     report.cleanup.confirmed &&
+    (report.runtimeSkippedDependencies?.length ?? 0) === 0 &&
     report.profile.forbiddenBroadGrants.length === 0 &&
     latencyPass
     ? 'GO'
@@ -159,7 +165,9 @@ export function redactProbeReport(report, evidenceDir) {
       },
     })),
     latency: { ...report.latency },
+    timing: { ...report.timing },
     cleanup: { confirmed: report.cleanup.confirmed },
+    harnessError: report.harnessError ?? null,
     evidenceManifestSha256: report.evidenceManifestSha256,
   }
 }
@@ -317,9 +325,22 @@ export function compileSeatbeltProfile(input) {
     systemSubpathGrants = SYSTEM_SUBPATH_GRANTS,
     requestedSubpathGrants = [],
     baselineImports = PROFILE_BASELINE_IMPORTS,
+    globalGrants = GLOBAL_GRANTS,
   } = input
 
-  const forbiddenBroadGrants = []
+  const forbiddenBroadGrants = [
+    ...baselineImports.map((source) => ({
+      role: `baseline-import:${source}`,
+      operation: 'import',
+      source,
+    })),
+    ...globalGrants.map(({ role, operation }) => ({ role, operation })),
+    ...systemSubpathGrants.map(({ subpath, operation, role }) => ({
+      role: role ?? roleForForbiddenSubpath(subpath, homeDir),
+      operation,
+      subpath,
+    })),
+  ]
   for (const grant of requestedSubpathGrants) {
     const isForbidden =
       grant.subpath === homeDir || FORBIDDEN_BROAD_SUBPATHS.includes(grant.subpath)
@@ -348,9 +369,9 @@ export function compileSeatbeltProfile(input) {
   }
   lines.push('(allow process-fork)')
   lines.push('(allow signal (target self))')
-  lines.push('(allow mach-lookup)')
-  lines.push('(allow sysctl-read)')
-  lines.push('(allow file-read-metadata)')
+  for (const grant of globalGrants) {
+    lines.push(`(allow ${grant.operation})`)
+  }
   lines.push(`(allow file-read* (subpath ${seatbeltQuote(mirrorRoot)}))`)
   lines.push(`(allow file-write* (subpath ${seatbeltQuote(mirrorRoot)}))`)
   lines.push(`(allow file-read* (subpath ${seatbeltQuote(evidenceDir)}))`)
@@ -444,6 +465,18 @@ function processGroupExists(pid) {
   } catch {
     return false
   }
+}
+
+export async function waitForProcessGroupExit(pid, deps = {}) {
+  const groupExists = deps.processGroupExists ?? processGroupExists
+  const wait = deps.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const attempts = deps.attempts ?? 20
+  const intervalMs = deps.intervalMs ?? 10
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!groupExists(pid)) return true
+    await wait(intervalMs)
+  }
+  return !groupExists(pid)
 }
 
 export function buildProbeEnv(fixture) {
@@ -745,6 +778,83 @@ async function stopFixtureListeners(fixture) {
 /**
  * Capture sandboxed child output in memory while optionally writing evidence files.
  */
+function appendBoundedTail(current, chunk, limit) {
+  const combined = Buffer.concat([current, Buffer.from(chunk)])
+  return combined.length <= limit ? combined : combined.subarray(combined.length - limit)
+}
+
+export function scrubAndBoundOutput(raw, secrets = []) {
+  let scrubbed = Buffer.from(raw).toString('utf8')
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret.length > 0) {
+      scrubbed = scrubbed.replaceAll(secret, '[REDACTED]')
+    }
+  }
+  const encoded = Buffer.from(scrubbed)
+  return encoded.length <= MAX_CAPTURE_BYTES
+    ? scrubbed
+    : encoded.subarray(encoded.length - MAX_CAPTURE_BYTES).toString('utf8')
+}
+
+function isMissingFileError(error) {
+  return error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+}
+
+export async function verifyPostCleanupMarker(markerPath, deps = {}) {
+  const readFile = deps.readFile ?? fsReadFile
+  const unlink = deps.unlink ?? fsUnlink
+  const wait = deps.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+
+  try {
+    const positiveControl = await readFile(markerPath, 'utf8')
+    if (!positiveControl.trim()) {
+      return { confirmed: false, markerPresent: false, error: 'post-cleanup marker was empty' }
+    }
+  } catch (error) {
+    return {
+      confirmed: false,
+      markerPresent: false,
+      error: isMissingFileError(error)
+        ? 'post-cleanup marker was never observed'
+        : 'post-cleanup marker could not be read',
+    }
+  }
+
+  try {
+    await unlink(markerPath)
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      return {
+        confirmed: false,
+        markerPresent: true,
+        error: 'post-cleanup marker could not be cleared',
+      }
+    }
+  }
+  await wait(POST_CLEANUP_CHECK_MS)
+
+  try {
+    const marker = await readFile(markerPath, 'utf8')
+    if (marker.trim()) {
+      return {
+        confirmed: false,
+        markerPresent: true,
+        error: 'post-cleanup descendant marker present',
+      }
+    }
+    return { confirmed: false, markerPresent: false, error: 'post-cleanup marker reappeared empty' }
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return { confirmed: true, markerPresent: false }
+    }
+    return {
+      confirmed: false,
+      markerPresent: false,
+      error: 'post-cleanup marker could not be rechecked',
+    }
+  }
+}
+
 export function runSandboxedProcessCapture(command, args, options = {}) {
   assertNoDocker(command)
   for (const arg of args) assertNoDocker(arg)
@@ -752,6 +862,13 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
   const spawnFn = options.spawn ?? nodeSpawn
   const terminate = options.terminateProcessGroup ?? terminateProcessGroup
   const groupExists = options.processGroupExists ?? ((pid) => processGroupExists(pid))
+  const longestSecretBytes = Math.max(
+    0,
+    ...(options.scrubValues ?? []).map((value) =>
+      typeof value === 'string' ? Buffer.byteLength(value) : 0,
+    ),
+  )
+  const rawCaptureLimit = MAX_CAPTURE_BYTES + longestSecretBytes
 
   return new Promise((resolve) => {
     const child = spawnFn(command, args, {
@@ -760,26 +877,14 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const stdoutFile = options.stdoutPath
-      ? createWriteStream(options.stdoutPath, { mode: 0o600 })
-      : null
-    const stderrFile = options.stderrPath
-      ? createWriteStream(options.stderrPath, { mode: 0o600 })
-      : null
-    const stdout = []
-    const stderr = []
+    let stdout = Buffer.alloc(0)
+    let stderr = Buffer.alloc(0)
     let timedOut = false
     let settled = false
     let forceKill = null
     let resolveForceKill
     let forceKillDone = Promise.resolve()
     const startedAt = performance.now()
-
-    const waitForProcessGroupExit = async () => {
-      for (let attempt = 0; attempt < 20 && groupExists(child.pid); attempt += 1) {
-        await new Promise((wait) => setTimeout(wait, 10))
-      }
-    }
 
     const timeout = options.timeoutMs
       ? setTimeout(() => {
@@ -802,9 +907,21 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
       if (settled) return
       settled = true
       if (timeout) clearTimeout(timeout)
-      if (timedOut && forceKill && groupExists(child.pid)) {
-        await forceKillDone
-        await waitForProcessGroupExit()
+      if (timedOut) {
+        if (forceKill && groupExists(child.pid)) {
+          await forceKillDone
+        } else if (forceKill) {
+          clearTimeout(forceKill)
+          forceKill = null
+          resolveForceKill?.()
+        }
+        const groupExited = await waitForProcessGroupExit(child.pid, {
+          processGroupExists: groupExists,
+          wait: options.wait,
+          attempts: options.groupExitAttempts,
+          intervalMs: options.groupExitIntervalMs,
+        })
+        if (!groupExited) error = error ?? 'post-cleanup process group still exists'
       } else if (forceKill) {
         clearTimeout(forceKill)
         forceKill = null
@@ -812,51 +929,46 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
       }
 
       if (options.postCleanupMarkerPath && timedOut) {
-        await new Promise((wait) => setTimeout(wait, POST_CLEANUP_CHECK_MS))
-        try {
-          const marker = await (options.readFile ?? fsReadFile)(
-            options.postCleanupMarkerPath,
-            'utf8',
-          )
-          if (marker.trim()) {
-            error = error ?? 'post-cleanup descendant marker present'
-          }
-        } catch {
-          // Absence of the marker confirms cleanup.
-        }
+        const cleanup = await verifyPostCleanupMarker(options.postCleanupMarkerPath, {
+          readFile: options.readFile,
+          unlink: options.unlink,
+          wait: options.wait,
+        })
+        if (!cleanup.confirmed) error = error ?? cleanup.error
       }
 
-      stdoutFile?.end()
-      stderrFile?.end()
-      await Promise.all(
-        [stdoutFile, stderrFile].filter(Boolean).map((stream) => finished(stream).catch(() => {})),
-      )
+      const scrubValues = options.scrubValues ?? []
+      const scrubbedStdout = scrubAndBoundOutput(stdout, scrubValues)
+      const scrubbedStderr = scrubAndBoundOutput(stderr, scrubValues)
+      const writeFile = options.writeFile ?? fsWriteFile
+      try {
+        await Promise.all([
+          options.stdoutPath
+            ? writeFile(options.stdoutPath, scrubbedStdout, { encoding: 'utf8', mode: 0o600 })
+            : Promise.resolve(),
+          options.stderrPath
+            ? writeFile(options.stderrPath, scrubbedStderr, { encoding: 'utf8', mode: 0o600 })
+            : Promise.resolve(),
+        ])
+      } catch {
+        error = error ?? 'bounded output evidence could not be written'
+      }
       resolve({
         code,
         signal,
         error,
         timedOut,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
+        stdout: scrubbedStdout,
+        stderr: scrubbedStderr,
         settledAfterMs: performance.now() - startedAt,
       })
     }
 
     child.stdout?.on('data', (chunk) => {
-      const buffer = Buffer.from(chunk)
-      if (stdout.reduce((sum, part) => sum + part.length, 0) < MAX_CAPTURE_BYTES) {
-        const remaining = MAX_CAPTURE_BYTES - stdout.reduce((sum, part) => sum + part.length, 0)
-        stdout.push(buffer.subarray(0, remaining))
-      }
-      stdoutFile?.write(buffer)
+      stdout = appendBoundedTail(stdout, chunk, rawCaptureLimit)
     })
     child.stderr?.on('data', (chunk) => {
-      const buffer = Buffer.from(chunk)
-      if (stderr.reduce((sum, part) => sum + part.length, 0) < MAX_CAPTURE_BYTES) {
-        const remaining = MAX_CAPTURE_BYTES - stderr.reduce((sum, part) => sum + part.length, 0)
-        stderr.push(buffer.subarray(0, remaining))
-      }
-      stderrFile?.write(buffer)
+      stderr = appendBoundedTail(stderr, chunk, rawCaptureLimit)
     })
     child.on('error', (error) => settle({ code: null, signal: null, error: error.message }))
     child.on('close', (code, signal) => settle({ code, signal, error: null }))
@@ -887,6 +999,9 @@ export async function runSandboxedCase(fixture, caseName, options = {}) {
         terminateProcessGroup: options.deps?.terminateProcessGroup,
         spawn: options.deps?.spawn,
         processGroupExists: options.deps?.processGroupExists,
+        writeFile: options.deps?.writeFile,
+        unlink: options.deps?.unlink,
+        wait: options.deps?.wait,
       }))
 
   const startedAt = performance.now()
@@ -910,6 +1025,10 @@ export async function runSandboxedCase(fixture, caseName, options = {}) {
       postCleanupMarkerPath:
         caseName === 'timeout-process-group' ? fixture.postCleanupMarkerPath : undefined,
       readFile: options.deps?.readFile,
+      unlink: options.deps?.unlink,
+      wait: options.deps?.wait,
+      writeFile: options.deps?.writeFile,
+      scrubValues: Object.values(fixture.sentinels),
     },
   )
 
@@ -936,14 +1055,32 @@ function outputContainsSentinel(output, sentinel) {
   return typeof output === 'string' && output.includes(sentinel)
 }
 
+function capturedOutputContainsAnySentinel(runResult, sentinels) {
+  return Object.values(sentinels).some(
+    (sentinel) =>
+      outputContainsSentinel(runResult.stdout, sentinel) ||
+      outputContainsSentinel(runResult.stderr, sentinel),
+  )
+}
+
 const PRE_HASH_CASE_PATHS = {
   'mirror-read-write': (fixture) => [path.join(fixture.mirrorDir, 'mirror-sentinel.txt')],
-  'source-read-write': (fixture) => [path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt')],
-  'home-secret-read-write': (fixture) => [path.join(fixture.fakeHomeDir, '.secret')],
+  'source-read-write': (fixture) => [
+    path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt'),
+    path.join(fixture.forbiddenSourceDir, 'probe-write.txt'),
+  ],
+  'home-secret-read-write': (fixture) => [
+    path.join(fixture.fakeHomeDir, '.secret'),
+    path.join(fixture.fakeHomeDir, 'probe-write.txt'),
+  ],
   'control-plane-read-write': (fixture) => [
     path.join(fixture.controlPlaneDir, 'control-sentinel.txt'),
+    path.join(fixture.controlPlaneDir, 'probe-write.txt'),
   ],
-  'absolute-path-read-write': (fixture) => [fixture.absoluteForbiddenPath],
+  'absolute-path-read-write': (fixture) => [
+    fixture.absoluteForbiddenPath,
+    `${fixture.absoluteForbiddenPath}.probe-write`,
+  ],
 }
 
 export async function capturePreCaseHashes(fixture, caseName, deps = {}) {
@@ -975,13 +1112,15 @@ export async function readCaseEvidenceRecords(fixture, caseName, readFile = fsRe
   }
 }
 
-export async function buildRawEvidenceManifestSha256(evidenceDir, deps = {}) {
+export async function writeRawEvidenceManifest(evidenceDir, deps = {}) {
   const readdir = deps.readdir ?? fsReaddir
   const stat = deps.stat ?? fsStat
   const sha256File = deps.sha256File ?? sha256FileDefault
+  const writeFile = deps.writeFile ?? fsWriteFile
   const entries = await readdir(evidenceDir)
   const files = []
   for (const name of entries.sort()) {
+    if (name === 'evidence-manifest.json') continue
     const fullPath = path.join(evidenceDir, name)
     const fileStat = await stat(fullPath)
     if (!fileStat.isFile()) continue
@@ -991,9 +1130,40 @@ export async function buildRawEvidenceManifestSha256(evidenceDir, deps = {}) {
       bytes: fileStat.size,
     })
   }
-  return createHash('sha256')
-    .update(JSON.stringify({ version: 1, files }))
-    .digest('hex')
+  const payload = { version: 1, files }
+  const manifestSha256 = createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+  await writeFile(
+    path.join(evidenceDir, 'evidence-manifest.json'),
+    `${JSON.stringify({ ...payload, manifestSha256 }, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
+  return manifestSha256
+}
+
+export async function buildRawEvidenceManifestSha256(evidenceDir, deps = {}) {
+  return await writeRawEvidenceManifest(evidenceDir, deps)
+}
+
+export async function writePrivateRunEvidence(report, evidenceDir, deps = {}) {
+  const writeFile = deps.writeFile ?? fsWriteFile
+  const privateReport = {
+    version: 1,
+    host: report.host,
+    substrate: report.substrate,
+    runtimeClosure: report.runtimeClosure,
+    runtimeSkippedDependencies: report.runtimeSkippedDependencies ?? [],
+    profile: report.profile,
+    cases: report.cases,
+    latency: report.latency,
+    timing: report.timing,
+    cleanup: report.cleanup,
+    harnessError: report.harnessError ?? null,
+  }
+  await writeFile(
+    path.join(evidenceDir, 'probe-run-private.json'),
+    `${JSON.stringify(privateReport, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
 }
 
 export async function evaluateSandboxedCase(fixture, caseName, runResult, deps = {}) {
@@ -1014,8 +1184,7 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
   }
 
   let passed = false
-  const requiresChildEvidence = !['loopback-tcp', 'unix-socket'].includes(caseName)
-  const childEvidenceOk = !requiresChildEvidence || evidenceResult.status === 'ok'
+  const childEvidenceOk = evidenceResult.status === 'ok'
 
   switch (caseName) {
     case 'mirror-read-write': {
@@ -1053,14 +1222,24 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
         'absolute-path-read-write': fixture.sentinels.absoluteForbidden,
       }
       const target = paths[caseName]
+      const writeTargets = {
+        'source-read-write': path.join(fixture.forbiddenSourceDir, 'probe-write.txt'),
+        'home-secret-read-write': path.join(fixture.fakeHomeDir, 'probe-write.txt'),
+        'control-plane-read-write': path.join(fixture.controlPlaneDir, 'probe-write.txt'),
+        'absolute-path-read-write': `${fixture.absoluteForbiddenPath}.probe-write`,
+      }
+      const writeTarget = writeTargets[caseName]
       const sentinel = sentinels[caseName]
       const before = deps.preHashes?.[target] ?? null
       const after = await readSentinelHash(deps, target)
+      const writeBefore = deps.preHashes?.[writeTarget] ?? null
+      const writeAfter = await readSentinelHash(deps, writeTarget)
       const readDenied = record?.readDenied === true
       const writeDenied = record?.writeDenied === true
       const readLeaked = record?.readLeaked === true
-      evidence.operationDenied = readDenied && writeDenied && runResult.exitCode !== 0
-      evidence.targetUnchanged = before !== null && after !== null && before === after
+      evidence.operationDenied = readDenied && writeDenied && runResult.exitCode === 1
+      evidence.targetUnchanged =
+        before !== null && after !== null && before === after && writeBefore === writeAfter
       evidence.markerPresent =
         readLeaked ||
         outputContainsSentinel(runResult.stdout, sentinel) ||
@@ -1074,23 +1253,32 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
       break
     }
     case 'loopback-tcp': {
-      evidence.operationDenied = runResult.exitCode !== 0
+      evidence.operationDenied =
+        record?.attempted === true && record?.connectionDenied === true && record?.passed === true
       evidence.acceptedConnections = fixture.acceptedTcpConnections
       passed =
+        childEvidenceOk &&
         evidence.operationDenied &&
+        runResult.exitCode === 1 &&
         evidence.acceptedConnections === 0 &&
-        !outputContainsSentinel(runResult.stdout, fixture.sentinels.forbiddenSource)
+        !capturedOutputContainsAnySentinel(runResult, fixture.sentinels)
       break
     }
     case 'unix-socket': {
-      evidence.operationDenied = runResult.exitCode !== 0
+      evidence.operationDenied =
+        record?.attempted === true && record?.connectionDenied === true && record?.passed === true
       evidence.acceptedConnections = fixture.acceptedUnixConnections
-      passed = evidence.operationDenied && evidence.acceptedConnections === 0
+      passed =
+        childEvidenceOk &&
+        evidence.operationDenied &&
+        runResult.exitCode === 1 &&
+        evidence.acceptedConnections === 0 &&
+        !capturedOutputContainsAnySentinel(runResult, fixture.sentinels)
       break
     }
     case 'descendant-inheritance': {
       const forbiddenRecords = records.filter((entry) => entry.name !== 'descendant-inheritance')
-      evidence.operationDenied = forbiddenRecords.every((entry) => entry.passed === false)
+      evidence.operationDenied = forbiddenRecords.every((entry) => entry.passed === true)
       evidence.markerPresent = forbiddenRecords.some((entry) => entry.markerPresent === true)
       passed =
         childEvidenceOk &&
@@ -1129,11 +1317,16 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
         runResult.exitCode === 37 &&
         runResult.stdout.includes('probe-stdout-marker') &&
         runResult.stderr.includes('probe-stderr-marker') &&
-        !runResult.stdout.includes(fixture.sentinels.homeSecret)
+        !capturedOutputContainsAnySentinel(runResult, fixture.sentinels)
       break
     }
     default:
       passed = false
+  }
+
+  if (runResult.error !== null && runResult.error !== undefined) {
+    evidence.harnessError = 'process-capture-error'
+    passed = false
   }
 
   return { name: caseName, passed, evidence }
@@ -1161,7 +1354,6 @@ export async function runLatencyNoopSample(fixture, sandboxed, options = {}) {
   const measure =
     options.measure ??
     (async () => {
-      const startedAt = performance.now()
       const runProcess =
         options.deps?.runProcess ??
         ((command, args, runOptions) =>
@@ -1179,6 +1371,8 @@ export async function runLatencyNoopSample(fixture, sandboxed, options = {}) {
         await writeFile(profilePath, fixture.profile.source, { encoding: 'utf8', mode: 0o600 })
         await chmod(profilePath, 0o600)
       }
+
+      const startedAt = performance.now()
 
       const childArgs = [
         fixture.mirrorScriptPath,
@@ -1275,7 +1469,9 @@ async function writeLatencyEvidence(fixture, latency, appendFile = fsAppendFile)
 }
 
 export async function runLiveProbe(deps = {}) {
+  const preparationStartedAt = performance.now()
   const fixtureResult = await createPrivateFixture({ ...deps, startListeners: deps.startListeners })
+  const mirrorPreparationMs = performance.now() - preparationStartedAt
   if (fixtureResult.blocked) {
     return {
       version: 1,
@@ -1292,6 +1488,7 @@ export async function runLiveProbe(deps = {}) {
       cases: [],
       latency: { samples: 0, medianOverheadMs: 0, p95OverheadMs: 0 },
       cleanup: { confirmed: false },
+      timing: { mirrorPreparationMs, caseCommandMs: 0, benchmarkCommandMs: 0 },
       evidenceManifestSha256: null,
       evidenceDir: null,
     }
@@ -1299,7 +1496,10 @@ export async function runLiveProbe(deps = {}) {
 
   const fixture = fixtureResult
   const caseResults = []
+  let caseCommandMs = 0
   let cleanupConfirmed = true
+  let activePhase = 'fixture-ready'
+  let harnessError = null
   let latency = {
     samples: 0,
     medianOverheadMs: 0,
@@ -1312,8 +1512,10 @@ export async function runLiveProbe(deps = {}) {
 
   try {
     for (const caseName of REQUIRED_CASE_NAMES) {
+      activePhase = `case:${caseName}`
       const preHashes = await capturePreCaseHashes(fixture, caseName, deps)
       const runResult = await runSandboxedCase(fixture, caseName, { deps })
+      caseCommandMs += runResult.settledAfterMs
       const evaluated = await evaluateSandboxedCase(fixture, caseName, runResult, {
         ...deps,
         preHashes,
@@ -1324,10 +1526,28 @@ export async function runLiveProbe(deps = {}) {
       }
     }
 
+    activePhase = 'latency-benchmark'
     latency = await runPairedLatencyBenchmark(fixture, { deps })
+    activePhase = 'latency-evidence'
     await writeLatencyEvidence(fixture, latency, deps.appendFile ?? fsAppendFile)
-  } finally {
+  } catch (error) {
+    const candidateKind = error instanceof Error ? error.name : 'UnknownError'
+    harnessError = {
+      phase: activePhase,
+      kind: /^[A-Za-z][A-Za-z0-9]*$/u.test(candidateKind) ? candidateKind : 'UnknownError',
+    }
+    cleanupConfirmed = false
+  }
+
+  try {
     await stopFixtureListeners(fixture)
+  } catch (error) {
+    const candidateKind = error instanceof Error ? error.name : 'UnknownError'
+    harnessError ??= {
+      phase: 'listener-cleanup',
+      kind: /^[A-Za-z][A-Za-z0-9]*$/u.test(candidateKind) ? candidateKind : 'UnknownError',
+    }
+    cleanupConfirmed = false
   }
 
   const report = {
@@ -1347,11 +1567,21 @@ export async function runLiveProbe(deps = {}) {
     },
     cases: caseResults,
     latency,
+    timing: {
+      mirrorPreparationMs,
+      caseCommandMs,
+      benchmarkCommandMs: latency.pairs.reduce(
+        (total, pair) => total + pair.baselineMs + pair.sandboxedMs,
+        0,
+      ),
+    },
     cleanup: { confirmed: cleanupConfirmed },
+    harnessError,
     evidenceManifestSha256: null,
     evidenceDir: fixture.evidenceDir,
   }
-  report.evidenceManifestSha256 = await buildRawEvidenceManifestSha256(fixture.evidenceDir, deps)
+  await writePrivateRunEvidence(report, fixture.evidenceDir, deps)
+  report.evidenceManifestSha256 = await writeRawEvidenceManifest(fixture.evidenceDir, deps)
   report.status = decideProbe(report)
   return report
 }
@@ -1365,6 +1595,13 @@ async function loadFixtureManifest(mirrorDir) {
 async function appendCaseEvidence(evidenceDir, caseName, record) {
   const evidencePath = path.join(evidenceDir, `${caseName}.ndjson`)
   await fsAppendFile(evidencePath, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+}
+
+async function appendOperationEvidence(evidenceDir, caseName, record, parentCase) {
+  await appendCaseEvidence(evidenceDir, caseName, record)
+  if (parentCase) {
+    await appendCaseEvidence(evidenceDir, parentCase, record)
+  }
 }
 
 async function tryReadFile(filePath) {
@@ -1384,20 +1621,32 @@ async function tryWriteFile(filePath, contents) {
   }
 }
 
-async function runForbiddenOperation(manifest, operationName, readTarget, writeTarget) {
+async function runForbiddenOperation(
+  manifest,
+  operationName,
+  readTarget,
+  writeTarget,
+  parentEvidenceCase,
+) {
   const readResult = await tryReadFile(readTarget)
   const writeResult = await tryWriteFile(writeTarget, 'probe-write-attempt')
   const readDenied = typeof readResult !== 'string'
   const writeDenied = writeResult.ok !== true
   const readLeaked = typeof readResult === 'string'
-  await appendCaseEvidence(manifest.evidenceDir, operationName, {
+  const evidenceRecord = {
     version: 1,
     name: operationName,
     readDenied,
     writeDenied,
     readLeaked,
     passed: readDenied && writeDenied && !readLeaked,
-  })
+  }
+  await appendOperationEvidence(
+    manifest.evidenceDir,
+    operationName,
+    evidenceRecord,
+    parentEvidenceCase,
+  )
   return {
     denied: readDenied && writeDenied,
     readDenied,
@@ -1406,9 +1655,13 @@ async function runForbiddenOperation(manifest, operationName, readTarget, writeT
   }
 }
 
-export async function runProbeChildEntry(nonce, caseName) {
+export async function runProbeChildEntry(nonce, caseName, parentEvidenceCase) {
   if (process.env[PROBE_NONCE_ENV] !== nonce) {
     process.exitCode = 91
+    return
+  }
+  if (parentEvidenceCase !== undefined && parentEvidenceCase !== 'descendant-inheritance') {
+    process.exitCode = 94
     return
   }
   if (caseName === LATENCY_NOOP_CASE) {
@@ -1446,6 +1699,7 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.forbiddenSourceDir, 'source-sentinel.txt'),
         path.join(manifest.forbiddenSourceDir, 'probe-write.txt'),
+        parentEvidenceCase,
       )
       process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
@@ -1456,6 +1710,7 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.fakeHomeDir, '.secret'),
         path.join(manifest.fakeHomeDir, 'probe-write.txt'),
+        parentEvidenceCase,
       )
       process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
@@ -1466,6 +1721,7 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.controlPlaneDir, 'control-sentinel.txt'),
         path.join(manifest.controlPlaneDir, 'probe-write.txt'),
+        parentEvidenceCase,
       )
       process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
@@ -1476,6 +1732,7 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         manifest.absoluteForbiddenPath,
         `${manifest.absoluteForbiddenPath}.probe-write`,
+        parentEvidenceCase,
       )
       process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
@@ -1495,11 +1752,18 @@ export async function runProbeChildEntry(nonce, caseName) {
       } catch {
         // Expected denial path.
       }
-      await appendCaseEvidence(manifest.evidenceDir, caseName, {
-        version: 1,
-        name: caseName,
-        passed: !denied,
-      })
+      await appendOperationEvidence(
+        manifest.evidenceDir,
+        caseName,
+        {
+          version: 1,
+          name: caseName,
+          attempted: true,
+          connectionDenied: denied,
+          passed: denied,
+        },
+        parentEvidenceCase,
+      )
       process.exitCode = denied ? 1 : 0
       return
     }
@@ -1518,11 +1782,18 @@ export async function runProbeChildEntry(nonce, caseName) {
       } catch {
         // Expected denial path.
       }
-      await appendCaseEvidence(manifest.evidenceDir, caseName, {
-        version: 1,
-        name: caseName,
-        passed: !denied,
-      })
+      await appendOperationEvidence(
+        manifest.evidenceDir,
+        caseName,
+        {
+          version: 1,
+          name: caseName,
+          attempted: true,
+          connectionDenied: denied,
+          passed: denied,
+        },
+        parentEvidenceCase,
+      )
       process.exitCode = denied ? 1 : 0
       return
     }
@@ -1537,7 +1808,14 @@ export async function runProbeChildEntry(nonce, caseName) {
         const exitCode = await new Promise((resolve) => {
           const child = nodeSpawn(
             process.execPath,
-            [manifest.mirrorScriptPath, '--probe-child', nonce, forbiddenCase],
+            [
+              manifest.mirrorScriptPath,
+              '--probe-child',
+              nonce,
+              forbiddenCase,
+              '--parent-evidence-case',
+              caseName,
+            ],
             {
               stdio: ['ignore', 'pipe', 'pipe'],
               env: buildProbeEnv({
@@ -1549,13 +1827,9 @@ export async function runProbeChildEntry(nonce, caseName) {
           )
           child.on('close', (code) => resolve(code ?? 1))
         })
-        await appendCaseEvidence(manifest.evidenceDir, caseName, {
-          version: 1,
-          name: forbiddenCase,
-          passed: exitCode === 0,
-        })
+        if (exitCode !== 1) process.exitCode = 1
       }
-      process.exitCode = 0
+      process.exitCode ??= 0
       return
     }
     case 'timeout-grandchild': {
@@ -1609,7 +1883,9 @@ async function main() {
   if (childIndex !== -1) {
     const nonce = process.argv[childIndex + 1]
     const caseName = process.argv[childIndex + 2]
-    await runProbeChildEntry(nonce, caseName)
+    const parentIndex = process.argv.indexOf('--parent-evidence-case')
+    const parentEvidenceCase = parentIndex === -1 ? undefined : process.argv[parentIndex + 1]
+    await runProbeChildEntry(nonce, caseName, parentEvidenceCase)
     return
   }
 
