@@ -1,71 +1,63 @@
 # Native Seatbelt boundary probe result
 
-- Invocation: `pnpm probe:native-seatbelt-boundary` (`node scripts/native-seatbelt-boundary-probe.mjs --live`).
-- Host: macOS product version 26.5.1 (build 25F80); Darwin kernel 25.5.0; architecture arm64.
-- Substrate role `<SANDBOX_EXEC>` SHA-256: `8857d087219f0f39d3e3c163e5d0a0aed690cc22f34b50c7eee3d74f93e69688`.
-- Runtime executable role `<RUNTIME_FILE>` SHA-256: `7bf25453c4280d0c4b8501144e419dd9597eeddd5804c4f4ab571d3286489547`.
-- Runtime skipped dependency count: **4** (otool-reported framework and `/usr/lib` paths absent as regular files on this host; recorded with reason codes in private manifest).
-- Private evidence directory role: `<PRIVATE_EVIDENCE_DIR>` (raw path recorded only in the private manifest; not committed).
-- Evidence manifest SHA-256: `415bbf6b96d4adb9853575f0d9422a686923cca467d58446e543d145f0c6f308` (SHA-256 over sorted raw evidence **file name + bytes + file hash** entries; not a synthetic report object).
+## Current terminal status
+
+**BLOCKED**
+
+Authorized run #6 did not start a sandboxed child. The fixture failed while binding its Unix
+socket, before any containment case or latency sample ran. This is a startup-harness result, not
+evidence for or against Seatbelt containment.
+
+- Invocation: `pnpm probe:native-seatbelt-boundary`
+- Probe commit: `e9cf45b` (`fix: make N1 Seatbelt evidence fail closed`)
+- Failure phase: private fixture listener startup
+- Stable failure class: `listen EINVAL`
+- Sandboxed child started: **no**
+- Required cases completed: **0/10**
+- Latency pairs completed: **0/30**
+- Evidence manifest SHA-256: **none**
 - Docker was neither inspected nor invoked.
 
-## Profile grant inventory (roles)
+The generated fixture root used the long per-user value returned by `os.tmpdir()`. Appending
+`listeners/probe.sock` exceeded macOS's Unix-domain socket path limit, so `net.Server.listen()`
+returned `EINVAL`.
 
-| Category | Role / import | Operation | Notes |
+## Authorized-run history
+
+Earlier results are retained as harness history. They are not substituted for the latest blocked
+run and do not authorize N2.
+
+| Attempt | Manifest | Recorded outcome | Review status / root cause |
 | --- | --- | --- | --- |
-| Baseline | `dyld-support.sb` | import | Apple dyld bootstrap profile |
-| Process | baseline | `process-fork`, `signal (target self)`, `mach-lookup`, `sysctl-read` | Minimum process control |
-| Metadata | baseline | `file-read-metadata` | Directory traversal for canonical `/private/var/...` temp paths |
-| Mirror fixture | `<MIRROR_ROOT>` | `file-read*`, `file-write*` | subpath |
-| Evidence output | `<PRIVATE_EVIDENCE_DIR>` | `file-read*`, `file-write*` | subpath (includes post-cleanup marker path) |
-| Runtime | `<RUNTIME_FILE>` | `process-exec`, `file-read*` | literal |
-| System literal | `<DEV_NULL>` | `file-read-data` | `/dev/null` |
-| System literal | `<DYLD>` | `file-read-data` | `/usr/lib/dyld` |
-| System subpath | `system-openssl` | `file-read*` | `/System/Library/OpenSSL` |
-| Forbidden broad grants | — | — | none recorded |
+| Pre-auth #1–2 | none | harness failure | Missing profile flag and path canonicalization defects |
+| Authorized #1 | `5d313611…` | NO-GO | Evidence directory was granted as a literal instead of a subpath |
+| Authorized #2–4 | various | NO-GO / GO | Invalid harness evidence; #4 placed the cleanup marker outside the sandbox write grant |
+| Authorized #5 | `415bbf6b…` | NO-GO | Invalid terminal rationale: a marker written before timeout was mistaken for post-cleanup survival; skipped runtime dependencies and implicit broad grants were not gated |
+| **Authorized #6** | **none** | **BLOCKED** | **Unix socket path exceeded the macOS limit before the first sandboxed child** |
 
-## Required containment cases
+## Correction prepared after #6
 
-| Case | Pass | Exit | Signal | Timed out | Marker / listener / hash evidence |
-| --- | --- | --- | --- | --- | --- |
-| mirror-read-write | yes | 0 | — | no | Mirror read/write succeeded; pre/post sentinel hash unchanged |
-| source-read-write | yes | 1 | — | no | Read **and** write denied; pre/post hash unchanged; no leak in streams |
-| home-secret-read-write | yes | 1 | — | no | Read **and** write denied; fake-home hash unchanged; mirror manifest omits sentinel values |
-| control-plane-read-write | yes | 1 | — | no | Read **and** write denied; control-plane hash unchanged |
-| absolute-path-read-write | yes | 1 | — | no | Read **and** write denied; absolute target hash unchanged |
-| loopback-tcp | yes | 1 | — | no | Connect denied; parent TCP listener accepted 0 connections |
-| unix-socket | yes | 1 | — | no | Connect denied; parent Unix listener accepted 0 connections |
-| descendant-inheritance | yes | 0 | — | no | Four forbidden descendant operations each denied independently |
-| timeout-process-group | **no** | — | SIGTERM | yes | Timed out, but post-cleanup marker **present** (`survived` written by grandchild) |
-| output-capture | yes | 37 | — | no | stdout/stderr markers captured; exit 37 observed |
+Commit `925bddb` (`fix: shorten native probe socket path`) makes macOS fixture creation use the
+short `/tmp/belay-native-seatbelt-probe-` prefix while retaining a mode-0700 private tree. A unit
+test proves the resulting socket path remains below 104 characters. Focused verification after
+the fix is 66/66 passing; typecheck and lint pass, with the same 10 pre-existing unrelated lint
+warnings.
 
-Cleanup confirmed: **no** (timeout case failed with surviving descendant marker).
+This correction has **not** been executed as another live probe. Per the one-run evidence rule,
+it requires a separately authorized run #7. A future run must preserve #6 in this table rather
+than replacing it.
 
-## Paired latency overhead (30 samples after 5 warm-up pairs)
+## Review boundary
 
-Thresholds: median ≤ 100 ms, p95 ≤ 250 ms.
-
-Summary: median overhead **7.34 ms**; p95 overhead **15.70 ms**. Latency thresholds **pass**.
-
-(Full 30-pair table remains in private `<PRIVATE_EVIDENCE_DIR>/latency.ndjson`.)
-
-## Earlier harness failures (not counted as evidence)
-
-| Attempt | Manifest | Outcome | Root cause |
-| --- | --- | --- | --- |
-| Pre-auth #1–2 | none | harness failure | Missing `-f` profile flag; path canonicalization defects |
-| Authorized #1 | `5d313611…` | NO-GO | Evidence dir granted as Seatbelt `literal` instead of `subpath` |
-| Authorized #2–4 | various | NO-GO / **invalid GO** | Descendant/timeout harness defects; **GO #4 used cleanup marker outside sandbox write grant (false-positive cleanup pass)** |
-| **Authorized #5** | **`415bbf6b…`** | **NO-GO** | **Hardened harness: 9/10 security cases pass; timeout cleanup fails with honest marker detection** |
-
-## Review boundaries
-
-This document is redacted. Raw NDJSON transcripts, stderr stacks, sentinel values, usernames, absolute temp paths, environment secrets, and the full private evidence tree remain outside Git. Reviewers may reconcile case counts, latency samples, grant inventory roles, raw file manifest hash, and terminal status against the private manifest at `<PRIVATE_EVIDENCE_DIR>`.
+The failed startup created a private temporary fixture but no raw evidence manifest. Its absolute
+path, generated sentinels, username-bearing temporary prefix, and copied fixture files are not
+committed. No case observation, grant inventory, host identity, runtime closure, or latency value
+from an earlier attempt is presented as run #6 evidence.
 
 ## Decision
 
-Terminal status: **NO-GO**
+Rule applied: N1 is **BLOCKED** when the authenticated local environment cannot execute the probe.
+Because run #6 stopped before containment execution, it cannot be called GO or NO-GO.
 
-Rule applied: N1 requires every required allow/deny case to pass **and** cleanup to be confirmed. Deny cases, descendant inheritance, mirror allow-path, and output capture pass under the hardened harness (read **and** write denial, pre-case hashes, mirror manifest without sentinel values, raw file manifest hash). **timeout-process-group** fails because the SIGTERM/SIGKILL sequence did not prevent the ignoring grandchild from writing the post-cleanup survival marker within the granted evidence subpath. Latency passes but does not override the cleanup failure.
-
-Native unknown execution via Seatbelt on this recorded host is not authorized. Ordinary exact approval remains in place. No production driver, ADR-007, or Workstream C plan is created by this result. N2 must not proceed.
+Ordinary exact approval remains in place. N2, ADR-007, Workstream C, and production Seatbelt code
+must not proceed unless a separately authorized, reviewed N1 run returns GO.
