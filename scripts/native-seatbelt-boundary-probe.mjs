@@ -10,6 +10,7 @@ import {
   copyFile as fsCopyFile,
   mkdir as fsMkdir,
   mkdtemp as fsMkdtemp,
+  readdir as fsReaddir,
   readFile as fsReadFile,
   realpath as fsRealpath,
   stat as fsStat,
@@ -36,6 +37,8 @@ const LATENCY_WARMUP_PAIRS = 5
 const LATENCY_MEASURED_PAIRS = 30
 const LATENCY_NOOP_CASE = 'latency-noop'
 const INTERNAL_CHILD_CASES = Object.freeze(['timeout-grandchild'])
+const MAX_CAPTURE_BYTES = 64 * 1024
+const POST_CLEANUP_MARKER_BASENAME = 'post-cleanup-marker'
 const SYSTEM_LITERALS = Object.freeze([
   { path: '/dev/null', operation: 'file-read-data' },
   { path: '/usr/lib/dyld', operation: 'file-read-data' },
@@ -126,6 +129,7 @@ export function redactProbeReport(report, evidenceDir) {
       sha256,
       source,
     })),
+    runtimeSkippedDependencyCount: report.runtimeSkippedDependencies?.length ?? 0,
     profile: {
       literalReadCount: report.profile.literalReads.length,
       literalExecCount: report.profile.literalExecs.length,
@@ -247,6 +251,7 @@ export async function resolveRuntimeClosure(
   const queue = [{ path: executablePath, source: 'executable' }]
   const visited = new Set()
   const closure = []
+  const skippedDependencies = []
 
   while (queue.length > 0) {
     const item = queue.shift()
@@ -257,6 +262,7 @@ export async function resolveRuntimeClosure(
       if (item.source === 'executable') {
         throw new Error(`runtime closure executable is not reachable: ${item.path}`)
       }
+      skippedDependencies.push({ path: item.path, reason: 'unreachable' })
       continue
     }
     if (visited.has(canonical)) continue
@@ -267,12 +273,14 @@ export async function resolveRuntimeClosure(
       if (item.source === 'executable') {
         throw new Error(`runtime closure executable is not reachable: ${item.path}`)
       }
+      skippedDependencies.push({ path: canonical, reason: 'stat-failed' })
       continue
     }
     if (!fileStat.isFile()) {
       if (item.source === 'executable') {
         throw new Error(`runtime closure is not a file: ${canonical}`)
       }
+      skippedDependencies.push({ path: canonical, reason: 'not-regular-file' })
       continue
     }
     visited.add(canonical)
@@ -288,7 +296,10 @@ export async function resolveRuntimeClosure(
     }
   }
 
-  return closure.sort((left, right) => left.path.localeCompare(right.path))
+  return {
+    closure: closure.sort((left, right) => left.path.localeCompare(right.path)),
+    skippedDependencies,
+  }
 }
 
 export function seatbeltQuote(value) {
@@ -461,6 +472,7 @@ export async function runPreflight(deps = {}) {
       host,
       substrate: { available: false, executable: SANDBOX_EXEC, sha256: null },
       runtimeClosure: [],
+      skippedDependencies: [],
       nodePath: null,
       nodeSha256: null,
     }
@@ -475,6 +487,7 @@ export async function runPreflight(deps = {}) {
       host,
       substrate: { available: false, executable: SANDBOX_EXEC, sha256: null },
       runtimeClosure: [],
+      skippedDependencies: [],
       nodePath: null,
       nodeSha256: null,
     }
@@ -490,7 +503,7 @@ export async function runPreflight(deps = {}) {
   const substrateSha256 = await sha256File(SANDBOX_EXEC)
   const nodePath = await (deps.realpath ?? fsRealpath)(deps.execPath ?? process.execPath)
   const resolveClosure = deps.resolveRuntimeClosure ?? resolveRuntimeClosure
-  const runtimeClosure = await resolveClosure(nodePath, {
+  const { closure: runtimeClosure, skippedDependencies } = await resolveClosure(nodePath, {
     realpath: deps.realpath ?? fsRealpath,
     stat: deps.stat ?? fsStat,
     sha256File,
@@ -504,6 +517,7 @@ export async function runPreflight(deps = {}) {
       host,
       substrate: { available: true, executable: SANDBOX_EXEC, sha256: substrateSha256 },
       runtimeClosure,
+      skippedDependencies,
       nodePath,
       nodeSha256: null,
     }
@@ -514,6 +528,7 @@ export async function runPreflight(deps = {}) {
     host,
     substrate: { available: true, executable: SANDBOX_EXEC, sha256: substrateSha256 },
     runtimeClosure,
+    skippedDependencies,
     nodePath,
     nodeSha256: recordedNode.sha256,
   }
@@ -544,12 +559,16 @@ function fixtureManifest(fixture) {
     listenersDir: fixture.listenersDir,
     evidenceDir: fixture.evidenceDir,
     mirrorScriptPath: fixture.mirrorScriptPath,
-    sentinels: fixture.sentinels,
     absoluteForbiddenPath: fixture.absoluteForbiddenPath,
     tcpPort: fixture.tcpPort,
     unixSocketPath: fixture.unixSocketPath,
     postCleanupMarkerPath: fixture.postCleanupMarkerPath,
   }
+}
+
+/** Mirror-visible manifest excludes sentinel values so sandboxed code cannot read secrets from JSON. */
+export function mirrorFixtureManifest(fixture) {
+  return fixtureManifest(fixture)
 }
 
 export async function createPrivateFixture(deps = {}) {
@@ -576,7 +595,6 @@ export async function createPrivateFixture(deps = {}) {
   let listenersDir = path.join(root, 'listeners')
   let evidenceDir = path.join(root, 'evidence')
   let absoluteForbiddenPath = path.join(root, 'absolute-forbidden', 'target')
-  let postCleanupMarkerPath = path.join(root, 'post-cleanup-marker')
   let unixSocketPath = path.join(listenersDir, 'probe.sock')
 
   for (const directory of [
@@ -600,7 +618,7 @@ export async function createPrivateFixture(deps = {}) {
   evidenceDir = await realpath(evidenceDir)
   const absoluteForbiddenDir = await realpath(path.dirname(absoluteForbiddenPath))
   absoluteForbiddenPath = path.join(absoluteForbiddenDir, 'target')
-  postCleanupMarkerPath = path.join(canonicalRoot, 'post-cleanup-marker')
+  const postCleanupMarkerPath = path.join(evidenceDir, POST_CLEANUP_MARKER_BASENAME)
   unixSocketPath = path.join(listenersDir, 'probe.sock')
 
   const sentinels = {
@@ -668,7 +686,7 @@ export async function createPrivateFixture(deps = {}) {
   await writePrivateFile(
     localDeps,
     path.join(mirrorDir, 'probe-fixture.json'),
-    JSON.stringify(fixtureManifest(fixture)),
+    JSON.stringify(mirrorFixtureManifest(fixture)),
   )
 
   if (deps.startListeners !== false) {
@@ -705,7 +723,7 @@ async function startFixtureListeners(fixture, deps = {}) {
   const manifestPath = path.join(fixture.mirrorDir, 'probe-fixture.json')
   const writeFile = deps.writeFile ?? fsWriteFile
   const chmod = deps.chmod ?? fsChmod
-  await writeFile(manifestPath, JSON.stringify(fixtureManifest(fixture)), {
+  await writeFile(manifestPath, JSON.stringify(mirrorFixtureManifest(fixture)), {
     encoding: 'utf8',
     mode: 0o600,
   })
@@ -826,12 +844,18 @@ export function runSandboxedProcessCapture(command, args, options = {}) {
 
     child.stdout?.on('data', (chunk) => {
       const buffer = Buffer.from(chunk)
-      stdout.push(buffer)
+      if (stdout.reduce((sum, part) => sum + part.length, 0) < MAX_CAPTURE_BYTES) {
+        const remaining = MAX_CAPTURE_BYTES - stdout.reduce((sum, part) => sum + part.length, 0)
+        stdout.push(buffer.subarray(0, remaining))
+      }
       stdoutFile?.write(buffer)
     })
     child.stderr?.on('data', (chunk) => {
       const buffer = Buffer.from(chunk)
-      stderr.push(buffer)
+      if (stderr.reduce((sum, part) => sum + part.length, 0) < MAX_CAPTURE_BYTES) {
+        const remaining = MAX_CAPTURE_BYTES - stderr.reduce((sum, part) => sum + part.length, 0)
+        stderr.push(buffer.subarray(0, remaining))
+      }
       stderrFile?.write(buffer)
     })
     child.on('error', (error) => settle({ code: null, signal: null, error: error.message }))
@@ -912,18 +936,70 @@ function outputContainsSentinel(output, sentinel) {
   return typeof output === 'string' && output.includes(sentinel)
 }
 
-async function readCaseEvidenceRecords(fixture, caseName, readFile = fsReadFile) {
+const PRE_HASH_CASE_PATHS = {
+  'mirror-read-write': (fixture) => [path.join(fixture.mirrorDir, 'mirror-sentinel.txt')],
+  'source-read-write': (fixture) => [path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt')],
+  'home-secret-read-write': (fixture) => [path.join(fixture.fakeHomeDir, '.secret')],
+  'control-plane-read-write': (fixture) => [
+    path.join(fixture.controlPlaneDir, 'control-sentinel.txt'),
+  ],
+  'absolute-path-read-write': (fixture) => [fixture.absoluteForbiddenPath],
+}
+
+export async function capturePreCaseHashes(fixture, caseName, deps = {}) {
+  const pathsForCase = PRE_HASH_CASE_PATHS[caseName]
+  if (!pathsForCase) {
+    return {}
+  }
+  const sha256File = deps.sha256File ?? sha256FileDefault
+  const hashes = {}
+  for (const target of pathsForCase(fixture)) {
+    hashes[target] = await readSentinelHash({ sha256File }, target)
+  }
+  return hashes
+}
+
+export async function readCaseEvidenceRecords(fixture, caseName, readFile = fsReadFile) {
   const evidencePath = path.join(fixture.evidenceDir, `${caseName}.ndjson`)
   try {
-    return parseCaseRecords(await readFile(evidencePath, 'utf8'))
-  } catch {
-    return []
+    const text = await readFile(evidencePath, 'utf8')
+    if (!text.trim()) {
+      return { status: 'empty', records: [] }
+    }
+    return { status: 'ok', records: parseCaseRecords(text) }
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return { status: 'missing', records: [] }
+    }
+    throw error
   }
+}
+
+export async function buildRawEvidenceManifestSha256(evidenceDir, deps = {}) {
+  const readdir = deps.readdir ?? fsReaddir
+  const stat = deps.stat ?? fsStat
+  const sha256File = deps.sha256File ?? sha256FileDefault
+  const entries = await readdir(evidenceDir)
+  const files = []
+  for (const name of entries.sort()) {
+    const fullPath = path.join(evidenceDir, name)
+    const fileStat = await stat(fullPath)
+    if (!fileStat.isFile()) continue
+    files.push({
+      name,
+      sha256: await sha256File(fullPath),
+      bytes: fileStat.size,
+    })
+  }
+  return createHash('sha256')
+    .update(JSON.stringify({ version: 1, files }))
+    .digest('hex')
 }
 
 export async function evaluateSandboxedCase(fixture, caseName, runResult, deps = {}) {
   const readFile = deps.readFile ?? fsReadFile
-  const records = await readCaseEvidenceRecords(fixture, caseName, readFile)
+  const evidenceResult = await readCaseEvidenceRecords(fixture, caseName, readFile)
+  const records = evidenceResult.records
   const record = records.find((entry) => entry.name === caseName)
   const evidence = {
     operationDenied: false,
@@ -934,27 +1010,29 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
     acceptedConnections: 0,
     targetUnchanged: true,
     settledAfterMs: runResult.settledAfterMs,
+    evidenceStatus: evidenceResult.status,
   }
 
   let passed = false
+  const requiresChildEvidence = !['loopback-tcp', 'unix-socket'].includes(caseName)
+  const childEvidenceOk = !requiresChildEvidence || evidenceResult.status === 'ok'
 
   switch (caseName) {
     case 'mirror-read-write': {
+      const sentinelPath = path.join(fixture.mirrorDir, 'mirror-sentinel.txt')
       const mirrorOutputPath = path.join(fixture.mirrorDir, 'mirror-output.txt')
-      const before = await readSentinelHash(
-        deps,
-        path.join(fixture.mirrorDir, 'mirror-sentinel.txt'),
-      )
-      const after = await readSentinelHash(
-        deps,
-        path.join(fixture.mirrorDir, 'mirror-sentinel.txt'),
-      )
+      const before = deps.preHashes?.[sentinelPath] ?? null
+      const after = await readSentinelHash(deps, sentinelPath)
       const outputWritten = await readSentinelHash(deps, mirrorOutputPath)
       evidence.operationDenied = runResult.exitCode !== 0
       evidence.markerPresent = before !== null && before === after && outputWritten !== null
       passed =
+        childEvidenceOk &&
         runResult.exitCode === 0 &&
-        evidence.markerPresent &&
+        before !== null &&
+        after !== null &&
+        before === after &&
+        outputWritten !== null &&
         !outputContainsSentinel(runResult.stdout, fixture.sentinels.mirror)
       break
     }
@@ -976,15 +1054,23 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
       }
       const target = paths[caseName]
       const sentinel = sentinels[caseName]
-      const before = await readSentinelHash(deps, target)
+      const before = deps.preHashes?.[target] ?? null
       const after = await readSentinelHash(deps, target)
-      evidence.operationDenied = runResult.exitCode !== 0 || record?.passed === false
-      evidence.targetUnchanged = before !== null && before === after
+      const readDenied = record?.readDenied === true
+      const writeDenied = record?.writeDenied === true
+      const readLeaked = record?.readLeaked === true
+      evidence.operationDenied = readDenied && writeDenied && runResult.exitCode !== 0
+      evidence.targetUnchanged = before !== null && after !== null && before === after
       evidence.markerPresent =
+        readLeaked ||
         outputContainsSentinel(runResult.stdout, sentinel) ||
         outputContainsSentinel(runResult.stderr, sentinel) ||
         records.some((entry) => outputContainsSentinel(JSON.stringify(entry), sentinel))
-      passed = evidence.operationDenied && evidence.targetUnchanged && !evidence.markerPresent
+      passed =
+        childEvidenceOk &&
+        evidence.operationDenied &&
+        evidence.targetUnchanged &&
+        !evidence.markerPresent
       break
     }
     case 'loopback-tcp': {
@@ -1007,6 +1093,7 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
       evidence.operationDenied = forbiddenRecords.every((entry) => entry.passed === false)
       evidence.markerPresent = forbiddenRecords.some((entry) => entry.markerPresent === true)
       passed =
+        childEvidenceOk &&
         runResult.exitCode === 0 &&
         forbiddenRecords.length === 4 &&
         evidence.operationDenied &&
@@ -1016,20 +1103,29 @@ export async function evaluateSandboxedCase(fixture, caseName, runResult, deps =
     case 'timeout-process-group': {
       evidence.operationDenied = runResult.timedOut === true
       evidence.timedOut = runResult.timedOut === true
-      let markerAbsent = true
+      let markerAbsent = false
       try {
         const marker = await readFile(fixture.postCleanupMarkerPath, 'utf8')
         markerAbsent = !marker.trim()
-      } catch {
-        markerAbsent = true
+      } catch (error) {
+        markerAbsent =
+          error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+        if (!markerAbsent) {
+          evidence.harnessError = 'marker-read-failed'
+        }
       }
       evidence.markerPresent = !markerAbsent
-      passed = runResult.timedOut === true && runResult.error === null && markerAbsent
+      passed =
+        runResult.timedOut === true &&
+        runResult.error === null &&
+        markerAbsent &&
+        evidence.harnessError === undefined
       break
     }
     case 'output-capture': {
       evidence.operationDenied = false
       passed =
+        childEvidenceOk &&
         runResult.exitCode === 37 &&
         runResult.stdout.includes('probe-stdout-marker') &&
         runResult.stderr.includes('probe-stderr-marker') &&
@@ -1058,26 +1154,6 @@ export function summarizeLatencyOverhead(overheadSamples) {
     overheadMs: overheadSamples,
     thresholds: { medianMs: 100, p95Ms: 250 },
     warmUpPairs: LATENCY_WARMUP_PAIRS,
-  }
-}
-
-function buildEvidenceManifestPayload(report) {
-  return {
-    version: 1,
-    host: report.host,
-    substrate: report.substrate,
-    runtimeClosure: report.runtimeClosure,
-    profile: {
-      literalReads: report.profile.literalReads,
-      literalExecs: report.profile.literalExecs,
-      forbiddenBroadGrants: report.profile.forbiddenBroadGrants,
-      imports: report.profile.imports,
-      systemSubpaths: report.profile.systemSubpaths,
-      sourceSha256: report.profile.sourceSha256,
-    },
-    cases: report.cases,
-    latency: report.latency,
-    cleanup: report.cleanup,
   }
 }
 
@@ -1236,8 +1312,12 @@ export async function runLiveProbe(deps = {}) {
 
   try {
     for (const caseName of REQUIRED_CASE_NAMES) {
+      const preHashes = await capturePreCaseHashes(fixture, caseName, deps)
       const runResult = await runSandboxedCase(fixture, caseName, { deps })
-      const evaluated = await evaluateSandboxedCase(fixture, caseName, runResult, deps)
+      const evaluated = await evaluateSandboxedCase(fixture, caseName, runResult, {
+        ...deps,
+        preHashes,
+      })
       caseResults.push(evaluated)
       if (caseName === 'timeout-process-group' && !evaluated.passed) {
         cleanupConfirmed = false
@@ -1256,6 +1336,7 @@ export async function runLiveProbe(deps = {}) {
     host: fixture.preflight.host,
     substrate: fixture.preflight.substrate,
     runtimeClosure: fixture.preflight.runtimeClosure,
+    runtimeSkippedDependencies: fixture.preflight.skippedDependencies ?? [],
     profile: {
       literalReads: fixture.profile.literalReads,
       literalExecs: fixture.profile.literalExecs,
@@ -1270,9 +1351,7 @@ export async function runLiveProbe(deps = {}) {
     evidenceManifestSha256: null,
     evidenceDir: fixture.evidenceDir,
   }
-  report.evidenceManifestSha256 = createHash('sha256')
-    .update(JSON.stringify(buildEvidenceManifestPayload(report)))
-    .digest('hex')
+  report.evidenceManifestSha256 = await buildRawEvidenceManifestSha256(fixture.evidenceDir, deps)
   report.status = decideProbe(report)
   return report
 }
@@ -1305,19 +1384,25 @@ async function tryWriteFile(filePath, contents) {
   }
 }
 
-async function runForbiddenOperation(manifest, operationName, readTarget, writeTarget, sentinel) {
+async function runForbiddenOperation(manifest, operationName, readTarget, writeTarget) {
   const readResult = await tryReadFile(readTarget)
   const writeResult = await tryWriteFile(writeTarget, 'probe-write-attempt')
-  const stdoutSentinel = typeof readResult === 'string' ? readResult.includes(sentinel) : false
+  const readDenied = typeof readResult !== 'string'
+  const writeDenied = writeResult.ok !== true
+  const readLeaked = typeof readResult === 'string'
   await appendCaseEvidence(manifest.evidenceDir, operationName, {
     version: 1,
     name: operationName,
-    passed: false,
-    markerPresent: stdoutSentinel,
+    readDenied,
+    writeDenied,
+    readLeaked,
+    passed: readDenied && writeDenied && !readLeaked,
   })
   return {
-    denied: typeof readResult !== 'string' || writeResult.error !== undefined,
-    markerPresent: stdoutSentinel,
+    denied: readDenied && writeDenied,
+    readDenied,
+    writeDenied,
+    readLeaked,
   }
 }
 
@@ -1361,9 +1446,8 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.forbiddenSourceDir, 'source-sentinel.txt'),
         path.join(manifest.forbiddenSourceDir, 'probe-write.txt'),
-        manifest.sentinels.forbiddenSource,
       )
-      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
     }
     case 'home-secret-read-write': {
@@ -1372,9 +1456,8 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.fakeHomeDir, '.secret'),
         path.join(manifest.fakeHomeDir, 'probe-write.txt'),
-        manifest.sentinels.homeSecret,
       )
-      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
     }
     case 'control-plane-read-write': {
@@ -1383,9 +1466,8 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         path.join(manifest.controlPlaneDir, 'control-sentinel.txt'),
         path.join(manifest.controlPlaneDir, 'probe-write.txt'),
-        manifest.sentinels.controlPlane,
       )
-      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
     }
     case 'absolute-path-read-write': {
@@ -1394,9 +1476,8 @@ export async function runProbeChildEntry(nonce, caseName) {
         caseName,
         manifest.absoluteForbiddenPath,
         `${manifest.absoluteForbiddenPath}.probe-write`,
-        manifest.sentinels.absoluteForbidden,
       )
-      process.exitCode = result.denied && !result.markerPresent ? 1 : 0
+      process.exitCode = result.denied && !result.readLeaked ? 1 : 0
       return
     }
     case 'loopback-tcp': {

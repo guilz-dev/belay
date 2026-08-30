@@ -439,7 +439,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       ].join('\n')
       const libOtoolOutput = `${canonicalLibPath}:\n`
 
-      const closure = await resolveRuntimeClosure(symlinkNodePath, {
+      const { closure, skippedDependencies } = await resolveRuntimeClosure(symlinkNodePath, {
         realpath: async (value: string) => (value === symlinkNodePath ? canonicalNodePath : value),
         stat: async () => ({ isFile: () => true }),
         sha256File: async (value: string) =>
@@ -449,6 +449,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         }),
       })
 
+      expect(skippedDependencies).toEqual([])
       expect(closure).toEqual([
         {
           path: canonicalNodePath,
@@ -482,7 +483,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         ],
       ])
 
-      const closure = await resolveRuntimeClosure(left, {
+      const { closure } = await resolveRuntimeClosure(left, {
         realpath: async (value: string) => value,
         stat: async () => ({ isFile: () => true }),
         sha256File: async (value: string) => `${value}-hash`,
@@ -504,7 +505,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         `\t@loader_path/lib "special".dylib (compatibility version 1.0.0, current version 1.0.0)`,
       ].join('\n')
 
-      const closure = await resolveRuntimeClosure(executablePath, {
+      const { closure } = await resolveRuntimeClosure(executablePath, {
         realpath: async (value: string) => value,
         stat: async () => ({ isFile: () => true }),
         sha256File: async (value: string) => `${value}-hash`,
@@ -543,7 +544,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         `\t${reachableLib} (compatibility version 1.0.0, current version 1.0.0)`,
       ].join('\n')
 
-      const closure = await resolveRuntimeClosure(executablePath, {
+      const { closure, skippedDependencies } = await resolveRuntimeClosure(executablePath, {
         realpath: async (value: string) => {
           if (value === missingFramework) {
             throw new Error('ENOENT')
@@ -559,6 +560,7 @@ describe('native Seatbelt boundary probe evidence contract', () => {
         }),
       })
 
+      expect(skippedDependencies).toEqual([{ path: missingFramework, reason: 'unreachable' }])
       expect(closure).toEqual([
         { path: executablePath, sha256: `${executablePath}-hash`, source: 'executable' },
         { path: reachableLib, sha256: `${reachableLib}-hash`, source: 'dependency' },
@@ -756,6 +758,110 @@ describe('native Seatbelt boundary probe evidence contract', () => {
       })
     })
   })
+
+  describe('mirrorFixtureManifest', () => {
+    it('omits sentinel values from the mirror-visible manifest', async () => {
+      const { mirrorFixtureManifest } = await probeModule()
+      const manifest = mirrorFixtureManifest({
+        nonce: 'nonce',
+        root: '/private/var/tmp/probe',
+        mirrorDir: '/private/var/tmp/probe/mirror',
+        forbiddenSourceDir: '/private/var/tmp/probe/forbidden-source',
+        fakeHomeDir: '/private/var/tmp/probe/fake-home',
+        controlPlaneDir: '/private/var/tmp/probe/control-plane',
+        listenersDir: '/private/var/tmp/probe/listeners',
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        mirrorScriptPath: '/private/var/tmp/probe/mirror/script.mjs',
+        absoluteForbiddenPath: '/private/var/tmp/probe/absolute-forbidden/target',
+        tcpPort: 12345,
+        unixSocketPath: '/private/var/tmp/probe/listeners/probe.sock',
+        postCleanupMarkerPath: '/private/var/tmp/probe/evidence/post-cleanup-marker',
+        sentinels: { homeSecret: 'super-secret-value' },
+      })
+
+      expect(JSON.stringify(manifest)).not.toContain('super-secret-value')
+      expect(manifest).not.toHaveProperty('sentinels')
+    })
+  })
+
+  describe('evaluateSandboxedCase', () => {
+    it('requires both read and write denial for forbidden cases', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        forbiddenSourceDir: '/private/var/tmp/probe/forbidden-source',
+        fakeHomeDir: '/private/var/tmp/probe/fake-home',
+        controlPlaneDir: '/private/var/tmp/probe/control-plane',
+        absoluteForbiddenPath: '/private/var/tmp/probe/absolute-forbidden/target',
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        sentinels: {
+          forbiddenSource: 'source-secret',
+          homeSecret: 'home-secret',
+          controlPlane: 'control-secret',
+          absoluteForbidden: 'absolute-secret',
+        },
+      }
+      const target = path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt')
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'source-read-write',
+        { exitCode: 1, signal: null, timedOut: false, stdout: '', stderr: '', settledAfterMs: 1 },
+        {
+          preHashes: { [target]: 'before-hash' },
+          sha256File: async () => 'before-hash',
+          readFile: async () =>
+            `${JSON.stringify({
+              version: 1,
+              name: 'source-read-write',
+              readDenied: true,
+              writeDenied: false,
+              readLeaked: false,
+              passed: false,
+            })}\n`,
+        },
+      )
+
+      expect(evaluated.passed).toBe(false)
+    })
+
+    it('uses pre-case hashes to detect target mutation', async () => {
+      const { evaluateSandboxedCase } = await probeModule()
+      const fixture = {
+        forbiddenSourceDir: '/private/var/tmp/probe/forbidden-source',
+        fakeHomeDir: '/private/var/tmp/probe/fake-home',
+        controlPlaneDir: '/private/var/tmp/probe/control-plane',
+        absoluteForbiddenPath: '/private/var/tmp/probe/absolute-forbidden/target',
+        evidenceDir: '/private/var/tmp/probe/evidence',
+        sentinels: {
+          forbiddenSource: 'source-secret',
+          homeSecret: 'home-secret',
+          controlPlane: 'control-secret',
+          absoluteForbidden: 'absolute-secret',
+        },
+      }
+      const target = path.join(fixture.forbiddenSourceDir, 'source-sentinel.txt')
+      const evaluated = await evaluateSandboxedCase(
+        fixture,
+        'source-read-write',
+        { exitCode: 1, signal: null, timedOut: false, stdout: '', stderr: '', settledAfterMs: 1 },
+        {
+          preHashes: { [target]: 'before-hash' },
+          sha256File: async () => 'after-hash',
+          readFile: async () =>
+            `${JSON.stringify({
+              version: 1,
+              name: 'source-read-write',
+              readDenied: true,
+              writeDenied: true,
+              readLeaked: false,
+              passed: true,
+            })}\n`,
+        },
+      )
+
+      expect(evaluated.passed).toBe(false)
+      expect(evaluated.evidence.targetUnchanged).toBe(false)
+    })
+  })
 })
 
 describe('native Seatbelt boundary probe lifecycle', () => {
@@ -779,10 +885,13 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       },
       arch: () => 'arm64',
       execPath: '/opt/homebrew/bin/node',
-      resolveRuntimeClosure: async () => [
-        { path: '/opt/homebrew/bin/node', sha256: 'node-hash', source: 'executable' },
-        { path: '/usr/lib/libSystem.B.dylib', sha256: 'lib-hash', source: 'dependency' },
-      ],
+      resolveRuntimeClosure: async () => ({
+        closure: [
+          { path: '/opt/homebrew/bin/node', sha256: 'node-hash', source: 'executable' },
+          { path: '/usr/lib/libSystem.B.dylib', sha256: 'lib-hash', source: 'dependency' },
+        ],
+        skippedDependencies: [],
+      }),
       sha256File: async (filePath: string) => `${filePath}-hash`,
       randomBytes: () => Buffer.from('0123456789abcdef0123456789abcdef', 'hex'),
       ...overrides,
