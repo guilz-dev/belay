@@ -216,4 +216,3 @@ ADR-007 must decide these only after N1 and N2 evidence exists:
 - N1 is executed once on the target macOS host and produces GO, NO-GO, or BLOCKED evidence.
 - N2 is neither planned nor executed unless N1 is GO.
 - ADR-007 and Workstream C remain absent unless both N1 and N2 are GO.
-
