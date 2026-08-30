@@ -1039,7 +1039,7 @@ describe('native Seatbelt boundary probe lifecycle', () => {
       let sampleOrdinal = 0
 
       const latency = await runPairedLatencyBenchmark(fixture, {
-        durationForSample: ({ sandboxed }) => {
+        durationForSample: ({ sandboxed }: { sandboxed: boolean }) => {
           sampleOrdinal += 1
           const duration = sandboxed ? 20 + sampleOrdinal : 10 + sampleOrdinal
           callOrder.push({ sandboxed })
