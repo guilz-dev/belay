@@ -5,7 +5,6 @@ import {
   expandMakeExpression,
   normalizeMakeRecipeLine,
   parseMakefileVariables,
-  parsePhonyTargets,
 } from './makefile-expand.js'
 
 const MAX_RESOLVE_DEPTH = 8
@@ -275,7 +274,6 @@ function resolveMakeRecipe(
   }
   const makefileContent = readFileSync(makefilePath, 'utf8')
   const makefileVars = parseMakefileVariables(makefileContent)
-  const phonyTargets = parsePhonyTargets(makefileContent)
   const targets = parseMakefileRecipeContent(makefileContent)
   if (!targets.has(target)) {
     return { recipes: [], opaque: true, reason: 'make_target_undefined' }
@@ -283,43 +281,34 @@ function resolveMakeRecipe(
   const recipeLines: string[] = []
   const visiting = new Set<string>()
   const visited = new Set<string>()
-  let opaquePrerequisites = false
-  const collect = (name: string): boolean => {
+  let hasDynamicPrerequisite = false
+  let hasUndefinedPrerequisite = false
+  let hasDependencyCycle = false
+  const collect = (name: string): void => {
     if (visited.has(name)) {
-      return true
+      return
     }
     if (visiting.has(name)) {
-      return false
+      hasDependencyCycle = true
+      return
     }
     const entry = targets.get(name)
     if (!entry) {
-      return true
+      if (!existsSync(path.resolve(path.dirname(makefilePath), name))) {
+        hasUndefinedPrerequisite = true
+      }
+      return
     }
     visiting.add(name)
-    opaquePrerequisites ||= entry.opaquePrerequisites
+    hasDynamicPrerequisite ||= entry.opaquePrerequisites
     for (const prerequisite of entry.prerequisites) {
-      if (targets.has(prerequisite) && !collect(prerequisite)) {
-        return false
-      }
+      collect(prerequisite)
     }
-    // When the requested target has its own recipes, treat those as the
-    // authorization authority. Skip .PHONY / `_`-prefixed prerequisite
-    // recipes (e.g. `_start_test_deps` docker-compose up) so setup-only
-    // side effects do not obscure the target's direct command.
-    const skipPhonyPrerequisiteRecipes =
-      name !== target &&
-      (phonyTargets.has(name) || name.startsWith('_')) &&
-      (targets.get(target)?.recipes.length ?? 0) > 0
-    if (!skipPhonyPrerequisiteRecipes) {
-      recipeLines.push(...entry.recipes)
-    }
+    recipeLines.push(...entry.recipes)
     visiting.delete(name)
     visited.add(name)
-    return true
   }
-  if (!collect(target)) {
-    return { recipes: recipeLines, opaque: true, reason: 'make_dependency_cycle' }
-  }
+  collect(target)
   const expandedRecipes: string[] = []
   for (const line of recipeLines) {
     const normalized = normalizeMakeRecipeLine(line)
@@ -334,8 +323,14 @@ function resolveMakeRecipe(
       return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_dynamic' }
     }
   }
-  if (opaquePrerequisites) {
+  if (hasDependencyCycle) {
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_dependency_cycle' }
+  }
+  if (hasDynamicPrerequisite) {
     return { recipes: expandedRecipes, opaque: true, reason: 'make_prerequisite_dynamic' }
+  }
+  if (hasUndefinedPrerequisite) {
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_prerequisite_undefined' }
   }
   return { recipes: expandedRecipes, opaque: false, reason: 'make_recipe_resolved' }
 }
@@ -346,13 +341,12 @@ export function resolveLauncherRecipe(params: {
   repoRoot: string
   depth: number
 }): LauncherResolution | null {
-  if (params.depth >= MAX_RESOLVE_DEPTH) {
-    return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
-  }
-
   const tokens = params.tokens
   const scriptName = npmScriptName(tokens)
   if (scriptName) {
+    if (params.depth >= MAX_RESOLVE_DEPTH) {
+      return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
+    }
     const resolution = resolveNpmRecipe(
       params.cwd,
       params.repoRoot,
@@ -375,6 +369,9 @@ export function resolveLauncherRecipe(params: {
   }
 
   if (tokens[0] === 'make') {
+    if (params.depth >= MAX_RESOLVE_DEPTH) {
+      return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
+    }
     if (tokens.includes('-n') || tokens.includes('--dry-run')) {
       return null
     }

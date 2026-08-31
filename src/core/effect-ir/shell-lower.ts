@@ -3,15 +3,20 @@ import path from 'node:path'
 
 import { inspectGitResourceIdentity } from '../git-resource-identity.js'
 import { canonicalPath, pathWithinRoot } from '../path-utils.js'
-import { isFdDuplication, isRedirectOperator, tokenizeShell } from '../shell-tokenizer.js'
+import {
+  isFdDuplication,
+  isRedirectOperator,
+  lexShell,
+  type ShellToken,
+  tokenizeShell,
+} from '../shell-tokenizer.js'
+import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
-  extractDockerComposeRunScript,
-  extractRecursiveScript,
+  decodeRecursiveInvocationTokens,
   isCommandInspection,
-  isDynamicRecursiveEvaluation,
   parseSegment,
   redactCommand,
   segmentOpacity,
@@ -211,7 +216,8 @@ function lowerSegment(
   context: LowerContext & { pipeToShellSegment?: boolean },
 ): ShellEffectSegment {
   const commandRedacted = redactCommand(command)
-  const rawTokens = tokenizeShell(command)
+  const lexed = lexShell(command)
+  const rawTokens = lexed.tokens.map((token) => token.value)
   const environment = extractEnvironment(rawTokens, context.env)
   const env = environment.env
   const parsed = parseSegment(command)
@@ -223,10 +229,24 @@ function lowerSegment(
       ? rawTokens
       : parsedTokens,
   ).map((token) => expandKnownVariables(token, env))
+  const decoderTokens = alignStructuredTokens(
+    stripStructuredRedirects(lexed.tokens),
+    stripRedirects(parsedTokens),
+  )
   const head = path.basename(tokens[0] ?? parsed.head)
   let opacity = segmentOpacity(command)
   const signals = new Set<string>()
   const requirements: ShellEffectRequirement[] = []
+
+  if (!lexed.complete) {
+    requirements.push(
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        'shell.grammar_incomplete',
+      ]),
+    )
+    signals.add('shell.grammar_incomplete')
+    opacity = joinEffectOpacity(opacity, 'unparseable')
+  }
 
   addRedirectEffects(requirements, rawTokens, env, context, commandRedacted)
   addSubstitutionEffects(requirements, command, context, commandRedacted, signals)
@@ -248,7 +268,7 @@ function lowerSegment(
     opacity = joinEffectOpacity(opacity, 'opaque')
   }
 
-  if (context.depth >= MAX_LOWER_DEPTH) {
+  if (context.depth > MAX_LOWER_DEPTH) {
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
         'shell.lower_depth_exceeded',
@@ -299,62 +319,96 @@ function lowerSegment(
     return shellSegment(commandRedacted, head, requirements, opacity, signals)
   }
 
-  const recursiveScript = extractRecursiveScript(tokens)
-  if (recursiveScript && opacity !== 'opaque' && opacity !== 'unparseable') {
-    const dynamicEvaluation = isDynamicRecursiveEvaluation(tokens)
+  const recursive = decodeRecursiveInvocationTokens(decoderTokens)
+  if (recursive.kind === 'static' && opacity !== 'opaque' && opacity !== 'unparseable') {
     requirements.push(
-      processRequirement(head || 'sh', 'spawn', commandRedacted, [
+      processRequirement(recursive.interpreter, 'spawn', commandRedacted, [
         'shell.recursive_wrapper',
-        ...(dynamicEvaluation ? ['dynamic_shell_evaluation'] : []),
+        'dynamic_shell_evaluation',
       ]),
     )
-    const nested = lowerTopLevelSegments(recursiveScript, {
-      ...context,
-      command: recursiveScript,
-      env,
-      depth: context.depth + 1,
-    })
-    for (const nestedSegment of nested) {
-      requirements.push(
-        ...nestedSegment.requirements.map((entry) =>
-          withInnerProvenance(entry, recursiveScript, head, commandRedacted),
-        ),
-      )
-      for (const signal of nestedSegment.signals) {
-        signals.add(signal)
+    if (recursive.script !== '') {
+      const nested = lowerTopLevelSegments(recursive.script, {
+        ...context,
+        command: recursive.script,
+        env,
+        depth: context.depth + 1,
+      })
+      for (const nestedSegment of nested) {
+        requirements.push(
+          ...nestedSegment.requirements.map((entry) =>
+            withInnerProvenance(entry, recursive.script, head, commandRedacted),
+          ),
+        )
+        for (const signal of nestedSegment.signals) signals.add(signal)
       }
     }
     signals.add('shell.recursive_wrapper')
-    if (dynamicEvaluation) {
-      signals.add('dynamic_shell_evaluation')
-    }
+    signals.add('dynamic_shell_evaluation')
     return shellSegment(commandRedacted, head, requirements, 'recursive', signals)
   }
+  if (recursive.kind === 'dynamic' || recursive.kind === 'indeterminate') {
+    const recursiveSignals = [
+      recursive.signal,
+      ...(recursive.kind === 'dynamic' ? ['dynamic_shell_evaluation'] : []),
+    ]
+    requirements.push(
+      processRequirement(recursive.interpreter, 'spawn', commandRedacted, recursiveSignals),
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        ...recursiveSignals,
+      ]),
+    )
+    for (const signal of recursiveSignals) signals.add(signal)
+    return shellSegment(
+      commandRedacted,
+      head,
+      requirements,
+      joinEffectOpacity(opacity, 'opaque'),
+      signals,
+    )
+  }
 
-  const dockerComposeScript = extractDockerComposeRunScript(tokens)
-  if (dockerComposeScript && opacity !== 'opaque' && opacity !== 'unparseable') {
+  const compose = decodeStructuredDockerComposeRun(decoderTokens)
+  if (compose.kind === 'recursive' && opacity !== 'opaque' && opacity !== 'unparseable') {
     requirements.push(
       processRequirement(head, 'spawn', commandRedacted, ['process.docker_compose_run']),
     )
-    const nested = lowerTopLevelSegments(dockerComposeScript, {
-      ...context,
-      command: dockerComposeScript,
-      env,
-      depth: context.depth + 1,
-    })
-    for (const nestedSegment of nested) {
-      requirements.push(
-        ...nestedSegment.requirements.map((entry) =>
-          withInnerProvenance(entry, dockerComposeScript, head, commandRedacted),
-        ),
-      )
-      for (const signal of nestedSegment.signals) {
-        signals.add(signal)
+    if (compose.script !== '') {
+      const nested = lowerTopLevelSegments(compose.script, {
+        ...context,
+        command: compose.script,
+        env,
+        depth: context.depth + 1,
+      })
+      for (const nestedSegment of nested) {
+        requirements.push(
+          ...nestedSegment.requirements.map((entry) =>
+            withInnerProvenance(entry, compose.script, head, commandRedacted),
+          ),
+        )
+        for (const signal of nestedSegment.signals) signals.add(signal)
+        opacity = joinNestedOpacity(opacity, nestedSegment)
       }
-      opacity = joinNestedOpacity(opacity, nestedSegment)
     }
     signals.add('process.docker_compose_run')
     return shellSegment(commandRedacted, head, requirements, 'recursive', signals)
+  }
+  if (compose.kind === 'dynamic' || compose.kind === 'indeterminate') {
+    requirements.push(
+      processRequirement(head, 'spawn', commandRedacted, ['process.docker_compose_run']),
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        compose.signal,
+      ]),
+    )
+    signals.add('process.docker_compose_run')
+    signals.add(compose.signal)
+    return shellSegment(
+      commandRedacted,
+      head,
+      requirements,
+      joinEffectOpacity(opacity, 'opaque'),
+      signals,
+    )
   }
 
   const launcher = resolveLauncherRecipe({
@@ -1796,14 +1850,43 @@ function stripRedirects(tokens: string[]): string[] {
       stripped.push(token)
       continue
     }
-    if (token.includes('>') || token.includes('<')) {
-      const inline = token.replace(/^\d*(?:>>?|<<?|<>|>\|)/, '')
-      if (!inline) {
-        index += 1
-      }
-    }
+    index += 1
   }
   return stripped
+}
+
+function stripStructuredRedirects(tokens: readonly ShellToken[]): ShellToken[] {
+  const stripped: ShellToken[] = []
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (!token) continue
+    if (isFdDuplication(token.value)) {
+      continue
+    }
+    if (!isRedirectOperator(token.value)) {
+      stripped.push(token)
+      continue
+    }
+    index += 1
+  }
+  return stripped
+}
+
+function alignStructuredTokens(
+  tokens: readonly ShellToken[],
+  values: readonly string[],
+): ShellToken[] {
+  if (values.length === 0) return []
+  for (let start = tokens.length - values.length; start >= 0; start -= 1) {
+    const candidate = tokens.slice(start)
+    if (
+      candidate.length === values.length &&
+      candidate.every((token, index) => token.value === values[index])
+    ) {
+      return candidate
+    }
+  }
+  return []
 }
 
 function shellSegment(

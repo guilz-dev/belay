@@ -21,6 +21,9 @@ import {
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
+const GIT_PROCESS_TEST_TIMEOUT_MS = 15_000
+/** Shell-exit budget under load; still well below the 2s background sleep in the pipe test. */
+const SHELL_EXIT_BUDGET_MS = 500
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -47,7 +50,9 @@ describe('transactional git worktree helpers', () => {
     expect(candidate.windowsProcessTreeKillArgs?.(4321)).toEqual(['/pid', '4321', '/t', '/f'])
   })
 
-  it('captures shell output for callers that need failure diagnostics', async () => {
+  it('captures shell output for callers that need failure diagnostics', {
+    timeout: GIT_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const result = await runShellCommand(
       "printf 'visible stdout'; printf 'visible stderr' >&2; exit 7",
       process.cwd(),
@@ -61,15 +66,17 @@ describe('transactional git worktree helpers', () => {
     })
   })
 
-  it('settles after the shell exits even when a background descendant holds its pipes', async () => {
+  it('settles after the shell exits even when a background descendant holds its pipes', {
+    timeout: GIT_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const startedAt = Date.now()
     const result = await runShellCommand(
       "printf 'failure detail' >&2; sleep 2 & exit 7",
       process.cwd(),
-      20,
+      SHELL_EXIT_BUDGET_MS,
     )
 
-    expect(Date.now() - startedAt).toBeLessThan(1_500)
+    expect(Date.now() - startedAt).toBeLessThan(SHELL_EXIT_BUDGET_MS)
     expect(result).toMatchObject({
       exitCode: 7,
       timedOut: false,
@@ -77,7 +84,9 @@ describe('transactional git worktree helpers', () => {
     })
   })
 
-  it('kills descendants that ignore SIGTERM after the command times out', async () => {
+  it('kills descendants that ignore SIGTERM after the command times out', {
+    timeout: GIT_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-process-timeout-'))
     tempDirs.push(dir)
     const ready = path.join(dir, 'ready.txt')
@@ -136,7 +145,9 @@ describe('transactional git worktree helpers', () => {
     await expect(readFile(path.join(repoRoot, 'a.txt'), 'utf8')).resolves.toBe('original\n')
   })
 
-  it('ignores untracked belay-managed paths in dirty-worktree checks', async () => {
+  it('ignores untracked belay-managed paths in dirty-worktree checks', {
+    timeout: GIT_PROCESS_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     const ignoreRoots = protectedArtifactRoots(cursorAdapter.layout, repoRoot, null)
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })

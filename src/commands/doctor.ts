@@ -68,9 +68,12 @@ function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterNam
 
 function hasCursorGlobalWorkspaceResolver(runtimeSource: string): boolean {
   // Cursor global hooks must derive workspace cwd from payload fields, not process cwd.
+  const hasScopedToolResolver =
+    runtimeSource.includes('resolveCursorToolActionCwd') ||
+    runtimeSource.includes('includeToolInputCwd')
   return (
     runtimeSource.includes('resolveCursorActionCwd') &&
-    runtimeSource.includes('includeToolInputCwd') &&
+    hasScopedToolResolver &&
     runtimeSource.includes('workspace_roots') &&
     runtimeSource.includes('working_directory') &&
     runtimeSource.includes('tool_input')

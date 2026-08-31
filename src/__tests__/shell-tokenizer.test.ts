@@ -6,6 +6,7 @@ import { collectOutsideRepoPaths } from '../core/capability/paths.js'
 import { canonicalPath } from '../core/path-utils.js'
 import {
   extractRedirectTargets,
+  lexShell,
   splitTopLevelSegments,
   tokenizeShell,
 } from '../core/shell-tokenizer.js'
@@ -17,6 +18,36 @@ const outsideTmpLog = canonicalPath('/tmp/out.log')
 const outsideTmpIn = canonicalPath('/tmp/in.txt')
 
 describe('tokenizeShell', () => {
+  it('preserves quote parts, spans, and an empty quoted word', () => {
+    const lexed = lexShell(`sh -c ''`)
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.tokens).toHaveLength(3)
+    expect(lexed.tokens[2]).toEqual(
+      expect.objectContaining({ kind: 'word', value: '', raw: "''", start: 6, end: 8 }),
+    )
+    expect(tokenizeShell(`sh -c ''`)).toEqual(['sh', '-c', ''])
+  })
+
+  it('keeps backslash literal in single quotes', () => {
+    expect(tokenizeShell(`printf '%s' 'a\\b'`)).toEqual(['printf', '%s', 'a\\b'])
+  })
+
+  it('only consumes portable escapes inside double quotes', () => {
+    expect(tokenizeShell(String.raw`printf "%s" "a\qb\"c"`)).toEqual(['printf', '%s', 'a\\qb"c'])
+  })
+
+  it('records expansion only outside single quotes', () => {
+    const words = lexShell(`sh -c '$CMD' "$CMD"`).tokens.filter((token) => token.kind === 'word')
+
+    expect(words[2]?.parts.some((part) => part.hasExpansion)).toBe(false)
+    expect(words[3]?.parts.some((part) => part.hasExpansion)).toBe(true)
+  })
+
+  it.each([`echo 'unterminated`, `echo trailing\\`])('marks incomplete lexing: %s', (command) => {
+    expect(lexShell(command).complete).toBe(false)
+  })
+
   it('splits top-level background operators with or without surrounding spaces', () => {
     expect(splitTopLevelSegments(tokenizeShell('git push origin main & echo done'))).toEqual([
       ['git', 'push', 'origin', 'main'],

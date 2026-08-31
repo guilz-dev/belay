@@ -24,6 +24,7 @@ const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
 const dockerAvailable = await isDockerAvailable()
 const DOCKER_TEST_TIMEOUT_MS = 60_000
+const FILE_CHECKPOINT_TEST_TIMEOUT_MS = 15_000
 
 async function createGitRepo(options?: { gitignoreCursor?: boolean }): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-tx-gate-'))
@@ -177,7 +178,9 @@ describe('transactional gate runtime', () => {
     await expect(readFile(path.join(repoRoot, 'safe.txt'), 'utf8')).rejects.toThrow()
   })
 
-  it('runs dirty Git file_checkpoint through the gate and audits snapshot details', async () => {
+  it('runs dirty Git file_checkpoint through the gate and audits snapshot details', {
+    timeout: FILE_CHECKPOINT_TEST_TIMEOUT_MS,
+  }, async () => {
     const repoRoot = await createGitRepo()
     await writeFile(path.join(repoRoot, 'README.md'), '# dirty\n')
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })

@@ -32,34 +32,46 @@ function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
 
+function nonEmptyPathString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
 export function resolveCursorActionCwd(
   payload: Record<string, unknown>,
-  fallbackCwd: string = process.cwd(),
-  options: { includeToolInputCwd?: boolean } = {},
+  fallback: string = process.cwd(),
 ): string {
-  const toolInput =
-    payload.tool_input && typeof payload.tool_input === 'object'
-      ? (payload.tool_input as Record<string, unknown>)
+  const toolInput = payload.tool_input
+  const toolInputWorkingDirectory =
+    toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
+      ? nonEmptyPathString((toolInput as Record<string, unknown>).working_directory)
       : undefined
-  const workingDirectory = options.includeToolInputCwd ? toolInput?.working_directory : undefined
-  if (typeof workingDirectory === 'string' && workingDirectory.trim()) {
-    return path.resolve(workingDirectory.trim())
+  const topLevelCwd = nonEmptyPathString(payload.cwd)
+  const workspaceRoot = Array.isArray(payload.workspace_roots)
+    ? payload.workspace_roots.map(nonEmptyPathString).find(Boolean)
+    : undefined
+
+  return path.resolve(toolInputWorkingDirectory ?? topLevelCwd ?? workspaceRoot ?? fallback)
+}
+
+function resolveCursorToolActionCwd(
+  payload: Record<string, unknown>,
+  fallback: string,
+  eventName: string,
+  toolName: string,
+): string {
+  if ((eventName === 'preToolUse' || eventName === 'PreToolUse') && toolName === 'Shell') {
+    return resolveCursorActionCwd(payload, fallback)
   }
 
-  const payloadCwd = payload.cwd
-  if (typeof payloadCwd === 'string' && payloadCwd.trim()) {
-    return path.resolve(payloadCwd.trim())
+  const toolInput = payload.tool_input
+  if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+    return resolveCursorActionCwd(payload, fallback)
   }
-
-  if (Array.isArray(payload.workspace_roots)) {
-    for (const root of payload.workspace_roots) {
-      if (typeof root === 'string' && root.trim()) {
-        return path.resolve(root.trim())
-      }
-    }
-  }
-
-  return path.resolve(fallbackCwd)
+  const { working_directory: _workingDirectory, ...withoutWorkingDirectory } = toolInput as Record<
+    string,
+    unknown
+  >
+  return resolveCursorActionCwd({ ...payload, tool_input: withoutWorkingDirectory }, fallback)
 }
 
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
@@ -103,7 +115,7 @@ export async function runShellGateHook() {
   try {
     const payload = await readStdinJson()
     const command = String(payload.command ?? '').trim()
-    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd: true })
+    const cwd = resolveCursorActionCwd(payload, process.cwd())
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const verdict = await evaluateGatedAction(ctx, deps, {
@@ -126,8 +138,7 @@ export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
     const toolName = String(payload.tool_name ?? '')
-    const includeToolInputCwd = toolName === 'Shell'
-    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd })
+    const cwd = resolveCursorToolActionCwd(payload, process.cwd(), eventName, toolName)
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
 
@@ -191,8 +202,7 @@ export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
     const toolName = String(payload.tool_name ?? '')
-    const includeToolInputCwd = toolName === 'Shell'
-    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd })
+    const cwd = resolveCursorToolActionCwd(payload, process.cwd(), eventName, toolName)
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
