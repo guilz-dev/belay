@@ -1,22 +1,26 @@
-# ADR-007: Global hook workspace resolution (Cursor)
+# ADR-007 — Global hook workspace resolution for Cursor
 
-## Status
-
-Accepted (2026-08-31)
+- Status: Accepted
+- Date: 2026-08-31
+- Related: [ADR-001](./ADR-001-layered-enforcement.md),
+  [ADR-003](./ADR-003-resource-scoped-capability.md)
 
 ## Context
 
-Cursor global installs place hook runners under `$HOME/.cursor/hooks` while per-repo policy
-and approval state remain in each workspace's `.cursor/belay.config.json`. When Cursor omits
-workspace fields from a hook payload, belay previously fell back to `process.cwd()`, which
-often resolved to `$HOME` or `$HOME/.cursor` and caused wrong-repo policy loads, blocked
-edits, and stuck approvals.
+With `installScope: global`, Cursor hooks and runtime live under `~/.cursor`, while
+`belay.config.json` remains repository-local at `<repoRoot>/.cursor/belay.config.json`.
+
+Hook scripts run with a process cwd under `~/.cursor/hooks`, not the active workspace.
+If runtime code derives `repoRoot` from `process.cwd()`, it can resolve to `$HOME` (because
+`$HOME/.cursor` exists) and silently bypass the intended repository config. This can cause
+`mode: audit` repositories to behave as enforce defaults, blocked edits, and stuck approvals.
 
 ## Decision
 
 1. **Payload-first cwd resolution** — Resolve action cwd in priority order:
    `tool_input.working_directory` → `cwd` → first non-empty `workspace_roots[]` → fallback.
    Non-Shell `preToolUse` events ignore nested `tool_input.working_directory` (Shell-only).
+   Applies to `beforeSubmitPrompt`, `preToolUse` / `subagentStart`, shell gates, and audit hooks.
 
 2. **Fail closed for global hooks** — When the runtime bundle is loaded from
    `$HOME/.cursor/belay/runtime` and no payload field yields a workspace path, hooks deny
@@ -36,6 +40,8 @@ edits, and stuck approvals.
 
 ## Consequences
 
+- Global installs continue to use a repository-local `belay.config.json` as canonical policy.
+- Hook install location no longer changes policy source selection.
 - Operators must run `belay upgrade --scope global` after upgrading belay to refresh global
   runtime artifacts.
 - Payload-free global hook events are blocked until the workspace is opened or payload
@@ -44,6 +50,16 @@ edits, and stuck approvals.
   changes; approvals re-issue on the next denied action.
 - Recovery from a runaway global install: `belay uninstall --scope global` from any
   initialized repo, then `belay doctor`.
+
+## Guardrails
+
+`belay doctor` warns for Cursor global installs when the installed runtime bundle does not
+contain payload-based workspace resolution markers. For Cursor global installs, `doctor` also
+notes `belay uninstall --scope global` as the official stop path. Operators should run:
+
+`belay upgrade --scope global`
+
+from the latest package build.
 
 ## Verification
 

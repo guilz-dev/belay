@@ -58,7 +58,7 @@ function resolveCursorToolActionCwdDetails(
   eventName: string,
   toolName: string,
 ): CursorActionCwdResolution {
-  if (eventName === 'preToolUse' && toolName === 'Shell') {
+  if ((eventName === 'preToolUse' || eventName === 'PreToolUse') && toolName === 'Shell') {
     return resolveCursorActionCwdDetails(payload, fallback)
   }
 
@@ -220,7 +220,6 @@ export async function runShellGateHook() {
       kind: 'shell',
       cwd,
       command,
-      payload,
       sourceEvent: 'beforeShellExecution',
     })
     jsonResponse(gateVerdictToCursorResponse(verdict))

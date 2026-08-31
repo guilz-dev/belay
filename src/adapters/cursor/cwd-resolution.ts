@@ -15,7 +15,7 @@ export interface CursorActionCwdResolution {
 }
 
 function nonEmptyPathString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 export function resolveCursorActionCwdDetails(

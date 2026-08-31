@@ -12,6 +12,7 @@ import {
   mergeCodexHooksToml,
   renderCodexHooksToml,
 } from '../../adapters/codex/hooks.js'
+import { resolveCodexActionCwd } from '../../adapters/codex/runtime-entry.js'
 import { codexLayout } from '../../adapters/layouts/codex.js'
 import {
   gateVerdictToCodexPreToolUseResponse,
@@ -82,6 +83,53 @@ describe('codex adapter (experimental)', () => {
   })
 
   describe('Codex deny contract', () => {
+    it.each([
+      [
+        'Shell tool_input working_directory',
+        {
+          tool_input: { working_directory: 'shell-action' },
+          cwd: 'top-level-action',
+          workspace_roots: ['workspace-action'],
+        },
+        { includeToolInputCwd: true },
+        path.resolve('shell-action'),
+      ],
+      [
+        'Shell tool_input cwd',
+        {
+          tool_input: { cwd: 'nested-shell-action' },
+          cwd: 'top-level-action',
+          workspace_roots: ['workspace-action'],
+        },
+        { includeToolInputCwd: true },
+        path.resolve('nested-shell-action'),
+      ],
+      [
+        'non-Shell ignores nested working directory',
+        {
+          tool_input: { working_directory: 'nested-ignored' },
+          cwd: 'top-level-action',
+          workspace_roots: ['workspace-action'],
+        },
+        { includeToolInputCwd: false },
+        path.resolve('top-level-action'),
+      ],
+      [
+        'falls back to first non-empty workspace root',
+        { cwd: '', workspace_roots: ['', false, 'workspace-action', 'later-action'] },
+        { includeToolInputCwd: true },
+        path.resolve('workspace-action'),
+      ],
+      [
+        'falls back to process cwd argument',
+        {},
+        { includeToolInputCwd: true },
+        path.resolve('fallback-action'),
+      ],
+    ])('resolves Codex action cwd from %s', (_name, payload, options, expected) => {
+      expect(resolveCodexActionCwd(payload, 'fallback-action', options)).toBe(expected)
+    })
+
     it('PreToolUse: non-allow verdict -> permissionDecision deny (Claude-identical shape)', () => {
       const verdict = unnormalizedGateVerdict({
         reason: 'tier0_external',
@@ -164,6 +212,89 @@ describe('codex adapter (experimental)', () => {
         approvals: unknown[]
       }
       expect(pending.approvals).toHaveLength(1)
+    })
+
+    it('uses Shell action directory for PreToolUse approval state', async () => {
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-shell-cwd-parent-'))
+      await mkdir(path.join(repoRoot, '.git'))
+      await codexAdapter.install(repoRoot, {})
+      await writeFile(
+        codexLayout.configPath(repoRoot),
+        `${JSON.stringify(
+          mergeConfig({
+            ...(await loadConfigFile(repoRoot)),
+            mode: 'enforce',
+            controlPlane: {
+              enabled: true,
+              configDir: path.join(repoRoot, '.belay-cp'),
+              integrity: 'hash-pinned',
+            },
+          }),
+          null,
+          2,
+        )}\n`,
+      )
+
+      const childRoot = path.join(repoRoot, 'linked-workspace')
+      await mkdir(childRoot, { recursive: true })
+      await mkdir(path.join(childRoot, '.git'))
+      await codexAdapter.install(childRoot, {})
+      await writeFile(
+        codexLayout.configPath(childRoot),
+        `${JSON.stringify(
+          mergeConfig({
+            ...(await loadConfigFile(childRoot)),
+            mode: 'enforce',
+            controlPlane: {
+              enabled: true,
+              configDir: path.join(childRoot, '.belay-cp'),
+              integrity: 'hash-pinned',
+            },
+          }),
+          null,
+          2,
+        )}\n`,
+      )
+
+      const result = await runCodexRunner(
+        repoRoot,
+        'belay-tool-gate',
+        {
+          tool_name: 'Shell',
+          tool_input: {
+            command: 'git push origin main',
+            working_directory: childRoot,
+          },
+          cwd: repoRoot,
+          workspace_roots: [repoRoot, childRoot],
+        },
+        ['PreToolUse'],
+      )
+      const response = JSON.parse(result.stdout) as {
+        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string }
+      }
+      expect(response.hookSpecificOutput?.permissionDecision).toBe('deny')
+      expect(response.hookSpecificOutput?.permissionDecisionReason).toContain('Approval ID:')
+
+      const parentConfig = await loadConfigFile(repoRoot)
+      const parentPending = JSON.parse(
+        await readFile(pendingApprovalsPath(repoRoot, parentConfig), 'utf8').catch(
+          () => '{"approvals":[]}',
+        ),
+      ) as { approvals: Array<Record<string, unknown>> }
+      expect(parentPending.approvals).toHaveLength(0)
+
+      const childConfig = await loadConfigFile(childRoot)
+      const childPending = JSON.parse(
+        await readFile(pendingApprovalsPath(childRoot, childConfig), 'utf8'),
+      ) as { approvals: Array<Record<string, unknown>> }
+      expect(childPending.approvals).toHaveLength(1)
+      expect(childPending.approvals[0]).toMatchObject({
+        kind: 'shell',
+        repoRoot: childRoot,
+        cwd: childRoot,
+        input: 'git push origin main',
+      })
     })
   })
 

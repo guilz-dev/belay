@@ -37,13 +37,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   retry).
 
 ## 0.9.2 — 2026-08-26
-
-### Fixed
-
-- **Static nested shell control lowering** — Recursive `sh -c` and docker compose scripts
-  now decode static shell control builtins at any depth; assignment-only segments no
-  longer emit spurious `shell.segment_empty` indeterminacy.
-- **Shell grammar for dogfood test commands** — EffectPlan lowering for ruby minitest,
   `bundle exec rubocop`, Make `ARGS` expansion, and docker-compose run recursion so
   freelance would-blocks clear without relaxing `unknownLocalEffect` policy.
 - **Contained-execution route for rspec dry-run** — Restore contained-execution route for

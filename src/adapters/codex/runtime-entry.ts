@@ -1,3 +1,4 @@
+import path from 'node:path'
 import process from 'node:process'
 
 import { codexLayout } from '../layouts/codex.js'
@@ -32,6 +33,31 @@ async function readStdinJson(): Promise<Record<string, unknown>> {
 
 function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+function nonEmptyPathString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+export function resolveCodexActionCwd(
+  payload: Record<string, unknown>,
+  fallbackCwd: string = process.cwd(),
+  options: { includeToolInputCwd?: boolean } = {},
+): string {
+  const toolInput =
+    payload.tool_input !== null && typeof payload.tool_input === 'object'
+      ? (payload.tool_input as Record<string, unknown>)
+      : undefined
+
+  const nestedCwd = options.includeToolInputCwd
+    ? (nonEmptyPathString(toolInput?.working_directory) ?? nonEmptyPathString(toolInput?.cwd))
+    : undefined
+  const payloadCwd = nonEmptyPathString(payload.cwd)
+  const workspaceRoot = Array.isArray(payload.workspace_roots)
+    ? payload.workspace_roots.map(nonEmptyPathString).find(Boolean)
+    : undefined
+
+  return path.resolve(nestedCwd ?? payloadCwd ?? workspaceRoot ?? fallbackCwd)
 }
 
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
@@ -167,7 +193,8 @@ export async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? payload.user_message ?? '')
-    const ctx = await loadRuntimeContext(process.cwd())
+    const cwd = resolveCodexActionCwd(payload)
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const result = await processApprovalPrompt(ctx, deps, prompt)
     jsonResponse(gateVerdictToCodexUserPromptResponse(result))
@@ -185,9 +212,11 @@ export async function runBeforeSubmitPromptHook() {
 export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const cwd = process.cwd()
     const toolName = String(payload.tool_name ?? payload.toolName ?? '')
     const kind = resolveCodexGateKind(eventName, toolName)
+    const includeToolInputCwd =
+      (eventName === 'PreToolUse' || eventName === 'preToolUse') && kind === 'shell'
+    const cwd = resolveCodexActionCwd(payload, process.cwd(), { includeToolInputCwd })
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     if (!kind) {
@@ -233,7 +262,7 @@ export async function runShellGateHook() {
   try {
     const payload = await readStdinJson()
     const command = extractString(payload.tool_input, 'command') || String(payload.command ?? '')
-    const cwd = process.cwd()
+    const cwd = resolveCodexActionCwd(payload, process.cwd(), { includeToolInputCwd: true })
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const verdict = await evaluateGatedAction(ctx, deps, {
@@ -260,7 +289,12 @@ export async function runShellGateHook() {
 export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const ctx = await loadRuntimeContext(process.cwd())
+    const toolName = String(payload.tool_name ?? payload.toolName ?? '')
+    const kind = resolveCodexGateKind(eventName, toolName)
+    const includeToolInputCwd =
+      (eventName === 'PreToolUse' || eventName === 'preToolUse') && kind === 'shell'
+    const cwd = resolveCodexActionCwd(payload, process.cwd(), { includeToolInputCwd })
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
     jsonResponse({})
