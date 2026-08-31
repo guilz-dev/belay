@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { resolveCursorActionCwd } from '../adapters/cursor/runtime-entry.js'
 import {
   approvedApprovalsPath,
   loadApprovalState,
@@ -101,6 +102,99 @@ describe('generated hook runtime', () => {
     delete process.env.BELAY_TEST_APPROVAL_REPLAY
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
     await Promise.all(tempFiles.splice(0).map((file) => rm(file, { force: true })))
+  })
+
+  it.each([
+    [
+      'Shell tool working directory',
+      { tool_input: { working_directory: 'shell-action' } },
+      { includeToolInputCwd: true },
+      path.resolve('shell-action'),
+    ],
+    [
+      'non-shell ignores nested working directory',
+      {
+        tool_input: { working_directory: 'nested-ignored' },
+        cwd: 'top-level-action',
+        workspace_roots: ['workspace-action'],
+      },
+      { includeToolInputCwd: false },
+      path.resolve('top-level-action'),
+    ],
+    ['top-level cwd', { cwd: 'top-level-action' }, { includeToolInputCwd: true }, path.resolve('top-level-action')],
+    [
+      'first non-empty workspace root',
+      { workspace_roots: ['', 1, null, 'workspace-action', 'later-workspace'] },
+      { includeToolInputCwd: false },
+      path.resolve('workspace-action'),
+    ],
+    ['fallback', {}, { includeToolInputCwd: false }, path.resolve('fallback-action')],
+    [
+      'empty higher-precedence values',
+      {
+        tool_input: { working_directory: '' },
+        cwd: '',
+        workspace_roots: ['', false, 'workspace-action'],
+      },
+      { includeToolInputCwd: true },
+      path.resolve('workspace-action'),
+    ],
+  ])('resolves Cursor action cwd from %s', (_caseName, payload, options, expected) => {
+    expect(resolveCursorActionCwd(payload, 'fallback-action', options)).toBe(expected)
+  })
+
+  it('uses Shell working_directory for preToolUse approval state', async () => {
+    const parentRoot = await initIsolatedRepo()
+    const childRoot = path.join(parentRoot, 'linked-workspace')
+    await initProject({ targetDir: childRoot })
+    const childConfig = mergeConfig({
+      ...(await loadConfigFile(childRoot)),
+      mode: 'enforce',
+      policy: {
+        ...(await loadConfigFile(childRoot)).policy,
+        unknownLocalEffect: 'deny',
+      },
+      controlPlane: {
+        enabled: true,
+        configDir: path.join(childRoot, '.belay-cp'),
+        integrity: 'hash-pinned',
+      },
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
+    })
+    await writeFile(
+      path.join(childRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(childConfig, null, 2)}\n`,
+    )
+
+    const result = await runRunner(
+      parentRoot,
+      'belay-tool-gate',
+      {
+        tool_name: 'Shell',
+        tool_input: {
+          command: 'git push origin main',
+          working_directory: childRoot,
+        },
+        cwd: parentRoot,
+        workspace_roots: [parentRoot, childRoot],
+      },
+      ['preToolUse'],
+    )
+
+    expect(JSON.parse(result.stdout)).toMatchObject({ permission: 'deny' })
+
+    const childPending = await loadApprovalState(childRoot, 'pending-approvals.json', childConfig)
+    expect(childPending.approvals).toHaveLength(1)
+    expect(childPending.approvals[0]).toMatchObject({
+      kind: 'shell',
+      repoRoot: childRoot,
+      cwd: childRoot,
+      input: 'git push origin main',
+    })
+
+    const parentConfig = await loadConfigFile(parentRoot)
+    const parentPending = await loadApprovalState(parentRoot, 'pending-approvals.json', parentConfig)
+    expect(parentPending.approvals).toHaveLength(0)
   })
 
   it('replays the exact denied shell action from an approval-only prompt', async () => {

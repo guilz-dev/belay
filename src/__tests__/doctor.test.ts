@@ -9,8 +9,16 @@ import { dogfoodProject } from '../commands/dogfood.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
+const originalHome = process.env.HOME
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
 
 afterEach(async () => {
+  process.env.HOME = originalHome
+  if (originalXdgConfigHome === undefined) {
+    delete process.env.XDG_CONFIG_HOME
+  } else {
+    process.env.XDG_CONFIG_HOME = originalXdgConfigHome
+  }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -27,6 +35,33 @@ describe('doctorProject', () => {
 
     const report = await doctorProject({ targetDir: repoRoot })
     expect(report.warnings.some((warning) => warning.includes('missing "version"'))).toBe(true)
+  })
+
+  it('warns when global Cursor runtime lacks payload-based workspace resolution', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-cwd-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+
+    const corePath = path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs')
+    await writeFile(
+      corePath,
+      [
+        'export const RUNTIME_PACKAGE_VERSION = "0.9.2";',
+        'export async function runToolGateHook() { const cwd = process.cwd(); return cwd }',
+        '',
+      ].join('\n'),
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(
+      report.warnings.some((warning) =>
+        warning.includes('Global Cursor runtime appears to resolve hook context from hook process cwd'),
+      ),
+    ).toBe(true)
   })
 
   it.each([

@@ -78,6 +78,10 @@ authorization model. It complements
     approval. Status/report expose this distinction without changing EffectPlan authority. In
     Belay audit mode, retain the host protection or approve only the exact host prompt; do not
     weaken the host globally on the strength of an audit-only Belay decision.
+13. **Cursor global hook context comes from payload, not hook process cwd**: when hooks are
+    installed under `~/.cursor`, runtime entry points must resolve workspace context from payload
+    before repo-root detection. Shell actions may use `tool_input.working_directory`; non-shell
+    actions use `cwd` and `workspace_roots`. Hook process cwd alone is non-authoritative.
 
 ## Policy precedence
 

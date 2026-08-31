@@ -1,3 +1,4 @@
+import path from 'node:path'
 import process from 'node:process'
 import { cursorLayout } from '../layouts/cursor.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
@@ -31,6 +32,36 @@ function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
 
+export function resolveCursorActionCwd(
+  payload: Record<string, unknown>,
+  fallbackCwd: string = process.cwd(),
+  options: { includeToolInputCwd?: boolean } = {},
+): string {
+  const toolInput =
+    payload.tool_input && typeof payload.tool_input === 'object'
+      ? (payload.tool_input as Record<string, unknown>)
+      : undefined
+  const workingDirectory = options.includeToolInputCwd ? toolInput?.working_directory : undefined
+  if (typeof workingDirectory === 'string' && workingDirectory.trim()) {
+    return path.resolve(workingDirectory.trim())
+  }
+
+  const payloadCwd = payload.cwd
+  if (typeof payloadCwd === 'string' && payloadCwd.trim()) {
+    return path.resolve(payloadCwd.trim())
+  }
+
+  if (Array.isArray(payload.workspace_roots)) {
+    for (const root of payload.workspace_roots) {
+      if (typeof root === 'string' && root.trim()) {
+        return path.resolve(root.trim())
+      }
+    }
+  }
+
+  return path.resolve(fallbackCwd)
+}
+
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
   const repoRoot = findRepoRoot(cwd, cursorLayout)
   const configPath = cursorLayout.configPath(repoRoot)
@@ -51,7 +82,8 @@ export async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? '')
-    const ctx = await loadRuntimeContext(process.cwd())
+    const cwd = resolveCursorActionCwd(payload)
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const result = await processApprovalPrompt(ctx, deps, prompt)
     jsonResponse({
@@ -71,7 +103,7 @@ export async function runShellGateHook() {
   try {
     const payload = await readStdinJson()
     const command = String(payload.command ?? '').trim()
-    const cwd = String(payload.cwd ?? process.cwd()).trim() || process.cwd()
+    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd: true })
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const verdict = await evaluateGatedAction(ctx, deps, {
@@ -93,10 +125,11 @@ export async function runShellGateHook() {
 export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const cwd = process.cwd()
+    const toolName = String(payload.tool_name ?? '')
+    const includeToolInputCwd = toolName === 'Shell'
+    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd })
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
-    const toolName = String(payload.tool_name ?? '')
 
     if (isSubagentEvent(payload, eventName)) {
       const verdict = await evaluateGatedAction(ctx, deps, {
@@ -157,7 +190,10 @@ export async function runToolGateHook(eventName: string) {
 export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const ctx = await loadRuntimeContext(process.cwd())
+    const toolName = String(payload.tool_name ?? '')
+    const includeToolInputCwd = toolName === 'Shell'
+    const cwd = resolveCursorActionCwd(payload, process.cwd(), { includeToolInputCwd })
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
     jsonResponse({})
