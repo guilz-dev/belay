@@ -163,18 +163,16 @@ function isFileMutationTool(toolName: string): boolean {
   return toolName === 'Write' || toolName === 'StrReplace' || toolName === 'Delete'
 }
 
-export async function runBeforeSubmitPromptHook() {
+export async function handleBeforeSubmitPromptHook(payload: Record<string, unknown>) {
   try {
-    const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? '')
     const resolution = resolveCursorActionCwdDetails(payload)
 
     if (isUnsafeGlobalHookFallback(resolution)) {
-      jsonResponse({
+      return {
         continue: false,
         user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
-      })
-      return
+      }
     }
 
     const ctx = await loadRuntimeContext(resolution.cwd)
@@ -186,31 +184,33 @@ export async function runBeforeSubmitPromptHook() {
       payload,
       resolution,
     )
-    jsonResponse({
+    return {
       continue: result.continue,
       ...(result.user_message ? { user_message: result.user_message } : {}),
       ...(result.replay ? { replay: result.replay } : {}),
-    })
+    }
   } catch {
-    jsonResponse({
+    return {
       continue: false,
       user_message: 'belay failed while processing approval state. Run belay doctor, then retry.',
-    })
+    }
   }
 }
 
-export async function runShellGateHook() {
+export async function runBeforeSubmitPromptHook() {
+  jsonResponse(await handleBeforeSubmitPromptHook(await readStdinJson()))
+}
+
+export async function handleShellGateHook(payload: Record<string, unknown>) {
   try {
-    const payload = await readStdinJson()
     const command = String(payload.command ?? '').trim()
     const resolution = resolveCursorActionCwdDetails(payload)
 
     if (isUnsafeGlobalHookFallback(resolution)) {
-      jsonResponse({
+      return {
         permission: 'deny',
         user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
-      })
-      return
+      }
     }
 
     const cwd = resolution.cwd
@@ -223,19 +223,22 @@ export async function runShellGateHook() {
       payload,
       sourceEvent: 'beforeShellExecution',
     })
-    jsonResponse(gateVerdictToCursorResponse(verdict))
+    return gateVerdictToCursorResponse(verdict)
   } catch {
-    jsonResponse({
+    return {
       permission: 'deny',
       user_message:
         'belay failed while classifying this shell command. Run belay doctor, then retry.',
-    })
+    }
   }
 }
 
-export async function runToolGateHook(eventName: string) {
+export async function runShellGateHook() {
+  jsonResponse(await handleShellGateHook(await readStdinJson()))
+}
+
+export async function handleToolGateHook(eventName: string, payload: Record<string, unknown>) {
   try {
-    const payload = await readStdinJson()
     const toolName = String(payload.tool_name ?? '')
     const resolution = resolveCursorToolActionCwdDetails(
       payload,
@@ -245,11 +248,10 @@ export async function runToolGateHook(eventName: string) {
     )
 
     if (isUnsafeGlobalHookFallback(resolution)) {
-      jsonResponse({
+      return {
         permission: 'deny',
         user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
-      })
-      return
+      }
     }
 
     const cwd = resolution.cwd
@@ -263,8 +265,7 @@ export async function runToolGateHook(eventName: string) {
         payload,
         sourceEvent: eventName,
       })
-      jsonResponse(gateVerdictToCursorResponse(verdict))
-      return
+      return gateVerdictToCursorResponse(verdict)
     }
 
     if (toolName === 'Shell') {
@@ -275,8 +276,7 @@ export async function runToolGateHook(eventName: string) {
         toolName,
         sourceEvent: eventName,
       })
-      jsonResponse(gateVerdictToCursorResponse(verdict))
-      return
+      return gateVerdictToCursorResponse(verdict)
     }
 
     if (isFileMutationTool(toolName)) {
@@ -287,8 +287,7 @@ export async function runToolGateHook(eventName: string) {
         toolName,
         sourceEvent: eventName,
       })
-      jsonResponse(gateVerdictToCursorResponse(verdict))
-      return
+      return gateVerdictToCursorResponse(verdict)
     }
 
     if (payload.tool_name === 'Task') {
@@ -298,23 +297,25 @@ export async function runToolGateHook(eventName: string) {
         payload,
         sourceEvent: eventName,
       })
-      jsonResponse(gateVerdictToCursorResponse(verdict))
-      return
+      return gateVerdictToCursorResponse(verdict)
     }
 
-    jsonResponse({ permission: 'allow' })
+    return { permission: 'allow' }
   } catch {
-    jsonResponse({
+    return {
       permission: 'deny',
       user_message:
         'belay failed while classifying this tool action. Run belay doctor, then retry.',
-    })
+    }
   }
 }
 
-export async function runAuditHook(eventName: string) {
+export async function runToolGateHook(eventName: string) {
+  jsonResponse(await handleToolGateHook(eventName, await readStdinJson()))
+}
+
+export async function handleAuditHook(eventName: string, payload: Record<string, unknown>) {
   try {
-    const payload = await readStdinJson()
     const toolName = String(payload.tool_name ?? '')
     const resolution = resolveCursorToolActionCwdDetails(
       payload,
@@ -324,19 +325,22 @@ export async function runAuditHook(eventName: string) {
     )
 
     if (isUnsafeGlobalHookFallback(resolution)) {
-      jsonResponse({})
-      return
+      return {}
     }
 
     const ctx = await loadRuntimeContext(resolution.cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
-    jsonResponse({})
+    return {}
   } catch (error) {
     console.error(
       'belay audit hook failed:',
       error instanceof Error ? error.message : String(error),
     )
-    jsonResponse({})
+    return {}
   }
+}
+
+export async function runAuditHook(eventName: string) {
+  jsonResponse(await handleAuditHook(eventName, await readStdinJson()))
 }

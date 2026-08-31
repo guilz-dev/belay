@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-
+import type { CursorHookOrigin } from './adapters/cursor/hook-router.js'
+import type { AdapterName } from './adapters/layouts/types.js'
 import type { BelayConfigV3 } from './core/config.js'
 import { hashValue } from './core/fingerprint.js'
 import { PACKAGE_VERSION } from './version.js'
@@ -14,21 +15,67 @@ export function renderConfig(config: BelayConfigV3): string {
   return `${inlineJson(config)}\n`
 }
 
-export function renderBeforeSubmitHook(): string {
+function requireCursorOrigin(origin: CursorHookOrigin | undefined): CursorHookOrigin {
+  if (!origin) {
+    throw new Error('Cursor hook origin is required when rendering dispatcher shims.')
+  }
+  return origin
+}
+
+function renderCursorDispatchHook(
+  origin: CursorHookOrigin,
+  kind: 'before-submit' | 'shell-gate' | 'tool-gate' | 'audit',
+  eventName: string,
+): string {
+  return `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+await dispatchCursorHook({
+  origin: ${JSON.stringify(origin)},
+  kind: ${JSON.stringify(kind)},
+  eventName: ${eventName},
+})
+`
+}
+
+export function renderBeforeSubmitHook(
+  adapter: AdapterName,
+  cursorOrigin?: CursorHookOrigin,
+): string {
+  if (adapter === 'cursor') {
+    return renderCursorDispatchHook(
+      requireCursorOrigin(cursorOrigin),
+      'before-submit',
+      JSON.stringify('beforeSubmitPrompt'),
+    )
+  }
   return `import { runBeforeSubmitPromptHook } from '../belay/runtime/core.mjs'
 
 await runBeforeSubmitPromptHook()
 `
 }
 
-export function renderShellGateHook(): string {
+export function renderShellGateHook(adapter: AdapterName, cursorOrigin?: CursorHookOrigin): string {
+  if (adapter === 'cursor') {
+    return renderCursorDispatchHook(
+      requireCursorOrigin(cursorOrigin),
+      'shell-gate',
+      JSON.stringify('beforeShellExecution'),
+    )
+  }
   return `import { runShellGateHook } from '../belay/runtime/core.mjs'
 
 await runShellGateHook()
 `
 }
 
-export function renderToolGateHook(): string {
+export function renderToolGateHook(adapter: AdapterName, cursorOrigin?: CursorHookOrigin): string {
+  if (adapter === 'cursor') {
+    return renderCursorDispatchHook(
+      requireCursorOrigin(cursorOrigin),
+      'tool-gate',
+      "process.argv[2] ?? 'preToolUse'",
+    )
+  }
   return `import { runToolGateHook } from '../belay/runtime/core.mjs'
 
 const eventName = process.argv[2] ?? 'preToolUse'
@@ -36,7 +83,14 @@ await runToolGateHook(eventName)
 `
 }
 
-export function renderAuditHook(): string {
+export function renderAuditHook(adapter: AdapterName, cursorOrigin?: CursorHookOrigin): string {
+  if (adapter === 'cursor') {
+    return renderCursorDispatchHook(
+      requireCursorOrigin(cursorOrigin),
+      'audit',
+      "process.argv[2] ?? 'postToolUse'",
+    )
+  }
   return `import { runAuditHook } from '../belay/runtime/core.mjs'
 
 const eventName = process.argv[2] ?? 'postToolUse'
@@ -53,6 +107,21 @@ async function readRuntimeBundle(
     'dist',
     'bundle',
     `${adapter}-runtime.mjs`,
+  )
+  try {
+    return await readFile(bundlePath, 'utf8')
+  } catch {
+    throw new Error('Runtime bundle missing. Run pnpm build before belay init or upgrade.')
+  }
+}
+
+export async function renderCursorDispatcher(): Promise<string> {
+  const bundlePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'dist',
+    'bundle',
+    'cursor-dispatcher.mjs',
   )
   try {
     return await readFile(bundlePath, 'utf8')
