@@ -34,7 +34,11 @@ import {
   resolveInitJudgeConfig,
 } from './core/judge-config.js'
 import { resolveJudgeTransport } from './core/judge-runtime-detection.js'
-import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
+import {
+  bootstrapStateFiles,
+  CURSOR_COMMAND_ARTIFACTS,
+  writeSkillArtifacts,
+} from './installer/bootstrap.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
 import { applyConfigPreset } from './presets.js'
@@ -182,10 +186,14 @@ async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
   for (const fileName of BELAY_HOOK_ARTIFACTS) {
     await rm(path.join(paths.hooksDir, fileName), { force: true })
   }
-  await rm(paths.runtimeDir, { recursive: true, force: true })
-  await rm(paths.skillsDir, { recursive: true, force: true })
+  for (const fileName of ['core.mjs', 'dispatcher.mjs']) {
+    await rm(path.join(paths.runtimeDir, fileName), { force: true })
+  }
+  await rm(path.join(paths.skillsDir, 'SKILL.md'), { force: true })
   if (paths.commandsDir) {
-    await rm(path.join(paths.commandsDir, 'belay.md'), { force: true })
+    for (const fileName of CURSOR_COMMAND_ARTIFACTS) {
+      await rm(path.join(paths.commandsDir, fileName), { force: true })
+    }
   }
 }
 

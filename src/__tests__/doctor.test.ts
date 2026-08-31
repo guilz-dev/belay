@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
+import { pendingApprovalsPath } from '../config-io.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -13,6 +14,7 @@ const originalHome = process.env.HOME
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   process.env.HOME = originalHome
   if (originalXdgConfigHome === undefined) {
     delete process.env.XDG_CONFIG_HOME
@@ -73,7 +75,11 @@ describe('doctorProject', () => {
     )
     await writeFile(
       path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
-      '// pre-router dispatcher generation\n',
+      [
+        '// deceptive legacy comments: routeCursorHook neutralResponse origin',
+        '// export const BELAY_CURSOR_DISPATCHER_GENERATION = "cursor-owner-router-v1";',
+        '',
+      ].join('\n'),
     )
 
     const report = await doctorProject({ targetDir: repoRoot })
@@ -103,6 +109,29 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
+  it('does not mislabel missing audit or approval state as an incomplete routing owner', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-missing-state-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const config = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
+    )
+    await rm(path.join(repoRoot, config.audit.logPath))
+    await rm(pendingApprovalsPath(repoRoot, config))
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(report.issues.some((issue) => issue.includes('Missing generated file'))).toBe(true)
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.includes('owner is incomplete') &&
+          (issue.includes('audit') || issue.includes('pending-approvals')),
+      ),
+    ).toBe(false)
+  })
+
   it('reports an old managed global install that cannot yield to the project owner', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-old-global-'))
     const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-old-global-home-'))
@@ -115,6 +144,27 @@ describe('doctorProject', () => {
       path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
       '// pre-router dispatcher generation\n',
     )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) =>
+        issue.includes('Global Cursor installation cannot yield to the project owner'),
+      ),
+    ).toBe(true)
+  })
+
+  it('requires the Windows runner when checking a shadowed global install', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-win-global-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-win-global-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    await rm(path.join(homeDir, '.cursor', 'hooks', 'belay-runner.cmd'))
 
     const report = await doctorProject({ targetDir: repoRoot })
 

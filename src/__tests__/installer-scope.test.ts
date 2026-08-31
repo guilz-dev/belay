@@ -1,7 +1,9 @@
-import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { exec as execCallback } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,7 +12,7 @@ import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { codexAdapter } from '../adapters/codex/adapter.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
 import { cursorLayout } from '../adapters/layouts/cursor.js'
-import { resolveScopedPaths } from '../adapters/layouts/scope.js'
+import { buildAbsoluteRunnerInvocation, resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { doctorProject } from '../commands/doctor.js'
 import { metricsProject } from '../commands/metrics.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
@@ -21,6 +23,7 @@ import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
+const exec = promisify(execCallback)
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-scope-'))
@@ -40,6 +43,42 @@ describe('installer scope (T29)', () => {
     vi.restoreAllMocks()
     process.env.HOME = originalHome
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('executes an absolute runner path with spaces and shell metacharacters literally', async () => {
+    const repoRoot = await createTempRepo()
+    const injectionMarker = path.join(repoRoot, 'injected-marker')
+    const hooksDir = path.join(
+      repoRoot,
+      process.platform === 'win32'
+        ? 'hooks space & mkdir injected-marker & literal'
+        : "hooks $(mkdir injected-marker) ; amp & quote' literal",
+    )
+    await mkdir(hooksDir, { recursive: true })
+    const runnerPath = path.join(
+      hooksDir,
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
+    await writeFile(
+      runnerPath,
+      process.platform === 'win32'
+        ? '@echo off\r\necho %1\r\necho %2\r\n'
+        : '#!/bin/sh\nprintf \'%s\\n\' "$@"\n',
+    )
+    if (process.platform !== 'win32') {
+      await chmod(runnerPath, 0o755)
+    }
+
+    const command = buildAbsoluteRunnerInvocation(
+      process.platform,
+      hooksDir,
+      'belay-shell-gate',
+      'preToolUse',
+    )
+    const result = await exec(command, { cwd: repoRoot })
+
+    expect(result.stdout.trim()).toBe('belay-shell-gate\npreToolUse')
+    expect(existsSync(injectionMarker)).toBe(false)
   })
 
   it('project scope (default) writes hooks and config under the repo', async () => {
@@ -119,11 +158,39 @@ describe('installer scope (T29)', () => {
     expect(globalShim).toContain("from '../belay/runtime/dispatcher.mjs'")
   })
 
+  it.runIf(process.platform !== 'win32')(
+    'upgrades through a symlink without duplicating canonical-equivalent managed hooks',
+    async () => {
+      const repoRoot = await createTempRepo()
+      const linkParent = await createTempRepo()
+      const linkedRepo = path.join(linkParent, 'repo-link')
+      await symlink(repoRoot, linkedRepo, 'dir')
+      await initProject({ targetDir: repoRoot })
+      const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+      const before = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+        hooks: Record<string, Array<{ command: string; matcher?: string }>>
+      }
+      const originalShellCommand = before.hooks.beforeShellExecution?.[0]?.command
+
+      await upgradeProject({ targetDir: linkedRepo })
+
+      const after = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+        hooks: Record<string, Array<{ command: string; matcher?: string }>>
+      }
+      expect(after.hooks.beforeShellExecution).toHaveLength(1)
+      expect(after.hooks.beforeShellExecution?.[0]?.command).toBe(originalShellCommand)
+      expect(after.hooks.preToolUse?.filter((entry) => entry.matcher === 'Shell')).toHaveLength(1)
+      const report = await doctorProject({ targetDir: linkedRepo })
+      expect(report.ok).toBe(true)
+      expect(report.issues.some((issue) => issue.includes('Missing managed hook'))).toBe(false)
+    },
+  )
+
   it('global selection removes only stale exact project hooks and artifacts for the current repo', async () => {
     await createTempHome()
     const repoRoot = await createTempRepo()
     const siblingRoot = await createTempRepo()
-    await initProject({ targetDir: repoRoot })
+    await initProject({ targetDir: repoRoot, withSkill: true })
     await initProject({ targetDir: siblingRoot })
 
     const projectHooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
@@ -137,6 +204,15 @@ describe('installer scope (T29)', () => {
       ...(projectHooks.hooks.beforeShellExecution ?? []),
     ]
     await writeFile(projectHooksPath, `${JSON.stringify(projectHooks, null, 2)}\n`)
+    const unknownArtifacts = [
+      path.join(repoRoot, '.cursor', 'hooks', 'custom-hook'),
+      path.join(repoRoot, '.cursor', 'belay', 'runtime', 'custom-runtime.mjs'),
+      path.join(repoRoot, '.cursor', 'skills', 'belay', 'custom-skill-note.md'),
+      path.join(repoRoot, '.cursor', 'commands', 'custom-command.md'),
+    ]
+    for (const artifactPath of unknownArtifacts) {
+      await writeFile(artifactPath, `preserve:${path.basename(artifactPath)}\n`)
+    }
 
     await upgradeProject({ targetDir: repoRoot, scope: 'global' })
 
@@ -153,6 +229,22 @@ describe('installer scope (T29)', () => {
     expect(existsSync(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
       false,
     )
+    expect(existsSync(path.join(repoRoot, '.cursor', 'skills', 'belay', 'SKILL.md'))).toBe(false)
+    for (const fileName of [
+      'belay-approve.md',
+      'belay-why.md',
+      'belay-explain.md',
+      'belay-status.md',
+      'belay-report.md',
+      'belay-recover.md',
+    ]) {
+      expect(existsSync(path.join(repoRoot, '.cursor', 'commands', fileName))).toBe(false)
+    }
+    for (const artifactPath of unknownArtifacts) {
+      await expect(readFile(artifactPath, 'utf8')).resolves.toBe(
+        `preserve:${path.basename(artifactPath)}\n`,
+      )
+    }
     expect(existsSync(path.join(siblingRoot, '.cursor', 'hooks', 'belay-runner'))).toBe(true)
     expect(
       existsSync(path.join(siblingRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs')),
@@ -272,8 +364,12 @@ describe('installer scope (T29)', () => {
     const hooksDir = cursorLayout.hooksDir(repoRoot)
     const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot)
     const shellHook = managed.find((entry) => entry.event === 'beforeShellExecution')?.definition
+    const runnerPath = path.join(
+      realpathSync(hooksDir),
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
     expect(shellHook?.command).toBe(
-      `${path.join(hooksDir, process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner')} belay-shell-gate`,
+      `${process.platform === 'win32' ? `"${runnerPath}"` : `'${runnerPath.replaceAll("'", "'\\''")}'`} belay-shell-gate`,
     )
 
     const claudeShellHook = getClaudeManagedHookEntries(

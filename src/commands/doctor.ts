@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
+import { hasCurrentCursorDispatcherGeneration } from '../adapters/cursor/dispatcher-generation.js'
 import {
   hasDuplicateCursorShellGates,
   hasManagedCursorHookEntries,
@@ -90,12 +91,8 @@ const CURSOR_HOOK_SHIMS = [
   'belay-audit.mjs',
 ] as const
 
-function hasCursorOwnershipRouter(dispatcherSource: string): boolean {
-  return (
-    dispatcherSource.includes('routeCursorHook') &&
-    dispatcherSource.includes('neutralResponse') &&
-    dispatcherSource.includes('origin')
-  )
+function runnerFileName(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
 }
 
 async function cursorOriginIssues(
@@ -284,15 +281,16 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   const repoLocalDir = loadedConfig
     ? repoLocalStateDirFor(repoRoot, loadedConfig)
     : activeLayout.repoLocalStateDir(repoRoot)
-  const requiredPaths = [
-    path.join(hooksDir, 'belay-runner'),
-    path.join(hooksDir, 'belay-runner.cmd'),
+  const routingOwnerPaths = [
+    path.join(hooksDir, runnerFileName(process.platform)),
     path.join(hooksDir, 'belay-before-submit.mjs'),
     path.join(hooksDir, 'belay-shell-gate.mjs'),
     path.join(hooksDir, 'belay-tool-gate.mjs'),
     path.join(hooksDir, 'belay-audit.mjs'),
     ...(adapterName === 'cursor' ? [path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')] : []),
     corePath,
+  ]
+  const operationalPaths = [
     loadedConfig
       ? pendingApprovalsPath(repoRoot, loadedConfig)
       : path.join(repoLocalDir, 'pending-approvals.json'),
@@ -301,10 +299,11 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       : path.join(repoLocalDir, 'approved-approvals.json'),
     path.join(repoRoot, loadedConfig?.audit.logPath ?? activeLayout.defaultAuditLogPath(repoRoot)),
   ]
+  const requiredPaths = [...routingOwnerPaths, ...operationalPaths]
   for (const requiredPath of requiredPaths) {
     if (!existsSync(requiredPath)) {
       issues.push(`Missing generated file: ${requiredPath}`)
-      if (adapterName === 'cursor') {
+      if (adapterName === 'cursor' && routingOwnerPaths.includes(requiredPath)) {
         issues.push(
           `Cursor intended ${installScope} owner is incomplete: missing ${requiredPath}. Run belay upgrade --scope ${installScope}.`,
         )
@@ -316,7 +315,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     const dispatcherPath = path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')
     if (
       existsSync(dispatcherPath) &&
-      !hasCursorOwnershipRouter(await readFile(dispatcherPath, 'utf8'))
+      !hasCurrentCursorDispatcherGeneration(await readFile(dispatcherPath, 'utf8'))
     ) {
       issues.push(
         `Cursor router generation mismatch for intended ${installScope} owner dispatcher: ${dispatcherPath}. Run belay upgrade --scope ${installScope}.`,
@@ -331,7 +330,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           hasManagedCursorHookEntries(globalHooks, process.platform, globalPaths.hooksDir, repoRoot)
         ) {
           const globalOwnerFiles = [
-            path.join(globalPaths.hooksDir, 'belay-runner'),
+            path.join(globalPaths.hooksDir, runnerFileName(process.platform)),
             path.join(globalPaths.runtimeDir, 'core.mjs'),
             path.join(globalPaths.runtimeDir, 'dispatcher.mjs'),
             ...CURSOR_HOOK_SHIMS.map((fileName) => path.join(globalPaths.hooksDir, fileName)),
@@ -343,7 +342,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           const globalDispatcherPath = path.join(globalPaths.runtimeDir, 'dispatcher.mjs')
           if (
             existsSync(globalDispatcherPath) &&
-            !hasCursorOwnershipRouter(await readFile(globalDispatcherPath, 'utf8'))
+            !hasCurrentCursorDispatcherGeneration(await readFile(globalDispatcherPath, 'utf8'))
           ) {
             globalProblems.push(globalDispatcherPath)
           }

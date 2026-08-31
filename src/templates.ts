@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CURSOR_DISPATCHER_GENERATION_HEADER } from './adapters/cursor/dispatcher-generation.js'
 import type { CursorHookOrigin } from './adapters/cursor/hook-router.js'
 import type { AdapterName } from './adapters/layouts/types.js'
 import type { BelayConfigV3 } from './core/config.js'
@@ -124,7 +125,7 @@ export async function renderCursorDispatcher(): Promise<string> {
     'cursor-dispatcher.mjs',
   )
   try {
-    return await readFile(bundlePath, 'utf8')
+    return `${CURSOR_DISPATCHER_GENERATION_HEADER}${await readFile(bundlePath, 'utf8')}`
   } catch {
     throw new Error('Runtime bundle missing. Run pnpm build before belay init or upgrade.')
   }

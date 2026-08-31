@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -30,13 +31,26 @@ async function readJson(filePath: string) {
 
 describe('cursor hook dedupe', () => {
   it('migrates exact legacy-relative entries to one absolute entry without reordering custom hooks', () => {
-    const repoRoot = path.resolve('/tmp/project with spaces')
+    const canonicalTempDir = realpathSync(os.tmpdir())
+    const repoRoot = path.join(canonicalTempDir, 'project with spaces')
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
-    const absoluteRunner = path.join(
+    const legacyAbsoluteRunner = path.join(
       hooksDir,
       process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
     )
-    const currentShell = { command: `${absoluteRunner} belay-shell-gate` }
+    const legacyAbsoluteShell = { command: `${legacyAbsoluteRunner} belay-shell-gate` }
+    const canonicalRunner = path.join(
+      canonicalTempDir,
+      'project with spaces',
+      '.cursor',
+      'hooks',
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
+    const quotedCanonicalRunner =
+      process.platform === 'win32'
+        ? `"${canonicalRunner}"`
+        : `'${canonicalRunner.replaceAll("'", "'\\''")}'`
+    const currentShellCommand = `${quotedCanonicalRunner} belay-shell-gate`
     const legacyRunner =
       process.platform === 'win32'
         ? '.\\.cursor\\hooks\\belay-runner.cmd'
@@ -53,7 +67,7 @@ describe('cursor hook dedupe', () => {
           customBefore,
           legacyShell,
           customMiddle,
-          currentShell,
+          legacyAbsoluteShell,
           legacyShell,
           unknownBelayLike,
           customAfter,
@@ -64,7 +78,7 @@ describe('cursor hook dedupe', () => {
     const merged = mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: currentShell.command, matcher: undefined },
+      { command: currentShellCommand, matcher: undefined },
       customBefore,
       customMiddle,
       unknownBelayLike,
@@ -73,7 +87,7 @@ describe('cursor hook dedupe', () => {
   })
 
   it('strips exact relative and absolute managed entries but preserves unknown commands in order', () => {
-    const repoRoot = path.resolve('/tmp/project')
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'project')
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
     const absoluteShell = {
       command: `${path.join(

@@ -1,7 +1,11 @@
 import path from 'node:path'
 
 import { cursorLayout } from './adapters/layouts/cursor.js'
-import { buildAbsoluteRunnerInvocation, buildRunnerInvocation } from './adapters/layouts/scope.js'
+import {
+  buildAbsoluteRunnerInvocation,
+  buildLegacyAbsoluteRunnerInvocation,
+  buildRunnerInvocation,
+} from './adapters/layouts/scope.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from './core/config.js'
 
 export { PACKAGE_NAME } from './branding.js'
@@ -19,19 +23,23 @@ function runnerCommand(
   hooksDir: string,
   _repoRoot: string,
   hookScript: string,
-  runnerPathMode: 'absolute' | 'legacy-relative',
+  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute',
   ...args: string[]
 ): string {
-  return runnerPathMode === 'absolute'
-    ? buildAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
-    : buildRunnerInvocation(platform, hooksDir, _repoRoot, hookScript, ...args)
+  if (runnerPathMode === 'absolute') {
+    return buildAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  if (runnerPathMode === 'legacy-absolute') {
+    return buildLegacyAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  return buildRunnerInvocation(platform, hooksDir, _repoRoot, hookScript, ...args)
 }
 
 export function getManagedHookEntries(
   platform: NodeJS.Platform = process.platform,
   hooksDir?: string,
   repoRoot?: string,
-  runnerPathMode: 'absolute' | 'legacy-relative' = 'absolute',
+  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute' = 'absolute',
 ): Array<{ event: string; definition: ManagedHookDefinition }> {
   const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
   const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)

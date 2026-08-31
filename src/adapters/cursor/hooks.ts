@@ -1,3 +1,5 @@
+import { existsSync, realpathSync } from 'node:fs'
+
 import { getManagedHookEntries } from '../../defaults.js'
 import type { HookEntry, HooksFile } from '../../types.js'
 
@@ -6,7 +8,19 @@ function entryMatches(existing: HookEntry, expected: HookEntry): boolean {
 }
 
 function legacyManagedEntries(platform: NodeJS.Platform, hooksDir: string, repoRoot: string) {
-  return getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-relative')
+  const entries = [
+    ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-relative'),
+    ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-absolute'),
+  ]
+  if (existsSync(hooksDir)) {
+    const canonicalHooksDir = realpathSync(hooksDir)
+    if (canonicalHooksDir !== hooksDir) {
+      entries.push(
+        ...getManagedHookEntries(platform, canonicalHooksDir, repoRoot, 'legacy-absolute'),
+      )
+    }
+  }
+  return entries
 }
 
 function variantsForDefinition(

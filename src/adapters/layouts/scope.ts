@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -68,6 +69,32 @@ export function buildRunnerInvocation(
 }
 
 export function buildAbsoluteRunnerInvocation(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  hookScript: string,
+  ...args: string[]
+): string {
+  const runnerFile = platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
+  const unresolvedSegments: string[] = []
+  let existingAncestor = path.resolve(hooksDir)
+  while (!existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor)
+    if (parent === existingAncestor) {
+      break
+    }
+    unresolvedSegments.unshift(path.basename(existingAncestor))
+    existingAncestor = parent
+  }
+  const canonicalHooksDir = existsSync(existingAncestor)
+    ? path.join(realpathSync(existingAncestor), ...unresolvedSegments)
+    : path.resolve(hooksDir)
+  const runnerPath = path.join(canonicalHooksDir, runnerFile)
+  const quotedRunnerPath =
+    platform === 'win32' ? `"${runnerPath}"` : `'${runnerPath.replaceAll("'", "'\\''")}'`
+  return [quotedRunnerPath, hookScript, ...args].join(' ')
+}
+
+export function buildLegacyAbsoluteRunnerInvocation(
   platform: NodeJS.Platform,
   hooksDir: string,
   hookScript: string,

@@ -9,7 +9,7 @@ import type { BelayConfigV3 } from '../core/config.js'
 import { EMPTY_APPROVALS } from '../defaults.js'
 
 const BUNDLED_SKILL_TEMPLATE_URL = new URL('../../skills/belay/SKILL.md', import.meta.url)
-const BUNDLED_COMMAND_TEMPLATES = [
+export const CURSOR_COMMAND_ARTIFACTS = [
   'belay-approve.md',
   'belay-why.md',
   'belay-explain.md',
@@ -73,7 +73,7 @@ export async function writeSkillArtifacts(
 
   if (adapterName === 'cursor' && paths.commandsDir) {
     await mkdir(paths.commandsDir, { recursive: true })
-    for (const fileName of BUNDLED_COMMAND_TEMPLATES) {
+    for (const fileName of CURSOR_COMMAND_ARTIFACTS) {
       const bundledCommand = await readBundledTemplate(
         new URL(`../../skills/belay/${fileName}`, import.meta.url),
       )
