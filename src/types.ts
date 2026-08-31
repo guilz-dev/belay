@@ -249,6 +249,7 @@ export interface AuditVisibilityReport {
   recentAsks: RecentAskEntry[]
   hostDeniedAfterAllowCount?: number
   recentHostDenials?: RecentHostDenialEntry[]
+  unrecognizedHostFailureCount?: number
   warnings: string[]
   notes: string[]
 }

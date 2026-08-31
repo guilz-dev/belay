@@ -64,6 +64,32 @@ from the latest package build.
 ## Verification
 
 - `pnpm test -- src/__tests__/hooks-runtime.test.ts src/__tests__/repo-root.test.ts src/__tests__/approval-repo-lookup.test.ts src/__tests__/installer-scope.test.ts`
+- `pnpm exec vitest run src/__tests__/cursor-host-denial-invariants.test.ts src/__tests__/audit-visibility.test.ts src/__tests__/doctor-advisory.test.ts src/__tests__/capability-gate-runtime.test.ts`
 - Global install smoke: `Write` / `Shell` / `/belay-approve` reference the same repo state
   when `cwd` or `workspace_roots` are present in payloads.
 - `belay uninstall --scope global` removes belay entries from `$HOME/.cursor/hooks.json`.
+
+## Host-denial observability (orthogonal concern)
+
+Workspace resolution and host-denial correlation are independent subsystems that must coexist
+on `main`:
+
+- `tool_use_id` normalization before correlation hashing (`tool_` prefix vs bare UUID)
+- `postToolUseFailure` join logic in audit visibility summaries
+- Cursor health-snapshot warnings for host approval modes that can deny after Belay allows
+
+These concerns share files with global hook work (`runtime-entry.ts`, `audit-serialize.ts`,
+`audit-summary.ts`, `health-snapshot.ts`) but must not be dropped during parallel PR merges.
+
+## Merge hazard
+
+When two or more PRs touch any of the following in parallel, run the combined verification
+command above on the integration branch before merge:
+
+- `src/adapters/cursor/runtime-entry.ts`
+- `src/core/audit-serialize.ts`
+- `src/core/audit-summary.ts`
+- `src/commands/health-snapshot.ts`
+
+A merge conflict resolution that keeps only one PR's version can silently drop host-denial
+correlation or global fail-close behavior while leaving CHANGELOG entries intact.
