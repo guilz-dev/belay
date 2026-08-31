@@ -3,9 +3,10 @@
 This document records the normative terms for Belay's resource-scoped capability
 authorization model. It complements
 [ADR-003](./adr/ADR-003-resource-scoped-capability.md),
-[ADR-004](./adr/ADR-004-effectplan-shell-authority.md), and
-[ADR-005](./adr/ADR-005-command-allowlist-prohibition.md), and
-[ADR-006](./adr/ADR-006-contained-unknown-execution.md).
+[ADR-004](./adr/ADR-004-effectplan-shell-authority.md),
+[ADR-005](./adr/ADR-005-command-allowlist-prohibition.md),
+[ADR-006](./adr/ADR-006-contained-unknown-execution.md), and
+[ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
 
 ## Core objects
 
@@ -85,6 +86,14 @@ authorization model. It complements
     statically known prerequisite recipe participates in the `EffectPlan` before the requested
     target's recipe. `.PHONY` declarations and `_`-prefixed target names have no policy meaning;
     policy evaluates the resulting effects, not Make target names.
+14. **Cursor hook source ownership**: Cursor may spawn User/global and multiple Project sources for
+    one canonical event, but exactly one Belay source may evaluate it. The matching initialized
+    Project owner takes precedence over User/global and nonmatching projects; a repository
+    configured for global scope selects User/global. Selection uses the canonical payload-derived
+    action repository. Non-owners are neutral and cannot import the heavy core or touch approval,
+    control-plane, or audit state. This is source precedence only: distinct canonical events and
+    repeated effective-owner deliveries remain separate hook processes
+    ([ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md)).
 
 ## Policy precedence
 

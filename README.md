@@ -215,6 +215,24 @@ npx @guilz-dev/belay upgrade                # refresh hooks/runtime, migrate con
 and skill under `~/.cursor/`, so the gate is user-wide while `belay.config.json`,
 approvals, and audit stay repo-local.
 
+**Cursor source precedence.** Cursor may launch User/global hooks and hooks from multiple open
+Projects for the same event. Belay chooses one effective source from the payload-derived action
+repository: its matching Project install wins when `installScope` is `project`; User/global wins
+when it is `global`. Other sources return a neutral Cursor response without loading the policy core
+or writing audit/control-plane state. In a multi-root workspace, Shell
+`tool_input.working_directory`, then `cwd`, then `workspace_roots` selects the action repository;
+canonical paths prevent symlink aliases from becoming two owners. An uninitialized repository is
+neutral to the global source. A selected but incomplete Project owner fails closed for gates and
+prompts (audit hooks remain safe and diagnostic).
+
+Run `belay upgrade --scope global` for a pre-router global Cursor install, then run `belay doctor`.
+A Project upgrade also refreshes an exactly recognized managed global install; doctor reports old
+global generations, origin mismatches, and incomplete owners, while a healthy global source
+shadowed by Project precedence is only a note. This mechanism resolves competing sources for the
+same canonical event; it does not combine distinct events such as `beforeShellExecution` and
+`preToolUse: Shell`, and it does not merge repeated deliveries to the effective owner. See
+[ADR-008](./docs/adr/ADR-008-cursor-hook-source-precedence.md).
+
 **Skill-only.** The skill is just a UX layer (slash commands + guidance) and does
 **not** enable gating on its own. Install from [skills.sh](https://skills.sh/guilz-dev/belay)
 or GitHub:

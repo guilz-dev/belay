@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Cursor Project-over-User hook precedence** — Cursor may spawn User/global and multiple Project
+  hooks for one event, but Belay now selects one effective owner from the canonical payload-derived
+  action repository before loading the policy core. Non-owners are neutral and cannot append a
+  duplicate gate audit record. Uninitialized repositories stay neutral to global hooks; incomplete
+  selected Project owners fail closed. Distinct canonical events remain separate executions.
 - **Cursor global hook workspace resolution** — Payload-free global hook invocations now
   fail closed instead of falling back to `process.cwd()` (which could resolve to `$HOME`).
   `beforeSubmitPrompt`, shell/tool gates, and audit hooks share the same payload-first cwd
@@ -27,6 +32,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Cursor router migration and doctor** — Project upgrades refresh exactly recognized managed
+  global artifacts. Pre-router global installs require `belay upgrade --scope global`; doctor
+  reports old generations, origin mismatches, and incomplete owners, and notes healthy global
+  installs shadowed by Project precedence.
 - **Global hook upgrades** — Run `belay upgrade --scope global` after pulling this release so
   global runtime artifacts pick up fail-close cwd resolution and approval reverse lookup.
   In-flight pending approvals may need re-issuance after upgrade (retry the denied action).

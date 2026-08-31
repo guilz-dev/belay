@@ -40,6 +40,21 @@ explicit opt-in (`--scope`).
 
 `managed` (Codex, pre-trusted, `/etc/codex/…`, sudo) is a deployment mode, not yet implemented.
 
+For Cursor, `installScope` also selects the effective hook source when Cursor launches matching
+User/global and Project hooks for one event. A canonical payload-derived action repository whose
+config says `project` selects its matching Project install; `global` selects the User/global
+install. Nonmatching sources are neutral before the heavy runtime loads. A global hook is neutral
+for a repository without `.cursor/belay.config.json`; a router-visible incomplete selected Project
+owner fails closed for gates/prompts and is audit-safe. Multi-root selection follows Shell
+`tool_input.working_directory` → `cwd` → first non-empty `workspace_roots[]`, with canonical path
+comparison.
+
+This behavior adds no config field or schema migration. Pre-router global Cursor artifacts must be
+refreshed with `belay upgrade --scope global`; `belay doctor` reports old generations, origin
+mismatches, and incomplete owners. Source precedence applies only within the same canonical event:
+distinct events and repeated deliveries to the effective owner remain separate hook processes. See
+[ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
+
 ## `judge` (Tier1 provider)
 
 Terminology: **provider** = 社名・サービス名 (judge.providerId); **driver** = API
