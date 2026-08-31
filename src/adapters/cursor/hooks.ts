@@ -40,6 +40,36 @@ export function managedShellPreToolUseEntry(
 /** @deprecated Use {@link managedShellPreToolUseEntry}. */
 export const legacyManagedShellPreToolUseEntry = managedShellPreToolUseEntry
 
+export function stripCursorHooksFile(
+  current: HooksFile,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): HooksFile {
+  const next: HooksFile = {
+    version: current.version || 1,
+    hooks: { ...current.hooks },
+  }
+  const managedEntries = getManagedHookEntries(platform, hooksDir, repoRoot)
+  for (const { event, definition } of managedEntries) {
+    const entries = next.hooks[event]
+    if (!Array.isArray(entries)) {
+      continue
+    }
+    next.hooks[event] = entries.filter(
+      (entry) =>
+        !entryMatches(entry, {
+          command: definition.command,
+          matcher: definition.matcher,
+        }),
+    )
+    if (next.hooks[event].length === 0) {
+      delete next.hooks[event]
+    }
+  }
+  return next
+}
+
 export function mergeCursorHooksFile(
   current: HooksFile,
   platform: NodeJS.Platform,

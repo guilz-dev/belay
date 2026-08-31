@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import * as cwdResolution from '../adapters/cursor/cwd-resolution.js'
 import { resolveCursorActionCwd } from '../adapters/cursor/runtime-entry.js'
 import {
   approvedApprovalsPath,
@@ -147,6 +148,23 @@ describe('generated hook runtime', () => {
     ],
   ])('resolves Cursor action cwd from %s', (_caseName, payload, expected) => {
     expect(resolveCursorActionCwd(payload, 'fallback-action')).toBe(expected)
+  })
+
+  it('marks payload-free fallback as unsafe for global hook runtime', () => {
+    const resolution = cwdResolution.resolveCursorActionCwdDetails({}, 'fallback-action')
+    expect(cwdResolution.isUnsafeGlobalHookFallback(resolution, true)).toBe(true)
+    expect(cwdResolution.GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE).toContain(
+      'belay uninstall --scope global',
+    )
+  })
+
+  it('allows payload-derived cwd for global hook runtime', () => {
+    const resolution = cwdResolution.resolveCursorActionCwdDetails(
+      { cwd: 'workspace-action' },
+      'fallback-action',
+    )
+    expect(cwdResolution.isUnsafeGlobalHookFallback(resolution, true)).toBe(false)
+    expect(resolution.source).toBe('cwd')
   })
 
   it('uses the Shell action working directory for Make policy and approval state', async () => {

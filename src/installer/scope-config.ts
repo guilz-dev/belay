@@ -9,14 +9,14 @@ import {
 import type { AdapterName } from '../adapters/layouts/types.js'
 import { loadConfigFile, writeConfigFile } from '../config-io.js'
 import type { BelayConfigV4 } from '../core/config.js'
-import type { InitOptions, UpgradeOptions } from '../types.js'
+import type { InitOptions, UninstallOptions, UpgradeOptions } from '../types.js'
 
 export type OperationScope = 'project' | 'global'
 
 export async function resolveOperationScope(
   repoRoot: string,
   adapter: AdapterName,
-  options: InitOptions | UpgradeOptions = {},
+  options: InitOptions | UpgradeOptions | UninstallOptions = {},
 ): Promise<OperationScope> {
   const layout = getAdapterLayout(adapter)
   let persisted: OperationScope | undefined

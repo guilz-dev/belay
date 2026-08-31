@@ -74,6 +74,12 @@ export interface UpgradeOptions {
   migrateJudgeDefault?: boolean
 }
 
+export interface UninstallOptions {
+  targetDir?: string
+  adapter?: AdapterName
+  scope?: InstallScope
+}
+
 export interface DoctorOptions {
   targetDir?: string
   fix?: boolean
