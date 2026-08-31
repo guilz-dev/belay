@@ -18,7 +18,10 @@ export type ManagedHookDefinition = {
   command: string
   placement: 'prepend' | 'append'
   matcher?: string
+  failClosed?: boolean
 }
+
+export type CursorManagedHookDefinition = ManagedHookDefinition & { failClosed: true }
 
 function runnerCommand(
   platform: NodeJS.Platform,
@@ -58,7 +61,7 @@ export function getManagedHookEntries(
     | 'legacy-absolute'
     | 'legacy-quoted-absolute'
     | 'legacy-bare-powershell-absolute' = 'absolute',
-): Array<{ event: string; definition: ManagedHookDefinition }> {
+): Array<{ event: string; definition: CursorManagedHookDefinition }> {
   const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
   const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)
   const toolGate = runnerCommand(
@@ -78,7 +81,10 @@ export function getManagedHookEntries(
     'subagentStart',
   )
 
-  return [
+  const entries: Array<{
+    event: string
+    definition: Omit<CursorManagedHookDefinition, 'failClosed'>
+  }> = [
     {
       event: 'beforeSubmitPrompt',
       definition: {
@@ -251,14 +257,18 @@ export function getManagedHookEntries(
       },
     },
   ]
+  return entries.map(({ event, definition }) => ({
+    event,
+    definition: { ...definition, failClosed: true },
+  }))
 }
 
 /** @deprecated Use getManagedHookEntries instead. */
 export function getManagedHookEvents(
   platform: NodeJS.Platform = process.platform,
-): Record<string, ManagedHookDefinition> {
+): Record<string, CursorManagedHookDefinition> {
   const entries = getManagedHookEntries(platform)
-  const result: Record<string, ManagedHookDefinition> = {}
+  const result: Record<string, CursorManagedHookDefinition> = {}
   for (const entry of entries) {
     if (!result[entry.event]) {
       result[entry.event] = entry.definition

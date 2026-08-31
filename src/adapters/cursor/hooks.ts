@@ -70,6 +70,7 @@ export function managedShellPreToolUseEntry(
   return {
     command: referencePreToolUse.command,
     matcher: 'Shell',
+    failClosed: true,
   }
 }
 
@@ -123,6 +124,7 @@ export function mergeCursorHooksFile(
       {
         command: definition.command,
         matcher: definition.matcher,
+        failClosed: definition.failClosed,
       },
       variants,
       definition.placement,

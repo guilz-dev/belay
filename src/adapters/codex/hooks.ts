@@ -28,6 +28,10 @@ function tomlString(value: string): string {
   return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
 }
 
+export function codexHooksTomlIncludesCommand(content: string, command: string): boolean {
+  return content.includes(`command = ${tomlString(command)}`)
+}
+
 function runnerCommand(
   platform: NodeJS.Platform,
   hooksDir: string,

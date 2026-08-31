@@ -90,8 +90,13 @@ authorization model. It complements
     one canonical event, but exactly one Belay source may evaluate it. The matching initialized
     Project owner takes precedence over User/global and nonmatching projects; a repository
     configured for global scope selects User/global. Selection uses the canonical payload-derived
-    action repository. Non-owners are neutral and cannot import the heavy core or touch approval,
-    control-plane, or audit state. This is source precedence only: distinct canonical events and
+    action repository, and the Project origin persisted in shims is canonical rather than the
+    lexical install path. Omitted scope means Project; only a missing config is neutral, while a
+    present broken config remains Project-owned and fails closed in config loading. Scope changes
+    stage the new owner before publishing the selection. Non-owners are neutral and cannot import
+    the heavy core or touch approval, control-plane, or audit state. Managed Cursor entries set the
+    host's `failClosed` option, but post-action events cannot undo completed effects and
+    `sessionEnd` is fire-and-forget. This is source precedence only: distinct canonical events and
     repeated effective-owner deliveries remain separate hook processes
     ([ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md)).
 

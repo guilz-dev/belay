@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
+import { doctorProject } from '../commands/doctor.js'
 import { loadConfigFile } from '../config-io.js'
-import { initProject } from '../installer.js'
+import { initProject, upgradeProject } from '../installer.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
@@ -222,6 +222,52 @@ describe.sequential('Cursor hook source precedence integration', () => {
     expect(await auditRecords(projectRoot)).toHaveLength(1)
   })
 
+  it.each([
+    {
+      name: 'runner',
+      artifactPath: (cursorRoot: string) =>
+        path.join(
+          cursorRoot,
+          'hooks',
+          process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
+        ),
+    },
+    {
+      name: 'shim',
+      artifactPath: (cursorRoot: string) => path.join(cursorRoot, 'hooks', 'belay-shell-gate.mjs'),
+    },
+    {
+      name: 'dispatcher',
+      artifactPath: (cursorRoot: string) =>
+        path.join(cursorRoot, 'belay', 'runtime', 'dispatcher.mjs'),
+    },
+  ])('marks the gate failClosed when its $name cannot start', async ({ artifactPath }) => {
+    const homeRoot = await createTempDir('agent-belay-cursor-home-')
+    const projectRoot = await createTempDir('agent-belay-cursor-host-fail-closed-')
+    process.env.HOME = homeRoot
+    process.env.USERPROFILE = homeRoot
+    await initProject({ targetDir: projectRoot, scope: 'project' })
+    const cursorRoot = path.join(projectRoot, '.cursor')
+    const hooks = JSON.parse(await readFile(path.join(cursorRoot, 'hooks.json'), 'utf8')) as {
+      hooks: { beforeShellExecution?: Array<{ command?: unknown; failClosed?: unknown }> }
+    }
+    const definition = hooks.hooks.beforeShellExecution?.[0]
+    if (typeof definition?.command !== 'string') {
+      throw new Error('missing managed beforeShellExecution hook')
+    }
+    await rm(artifactPath(cursorRoot), { force: true })
+
+    const result = await runManagedCommand(
+      definition.command,
+      { command: 'git status', cwd: projectRoot },
+      projectRoot,
+      path.join(homeRoot, 'missing-entrypoint-core-imports.txt'),
+    )
+
+    expect(definition.failClosed).toBe(true)
+    expect(result.exitCode).not.toBe(0)
+  })
+
   it('runs a global-only owner once', async () => {
     const homeRoot = await createTempDir('agent-belay-cursor-home-')
     const projectRoot = await createTempDir('agent-belay-cursor-global-only-')
@@ -307,6 +353,56 @@ describe.sequential('Cursor hook source precedence integration', () => {
       expect(results.map((result) => result.exitCode)).toEqual([0, 0, 0])
       expect(await markerLoads(sources.markerPath)).toEqual(['project-a'])
       expect(await auditRecords(sources.projectA)).toHaveLength(1)
+    },
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps the canonical project origin after its install-time symlink is removed',
+    async () => {
+      const homeRoot = await createTempDir('agent-belay-cursor-home-')
+      const projectRoot = await createTempDir('agent-belay-cursor-durable-origin-')
+      const linkParent = await createTempDir('agent-belay-cursor-origin-link-parent-')
+      const projectLink = path.join(linkParent, 'project-link')
+      process.env.HOME = homeRoot
+      process.env.USERPROFILE = homeRoot
+      await symlink(projectRoot, projectLink, 'dir')
+      await initProject({
+        targetDir: projectLink,
+        scope: 'project',
+        judgeProviderId: 'ollama',
+      })
+      const cursorRoot = path.join(projectRoot, '.cursor')
+      const auditPath = path.join(projectRoot, (await loadConfigFile(projectRoot)).audit.logPath)
+      await writeFile(auditPath, '')
+      await rm(projectLink)
+
+      const first = await runManagedCommand(
+        await managedCommand(path.join(cursorRoot, 'hooks.json'), 'beforeShellExecution'),
+        { command: 'git push origin main', cwd: projectRoot },
+        projectRoot,
+        path.join(homeRoot, 'durable-origin-core-imports.txt'),
+      )
+      const beforeUpgradeDoctor = await doctorProject({ targetDir: projectRoot })
+
+      expect(first.exitCode).toBe(0)
+      expect(JSON.parse(first.stdout)).toMatchObject({ permission: 'deny' })
+      expect(await auditRecords(projectRoot)).toHaveLength(1)
+      expect(beforeUpgradeDoctor.ok).toBe(true)
+
+      await upgradeProject({ targetDir: projectRoot })
+      const hooks = JSON.parse(await readFile(path.join(cursorRoot, 'hooks.json'), 'utf8')) as {
+        hooks: { beforeShellExecution?: Array<{ command?: unknown }> }
+      }
+      expect(hooks.hooks.beforeShellExecution).toHaveLength(1)
+      const second = await runManagedCommand(
+        await managedCommand(path.join(cursorRoot, 'hooks.json'), 'beforeShellExecution'),
+        { command: 'git push origin main', cwd: projectRoot },
+        projectRoot,
+        path.join(homeRoot, 'durable-origin-core-imports.txt'),
+      )
+      expect(second.exitCode).toBe(0)
+      expect(JSON.parse(second.stdout)).toMatchObject({ permission: 'deny' })
+      expect(await auditRecords(projectRoot)).toHaveLength(2)
     },
   )
 

@@ -103,7 +103,6 @@ export async function initCursorProject(
 
   await ensureDir(paths.hooksDir)
   const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await applyInstallScope(repoRoot, 'cursor', scope, config)
   await writeRuntimeArtifacts('cursor', paths)
   await bootstrapStateFiles(repoRoot, config, paths)
 
@@ -113,11 +112,12 @@ export async function initCursorProject(
 
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
+  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
   if (scope === 'global') {
     await cleanupStaleProjectCursorInstall(repoRoot)
   }
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
+  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
   return { repoRoot, withSkill }
 }
 
@@ -129,7 +129,6 @@ export async function upgradeCursorProject(
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
 
   const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await applyInstallScope(repoRoot, 'cursor', scope, config)
   await writeRuntimeArtifacts('cursor', paths)
 
   const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
@@ -164,12 +163,13 @@ export async function upgradeCursorProject(
     await writeSkillArtifacts('cursor', paths)
   }
 
+  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
   if (scope === 'global') {
     await cleanupStaleProjectCursorInstall(repoRoot)
   }
 
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
+  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
   return { repoRoot }
 }
 

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
-import { resolveScopedPaths } from '../adapters/layouts/scope.js'
+import { isPathInside, resolveScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterLayout } from '../adapters/layouts/types.js'
 import { resolveAdapterName } from '../config-io.js'
 import type { BelayConfigV4 } from './config.js'
@@ -13,6 +13,29 @@ export interface IntegrityManifest {
   version: 1
   generatedAt: string
   files: Record<string, string>
+}
+
+const GLOBAL_INTEGRITY_PREFIX = '@global/'
+
+function portableRelativePath(from: string, to: string): string {
+  return path.relative(from, to).split(path.sep).join('/')
+}
+
+function integrityManifestFileKey(
+  repoRoot: string,
+  layout: AdapterLayout,
+  filePath: string,
+): string {
+  const absolutePath = path.resolve(filePath)
+  if (isPathInside(absolutePath, repoRoot)) {
+    return portableRelativePath(repoRoot, absolutePath)
+  }
+  const globalPaths = resolveScopedPaths(layout, 'global', repoRoot)
+  const globalAgentDir = path.dirname(globalPaths.hooksSettingsPath)
+  if (isPathInside(absolutePath, globalAgentDir)) {
+    return `${GLOBAL_INTEGRITY_PREFIX}${portableRelativePath(globalAgentDir, absolutePath)}`
+  }
+  throw new Error(`Integrity file is outside the repository and global adapter root: ${filePath}`)
 }
 
 export async function sha256File(filePath: string): Promise<string> {
@@ -26,9 +49,6 @@ export function integrityManifestPath(layout: AdapterLayout, repoRoot: string): 
 
 export function runtimeIntegrityFiles(layout: AdapterLayout, paths: ScopedPaths): string[] {
   const files = [paths.configPath]
-  if (paths.scope !== 'project') {
-    return files
-  }
   const hooksDir = paths.hooksDir
   const runtimeDir = paths.runtimeDir
   return [
@@ -56,8 +76,8 @@ export async function writeIntegrityManifest(
     if (!existsSync(filePath)) {
       continue
     }
-    const relativePath = path.relative(repoRoot, filePath)
-    files[relativePath] = await sha256File(filePath)
+    const manifestKey = integrityManifestFileKey(repoRoot, layout, filePath)
+    files[manifestKey] = await sha256File(filePath)
   }
   const manifest: IntegrityManifest = {
     version: 1,
@@ -72,6 +92,7 @@ export async function writeIntegrityManifest(
 export async function verifyIntegrityManifest(
   repoRoot: string,
   layout: AdapterLayout,
+  requiredFilePaths: string[] = [],
 ): Promise<{ ok: boolean; mismatches: string[] }> {
   const manifestPath = integrityManifestPath(layout, repoRoot)
   if (!existsSync(manifestPath)) {
@@ -79,15 +100,41 @@ export async function verifyIntegrityManifest(
   }
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as IntegrityManifest
   const mismatches: string[] = []
-  for (const [relativePath, expectedHash] of Object.entries(manifest.files ?? {})) {
-    const absolutePath = path.join(repoRoot, relativePath)
+  const requiredPathsByKey = new Map(
+    requiredFilePaths.map((requiredPath) => [
+      integrityManifestFileKey(repoRoot, layout, requiredPath),
+      path.resolve(requiredPath),
+    ]),
+  )
+  for (const requiredPath of requiredFilePaths) {
+    const requiredKey = integrityManifestFileKey(repoRoot, layout, requiredPath)
+    if (!Object.hasOwn(manifest.files ?? {}, requiredKey)) {
+      mismatches.push(`missing integrity pin ${requiredKey}`)
+    }
+  }
+  for (const [manifestKey, expectedHash] of Object.entries(manifest.files ?? {})) {
+    let absolutePath: string
+    if (manifestKey.startsWith(GLOBAL_INTEGRITY_PREFIX)) {
+      const requiredPath = requiredPathsByKey.get(manifestKey)
+      if (!requiredPath) {
+        mismatches.push(`unrecognized global integrity pin ${manifestKey}`)
+        continue
+      }
+      absolutePath = requiredPath
+    } else {
+      absolutePath = path.resolve(repoRoot, manifestKey)
+      if (!isPathInside(absolutePath, repoRoot)) {
+        mismatches.push(`integrity pin escapes repository ${manifestKey}`)
+        continue
+      }
+    }
     if (!existsSync(absolutePath)) {
-      mismatches.push(`missing ${relativePath}`)
+      mismatches.push(`missing ${manifestKey}`)
       continue
     }
     const actualHash = await sha256File(absolutePath)
     if (actualHash !== expectedHash) {
-      mismatches.push(`hash mismatch ${relativePath}`)
+      mismatches.push(`hash mismatch ${manifestKey}`)
     }
   }
   return { ok: mismatches.length === 0, mismatches }

@@ -98,6 +98,36 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
+  it('reports a managed Cursor entry that has not migrated to failClosed', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-host-fail-closed-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        controlPlane: { ...config.controlPlane, integrity: 'none' },
+      })}\n`,
+    )
+    const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+    const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+      hooks: { beforeShellExecution: Array<Record<string, unknown>> }
+    }
+    delete hooks.hooks.beforeShellExecution[0]?.failClosed
+    await writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`)
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('beforeShellExecution') && issue.includes('failClosed: true'),
+      ),
+    ).toBe(true)
+  })
+
   it('reports an incomplete intended project owner when its dispatcher is missing', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-incomplete-owner-'))
     tempDirs.push(repoRoot)
@@ -183,6 +213,31 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
+  it.each([
+    'claude',
+    'codex',
+  ] as const)('uses the actual Windows .cmd runner when diagnosing a healthy %s install', async (adapter) => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), `belay-doctor-win-${adapter}-`))
+    tempDirs.push(repoRoot)
+    process.env.SystemRoot = 'D:\\Windows'
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    await initProject({ targetDir: repoRoot, adapter, judgeProviderId: 'ollama' })
+
+    const hooksDir = path.join(repoRoot, `.${adapter}`, 'hooks')
+    expect(existsSync(path.join(hooksDir, 'belay-runner.cmd'))).toBe(true)
+    expect(existsSync(path.join(hooksDir, 'belay-runner.ps1'))).toBe(false)
+
+    const report = await doctorProject({ targetDir: repoRoot, adapter })
+
+    expect(report.issues).toEqual([])
+    expect(report.ok).toBe(true)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('Missing generated file') && issue.includes('belay-runner'),
+      ),
+    ).toBe(false)
+  })
+
   it('notes a healthy global install shadowed by the selected project owner', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadowed-global-'))
     const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadowed-home-'))
@@ -199,6 +254,68 @@ describe('doctorProject', () => {
       report.notes.some((note) => note.includes('Healthy global Cursor install is shadowed')),
     ).toBe(true)
     expect(report.warnings.some((warning) => warning.toLowerCase().includes('shadow'))).toBe(false)
+  })
+
+  it('diagnoses malformed shadowed global Cursor hooks without throwing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-hooks-json-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-hooks-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    await writeFile(path.join(homeDir, '.cursor', 'hooks.json'), '{ malformed')
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) =>
+        issue.includes('Unable to inspect shadowed global Cursor hooks'),
+      ),
+    ).toBe(true)
+  })
+
+  it('diagnoses unreadable shadowed global Cursor hooks without throwing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-hooks-read-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-hooks-read-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    const globalHooksPath = path.join(homeDir, '.cursor', 'hooks.json')
+    await rm(globalHooksPath)
+    await mkdir(globalHooksPath)
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) =>
+        issue.includes('Unable to inspect shadowed global Cursor hooks'),
+      ),
+    ).toBe(true)
+  })
+
+  it('diagnoses an unreadable shadowed global Cursor shim without throwing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-shim-read-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadow-shim-read-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    const shellShim = path.join(homeDir, '.cursor', 'hooks', 'belay-shell-gate.mjs')
+    await rm(shellShim)
+    await mkdir(shellShim)
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) => issue.includes('Unable to inspect Cursor hook shim')),
+    ).toBe(true)
   })
 
   it.runIf(process.platform !== 'win32')(
@@ -232,6 +349,98 @@ describe('doctorProject', () => {
     expect(
       report.issues.some(
         (issue) => issue.includes('hash mismatch') && issue.includes('dispatcher'),
+      ),
+    ).toBe(true)
+  })
+
+  it.each([
+    {
+      name: 'dispatcher',
+      artifactPath: (homeDir: string) =>
+        path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
+    },
+    {
+      name: 'core',
+      artifactPath: (homeDir: string) =>
+        path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs'),
+    },
+    {
+      name: 'shim',
+      artifactPath: (homeDir: string) =>
+        path.join(homeDir, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+    },
+    {
+      name: 'runner',
+      artifactPath: (homeDir: string) =>
+        path.join(
+          homeDir,
+          '.cursor',
+          'hooks',
+          process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
+        ),
+    },
+  ])('reports a tampered global Cursor $name integrity pin', async ({ artifactPath }) => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-integrity-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-integrity-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({
+      targetDir: repoRoot,
+      scope: 'global',
+      judgeProviderId: 'ollama',
+    })
+    const targetPath = artifactPath(homeDir)
+    await writeFile(targetPath, `${await readFile(targetPath, 'utf8')}\n// integrity tamper\n`)
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.includes('Integrity verification failed') &&
+          issue.includes('hash mismatch') &&
+          issue.includes(path.basename(targetPath)),
+      ),
+    ).toBe(true)
+  })
+
+  it('reports a global integrity manifest that omits enforcement artifacts', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-pin-set-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-pin-set-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({
+      targetDir: repoRoot,
+      scope: 'global',
+      judgeProviderId: 'ollama',
+    })
+    const manifestPath = path.join(repoRoot, '.cursor', 'belay', 'integrity-manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      files: Record<string, string>
+    }
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(
+        {
+          ...manifest,
+          files: {
+            '.cursor/belay.config.json': manifest.files['.cursor/belay.config.json'],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('missing integrity pin') && issue.includes('dispatcher.mjs'),
       ),
     ).toBe(true)
   })

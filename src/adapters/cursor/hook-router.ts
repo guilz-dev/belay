@@ -1,9 +1,13 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
-import { cursorLayout } from '../layouts/cursor.js'
-import { findRepoRoot } from '../shared/repo-root.js'
 import { resolveCursorActionCwdDetails } from './cwd-resolution.js'
+import {
+  cursorRoutingConfigPath,
+  cursorRoutingHooksDir,
+  cursorRoutingRuntimeDir,
+  findCursorRoutingRepoRoot,
+} from './routing-layout.js'
 
 export type CursorHookOrigin = { scope: 'project'; repoRoot: string } | { scope: 'global' }
 
@@ -19,6 +23,8 @@ export interface RouteCursorHookParams {
   kind: CursorHookKind
   payload: Record<string, unknown>
 }
+
+type RoutingInstallScope = 'missing' | 'project' | 'global'
 
 function canonicalExistingPath(value: string): string | undefined {
   if (!existsSync(value)) {
@@ -87,6 +93,31 @@ function selectedActionPath(payload: Record<string, unknown>): string | undefine
   return undefined
 }
 
+function readInstallScope(repoRoot: string): RoutingInstallScope {
+  const configPath = cursorRoutingConfigPath(repoRoot)
+  let source: string
+  try {
+    source = readFileSync(configPath, 'utf8')
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'project'
+  }
+  try {
+    const parsed: unknown = JSON.parse(source)
+    if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).installScope === 'global'
+    ) {
+      return 'global'
+    }
+  } catch {
+    // A present config that cannot be read or parsed must retain Project ownership so the
+    // selected Project hook reaches its fail-closed core path. Only a missing config is neutral.
+  }
+  return 'project'
+}
+
 export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute {
   const relevantPayload = payloadForKind(params.payload, params.kind)
   const selectedPath = selectedActionPath(relevantPayload)
@@ -98,24 +129,18 @@ export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute 
   if (!canonicalCwd) {
     return { decision: 'fail_closed', message: 'belay could not determine the workspace.' }
   }
-  const repoRoot = canonicalExistingPath(findRepoRoot(canonicalCwd, cursorLayout))
+  const repoRoot = canonicalExistingPath(findCursorRoutingRepoRoot(canonicalCwd))
   if (!repoRoot) {
     return { decision: 'neutral' }
   }
-  try {
-    const config = JSON.parse(readFileSync(cursorLayout.configPath(repoRoot), 'utf8')) as {
-      installScope?: unknown
-    }
-    if (config.installScope === 'global') {
-      return params.origin.scope === 'global'
-        ? { decision: 'execute', repoRoot }
-        : { decision: 'neutral' }
-    }
-    if (config.installScope !== 'project') {
-      return { decision: 'neutral' }
-    }
-  } catch {
+  const installScope = readInstallScope(repoRoot)
+  if (installScope === 'missing') {
     return { decision: 'neutral' }
+  }
+  if (installScope === 'global') {
+    return params.origin.scope === 'global'
+      ? { decision: 'execute', repoRoot }
+      : { decision: 'neutral' }
   }
   if (params.origin.scope !== 'project') {
     return { decision: 'neutral' }
@@ -123,11 +148,11 @@ export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute 
   if (canonicalExistingPath(params.origin.repoRoot) !== repoRoot) {
     return { decision: 'neutral' }
   }
-  const hooksDir = cursorLayout.hooksDir(repoRoot)
+  const hooksDir = cursorRoutingHooksDir(repoRoot)
   const complete = [
     path.join(hooksDir, hookScriptFor(params.kind)),
     path.join(hooksDir, 'belay-runner'),
-    path.join(cursorLayout.runtimeDir(repoRoot), 'core.mjs'),
+    path.join(cursorRoutingRuntimeDir(repoRoot), 'core.mjs'),
   ].every(existsSync)
   return complete
     ? { decision: 'execute', repoRoot }

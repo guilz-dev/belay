@@ -1,4 +1,4 @@
-import { exec as execCallback, execFile as execFileCallback } from 'node:child_process'
+import { exec as execCallback, execFile as execFileCallback, spawnSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -39,6 +39,31 @@ async function createTempHome() {
   tempDirs.push(homeDir)
   process.env.HOME = homeDir
   return homeDir
+}
+
+async function runInstalledCursorShellGate(
+  hooksPath: string,
+  actionRepoRoot: string,
+): Promise<Record<string, unknown>> {
+  const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+    hooks: { beforeShellExecution?: Array<{ command?: unknown }> }
+  }
+  const command = hooks.hooks.beforeShellExecution?.[0]?.command
+  if (typeof command !== 'string') {
+    throw new Error(`missing Cursor shell gate in ${hooksPath}`)
+  }
+  const result = spawnSync(command, {
+    cwd: actionRepoRoot,
+    env: { ...process.env, BELAY_DETERMINISTIC_JUDGE: '1' },
+    input: JSON.stringify({ command: 'git push origin main', cwd: actionRepoRoot }),
+    encoding: 'utf8',
+    shell: true,
+    timeout: 15_000,
+  })
+  if (result.status !== 0) {
+    throw new Error(`Cursor shell gate failed (${result.status}): ${result.stderr}`)
+  }
+  return JSON.parse(result.stdout.trim()) as Record<string, unknown>
 }
 
 describe('installer scope (T29)', () => {
@@ -225,6 +250,50 @@ describe('installer scope (T29)', () => {
     expect(globalShim).toContain("from '../belay/runtime/dispatcher.mjs'")
   })
 
+  it('keeps the global owner effective when staging a project init fails before publication', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    const projectRuntimePath = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    await rm(projectRuntimePath, { recursive: true, force: true })
+    await writeFile(projectRuntimePath, 'blocks runtime directory creation\n')
+
+    await expect(initProject({ targetDir: repoRoot, scope: 'project' })).rejects.toThrow()
+
+    expect((await loadConfigFile(repoRoot, 'cursor')).installScope).toBe('global')
+    await expect(
+      runInstalledCursorShellGate(path.join(homeDir, '.cursor', 'hooks.json'), repoRoot),
+    ).resolves.toMatchObject({ permission: 'deny' })
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      true,
+    )
+  })
+
+  it('keeps the project owner effective when staging a global upgrade fails before publication', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    const globalSkillsDir = path.join(homeDir, '.cursor', 'skills')
+    await mkdir(globalSkillsDir, { recursive: true })
+    await writeFile(path.join(globalSkillsDir, 'belay'), 'blocks skill directory creation\n')
+
+    await expect(
+      upgradeProject({ targetDir: repoRoot, scope: 'global', withSkill: true }),
+    ).rejects.toThrow()
+
+    expect((await loadConfigFile(repoRoot, 'cursor')).installScope).toBe('project')
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      true,
+    )
+    expect(existsSync(path.join(homeDir, '.cursor', 'hooks.json'))).toBe(true)
+    await expect(
+      runInstalledCursorShellGate(path.join(repoRoot, '.cursor', 'hooks.json'), repoRoot),
+    ).resolves.toMatchObject({ permission: 'deny' })
+    expect(existsSync(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      true,
+    )
+  })
+
   it.runIf(process.platform !== 'win32')(
     'upgrades through a symlink without duplicating canonical-equivalent managed hooks',
     async () => {
@@ -385,22 +454,72 @@ describe('installer scope (T29)', () => {
     expect(shellCommand).not.toMatch(/^\.\//)
   })
 
-  it('integrity manifest lists project files only for global scope', async () => {
+  it('integrity manifest pins the global Cursor settings, shims, runners, and runtime', async () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot, scope: 'global' })
 
     const paths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
     const files = runtimeIntegrityFiles(cursorLayout, paths)
-    expect(files).toEqual([paths.configPath])
-    expect(files.every((filePath) => filePath.startsWith(repoRoot))).toBe(true)
+    const expectedFiles = [
+      paths.configPath,
+      paths.hooksSettingsPath,
+      path.join(paths.hooksDir, 'belay-before-submit.mjs'),
+      path.join(paths.hooksDir, 'belay-shell-gate.mjs'),
+      path.join(paths.hooksDir, 'belay-tool-gate.mjs'),
+      path.join(paths.hooksDir, 'belay-audit.mjs'),
+      path.join(paths.hooksDir, 'belay-runner'),
+      path.join(paths.hooksDir, 'belay-runner.cmd'),
+      path.join(paths.hooksDir, 'belay-runner.ps1'),
+      path.join(paths.runtimeDir, 'core.mjs'),
+      path.join(paths.runtimeDir, 'dispatcher.mjs'),
+    ]
+    expect(files).toEqual(expectedFiles)
 
     const manifestPath = path.join(repoRoot, '.cursor', 'belay', 'integrity-manifest.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
       files: Record<string, string>
     }
-    expect(Object.keys(manifest.files)).toEqual(['.cursor/belay.config.json'])
+    expect(Object.keys(manifest.files)).toEqual([
+      '.cursor/belay.config.json',
+      '@global/hooks.json',
+      '@global/hooks/belay-before-submit.mjs',
+      '@global/hooks/belay-shell-gate.mjs',
+      '@global/hooks/belay-tool-gate.mjs',
+      '@global/hooks/belay-audit.mjs',
+      '@global/hooks/belay-runner',
+      '@global/hooks/belay-runner.cmd',
+      '@global/hooks/belay-runner.ps1',
+      '@global/belay/runtime/core.mjs',
+      '@global/belay/runtime/dispatcher.mjs',
+    ])
     expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-tool-gate.mjs'))).toBe(true)
+  })
+
+  it('refreshes every global Cursor integrity pin on upgrade', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    const dispatcherPath = path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs')
+    await writeFile(dispatcherPath, `${await readFile(dispatcherPath, 'utf8')}\n// tampered\n`)
+
+    await upgradeProject({ targetDir: repoRoot, scope: 'global' })
+
+    const manifest = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'integrity-manifest.json'), 'utf8'),
+    ) as { files: Record<string, string> }
+    for (const manifestKey of [
+      '@global/hooks.json',
+      '@global/hooks/belay-shell-gate.mjs',
+      '@global/hooks/belay-runner',
+      '@global/hooks/belay-runner.cmd',
+      '@global/hooks/belay-runner.ps1',
+      '@global/belay/runtime/core.mjs',
+      '@global/belay/runtime/dispatcher.mjs',
+    ]) {
+      expect(manifest.files[manifestKey]).toMatch(/^[a-f0-9]{64}$/)
+    }
+    await expect(doctorProject({ targetDir: repoRoot })).resolves.toMatchObject({ ok: true })
   })
 
   it('doctor passes after global install', async () => {

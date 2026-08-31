@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
@@ -48,7 +48,7 @@ export async function writeRuntimeArtifacts(
     adapterName === 'cursor'
       ? paths.scope === 'global'
         ? ({ scope: 'global' } as const)
-        : ({ scope: 'project', repoRoot: paths.repoRoot } as const)
+        : ({ scope: 'project', repoRoot: await realpath(paths.repoRoot) } as const)
       : undefined
   const artifacts = {
     auditHook: renderAuditHook(adapterName, cursorOrigin),

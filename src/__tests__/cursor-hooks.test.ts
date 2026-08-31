@@ -37,6 +37,64 @@ async function readJson(filePath: string) {
 }
 
 describe('cursor hook dedupe', () => {
+  it('serializes failClosed for every managed Cursor hook entry', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const hooks = (await readJson(path.join(repoRoot, '.cursor', 'hooks.json'))) as {
+      hooks: Record<
+        string,
+        Array<{ command: string; matcher?: string; failClosed?: boolean }> | undefined
+      >
+    }
+
+    for (const { event, definition } of getManagedHookEntries(
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )) {
+      const installed = hooks.hooks[event]?.find(
+        (entry) => entry.command === definition.command && entry.matcher === definition.matcher,
+      )
+      expect(installed, `${event}:${definition.matcher ?? '*'}`).toMatchObject({
+        failClosed: true,
+      })
+    }
+  })
+
+  it('migrates an exact managed entry without failClosed to the host fail-closed definition', () => {
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'fail-closed-project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot).find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )
+    if (!managed) {
+      throw new Error('missing managed beforeShellExecution definition')
+    }
+    const custom = { command: 'custom-shell-hook', failClosed: false }
+
+    const merged = mergeCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            { command: managed.definition.command },
+            custom,
+            { command: managed.definition.command, failClosed: false },
+          ],
+        },
+      },
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: managed.definition.command, matcher: undefined, failClosed: true },
+      custom,
+    ])
+  })
+
   it('migrates exact legacy-relative entries to one absolute entry without reordering custom hooks', () => {
     const canonicalTempDir = realpathSync(os.tmpdir())
     const repoRoot = path.join(canonicalTempDir, 'project with spaces')
@@ -85,7 +143,7 @@ describe('cursor hook dedupe', () => {
     const merged = mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: currentShellCommand, matcher: undefined },
+      { command: currentShellCommand, matcher: undefined, failClosed: true },
       customBefore,
       customMiddle,
       unknownBelayLike,
@@ -182,7 +240,7 @@ describe('cursor hook dedupe', () => {
     )
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: current.command, matcher: current.matcher },
+      { command: current.command, matcher: current.matcher, failClosed: true },
       customBefore,
       unknownLookalike,
       unknownBarePowerShell,

@@ -34,6 +34,7 @@ import type { ApprovalRecord, ClassifyResult } from './core/types.js'
 export interface HookEntry {
   command: string
   matcher?: string
+  failClosed?: boolean
 }
 
 export interface HooksFile {

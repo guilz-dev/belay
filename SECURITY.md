@@ -85,7 +85,14 @@ Requires external OS sandbox runtime + running egress proxy. See
 - **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but forbidden for use and ignored by shell authorization; `belay doctor` fails when either list is non-empty.
 - **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, unresolved/dynamic substitutions, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools. Statically recoverable nested effects are retained before the partial plan asks.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
-- **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records runtime hashes; `doctor` verifies them.
+- **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records
+  config, hook settings, shims, platform runners, core, and Cursor dispatcher hashes for both
+  Project and global installs; `doctor` verifies the hashes and the required pin set. Global files
+  use scope-relative `@global/…` manifest keys that resolve only to expected adapter artifacts.
+- **Cursor host failure floor** — all managed Cursor entries set `failClosed: true`, so actionable
+  hook launch, crash, timeout, and invalid-output failures are blocked by the host as well as by
+  Belay response handling. Post-action events cannot undo completed effects, and Cursor treats
+  `sessionEnd` as fire-and-forget.
 - **Audit redaction** — configurable scrubbing for bearer tokens, auth headers, key/value secrets, and approval IDs.
 
 ### Egress chokepoint (v0.7, opt-in) — partial L1
@@ -177,7 +184,9 @@ sandbox) must enforce deny-all; belay brokers capability widening:
 - Audit mode records would-be denies without blocking.
 - Control-plane protection depends on accurate path resolution (symlinks resolved via `realpath`).
 - Command substitution parsing does not cover `${...}` parameter expansion; complex quoting edge cases may still evade detection.
-- Hash-pinned integrity detects tampering only for files listed in the install manifest; manual edits require `belay upgrade` to refresh hashes.
+- Hash-pinned integrity detects tampering in the required installed enforcement cohort; manual
+  edits require `belay upgrade` to refresh hashes. It does not provide code signing or protect
+  files against mutation before doctor or the next read.
 - Disabling `controlPlane` reverts to repo-local approval paths; files under `~/.config/belay/` are not deleted automatically.
 - Cursor sandbox behavior for hooks writing outside the workspace should be validated on target hosts (see `docs/spikes/oq3-control-plane.md`).
 

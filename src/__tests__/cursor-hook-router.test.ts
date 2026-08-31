@@ -182,6 +182,100 @@ describe('routeCursorHook', () => {
     ).toEqual({ decision: 'neutral' })
   })
 
+  it('keeps every source neutral when the repository config is missing', async () => {
+    const repoRoot = await createTempDir('belay-cursor-missing-config-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await Promise.all([
+      mkdir(path.join(repoRoot, '.git'), { recursive: true }),
+      mkdir(actionDir, { recursive: true }),
+    ])
+
+    for (const origin of [{ scope: 'global' as const }, { scope: 'project' as const, repoRoot }]) {
+      expect(
+        routeCursorHook({
+          origin,
+          kind: 'shell-gate',
+          payload: { cwd: actionDir },
+        }),
+      ).toEqual({ decision: 'neutral' })
+    }
+  })
+
+  it('normalizes an omitted installScope to the project owner', async () => {
+    const repoRoot = await createTempDir('belay-cursor-omitted-scope-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'execute', repoRoot: realpathSync(repoRoot) })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
+  it.each([
+    { name: 'malformed', config: '{not-json\n' },
+    { name: 'structurally invalid', config: '[]\n' },
+    { name: 'invalid installScope', config: '{"installScope":"managed"}\n' },
+  ])('routes a present $name config through the project owner', async ({ config }) => {
+    const repoRoot = await createTempDir('belay-cursor-broken-config-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), config)
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'execute', repoRoot: realpathSync(repoRoot) })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
+  it('routes an unreadable config path through the project owner', async () => {
+    const repoRoot = await createTempDir('belay-cursor-unreadable-config-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await rm(configPath)
+    await mkdir(configPath)
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'execute', repoRoot: realpathSync(repoRoot) })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
   it.each([
     { kind: 'shell-gate' as const, hookFile: 'belay-shell-gate.mjs' },
     { kind: 'audit' as const, hookFile: 'belay-audit.mjs' },
