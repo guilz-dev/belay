@@ -1,5 +1,12 @@
 import path from 'node:path'
 import process from 'node:process'
+
+import { approvalCommandMatch } from '../../core/approval.js'
+import {
+  findApprovalRepoRoots,
+  formatAmbiguousApprovalRepoMessage,
+} from '../../core/approval-repo-lookup.js'
+import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
 import { cursorLayout } from '../layouts/cursor.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
 import {
@@ -11,6 +18,12 @@ import {
   resolveGateConfig,
 } from '../shared/gate-runtime.js'
 import { findRepoRoot } from '../shared/repo-root.js'
+import {
+  type CursorActionCwdResolution,
+  GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
+  isUnsafeGlobalHookFallback,
+  resolveCursorActionCwdDetails,
+} from './cwd-resolution.js'
 
 async function readStdinJson(): Promise<Record<string, unknown>> {
   const chunks: string[] = []
@@ -32,43 +45,57 @@ function jsonResponse(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
 
-function nonEmptyPathString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined
+export function resolveCursorActionCwd(
+  payload: Record<string, unknown>,
+  fallback: string = process.cwd(),
+): string {
+  return resolveCursorActionCwdDetails(payload, fallback).cwd
 }
 
-export function resolveCursorActionCwd(payload: Record<string, unknown>, fallback: string): string {
-  const toolInput = payload.tool_input
-  const toolInputWorkingDirectory =
-    toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
-      ? nonEmptyPathString((toolInput as Record<string, unknown>).working_directory)
-      : undefined
-  const topLevelCwd = nonEmptyPathString(payload.cwd)
-  const workspaceRoot = Array.isArray(payload.workspace_roots)
-    ? payload.workspace_roots.map(nonEmptyPathString).find(Boolean)
-    : undefined
-
-  return path.resolve(toolInputWorkingDirectory ?? topLevelCwd ?? workspaceRoot ?? fallback)
-}
-
-function resolveCursorToolActionCwd(
+function resolveCursorToolActionCwdDetails(
   payload: Record<string, unknown>,
   fallback: string,
   eventName: string,
   toolName: string,
-): string {
+): CursorActionCwdResolution {
   if (eventName === 'preToolUse' && toolName === 'Shell') {
-    return resolveCursorActionCwd(payload, fallback)
+    return resolveCursorActionCwdDetails(payload, fallback)
   }
 
   const toolInput = payload.tool_input
   if (toolInput === null || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
-    return resolveCursorActionCwd(payload, fallback)
+    return resolveCursorActionCwdDetails(payload, fallback)
   }
   const { working_directory: _workingDirectory, ...withoutWorkingDirectory } = toolInput as Record<
     string,
     unknown
   >
-  return resolveCursorActionCwd({ ...payload, tool_input: withoutWorkingDirectory }, fallback)
+  return resolveCursorActionCwdDetails(
+    { ...payload, tool_input: withoutWorkingDirectory },
+    fallback,
+  )
+}
+
+function collectCandidateRepoRoots(
+  payload: Record<string, unknown>,
+  resolution: CursorActionCwdResolution,
+): string[] {
+  const roots: string[] = []
+  const add = (value: string) => {
+    const resolved = path.resolve(value)
+    if (!roots.includes(resolved)) {
+      roots.push(resolved)
+    }
+  }
+  if (Array.isArray(payload.workspace_roots)) {
+    for (const root of payload.workspace_roots) {
+      if (typeof root === 'string' && root.trim()) {
+        add(root)
+      }
+    }
+  }
+  add(resolution.cwd)
+  return roots
 }
 
 async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
@@ -77,6 +104,55 @@ async function loadRuntimeContext(cwd: string): Promise<GateRuntimeContext> {
   const deps = createDefaultGateRuntimeDeps()
   const config = await resolveGateConfig({ layout: cursorLayout, repoRoot, configPath }, deps)
   return { layout: cursorLayout, repoRoot, config, configPath }
+}
+
+async function processApprovalPromptWithRepoFallback(
+  ctx: GateRuntimeContext,
+  deps: ReturnType<typeof createDefaultGateRuntimeDeps>,
+  prompt: string,
+  payload: Record<string, unknown>,
+  resolution: CursorActionCwdResolution,
+): Promise<Awaited<ReturnType<typeof processApprovalPrompt>>> {
+  const tokenPrefix = ctx.config.tokenPrefix || DEFAULT_CONFIG_V4.tokenPrefix
+  const approvalId = approvalCommandMatch(prompt, tokenPrefix)
+  const result = await processApprovalPrompt(ctx, deps, prompt)
+
+  if (result.continue || !approvalId) {
+    return result
+  }
+
+  const notFound =
+    result.user_message?.includes('not found') ||
+    result.user_message?.includes('Belay approval not found')
+  if (!notFound) {
+    return result
+  }
+
+  const candidates = collectCandidateRepoRoots(payload, resolution).filter(
+    (root) => root !== ctx.repoRoot,
+  )
+  if (candidates.length === 0) {
+    return result
+  }
+
+  const lookup = await findApprovalRepoRoots({
+    approvalId,
+    candidateRepoRoots: candidates,
+    adapter: 'cursor',
+  })
+
+  if (lookup.status === 'ambiguous') {
+    return {
+      continue: false,
+      user_message: formatAmbiguousApprovalRepoMessage(lookup.repoRoots),
+    }
+  }
+  if (lookup.status !== 'found') {
+    return result
+  }
+
+  const retryCtx = await loadRuntimeContext(lookup.repoRoot)
+  return processApprovalPrompt(retryCtx, deps, prompt)
 }
 
 function isSubagentEvent(payload: Record<string, unknown>, eventName: string): boolean {
@@ -91,9 +167,25 @@ export async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? '')
-    const ctx = await loadRuntimeContext(process.cwd())
+    const resolution = resolveCursorActionCwdDetails(payload)
+
+    if (isUnsafeGlobalHookFallback(resolution)) {
+      jsonResponse({
+        continue: false,
+        user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
+      })
+      return
+    }
+
+    const ctx = await loadRuntimeContext(resolution.cwd)
     const deps = createDefaultGateRuntimeDeps()
-    const result = await processApprovalPrompt(ctx, deps, prompt)
+    const result = await processApprovalPromptWithRepoFallback(
+      ctx,
+      deps,
+      prompt,
+      payload,
+      resolution,
+    )
     jsonResponse({
       continue: result.continue,
       ...(result.user_message ? { user_message: result.user_message } : {}),
@@ -111,7 +203,17 @@ export async function runShellGateHook() {
   try {
     const payload = await readStdinJson()
     const command = String(payload.command ?? '').trim()
-    const cwd = resolveCursorActionCwd(payload, process.cwd())
+    const resolution = resolveCursorActionCwdDetails(payload)
+
+    if (isUnsafeGlobalHookFallback(resolution)) {
+      jsonResponse({
+        permission: 'deny',
+        user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
+      })
+      return
+    }
+
+    const cwd = resolution.cwd
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const verdict = await evaluateGatedAction(ctx, deps, {
@@ -135,7 +237,22 @@ export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
     const toolName = String(payload.tool_name ?? '')
-    const cwd = resolveCursorToolActionCwd(payload, process.cwd(), eventName, toolName)
+    const resolution = resolveCursorToolActionCwdDetails(
+      payload,
+      process.cwd(),
+      eventName,
+      toolName,
+    )
+
+    if (isUnsafeGlobalHookFallback(resolution)) {
+      jsonResponse({
+        permission: 'deny',
+        user_message: GLOBAL_HOOK_WORKSPACE_MISSING_MESSAGE,
+      })
+      return
+    }
+
+    const cwd = resolution.cwd
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
 
@@ -198,7 +315,20 @@ export async function runToolGateHook(eventName: string) {
 export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const ctx = await loadRuntimeContext(process.cwd())
+    const toolName = String(payload.tool_name ?? '')
+    const resolution = resolveCursorToolActionCwdDetails(
+      payload,
+      process.cwd(),
+      eventName,
+      toolName,
+    )
+
+    if (isUnsafeGlobalHookFallback(resolution)) {
+      jsonResponse({})
+      return
+    }
+
+    const ctx = await loadRuntimeContext(resolution.cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
     jsonResponse({})

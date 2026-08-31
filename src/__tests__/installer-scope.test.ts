@@ -14,7 +14,7 @@ import { metricsProject } from '../commands/metrics.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { runtimeIntegrityFiles } from '../core/integrity.js'
 import { getManagedHookEntries } from '../defaults.js'
-import { initProject, upgradeProject } from '../installer.js'
+import { initProject, uninstallProject, upgradeProject } from '../installer.js'
 import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
@@ -190,5 +190,38 @@ describe('installer scope (T29)', () => {
     expect(existsSync(path.join(homeDir, '.codex', 'skills', 'belay', 'SKILL.md'))).toBe(true)
     const config = await loadConfigFile(repoRoot, 'codex')
     expect(config.installScope).toBe('global')
+  })
+
+  it('uninstall --scope global removes hooks.json entries and hook artifacts', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global', withSkill: true })
+
+    const hooksPath = path.join(homeDir, '.cursor', 'hooks.json')
+    const hooksBefore = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+      hooks: Record<string, unknown[]>
+    }
+    expect(hooksBefore.hooks.beforeShellExecution?.length ?? 0).toBeGreaterThan(0)
+    expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(true)
+
+    const result = await uninstallProject({ targetDir: repoRoot, scope: 'global' })
+    expect(result.scope).toBe('global')
+
+    const hooksAfter = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+      hooks: Record<string, unknown[]>
+    }
+    const belayEntries = Object.values(hooksAfter.hooks)
+      .flat()
+      .filter((entry) => {
+        const command =
+          entry && typeof entry === 'object' && 'command' in entry
+            ? String((entry as { command?: string }).command ?? '')
+            : ''
+        return command.includes('belay-runner')
+      })
+    expect(belayEntries).toHaveLength(0)
+    expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'skills', 'belay', 'SKILL.md'))).toBe(false)
   })
 })

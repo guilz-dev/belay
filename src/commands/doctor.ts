@@ -137,7 +137,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       corePath = path.join(scopedPaths.runtimeDir, 'core.mjs')
       notes.push(
         installScope === 'global'
-          ? `Install scope: global (hooks/runtime at ${scopedPaths.hooksDir})`
+          ? adapterName === 'cursor'
+            ? `Install scope: global (hooks/runtime at ${scopedPaths.hooksDir}). To remove global hooks: belay uninstall --scope global`
+            : `Install scope: global (hooks/runtime at ${scopedPaths.hooksDir})`
           : 'Install scope: project',
       )
       notes.push(`Config mode: ${loadedConfig.mode}`)

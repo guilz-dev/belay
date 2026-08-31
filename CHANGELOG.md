@@ -8,13 +8,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Cursor global hook workspace resolution** — Payload-free global hook invocations now
+  fail closed instead of falling back to `process.cwd()` (which could resolve to `$HOME`).
+  `beforeSubmitPrompt`, shell/tool gates, and audit hooks share the same payload-first cwd
+  resolver. `/belay-approve` can reverse-lookup the target repo from `workspace_roots` when
+  the initial repo guess misses a pending approval.
+- **Repo root detection** — `.cursor` / `.claude` / `.codex` markers require a belay config
+  file so `$HOME/.cursor` alone is not treated as a repository root.
 - **Cursor host-denial correlation** — Normalize `tool_use_id` values before hashing so
   `preToolUse` bare UUIDs join `postToolUseFailure` `tool_`-prefixed IDs; strengthen audit
   correlation guards and health-snapshot Cursor config discovery.
 
+### Added
+
+- **`belay uninstall`** — Remove managed Cursor hooks and runtime artifacts for
+  `--scope project` or `--scope global`. Use `belay uninstall --scope global` when global
+  hooks keep running after project cleanup.
+
 ### Changed
 
-- **Cursor `postToolUseFailure` hook** — Managed installs now register the audit hook.
+- **Global hook upgrades** — Run `belay upgrade --scope global` after pulling this release so
+  global runtime artifacts pick up fail-close cwd resolution and approval reverse lookup.
+  In-flight pending approvals may need re-issuance after upgrade (retry the denied action).
   Run `belay upgrade` on existing Cursor projects so `belay doctor` stays green and host
   denials after Belay allow are observable.
 - **Pending approval replay** — `fingerprintReplayPayload` no longer includes raw

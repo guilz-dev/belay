@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { mergeCursorHooksFile } from './adapters/cursor/hooks.js'
+import { mergeCursorHooksFile, stripCursorHooksFile } from './adapters/cursor/hooks.js'
 import { cursorLayout } from './adapters/layouts/cursor.js'
-import { resolveScopedPaths } from './adapters/layouts/scope.js'
+import { resolveScopedPaths, type ScopedPaths } from './adapters/layouts/scope.js'
 import type { AdapterName } from './adapters/layouts/types.js'
 import { getAdapter } from './adapters/registry.js'
 import { dogfoodProject } from './commands/dogfood.js'
@@ -34,7 +34,7 @@ import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
 import { applyConfigPreset } from './presets.js'
-import type { HooksFile, InitOptions, UpgradeOptions } from './types.js'
+import type { HooksFile, InitOptions, UninstallOptions, UpgradeOptions } from './types.js'
 
 export type { InstallScope } from './adapters/layouts/scope.js'
 
@@ -135,7 +135,48 @@ export async function upgradeCursorProject(
   return { repoRoot }
 }
 
-function resolveAdapterName(options: InitOptions | UpgradeOptions, repoRoot?: string): AdapterName {
+const BELAY_HOOK_ARTIFACTS = [
+  'belay-before-submit.mjs',
+  'belay-shell-gate.mjs',
+  'belay-tool-gate.mjs',
+  'belay-audit.mjs',
+  'belay-runner',
+  'belay-runner.cmd',
+]
+
+async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
+  for (const fileName of BELAY_HOOK_ARTIFACTS) {
+    await rm(path.join(paths.hooksDir, fileName), { force: true })
+  }
+  await rm(paths.runtimeDir, { recursive: true, force: true })
+  if (paths.scope === 'global') {
+    await rm(paths.skillsDir, { recursive: true, force: true })
+  }
+  if (paths.commandsDir) {
+    await rm(path.join(paths.commandsDir, 'belay.md'), { force: true })
+  }
+}
+
+export async function uninstallCursorProject(
+  options: UninstallOptions = {},
+): Promise<{ repoRoot: string; scope: 'project' | 'global' }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const scope = await resolveOperationScope(repoRoot, 'cursor', options)
+  const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
+  const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
+  const stripped = stripCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
+
+  await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
+  await writeFile(paths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  await removeBelayHookArtifacts(paths)
+
+  return { repoRoot, scope }
+}
+
+function resolveAdapterName(
+  options: InitOptions | UpgradeOptions | UninstallOptions,
+  repoRoot?: string,
+): AdapterName {
   if (options.adapter === 'claude') {
     return 'claude'
   }
@@ -303,4 +344,18 @@ export async function upgradeProject(
   }
   await refreshIntegrityManifest(repoRoot, adapterName)
   return { repoRoot, adapter: adapterName }
+}
+
+export async function uninstallProject(
+  options: UninstallOptions = {},
+): Promise<{ repoRoot: string; adapter: AdapterName; scope: 'project' | 'global' }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const adapterName = resolveAdapterName(options, repoRoot)
+  if (adapterName !== 'cursor') {
+    throw new Error(
+      `belay uninstall is only supported for Cursor adapter today. Use --adapter cursor or uninstall hooks manually for ${adapterName}.`,
+    )
+  }
+  const result = await uninstallCursorProject({ ...options, targetDir: repoRoot })
+  return { repoRoot: result.repoRoot, adapter: adapterName, scope: result.scope }
 }

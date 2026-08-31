@@ -28,7 +28,7 @@ import { revokeStandingAllow } from './commands/standing-allow.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
 import { loadConfigFile } from './config-io.js'
 import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
-import { initProject, upgradeProject } from './installer.js'
+import { initProject, uninstallProject, upgradeProject } from './installer.js'
 import type { ConfigPresetName } from './presets.js'
 import {
   egressEnv,
@@ -383,13 +383,13 @@ function parseArgs(argv: string[]) {
           throw new Error('--scope requires once, domain, path, or workspace-root.')
         }
         options.approveScope = next as 'once' | 'domain' | 'path' | 'workspace-root'
-      } else if (command === 'init' || command === 'upgrade') {
+      } else if (command === 'init' || command === 'upgrade' || command === 'uninstall') {
         if (!next || !['project', 'global'].includes(next)) {
           throw new Error('--scope requires project or global.')
         }
         options.installScope = next as 'project' | 'global'
       } else {
-        throw new Error('--scope is only valid for init, upgrade, or approve.')
+        throw new Error('--scope is only valid for init, upgrade, uninstall, or approve.')
       }
       index += 1
       continue
@@ -642,6 +642,7 @@ Usage:
   (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default]
+  ${c} uninstall [--target <dir>] [--adapter cursor] [--scope project|global]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
@@ -744,6 +745,18 @@ async function main() {
         )
       }
       process.stdout.write(`Upgraded belay (${result.adapter}) in ${result.repoRoot}.\n`)
+      return
+    }
+
+    if (command === 'uninstall') {
+      const result = await uninstallProject({
+        targetDir: options.targetDir,
+        adapter: options.adapter,
+        scope: options.installScope,
+      })
+      process.stdout.write(
+        `Removed belay hooks (${result.adapter}, scope=${result.scope}) from ${result.repoRoot}.\n`,
+      )
       return
     }
 
