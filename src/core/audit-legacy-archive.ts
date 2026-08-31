@@ -1,6 +1,7 @@
-import { existsSync } from 'node:fs'
-import { open, rename } from 'node:fs/promises'
+import { createReadStream, existsSync } from 'node:fs'
+import { rename } from 'node:fs/promises'
 import path from 'node:path'
+import { createInterface } from 'node:readline'
 
 import type { BelayConfigV3 } from './config.js'
 
@@ -10,11 +11,39 @@ const LEGACY_PLACEHOLDER_PATTERNS = [
   /"approvalId"\s*:\s*"<approval-id>"/,
 ] as const
 
-const AUDIT_SCAN_CHUNK_BYTES = 64 * 1024
-const AUDIT_SCAN_OVERLAP_CHARS = 256
+const LEGACY_HIGH_ENTROPY_FIELDS = [
+  'fingerprint',
+  'commandFingerprint',
+  'effectIRHash',
+  'payloadHash',
+  'configFingerprint',
+  'runtimeArtifactHash',
+  'decisionConfigFingerprint',
+  'receiptHash',
+] as const
 
 export function auditLogHasLegacyScrubPlaceholders(sample: string): boolean {
-  return LEGACY_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(sample))
+  for (const line of sample.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if (auditRecordHasLegacyCorrelationPlaceholders(parsed as Record<string, unknown>)) {
+          return true
+        }
+        continue
+      }
+    } catch {
+      // Malformed legacy lines still need archival before a new runtime appends to the log.
+    }
+    if (LEGACY_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+      return true
+    }
+  }
+  return false
 }
 
 export function auditRecordHasLegacyCorrelationPlaceholders(
@@ -22,32 +51,21 @@ export function auditRecordHasLegacyCorrelationPlaceholders(
 ): boolean {
   return (
     record.timestamp === '<timestamp>' ||
-    record.fingerprint === '<high-entropy>' ||
+    record.ts === '<timestamp>' ||
+    LEGACY_HIGH_ENTROPY_FIELDS.some((field) => record[field] === '<high-entropy>') ||
     record.approvalId === '<approval-id>'
   )
 }
 
 async function auditFileHasLegacyScrubPlaceholders(auditPath: string): Promise<boolean> {
-  const handle = await open(auditPath, 'r')
-  const buffer = Buffer.allocUnsafe(AUDIT_SCAN_CHUNK_BYTES)
-  let carry = ''
-  let position = 0
-  try {
-    while (true) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
-      if (bytesRead === 0) {
-        return false
-      }
-      const sample = carry + buffer.toString('utf8', 0, bytesRead)
-      if (auditLogHasLegacyScrubPlaceholders(sample)) {
-        return true
-      }
-      carry = sample.slice(-AUDIT_SCAN_OVERLAP_CHARS)
-      position += bytesRead
+  const input = createReadStream(auditPath, { encoding: 'utf8' })
+  const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY })
+  for await (const line of lines) {
+    if (auditLogHasLegacyScrubPlaceholders(line)) {
+      return true
     }
-  } finally {
-    await handle.close()
   }
+  return false
 }
 
 export async function archiveLegacyAuditLogIfNeeded(

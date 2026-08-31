@@ -1,6 +1,4 @@
-import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -12,11 +10,6 @@ import { cursorCliConfigPaths } from '../commands/health-snapshot.js'
 import { toolInvocationCorrelationId } from '../core/audit-io.js'
 import { toAuditRecord } from '../core/audit-metrics.js'
 import { summarizeAuditVisibility } from '../core/audit-summary.js'
-
-const runtimeEntryPath = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../adapters/cursor/runtime-entry.ts',
-)
 
 describe('regression: PR #87/#88 merge conflict', () => {
   it('normalizes tool_ prefixed UUIDs to the same correlation hash as bare UUIDs', () => {
@@ -61,16 +54,5 @@ describe('regression: PR #87/#88 merge conflict', () => {
     const resolution = resolveCursorActionCwdDetails({ cwd: '/workspace/repo' }, 'fallback')
     expect(resolution.cwd).toBe(path.resolve('/workspace/repo'))
     expect(resolution.fromPayload).toBe(true)
-  })
-
-  it('passes payload through runShellGateHook for beforeShellExecution correlation', async () => {
-    const source = await readFile(runtimeEntryPath, 'utf8')
-    const shellGateBlock = source.slice(
-      source.indexOf('export async function runShellGateHook'),
-      source.indexOf('export async function runToolGateHook'),
-    )
-    expect(shellGateBlock).toMatch(
-      /evaluateGatedAction\([\s\S]*payload,[\s\S]*beforeShellExecution/,
-    )
   })
 })

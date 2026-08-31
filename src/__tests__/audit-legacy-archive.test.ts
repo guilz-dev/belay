@@ -124,4 +124,30 @@ describe('audit legacy archive', () => {
     expect(result.archived).toBe(false)
     expect(existsSync(auditPath)).toBe(true)
   })
+
+  it('leaves current records with nested scrub placeholders untouched', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-archive-current-'))
+    tempDirs.push(repoRoot)
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    await mkdir(path.dirname(auditPath), { recursive: true })
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        schemaVersion: 3,
+        timestamp: '2026-08-22T05:00:00.000Z',
+        fingerprint: 'a'.repeat(64),
+        actionSnapshot: { payloadHash: '<high-entropy>' },
+        replayContext: { cwd: '/<high-entropy>-repo' },
+      })}\n`,
+      'utf8',
+    )
+
+    const config = mergeConfig({
+      audit: { logPath: '.cursor/belay/audit.ndjson' },
+    })
+    const result = await archiveLegacyAuditLogIfNeeded(repoRoot, config)
+
+    expect(result.archived).toBe(false)
+    expect(existsSync(auditPath)).toBe(true)
+  })
 })

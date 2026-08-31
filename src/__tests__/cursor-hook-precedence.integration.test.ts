@@ -222,6 +222,35 @@ describe.sequential('Cursor hook source precedence integration', () => {
     expect(await auditRecords(projectRoot)).toHaveLength(1)
   })
 
+  it('preserves beforeShellExecution payload correlation through the core handler', async () => {
+    const homeRoot = await createTempDir('agent-belay-cursor-home-')
+    const projectRoot = await createTempDir('agent-belay-cursor-payload-correlation-')
+    process.env.HOME = homeRoot
+    process.env.USERPROFILE = homeRoot
+    await initProject({ targetDir: projectRoot, scope: 'project' })
+    const cursorRoot = path.join(projectRoot, '.cursor')
+    await writeFile(path.join(projectRoot, (await loadConfigFile(projectRoot)).audit.logPath), '')
+
+    const result = await runManagedCommand(
+      await managedCommand(path.join(cursorRoot, 'hooks.json'), 'beforeShellExecution'),
+      {
+        command: 'git status',
+        cwd: projectRoot,
+        tool_use_id: 'tool_f5be1fa7-4c96-4568-817d-098e61fbf891',
+      },
+      projectRoot,
+      path.join(homeRoot, 'payload-correlation-core-imports.txt'),
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(await auditRecords(projectRoot)).toMatchObject([
+      {
+        event: 'beforeShellExecution',
+        toolInvocationCorrelationId: '317289e359b0cce4',
+      },
+    ])
+  })
+
   it.each([
     {
       name: 'runner',
