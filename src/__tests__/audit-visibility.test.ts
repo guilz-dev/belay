@@ -157,6 +157,102 @@ describe('audit visibility (T-V1)', () => {
     expect(text).toContain('make test-fast ARGS="spec/example_spec.rb:74"')
   })
 
+  it('deduplicates host denials, enforces gate-before-failure ordering, and counts unrecognized failures', () => {
+    const records = [
+      {
+        timestamp: '2026-01-01T00:00:00.000Z',
+        event: 'preToolUse',
+        kind: 'shell',
+        verdict: 'allow',
+        permission: 'allow',
+        wouldBlock: false,
+        summary: 'allowed command',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-01T00:00:00.200Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        failureType: 'permission_denied',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-01T00:00:00.300Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        failureType: 'permission_denied',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        failureType: 'permission_denied',
+        toolInvocationCorrelationId: '2222222222222222',
+      },
+      {
+        timestamp: '2026-01-01T00:00:01.100Z',
+        event: 'preToolUse',
+        kind: 'shell',
+        verdict: 'allow',
+        permission: 'allow',
+        wouldBlock: false,
+        summary: 'late allow',
+        toolInvocationCorrelationId: '2222222222222222',
+      },
+      {
+        timestamp: '2026-01-01T00:00:02.000Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        failureType: 'timeout',
+        toolInvocationCorrelationId: '3333333333333333',
+      },
+    ].map((entry) => toAuditRecord(entry))
+
+    const summary = summarizeAuditVisibility(records)
+
+    expect(summary.hostDeniedAfterAllowCount).toBe(1)
+    expect(summary.unrecognizedHostFailureCount).toBe(1)
+  })
+
+  it('joins host denials to gate allows outside the filtered window', () => {
+    const records = [
+      {
+        timestamp: '2026-01-01T00:00:00.000Z',
+        event: 'preToolUse',
+        kind: 'shell',
+        verdict: 'allow',
+        permission: 'allow',
+        wouldBlock: false,
+        summary: 'allowed before window',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+      {
+        timestamp: '2026-01-02T00:00:00.100Z',
+        event: 'postToolUseFailure',
+        kind: 'audit',
+        verdict: 'allow',
+        reason: 'observed',
+        failureType: 'permission_denied',
+        toolInvocationCorrelationId: '1111111111111111',
+      },
+    ].map((entry) => toAuditRecord(entry))
+
+    const summary = summarizeAuditVisibility(records, {
+      since: '2026-01-02T00:00:00.000Z',
+    })
+
+    expect(summary.hostDeniedAfterAllowCount).toBe(1)
+  })
+
   it('formats legacy visibility reports without host-denial fields', () => {
     const text = formatReport({
       repoRoot: '/repo',
