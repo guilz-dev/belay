@@ -80,31 +80,61 @@ async function managedHooksPresent(
   return managedEntries.every(({ definition }) => content.includes(definition.command))
 }
 
+/** Cursor modes confirmed not to apply host-level denial after Belay allows. */
+const CURSOR_APPROVAL_MODES_WITHOUT_HOST_DENIAL = new Set(['unrestricted'])
+
+export function cursorCliConfigPaths(
+  homeDir: string,
+  env: Partial<Pick<NodeJS.ProcessEnv, 'CURSOR_CONFIG_DIR' | 'XDG_CONFIG_HOME'>>,
+): string[] {
+  const cursorConfigDir = env.CURSOR_CONFIG_DIR?.trim()
+  if (cursorConfigDir) {
+    return [path.join(cursorConfigDir, 'cli-config.json')]
+  }
+
+  const candidates: string[] = []
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
+  if (xdgConfigHome) {
+    candidates.push(path.join(xdgConfigHome, 'cursor', 'cli-config.json'))
+  }
+  candidates.push(path.join(homeDir, '.cursor', 'cli-config.json'))
+  return candidates
+}
+
+export function cursorApprovalModeRequiresHostDenialWarning(approvalMode: unknown): boolean {
+  if (typeof approvalMode !== 'string' || !approvalMode.trim()) {
+    return true
+  }
+  return !CURSOR_APPROVAL_MODES_WITHOUT_HOST_DENIAL.has(approvalMode)
+}
+
+export function formatCursorApprovalModeLabel(approvalMode: unknown): string {
+  if (typeof approvalMode !== 'string' || !approvalMode.trim()) {
+    return 'default (prompts on each action)'
+  }
+  return approvalMode
+}
+
 async function cursorRunModeRiskSignal(
   homeDir: string,
   belayMode: string,
   env: Partial<Pick<NodeJS.ProcessEnv, 'CURSOR_CONFIG_DIR' | 'XDG_CONFIG_HOME'>>,
 ): Promise<string | null> {
-  const cursorConfigDir = env.CURSOR_CONFIG_DIR?.trim()
-  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
-  const configPath = cursorConfigDir
-    ? path.join(cursorConfigDir, 'cli-config.json')
-    : xdgConfigHome
-      ? path.join(xdgConfigHome, 'cursor', 'cli-config.json')
-      : path.join(homeDir, '.cursor', 'cli-config.json')
-  if (!existsSync(configPath)) {
+  const configPath = cursorCliConfigPaths(homeDir, env).find((candidate) => existsSync(candidate))
+  if (!configPath) {
     return null
   }
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8')) as { approvalMode?: unknown }
-    if (config.approvalMode !== 'allowlist' && config.approvalMode !== 'auto-review') {
+    if (!cursorApprovalModeRequiresHostDenialWarning(config.approvalMode)) {
       return null
     }
+    const approvalModeLabel = formatCursorApprovalModeLabel(config.approvalMode)
     const auditGuidance =
       belayMode === 'audit'
         ? ' Belay is in audit mode; keep the Cursor protection or approve the exact host prompt, and do not switch Cursor to unrestricted until Belay enforce mode and fail-closed hook health are verified.'
         : ' If Belay is intended to be authoritative, verify fail-closed hook health before configuring Cursor unrestricted mode.'
-    return `Cursor approval mode is ${config.approvalMode}; Cursor can deny shell actions after Belay allows them. Such a denial is a host-policy denial, not a Belay approval.${auditGuidance}`
+    return `Cursor approval mode is ${approvalModeLabel}; Cursor can deny shell actions after Belay allows them. Such a denial is a host-policy denial, not a Belay approval.${auditGuidance}`
   } catch {
     return null
   }
