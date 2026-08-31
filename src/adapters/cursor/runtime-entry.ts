@@ -33,10 +33,13 @@ function jsonResponse(value: unknown) {
 }
 
 function nonEmptyPathString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-export function resolveCursorActionCwd(payload: Record<string, unknown>, fallback: string): string {
+export function resolveCursorActionCwd(
+  payload: Record<string, unknown>,
+  fallback: string = process.cwd(),
+): string {
   const toolInput = payload.tool_input
   const toolInputWorkingDirectory =
     toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
@@ -56,7 +59,7 @@ function resolveCursorToolActionCwd(
   eventName: string,
   toolName: string,
 ): string {
-  if (eventName === 'preToolUse' && toolName === 'Shell') {
+  if ((eventName === 'preToolUse' || eventName === 'PreToolUse') && toolName === 'Shell') {
     return resolveCursorActionCwd(payload, fallback)
   }
 
@@ -91,7 +94,8 @@ export async function runBeforeSubmitPromptHook() {
   try {
     const payload = await readStdinJson()
     const prompt = String(payload.prompt ?? '')
-    const ctx = await loadRuntimeContext(process.cwd())
+    const cwd = resolveCursorActionCwd(payload)
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     const result = await processApprovalPrompt(ctx, deps, prompt)
     jsonResponse({
@@ -118,7 +122,6 @@ export async function runShellGateHook() {
       kind: 'shell',
       cwd,
       command,
-      payload,
       sourceEvent: 'beforeShellExecution',
     })
     jsonResponse(gateVerdictToCursorResponse(verdict))
@@ -198,7 +201,9 @@ export async function runToolGateHook(eventName: string) {
 export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const ctx = await loadRuntimeContext(process.cwd())
+    const toolName = String(payload.tool_name ?? '')
+    const cwd = resolveCursorToolActionCwd(payload, process.cwd(), eventName, toolName)
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     await appendObservedAudit(ctx, deps, eventName, payload)
     jsonResponse({})

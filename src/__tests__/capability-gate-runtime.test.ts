@@ -158,54 +158,6 @@ describe('capability gate runtime', () => {
     ).not.toContain(toolUseId)
   })
 
-  it('correlates host denials when preToolUse uses a bare UUID and postToolUseFailure uses tool_ prefix', async () => {
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-host-denial-shape-'))
-    tempDirs.push(repoRoot)
-    await mkdir(path.join(repoRoot, '.git'))
-    const config = brokerInactiveConfig()
-    const ctx = {
-      layout: cursorAdapter.layout,
-      repoRoot,
-      config,
-      configPath: cursorAdapter.layout.configPath(repoRoot),
-    }
-    const auditEvents: Record<string, unknown>[] = []
-    const deps = {
-      ...createDefaultGateRuntimeDeps(),
-      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
-        auditEvents.push(event)
-      },
-    }
-    const bareUuid = 'f5be1fa7-4c96-4568-817d-098e61fbf891'
-    const prePayload = {
-      tool_name: 'Shell',
-      tool_use_id: bareUuid,
-      tool_input: { command: 'git status' },
-      cwd: repoRoot,
-    }
-
-    await evaluateGatedAction(ctx, deps, {
-      kind: 'shell',
-      cwd: repoRoot,
-      payload: prePayload,
-      toolName: 'Shell',
-      sourceEvent: 'preToolUse',
-    })
-    await appendObservedAudit(ctx, deps, 'postToolUseFailure', {
-      tool_name: 'Shell',
-      tool_use_id: `tool_${bareUuid}`,
-      failure_type: 'permission_denied',
-      error_message: 'Command denied by Cursor Run Mode',
-      duration: 12,
-      is_interrupt: false,
-    })
-
-    expect(auditEvents).toHaveLength(2)
-    expect(auditEvents[1]?.toolInvocationCorrelationId).toBe(
-      auditEvents[0]?.toolInvocationCorrelationId,
-    )
-  })
-
   it('does not let a standing path allowlist override effect policy', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-gate-'))
     tempDirs.push(repoRoot)

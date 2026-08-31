@@ -37,7 +37,6 @@ export interface AuditVisibilitySummary {
   recentAsks: RecentAskEntry[]
   hostDeniedAfterAllowCount: number
   recentHostDenials: RecentHostDenialEntry[]
-  unrecognizedHostFailureCount: number
 }
 
 export const DEFAULT_SILENT_PASS_THRESHOLD = 0.5
@@ -100,7 +99,6 @@ export function summarizeAuditVisibility(
 ): AuditVisibilitySummary {
   const filtered = filterAuditRecords(records, filter)
   const gateRecords = filtered.filter(isGateEventRecord)
-  const allGateRecords = records.filter(isGateEventRecord)
   const recentAskLimit = options.recentAskLimit ?? 10
 
   let askCount = 0
@@ -112,24 +110,12 @@ export function summarizeAuditVisibility(
   const recentAsks: RecentAskEntry[] = []
   const allowedByInvocation = new Map<string, AuditRecord>()
   const recentHostDenials: RecentHostDenialEntry[] = []
-  let unrecognizedHostFailureCount = 0
-  const matchedHostDenials = new Set<string>()
-
-  for (const record of allGateRecords) {
-    const invocationId = auditToolInvocationCorrelationId(record)
-    if (invocationId && !inferWouldBlock(record) && record.permission === 'allow') {
-      const existing = allowedByInvocation.get(invocationId)
-      const recordMs = parseTimestamp(record.timestamp) ?? Number.NEGATIVE_INFINITY
-      const existingMs = existing
-        ? (parseTimestamp(existing.timestamp) ?? Number.NEGATIVE_INFINITY)
-        : Number.NEGATIVE_INFINITY
-      if (!existing || recordMs >= existingMs) {
-        allowedByInvocation.set(invocationId, record)
-      }
-    }
-  }
 
   for (const record of gateRecords) {
+    const invocationId = auditToolInvocationCorrelationId(record)
+    if (invocationId && !inferWouldBlock(record) && record.permission === 'allow') {
+      allowedByInvocation.set(invocationId, record)
+    }
     if (inferWouldBlock(record)) {
       askCount += 1
       const recordMode = recordStringField(record, 'mode')
@@ -156,28 +142,13 @@ export function summarizeAuditVisibility(
   }
 
   for (const record of filtered) {
-    if (record.event !== 'postToolUseFailure') {
-      continue
-    }
-    if (record.failureType !== 'permission_denied') {
-      unrecognizedHostFailureCount += 1
+    if (record.event !== 'postToolUseFailure' || record.failureType !== 'permission_denied') {
       continue
     }
     const invocationId = auditToolInvocationCorrelationId(record)
     const gate = invocationId ? allowedByInvocation.get(invocationId) : undefined
     if (!gate) {
       continue
-    }
-    const gateMs = parseTimestamp(gate.timestamp)
-    const failureMs = parseTimestamp(record.timestamp)
-    if (gateMs !== null && failureMs !== null && failureMs < gateMs) {
-      continue
-    }
-    if (invocationId && matchedHostDenials.has(invocationId)) {
-      continue
-    }
-    if (invocationId) {
-      matchedHostDenials.add(invocationId)
     }
     recentHostDenials.push({
       gateTimestamp: gate.timestamp,
@@ -213,7 +184,6 @@ export function summarizeAuditVisibility(
     recentAsks: recentAsks.slice(0, recentAskLimit),
     hostDeniedAfterAllowCount: recentHostDenials.length,
     recentHostDenials: recentHostDenials.slice(0, recentAskLimit),
-    unrecognizedHostFailureCount,
   }
 }
 

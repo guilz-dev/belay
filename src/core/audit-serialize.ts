@@ -51,29 +51,8 @@ export function approvalCorrelationId(approvalId: string): string {
   return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
 }
 
-const TOOL_USE_UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-/** Normalize Cursor host tool_use_id values before correlation hashing. */
-export function canonicalToolUseIdForCorrelation(toolUseId: string): string {
-  const trimmed = toolUseId.trim()
-  if (trimmed.startsWith('tool_')) {
-    const remainder = trimmed.slice('tool_'.length)
-    if (TOOL_USE_UUID_PATTERN.test(remainder)) {
-      return remainder.toLowerCase()
-    }
-  }
-  if (TOOL_USE_UUID_PATTERN.test(trimmed)) {
-    return trimmed.toLowerCase()
-  }
-  return trimmed
-}
-
 export function toolInvocationCorrelationId(toolUseId: string): string {
-  return createHash('sha256')
-    .update(canonicalToolUseIdForCorrelation(toolUseId))
-    .digest('hex')
-    .slice(0, 16)
+  return createHash('sha256').update(toolUseId).digest('hex').slice(0, 16)
 }
 
 export function isValidApprovalCorrelationId(value: string): boolean {

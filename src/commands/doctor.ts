@@ -66,6 +66,20 @@ function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterNam
   return 'cursor'
 }
 
+function hasCursorGlobalWorkspaceResolver(runtimeSource: string): boolean {
+  // Cursor global hooks must derive workspace cwd from payload fields, not process cwd.
+  const hasScopedToolResolver =
+    runtimeSource.includes('resolveCursorToolActionCwd') ||
+    runtimeSource.includes('includeToolInputCwd')
+  return (
+    runtimeSource.includes('resolveCursorActionCwd') &&
+    hasScopedToolResolver &&
+    runtimeSource.includes('workspace_roots') &&
+    runtimeSource.includes('working_directory') &&
+    runtimeSource.includes('tool_input')
+  )
+}
+
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const issues: string[] = []
@@ -316,6 +330,20 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     }
     if (runtimeVersions.stamp?.startsWith(`${PACKAGE_VERSION}@`)) {
       notes.push(`Runtime version matches package (${PACKAGE_VERSION}).`)
+    }
+    if (adapterName === 'cursor' && installScope === 'global') {
+      try {
+        const runtimeSource = await readFile(corePath, 'utf8')
+        if (!hasCursorGlobalWorkspaceResolver(runtimeSource)) {
+          warnings.push(
+            'Global Cursor runtime appears to resolve hook context from hook process cwd. Per-repository belay.config.json can be bypassed (audit may act as enforce). Run belay upgrade --scope global from the latest package.',
+          )
+        }
+      } catch {
+        warnings.push(
+          'Unable to inspect global Cursor runtime for workspace-cwd resolution. Run belay upgrade --scope global from the latest package.',
+        )
+      }
     }
   }
 

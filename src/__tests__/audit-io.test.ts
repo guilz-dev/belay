@@ -82,15 +82,6 @@ describe('serializeAuditRecordV3', () => {
     expect(JSON.stringify(serialized)).not.toContain(rawToolUseId)
   })
 
-  it('normalizes Cursor tool_use_id prefixes before correlation hashing', () => {
-    const bareUuid = 'f5be1fa7-4c96-4568-817d-098e61fbf891'
-    const prefixed = `tool_${bareUuid}`
-    expect(toolInvocationCorrelationId(prefixed)).toBe(toolInvocationCorrelationId(bareUuid))
-    expect(toolInvocationCorrelationId(bareUuid.toUpperCase())).toBe(
-      toolInvocationCorrelationId(bareUuid),
-    )
-  })
-
   it('rejects malformed hash fields and scrubs them', () => {
     const serialized = serializeAuditRecordV3(
       {

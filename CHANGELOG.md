@@ -6,21 +6,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
-### Fixed
-
-- **Cursor host-denial correlation** — Normalize `tool_use_id` values before hashing so
-  `preToolUse` bare UUIDs join `postToolUseFailure` `tool_`-prefixed IDs; strengthen audit
-  correlation guards and health-snapshot Cursor config discovery.
-
-### Changed
-
-- **Cursor `postToolUseFailure` hook** — Managed installs now register the audit hook.
-  Run `belay upgrade` on existing Cursor projects so `belay doctor` stays green and host
-  denials after Belay allow are observable.
-- **Pending approval replay** — `fingerprintReplayPayload` no longer includes raw
-  `tool_use_id`; upgrade may invalidate in-flight pending approvals once (they re-issue on
-  retry).
-
 ## 0.9.2 — 2026-08-26
 
 ### Fixed

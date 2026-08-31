@@ -78,10 +78,6 @@ export function formatStatusReport(report: StatusReport): string {
     `  Flag (allow_flagged): ${report.visibility.flagCount}`,
     `  Allow (silent pass): ${report.visibility.allowCount}`,
     `  Host denied after Belay allow: ${report.visibility.hostDeniedAfterAllowCount ?? 0}`,
-    ...(report.visibility.unrecognizedHostFailureCount &&
-    report.visibility.unrecognizedHostFailureCount > 0
-      ? [`  Unrecognized host tool failures: ${report.visibility.unrecognizedHostFailureCount}`]
-      : []),
     `  Silent-pass rate: ${(report.visibility.silentPassRate * 100).toFixed(1)}%`,
     '',
   ]
