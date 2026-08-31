@@ -50,7 +50,7 @@ export function resolveCodexActionCwd(
       : undefined
 
   const nestedCwd = options.includeToolInputCwd
-    ? nonEmptyPathString(toolInput?.working_directory) ?? nonEmptyPathString(toolInput?.cwd)
+    ? (nonEmptyPathString(toolInput?.working_directory) ?? nonEmptyPathString(toolInput?.cwd))
     : undefined
   const payloadCwd = nonEmptyPathString(payload.cwd)
   const workspaceRoot = Array.isArray(payload.workspace_roots)

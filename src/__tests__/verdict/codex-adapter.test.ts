@@ -6,13 +6,13 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { codexAdapter } from '../../adapters/codex/adapter.js'
-import { resolveCodexActionCwd } from '../../adapters/codex/runtime-entry.js'
 import {
   CODEX_HOOKS_BEGIN,
   CODEX_HOOKS_END,
   mergeCodexHooksToml,
   renderCodexHooksToml,
 } from '../../adapters/codex/hooks.js'
+import { resolveCodexActionCwd } from '../../adapters/codex/runtime-entry.js'
 import { codexLayout } from '../../adapters/layouts/codex.js'
 import {
   gateVerdictToCodexPreToolUseResponse,
@@ -120,7 +120,12 @@ describe('codex adapter (experimental)', () => {
         { includeToolInputCwd: true },
         path.resolve('workspace-action'),
       ],
-      ['falls back to process cwd argument', {}, { includeToolInputCwd: true }, path.resolve('fallback-action')],
+      [
+        'falls back to process cwd argument',
+        {},
+        { includeToolInputCwd: true },
+        path.resolve('fallback-action'),
+      ],
     ])('resolves Codex action cwd from %s', (_name, payload, options, expected) => {
       expect(resolveCodexActionCwd(payload, 'fallback-action', options)).toBe(expected)
     })

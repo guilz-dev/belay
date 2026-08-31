@@ -59,7 +59,9 @@ describe('doctorProject', () => {
     const report = await doctorProject({ targetDir: repoRoot })
     expect(
       report.warnings.some((warning) =>
-        warning.includes('Global Cursor runtime appears to resolve hook context from hook process cwd'),
+        warning.includes(
+          'Global Cursor runtime appears to resolve hook context from hook process cwd',
+        ),
       ),
     ).toBe(true)
   })
