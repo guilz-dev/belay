@@ -26,6 +26,7 @@ import {
 import { formatSimulateReport, simulateProject } from './commands/simulate.js'
 import { revokeStandingAllow } from './commands/standing-allow.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
+import { formatWhereReport, whereProject } from './commands/where.js'
 import { loadConfigFile } from './config-io.js'
 import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
 import { initProject, uninstallProject, upgradeProject } from './installer.js'
@@ -383,13 +384,13 @@ function parseArgs(argv: string[]) {
           throw new Error('--scope requires once, domain, path, or workspace-root.')
         }
         options.approveScope = next as 'once' | 'domain' | 'path' | 'workspace-root'
-      } else if (command === 'init' || command === 'upgrade' || command === 'uninstall') {
+      } else if (command === 'init' || command === 'upgrade' || command === 'uninstall' || command === 'where') {
         if (!next || !['project', 'global'].includes(next)) {
           throw new Error('--scope requires project or global.')
         }
         options.installScope = next as 'project' | 'global'
       } else {
-        throw new Error('--scope is only valid for init, upgrade, uninstall, or approve.')
+        throw new Error('--scope is only valid for init, upgrade, uninstall, where, or approve.')
       }
       index += 1
       continue
@@ -643,6 +644,7 @@ Usage:
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
   ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default]
   ${c} uninstall [--target <dir>] [--adapter cursor] [--scope project|global]
+  ${c} where [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--json]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
@@ -757,6 +759,21 @@ async function main() {
       process.stdout.write(
         `Removed belay hooks (${result.adapter}, scope=${result.scope}) from ${result.repoRoot}.\n`,
       )
+      return
+    }
+
+    if (command === 'where') {
+      const report = await whereProject({
+        targetDir: options.targetDir,
+        adapter: options.adapter,
+        scope: options.installScope,
+        json: options.json,
+      })
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      } else {
+        process.stdout.write(formatWhereReport(report))
+      }
       return
     }
 

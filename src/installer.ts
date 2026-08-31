@@ -149,9 +149,7 @@ async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
     await rm(path.join(paths.hooksDir, fileName), { force: true })
   }
   await rm(paths.runtimeDir, { recursive: true, force: true })
-  if (paths.scope === 'global') {
-    await rm(paths.skillsDir, { recursive: true, force: true })
-  }
+  await rm(paths.skillsDir, { recursive: true, force: true })
   if (paths.commandsDir) {
     await rm(path.join(paths.commandsDir, 'belay.md'), { force: true })
   }
@@ -163,11 +161,14 @@ export async function uninstallCursorProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
+  const hooksSettingsExisted = existsSync(paths.hooksSettingsPath)
   const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
   const stripped = stripCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
 
-  await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
-  await writeFile(paths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  if (hooksSettingsExisted) {
+    await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
+    await writeFile(paths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  }
   await removeBelayHookArtifacts(paths)
 
   return { repoRoot, scope }
