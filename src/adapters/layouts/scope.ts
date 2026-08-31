@@ -20,6 +20,26 @@ export interface ScopedPaths {
   commandsDir?: string
 }
 
+function canonicalizePotentialPath(inputPath: string): string {
+  const unresolvedSegments: string[] = []
+  let existingAncestor = path.resolve(inputPath)
+  while (!existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor)
+    if (parent === existingAncestor) {
+      break
+    }
+    unresolvedSegments.unshift(path.basename(existingAncestor))
+    existingAncestor = parent
+  }
+  return existsSync(existingAncestor)
+    ? path.join(realpathSync(existingAncestor), ...unresolvedSegments)
+    : path.resolve(inputPath)
+}
+
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
 function agentHomeDir(adapter: AdapterName): string {
   const home = os.homedir()
   if (adapter === 'cursor') {
@@ -74,21 +94,31 @@ export function buildAbsoluteRunnerInvocation(
   hookScript: string,
   ...args: string[]
 ): string {
-  const runnerFile = platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
-  const unresolvedSegments: string[] = []
-  let existingAncestor = path.resolve(hooksDir)
-  while (!existsSync(existingAncestor)) {
-    const parent = path.dirname(existingAncestor)
-    if (parent === existingAncestor) {
-      break
-    }
-    unresolvedSegments.unshift(path.basename(existingAncestor))
-    existingAncestor = parent
-  }
-  const canonicalHooksDir = existsSync(existingAncestor)
-    ? path.join(realpathSync(existingAncestor), ...unresolvedSegments)
-    : path.resolve(hooksDir)
+  const runnerFile = platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner'
+  const canonicalHooksDir = canonicalizePotentialPath(hooksDir)
   const runnerPath = path.join(canonicalHooksDir, runnerFile)
+  if (platform === 'win32') {
+    const encodedCommand = Buffer.from(
+      [
+        '&',
+        quotePowerShellLiteral(runnerPath),
+        ...[hookScript, ...args].map(quotePowerShellLiteral),
+      ].join(' '),
+      'utf16le',
+    ).toString('base64')
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`
+  }
+  return [`'${runnerPath.replaceAll("'", "'\\''")}'`, hookScript, ...args].join(' ')
+}
+
+export function buildLegacyQuotedAbsoluteRunnerInvocation(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  hookScript: string,
+  ...args: string[]
+): string {
+  const runnerFile = platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
+  const runnerPath = path.join(canonicalizePotentialPath(hooksDir), runnerFile)
   const quotedRunnerPath =
     platform === 'win32' ? `"${runnerPath}"` : `'${runnerPath.replaceAll("'", "'\\''")}'`
   return [quotedRunnerPath, hookScript, ...args].join(' ')

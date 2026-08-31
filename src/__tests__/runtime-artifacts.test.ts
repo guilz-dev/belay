@@ -46,6 +46,7 @@ describe('runtime artifact installation', () => {
       [path.join(hooksDir, 'belay-audit.mjs'), 'old audit\n'],
       [path.join(hooksDir, 'belay-runner'), 'old runner\n'],
       [path.join(hooksDir, 'belay-runner.cmd'), 'old runner cmd\n'],
+      [path.join(hooksDir, 'belay-runner.ps1'), 'old runner powershell\n'],
       [path.join(runtimeDir, 'core.mjs'), 'old core\n'],
       [path.join(runtimeDir, 'dispatcher.mjs'), 'old dispatcher\n'],
     ])

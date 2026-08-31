@@ -4,6 +4,7 @@ import { cursorLayout } from './adapters/layouts/cursor.js'
 import {
   buildAbsoluteRunnerInvocation,
   buildLegacyAbsoluteRunnerInvocation,
+  buildLegacyQuotedAbsoluteRunnerInvocation,
   buildRunnerInvocation,
 } from './adapters/layouts/scope.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from './core/config.js'
@@ -23,7 +24,7 @@ function runnerCommand(
   hooksDir: string,
   _repoRoot: string,
   hookScript: string,
-  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute',
+  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute' | 'legacy-quoted-absolute',
   ...args: string[]
 ): string {
   if (runnerPathMode === 'absolute') {
@@ -32,6 +33,9 @@ function runnerCommand(
   if (runnerPathMode === 'legacy-absolute') {
     return buildLegacyAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
   }
+  if (runnerPathMode === 'legacy-quoted-absolute') {
+    return buildLegacyQuotedAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
   return buildRunnerInvocation(platform, hooksDir, _repoRoot, hookScript, ...args)
 }
 
@@ -39,7 +43,11 @@ export function getManagedHookEntries(
   platform: NodeJS.Platform = process.platform,
   hooksDir?: string,
   repoRoot?: string,
-  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute' = 'absolute',
+  runnerPathMode:
+    | 'absolute'
+    | 'legacy-relative'
+    | 'legacy-absolute'
+    | 'legacy-quoted-absolute' = 'absolute',
 ): Array<{ event: string; definition: ManagedHookDefinition }> {
   const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
   const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)

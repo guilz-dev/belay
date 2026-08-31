@@ -4,7 +4,11 @@ import path from 'node:path'
 
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterName } from '../adapters/layouts/types.js'
-import { buildRunnerScript, buildWindowsRunnerScript } from '../node-resolution.js'
+import {
+  buildRunnerScript,
+  buildWindowsPowerShellRunnerScript,
+  buildWindowsRunnerScript,
+} from '../node-resolution.js'
 import {
   renderAuditHook,
   renderBeforeSubmitHook,
@@ -53,6 +57,8 @@ export async function writeRuntimeArtifacts(
     dispatcher: adapterName === 'cursor' ? await renderCursorDispatcher() : undefined,
     runner: buildRunnerScript(process.execPath),
     runnerCmd: buildWindowsRunnerScript(process.execPath),
+    runnerPowerShell:
+      adapterName === 'cursor' ? buildWindowsPowerShellRunnerScript(process.execPath) : undefined,
     shellGateHook: renderShellGateHook(adapterName, cursorOrigin),
     toolGateHook: renderToolGateHook(adapterName, cursorOrigin),
   }
@@ -65,6 +71,12 @@ export async function writeRuntimeArtifacts(
   }
   await writeFileMaybeExecutable(path.join(hooksDir, 'belay-runner'), artifacts.runner, true)
   await writeFileMaybeExecutable(path.join(hooksDir, 'belay-runner.cmd'), artifacts.runnerCmd)
+  if (artifacts.runnerPowerShell !== undefined) {
+    await writeFileMaybeExecutable(
+      path.join(hooksDir, 'belay-runner.ps1'),
+      artifacts.runnerPowerShell,
+    )
+  }
 
   await writeFileMaybeExecutable(
     path.join(hooksDir, 'belay-before-submit.mjs'),

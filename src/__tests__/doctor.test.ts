@@ -164,7 +164,7 @@ describe('doctorProject', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     await initProject({ targetDir: repoRoot, scope: 'global' })
     await initProject({ targetDir: repoRoot, scope: 'project' })
-    await rm(path.join(homeDir, '.cursor', 'hooks', 'belay-runner.cmd'))
+    await rm(path.join(homeDir, '.cursor', 'hooks', 'belay-runner.ps1'), { force: true })
 
     const report = await doctorProject({ targetDir: repoRoot })
 

@@ -1,4 +1,4 @@
-import { exec as execCallback } from 'node:child_process'
+import { exec as execCallback, execFile as execFileCallback } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -24,6 +24,7 @@ import { PACKAGE_VERSION } from '../version.js'
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
 const exec = promisify(execCallback)
+const execFile = promisify(execFileCallback)
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-scope-'))
@@ -51,18 +52,18 @@ describe('installer scope (T29)', () => {
     const hooksDir = path.join(
       repoRoot,
       process.platform === 'win32'
-        ? 'hooks space & mkdir injected-marker & literal'
+        ? 'hooks %TEMP% !BELAY_TEST_NAME! space & mkdir injected-marker & literal'
         : "hooks $(mkdir injected-marker) ; amp & quote' literal",
     )
     await mkdir(hooksDir, { recursive: true })
     const runnerPath = path.join(
       hooksDir,
-      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+      process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
     )
     await writeFile(
       runnerPath,
       process.platform === 'win32'
-        ? '@echo off\r\necho %1\r\necho %2\r\n'
+        ? 'Write-Output $args[0]\r\nWrite-Output $args[1]\r\n'
         : '#!/bin/sh\nprintf \'%s\\n\' "$@"\n',
     )
     if (process.platform !== 'win32') {
@@ -75,10 +76,45 @@ describe('installer scope (T29)', () => {
       'belay-shell-gate',
       'preToolUse',
     )
-    const result = await exec(command, { cwd: repoRoot })
+    const result =
+      process.platform === 'win32'
+        ? await execFile(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/s', '/c', command], {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              TEMP: 'expanded-temp-segment',
+              BELAY_TEST_NAME: 'expanded-bang-segment',
+            },
+          })
+        : await exec(command, { cwd: repoRoot })
 
     expect(result.stdout.trim()).toBe('belay-shell-gate\npreToolUse')
     expect(existsSync(injectionMarker)).toBe(false)
+  })
+
+  it('encodes Windows percent and delayed-expansion path segments outside cmd.exe parsing', () => {
+    const hooksDir = path.join(os.tmpdir(), 'hooks %TEMP% !BELAY_TEST_NAME! & space')
+    const command = buildAbsoluteRunnerInvocation(
+      'win32',
+      hooksDir,
+      'belay-shell-gate',
+      'preToolUse',
+    )
+    const match = command.match(
+      /^powershell\.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)$/,
+    )
+
+    expect(match?.[1]).toBeDefined()
+    expect(command).not.toContain('%TEMP%')
+    expect(command).not.toContain('!BELAY_TEST_NAME!')
+    const decoded = Buffer.from(match?.[1] ?? '', 'base64').toString('utf16le')
+    const canonicalHooksDir = path.join(
+      realpathSync(os.tmpdir()),
+      'hooks %TEMP% !BELAY_TEST_NAME! & space',
+    )
+    expect(decoded).toBe(
+      `& '${path.join(canonicalHooksDir, 'belay-runner.ps1')}' 'belay-shell-gate' 'preToolUse'`,
+    )
   })
 
   it('project scope (default) writes hooks and config under the repo', async () => {
@@ -308,7 +344,13 @@ describe('installer scope (T29)', () => {
       await readFile(path.join(homeDir, '.cursor', 'hooks.json'), 'utf8'),
     ) as { hooks: { beforeShellExecution: Array<{ command: string }> } }
     const shellCommand = hooks.hooks.beforeShellExecution[0]?.command ?? ''
-    expect(shellCommand).toContain(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))
+    expect(shellCommand).toBe(
+      buildAbsoluteRunnerInvocation(
+        process.platform,
+        path.join(homeDir, '.cursor', 'hooks'),
+        'belay-shell-gate',
+      ),
+    )
     expect(shellCommand).not.toMatch(/^\.\//)
   })
 
@@ -364,12 +406,8 @@ describe('installer scope (T29)', () => {
     const hooksDir = cursorLayout.hooksDir(repoRoot)
     const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot)
     const shellHook = managed.find((entry) => entry.event === 'beforeShellExecution')?.definition
-    const runnerPath = path.join(
-      realpathSync(hooksDir),
-      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
-    )
     expect(shellHook?.command).toBe(
-      `${process.platform === 'win32' ? `"${runnerPath}"` : `'${runnerPath.replaceAll("'", "'\\''")}'`} belay-shell-gate`,
+      buildAbsoluteRunnerInvocation(process.platform, hooksDir, 'belay-shell-gate'),
     )
 
     const claudeShellHook = getClaudeManagedHookEntries(
@@ -394,6 +432,7 @@ describe('installer scope (T29)', () => {
 
     expect(existsSync(path.join(homeDir, '.claude', 'skills', 'belay', 'SKILL.md'))).toBe(true)
     expect(existsSync(path.join(homeDir, '.claude', 'hooks', 'belay-runner'))).toBe(true)
+    expect(existsSync(path.join(homeDir, '.claude', 'hooks', 'belay-runner.ps1'))).toBe(false)
     const config = await loadConfigFile(repoRoot, 'claude')
     expect(config.installScope).toBe('global')
   })
@@ -405,6 +444,7 @@ describe('installer scope (T29)', () => {
     await codexAdapter.install(repoRoot, { scope: 'global', withSkill: true })
 
     expect(existsSync(path.join(homeDir, '.codex', 'hooks', 'belay-runner'))).toBe(true)
+    expect(existsSync(path.join(homeDir, '.codex', 'hooks', 'belay-runner.ps1'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.codex', 'skills', 'belay', 'SKILL.md'))).toBe(true)
     const config = await loadConfigFile(repoRoot, 'codex')
     expect(config.installScope).toBe('global')
@@ -442,6 +482,7 @@ describe('installer scope (T29)', () => {
       })
     expect(belayEntries).toHaveLength(0)
     expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner.ps1'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
       false,

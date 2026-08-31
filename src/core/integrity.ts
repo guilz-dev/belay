@@ -40,6 +40,7 @@ export function runtimeIntegrityFiles(layout: AdapterLayout, paths: ScopedPaths)
     path.join(hooksDir, 'belay-audit.mjs'),
     path.join(hooksDir, 'belay-runner'),
     path.join(hooksDir, 'belay-runner.cmd'),
+    ...(layout.name === 'cursor' ? [path.join(hooksDir, 'belay-runner.ps1')] : []),
     path.join(runtimeDir, 'core.mjs'),
     ...(layout.name === 'cursor' ? [path.join(runtimeDir, 'dispatcher.mjs')] : []),
   ]

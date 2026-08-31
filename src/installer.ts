@@ -180,6 +180,7 @@ const BELAY_HOOK_ARTIFACTS = [
   'belay-audit.mjs',
   'belay-runner',
   'belay-runner.cmd',
+  'belay-runner.ps1',
 ]
 
 async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {

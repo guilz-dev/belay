@@ -92,7 +92,7 @@ const CURSOR_HOOK_SHIMS = [
 ] as const
 
 function runnerFileName(platform: NodeJS.Platform): string {
-  return platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
+  return platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner'
 }
 
 async function cursorOriginIssues(

@@ -11,6 +11,7 @@ import {
   mergeCursorHooksFile,
   stripCursorHooksFile,
 } from '../adapters/cursor/hooks.js'
+import { getManagedHookEntries } from '../defaults.js'
 import { initProject, upgradeCursorProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -126,6 +127,53 @@ describe('cursor hook dedupe', () => {
       unknownBelayLike,
       customAfter,
     ])
+  })
+
+  it('migrates the prior quoted Windows cmd command to one encoded PowerShell command', () => {
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'windows %TEMP% !NAME! project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const prior = getManagedHookEntries('win32', hooksDir, repoRoot, 'legacy-quoted-absolute').find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )?.definition
+    const current = getManagedHookEntries('win32', hooksDir, repoRoot).find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )?.definition
+    expect(prior).toBeDefined()
+    expect(current).toBeDefined()
+    if (!prior || !current) {
+      throw new Error('Windows managed hook definitions are missing')
+    }
+
+    const customBefore = { command: 'custom-before' }
+    const unknownLookalike = { command: `${prior.command} --unknown` }
+    const merged = mergeCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [customBefore, prior, unknownLookalike, prior],
+        },
+      },
+      'win32',
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: current.command, matcher: current.matcher },
+      customBefore,
+      unknownLookalike,
+    ])
+
+    const stripped = stripCursorHooksFile(
+      {
+        version: 1,
+        hooks: { beforeShellExecution: [customBefore, prior, unknownLookalike, prior] },
+      },
+      'win32',
+      hooksDir,
+      repoRoot,
+    )
+    expect(stripped.hooks.beforeShellExecution).toEqual([customBefore, unknownLookalike])
   })
 
   it('detects duplicate Shell preToolUse gate entries', () => {
