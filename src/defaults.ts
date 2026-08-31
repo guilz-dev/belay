@@ -4,6 +4,7 @@ import { cursorLayout } from './adapters/layouts/cursor.js'
 import {
   buildAbsoluteRunnerInvocation,
   buildLegacyAbsoluteRunnerInvocation,
+  buildLegacyBarePowerShellRunnerInvocation,
   buildLegacyQuotedAbsoluteRunnerInvocation,
   buildRunnerInvocation,
 } from './adapters/layouts/scope.js'
@@ -24,7 +25,12 @@ function runnerCommand(
   hooksDir: string,
   _repoRoot: string,
   hookScript: string,
-  runnerPathMode: 'absolute' | 'legacy-relative' | 'legacy-absolute' | 'legacy-quoted-absolute',
+  runnerPathMode:
+    | 'absolute'
+    | 'legacy-relative'
+    | 'legacy-absolute'
+    | 'legacy-quoted-absolute'
+    | 'legacy-bare-powershell-absolute',
   ...args: string[]
 ): string {
   if (runnerPathMode === 'absolute') {
@@ -35,6 +41,9 @@ function runnerCommand(
   }
   if (runnerPathMode === 'legacy-quoted-absolute') {
     return buildLegacyQuotedAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  if (runnerPathMode === 'legacy-bare-powershell-absolute') {
+    return buildLegacyBarePowerShellRunnerInvocation(platform, hooksDir, hookScript, ...args)
   }
   return buildRunnerInvocation(platform, hooksDir, _repoRoot, hookScript, ...args)
 }
@@ -47,7 +56,8 @@ export function getManagedHookEntries(
     | 'absolute'
     | 'legacy-relative'
     | 'legacy-absolute'
-    | 'legacy-quoted-absolute' = 'absolute',
+    | 'legacy-quoted-absolute'
+    | 'legacy-bare-powershell-absolute' = 'absolute',
 ): Array<{ event: string; definition: ManagedHookDefinition }> {
   const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
   const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)

@@ -12,6 +12,7 @@ import { initProject } from '../installer.js'
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
+const originalSystemRoot = process.env.SystemRoot
 
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -20,6 +21,11 @@ afterEach(async () => {
     delete process.env.XDG_CONFIG_HOME
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome
+  }
+  if (originalSystemRoot === undefined) {
+    delete process.env.SystemRoot
+  } else {
+    process.env.SystemRoot = originalSystemRoot
   }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
@@ -161,6 +167,7 @@ describe('doctorProject', () => {
     tempDirs.push(repoRoot, homeDir)
     process.env.HOME = homeDir
     delete process.env.XDG_CONFIG_HOME
+    process.env.SystemRoot = 'D:\\Windows'
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     await initProject({ targetDir: repoRoot, scope: 'global' })
     await initProject({ targetDir: repoRoot, scope: 'project' })

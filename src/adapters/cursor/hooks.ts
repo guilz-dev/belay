@@ -12,6 +12,7 @@ function legacyManagedEntries(platform: NodeJS.Platform, hooksDir: string, repoR
     ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-relative'),
     ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-absolute'),
     ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-quoted-absolute'),
+    ...getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-bare-powershell-absolute'),
   ]
   if (existsSync(hooksDir)) {
     const canonicalHooksDir = realpathSync(hooksDir)

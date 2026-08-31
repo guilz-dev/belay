@@ -23,6 +23,8 @@ import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
+const originalPath = process.env.PATH
+const originalSystemRoot = process.env.SystemRoot
 const exec = promisify(execCallback)
 const execFile = promisify(execFileCallback)
 
@@ -43,6 +45,12 @@ describe('installer scope (T29)', () => {
   afterEach(async () => {
     vi.restoreAllMocks()
     process.env.HOME = originalHome
+    process.env.PATH = originalPath
+    if (originalSystemRoot === undefined) {
+      delete process.env.SystemRoot
+    } else {
+      process.env.SystemRoot = originalSystemRoot
+    }
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -92,29 +100,52 @@ describe('installer scope (T29)', () => {
     expect(existsSync(injectionMarker)).toBe(false)
   })
 
-  it('encodes Windows percent and delayed-expansion path segments outside cmd.exe parsing', () => {
-    const hooksDir = path.join(os.tmpdir(), 'hooks %TEMP% !BELAY_TEST_NAME! & space')
-    const command = buildAbsoluteRunnerInvocation(
-      'win32',
-      hooksDir,
-      'belay-shell-gate',
-      'preToolUse',
-    )
+  it('uses a trusted absolute PowerShell path despite hostile cwd and PATH executables', async () => {
+    const hostileRoot = await createTempRepo()
+    const hooksDir = path.join(hostileRoot, 'hooks %TEMP% !BELAY_TEST_NAME! & space')
+    await mkdir(hooksDir, { recursive: true })
+    await writeFile(path.join(hostileRoot, 'powershell.exe'), 'hostile workspace executable\n')
+    process.env.PATH = hostileRoot
+    process.env.SystemRoot = 'D:\\Trusted Windows\\.\\'
+    const previousCwd = process.cwd()
+    let command: string
+    try {
+      process.chdir(hostileRoot)
+      command = buildAbsoluteRunnerInvocation('win32', hooksDir, 'belay-shell-gate', 'preToolUse')
+    } finally {
+      process.chdir(previousCwd)
+    }
     const match = command.match(
-      /^powershell\.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)$/,
+      /^"D:\\Trusted Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)$/,
     )
 
     expect(match?.[1]).toBeDefined()
+    expect(command).not.toMatch(/^powershell\.exe\b/i)
+    expect(command).not.toContain(hostileRoot)
     expect(command).not.toContain('%TEMP%')
     expect(command).not.toContain('!BELAY_TEST_NAME!')
     const decoded = Buffer.from(match?.[1] ?? '', 'base64').toString('utf16le')
-    const canonicalHooksDir = path.join(
-      realpathSync(os.tmpdir()),
-      'hooks %TEMP% !BELAY_TEST_NAME! & space',
-    )
     expect(decoded).toBe(
-      `& '${path.join(canonicalHooksDir, 'belay-runner.ps1')}' 'belay-shell-gate' 'preToolUse'`,
+      `& '${path.join(realpathSync(hooksDir), 'belay-runner.ps1')}' 'belay-shell-gate' 'preToolUse'`,
     )
+  })
+
+  it('rejects relative or cmd-expandable Windows system roots', () => {
+    for (const systemRoot of [
+      'Windows',
+      'D:\\Windows%TEMP%',
+      'D:\\Windows!BELAY_TEST_NAME!',
+      'D:\\Windows&hostile',
+      '\\\\host\\Windows',
+      'D:\\Win?dows',
+      'D:\\Win"dows',
+      'D:\\Win\u0001dows',
+    ]) {
+      process.env.SystemRoot = systemRoot
+      expect(() =>
+        buildAbsoluteRunnerInvocation('win32', 'D:\\repo\\.cursor\\hooks', 'belay-shell-gate'),
+      ).toThrow(/trusted Windows system root/i)
+    }
   })
 
   it('project scope (default) writes hooks and config under the repo', async () => {

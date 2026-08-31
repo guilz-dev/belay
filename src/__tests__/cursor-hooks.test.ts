@@ -15,8 +15,14 @@ import { getManagedHookEntries } from '../defaults.js'
 import { initProject, upgradeCursorProject } from '../installer.js'
 
 const tempDirs: string[] = []
+const originalSystemRoot = process.env.SystemRoot
 
 afterEach(async () => {
+  if (originalSystemRoot === undefined) {
+    delete process.env.SystemRoot
+  } else {
+    process.env.SystemRoot = originalSystemRoot
+  }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -130,6 +136,7 @@ describe('cursor hook dedupe', () => {
   })
 
   it('migrates the prior quoted Windows cmd command to one encoded PowerShell command', () => {
+    process.env.SystemRoot = 'D:\\Windows'
     const repoRoot = path.join(realpathSync(os.tmpdir()), 'windows %TEMP% !NAME! project')
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
     const prior = getManagedHookEntries('win32', hooksDir, repoRoot, 'legacy-quoted-absolute').find(
@@ -138,19 +145,35 @@ describe('cursor hook dedupe', () => {
     const current = getManagedHookEntries('win32', hooksDir, repoRoot).find(
       (entry) => entry.event === 'beforeShellExecution',
     )?.definition
+    const priorBarePowerShell = getManagedHookEntries(
+      'win32',
+      hooksDir,
+      repoRoot,
+      'legacy-bare-powershell-absolute',
+    ).find((entry) => entry.event === 'beforeShellExecution')?.definition
     expect(prior).toBeDefined()
     expect(current).toBeDefined()
-    if (!prior || !current) {
+    expect(priorBarePowerShell?.command).toMatch(/^powershell\.exe\b/)
+    if (!prior || !current || !priorBarePowerShell) {
       throw new Error('Windows managed hook definitions are missing')
     }
 
     const customBefore = { command: 'custom-before' }
     const unknownLookalike = { command: `${prior.command} --unknown` }
+    const unknownBarePowerShell = { command: `${priorBarePowerShell.command} --unknown` }
     const merged = mergeCursorHooksFile(
       {
         version: 1,
         hooks: {
-          beforeShellExecution: [customBefore, prior, unknownLookalike, prior],
+          beforeShellExecution: [
+            customBefore,
+            prior,
+            priorBarePowerShell,
+            unknownLookalike,
+            unknownBarePowerShell,
+            prior,
+            priorBarePowerShell,
+          ],
         },
       },
       'win32',
@@ -162,18 +185,33 @@ describe('cursor hook dedupe', () => {
       { command: current.command, matcher: current.matcher },
       customBefore,
       unknownLookalike,
+      unknownBarePowerShell,
     ])
 
     const stripped = stripCursorHooksFile(
       {
         version: 1,
-        hooks: { beforeShellExecution: [customBefore, prior, unknownLookalike, prior] },
+        hooks: {
+          beforeShellExecution: [
+            customBefore,
+            prior,
+            priorBarePowerShell,
+            unknownLookalike,
+            unknownBarePowerShell,
+            prior,
+            priorBarePowerShell,
+          ],
+        },
       },
       'win32',
       hooksDir,
       repoRoot,
     )
-    expect(stripped.hooks.beforeShellExecution).toEqual([customBefore, unknownLookalike])
+    expect(stripped.hooks.beforeShellExecution).toEqual([
+      customBefore,
+      unknownLookalike,
+      unknownBarePowerShell,
+    ])
   })
 
   it('detects duplicate Shell preToolUse gate entries', () => {
