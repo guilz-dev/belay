@@ -24,7 +24,7 @@ export function integrityManifestPath(layout: AdapterLayout, repoRoot: string): 
   return path.join(layout.repoLocalStateDir(repoRoot), 'integrity-manifest.json')
 }
 
-export function runtimeIntegrityFiles(_layout: AdapterLayout, paths: ScopedPaths): string[] {
+export function runtimeIntegrityFiles(layout: AdapterLayout, paths: ScopedPaths): string[] {
   const files = [paths.configPath]
   if (paths.scope !== 'project') {
     return files
@@ -41,6 +41,7 @@ export function runtimeIntegrityFiles(_layout: AdapterLayout, paths: ScopedPaths
     path.join(hooksDir, 'belay-runner'),
     path.join(hooksDir, 'belay-runner.cmd'),
     path.join(runtimeDir, 'core.mjs'),
+    ...(layout.name === 'cursor' ? [path.join(runtimeDir, 'dispatcher.mjs')] : []),
   ]
 }
 

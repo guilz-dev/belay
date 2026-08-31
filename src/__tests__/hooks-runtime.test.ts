@@ -209,6 +209,44 @@ export async function runAuditHook() { write({}) }
     expect(await coreMarkerLoadCount(ownerMarker)).toBe(1)
   })
 
+  it('returns neutral without loading core for unrecognized owner payload shapes', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const markerPath = path.join(repoRoot, 'unrecognized-core-loads.txt')
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'),
+      `import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.BELAY_CORE_IMPORT_MARKER, 'loaded\\n')
+export async function handleBeforeSubmitPromptHook() { return { continue: false } }
+export async function handleShellGateHook() { return { permission: 'deny' } }
+export async function handleToolGateHook() { return { permission: 'deny' } }
+export async function handleAuditHook() { return { unexpected: true } }
+`,
+    )
+    const unrecognizedPayload = JSON.stringify({ cwd: repoRoot })
+    const cases = [
+      ['belay-before-submit.mjs', [], { continue: true }],
+      ['belay-shell-gate.mjs', [], { permission: 'allow' }],
+      ['belay-tool-gate.mjs', ['preToolUse'], { permission: 'allow' }],
+      ['belay-tool-gate.mjs', ['subagentStart'], { permission: 'allow' }],
+      ['belay-audit.mjs', ['postToolUse'], {}],
+      ['belay-audit.mjs', ['postToolUseFailure'], {}],
+      ['belay-audit.mjs', ['stop'], {}],
+      ['belay-audit.mjs', ['sessionEnd'], {}],
+    ] as const
+
+    for (const [hookName, args, expected] of cases) {
+      const result = await runHookScript(
+        path.join(repoRoot, '.cursor', 'hooks', hookName),
+        unrecognizedPayload,
+        markerPath,
+        [...args],
+      )
+      expect(result.exitCode).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual(expected)
+    }
+    expect(await coreMarkerLoadCount(markerPath)).toBe(0)
+  })
+
   it('rejects malformed gate input without loading core and keeps audit input safe', async () => {
     const repoRoot = await initIsolatedRepo()
     const runtimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')

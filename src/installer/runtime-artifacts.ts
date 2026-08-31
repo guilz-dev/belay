@@ -1,4 +1,5 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
@@ -19,9 +20,18 @@ async function writeFileMaybeExecutable(
   executable = false,
 ): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true })
-  await writeFile(filePath, content, 'utf8')
-  if (executable) {
-    await chmod(filePath, 0o755)
+  const temporaryPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+  )
+  try {
+    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' })
+    if (executable) {
+      await chmod(temporaryPath, 0o755)
+    }
+    await rename(temporaryPath, filePath)
+  } finally {
+    await rm(temporaryPath, { force: true })
   }
 }
 
@@ -30,48 +40,40 @@ export async function writeRuntimeArtifacts(
   paths: ScopedPaths,
 ): Promise<void> {
   const { hooksDir, runtimeDir } = paths
-  await mkdir(hooksDir, { recursive: true })
-  await mkdir(runtimeDir, { recursive: true })
   const cursorOrigin =
     adapterName === 'cursor'
       ? paths.scope === 'global'
         ? ({ scope: 'global' } as const)
         : ({ scope: 'project', repoRoot: paths.repoRoot } as const)
       : undefined
+  const artifacts = {
+    auditHook: renderAuditHook(adapterName, cursorOrigin),
+    beforeSubmitHook: renderBeforeSubmitHook(adapterName, cursorOrigin),
+    core: await renderRuntimeCore(adapterName),
+    dispatcher: adapterName === 'cursor' ? await renderCursorDispatcher() : undefined,
+    runner: buildRunnerScript(process.execPath),
+    runnerCmd: buildWindowsRunnerScript(process.execPath),
+    shellGateHook: renderShellGateHook(adapterName, cursorOrigin),
+    toolGateHook: renderToolGateHook(adapterName, cursorOrigin),
+  }
+
+  await mkdir(hooksDir, { recursive: true })
+  await mkdir(runtimeDir, { recursive: true })
+  await writeFileMaybeExecutable(path.join(runtimeDir, 'core.mjs'), artifacts.core)
+  if (artifacts.dispatcher !== undefined) {
+    await writeFileMaybeExecutable(path.join(runtimeDir, 'dispatcher.mjs'), artifacts.dispatcher)
+  }
+  await writeFileMaybeExecutable(path.join(hooksDir, 'belay-runner'), artifacts.runner, true)
+  await writeFileMaybeExecutable(path.join(hooksDir, 'belay-runner.cmd'), artifacts.runnerCmd)
 
   await writeFileMaybeExecutable(
     path.join(hooksDir, 'belay-before-submit.mjs'),
-    renderBeforeSubmitHook(adapterName, cursorOrigin),
+    artifacts.beforeSubmitHook,
   )
   await writeFileMaybeExecutable(
     path.join(hooksDir, 'belay-shell-gate.mjs'),
-    renderShellGateHook(adapterName, cursorOrigin),
+    artifacts.shellGateHook,
   )
-  await writeFileMaybeExecutable(
-    path.join(hooksDir, 'belay-tool-gate.mjs'),
-    renderToolGateHook(adapterName, cursorOrigin),
-  )
-  await writeFileMaybeExecutable(
-    path.join(hooksDir, 'belay-audit.mjs'),
-    renderAuditHook(adapterName, cursorOrigin),
-  )
-  await writeFileMaybeExecutable(
-    path.join(runtimeDir, 'core.mjs'),
-    await renderRuntimeCore(adapterName),
-  )
-  if (adapterName === 'cursor') {
-    await writeFileMaybeExecutable(
-      path.join(runtimeDir, 'dispatcher.mjs'),
-      await renderCursorDispatcher(),
-    )
-  }
-  await writeFileMaybeExecutable(
-    path.join(hooksDir, 'belay-runner'),
-    buildRunnerScript(process.execPath),
-    true,
-  )
-  await writeFileMaybeExecutable(
-    path.join(hooksDir, 'belay-runner.cmd'),
-    buildWindowsRunnerScript(process.execPath),
-  )
+  await writeFileMaybeExecutable(path.join(hooksDir, 'belay-tool-gate.mjs'), artifacts.toolGateHook)
+  await writeFileMaybeExecutable(path.join(hooksDir, 'belay-audit.mjs'), artifacts.auditHook)
 }

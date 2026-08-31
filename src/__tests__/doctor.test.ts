@@ -23,6 +23,25 @@ afterEach(async () => {
 })
 
 describe('doctorProject', () => {
+  it('reports a modified Cursor dispatcher as an integrity failure', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dispatcher-integrity-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
+      '// modified dispatcher\n',
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('hash mismatch') && issue.includes('dispatcher'),
+      ),
+    ).toBe(true)
+  })
+
   it('warns when belay.config.json omits version', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-'))
     tempDirs.push(repoRoot)

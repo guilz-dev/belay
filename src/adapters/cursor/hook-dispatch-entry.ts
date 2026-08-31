@@ -59,6 +59,58 @@ function failClosedResponse(kind: CursorHookKind, message: string): CursorRespon
   return { permission: 'deny', user_message: message }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isRecognizedPayload(
+  params: DispatchCursorHookParams,
+  payload: Record<string, unknown>,
+): boolean {
+  if (params.kind === 'before-submit') {
+    return params.eventName === 'beforeSubmitPrompt' && typeof payload.prompt === 'string'
+  }
+  if (params.kind === 'shell-gate') {
+    return params.eventName === 'beforeShellExecution' && typeof payload.command === 'string'
+  }
+  if (params.kind === 'tool-gate') {
+    if (params.eventName === 'preToolUse' || params.eventName === 'PreToolUse') {
+      return isNonEmptyString(payload.tool_name) && isRecord(payload.tool_input)
+    }
+    return (
+      params.eventName === 'subagentStart' &&
+      isNonEmptyString(payload.subagent_type) &&
+      typeof payload.task === 'string'
+    )
+  }
+  if (params.eventName === 'postToolUse') {
+    return (
+      isNonEmptyString(payload.tool_name) &&
+      isRecord(payload.tool_input) &&
+      typeof payload.tool_output === 'string'
+    )
+  }
+  if (params.eventName === 'postToolUseFailure') {
+    return (
+      isNonEmptyString(payload.tool_name) &&
+      isRecord(payload.tool_input) &&
+      typeof payload.error_message === 'string' &&
+      typeof payload.failure_type === 'string'
+    )
+  }
+  if (params.eventName === 'stop') {
+    return typeof payload.status === 'string' && typeof payload.loop_count === 'number'
+  }
+  if (params.eventName === 'sessionEnd') {
+    return isNonEmptyString(payload.session_id) && typeof payload.reason === 'string'
+  }
+  return false
+}
+
 async function executeCoreHandler(
   params: DispatchCursorHookParams,
   payload: Record<string, unknown>,
@@ -83,6 +135,9 @@ async function dispatchCursorHookResponse(
   const input = await readStdinPayload()
   if (!input.ok) {
     return failClosedResponse(params.kind, 'belay received malformed Cursor hook input.')
+  }
+  if (!isRecognizedPayload(params, input.payload)) {
+    return neutralResponse(params.kind)
   }
 
   try {
