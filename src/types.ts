@@ -80,6 +80,29 @@ export interface UninstallOptions {
   scope?: InstallScope
 }
 
+export interface WhereOptions {
+  targetDir?: string
+  adapter?: AdapterName
+  scope?: InstallScope
+  json?: boolean
+}
+
+export interface WhereReport {
+  cwd: string
+  repoRoot: string
+  adapter: AdapterName
+  installScope: 'project' | 'global'
+  configPresent: boolean
+  cliExecutable?: string
+  cliPackageRoot: string
+  configPath: string
+  hooksSettingsPath: string
+  hooksDir: string
+  runtimeDir: string
+  skillsDir: string
+  commandsDir?: string
+}
+
 export interface DoctorOptions {
   targetDir?: string
   fix?: boolean
