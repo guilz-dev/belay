@@ -384,7 +384,12 @@ function parseArgs(argv: string[]) {
           throw new Error('--scope requires once, domain, path, or workspace-root.')
         }
         options.approveScope = next as 'once' | 'domain' | 'path' | 'workspace-root'
-      } else if (command === 'init' || command === 'upgrade' || command === 'uninstall' || command === 'where') {
+      } else if (
+        command === 'init' ||
+        command === 'upgrade' ||
+        command === 'uninstall' ||
+        command === 'where'
+      ) {
         if (!next || !['project', 'global'].includes(next)) {
           throw new Error('--scope requires project or global.')
         }
