@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.9.3 — 2026-09-01
+
 ### Fixed
 
 - **Cursor global hook workspace resolution** — Payload-free global hook invocations now
@@ -17,10 +19,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   file so `$HOME/.cursor` alone is not treated as a repository root.
 - **Cursor host-denial correlation** — Normalize `tool_use_id` values before hashing so
   `preToolUse` bare UUIDs join `postToolUseFailure` `tool_`-prefixed IDs; strengthen audit
-  correlation guards and health-snapshot Cursor config discovery.
+  correlation guards and health-snapshot Cursor config discovery. Restores PR #88 behavior
+  lost in the #87 merge.
 
 ### Added
 
+- **`belay where`** — Report cwd, target dir, CLI package path, and scoped install paths for
+  debugging installs and hook wiring.
 - **`belay uninstall`** — Remove managed Cursor hooks and runtime artifacts for
   `--scope project` or `--scope global`. Use `belay uninstall --scope global` when global
   hooks keep running after project cleanup.
