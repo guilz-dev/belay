@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 import { resolveCursorActionCwdDetails } from './cwd-resolution.js'
 import {
   cursorRoutingConfigPath,
   cursorRoutingHooksDir,
+  cursorRoutingHooksSettingsPath,
   cursorRoutingRuntimeDir,
   findCursorRoutingRepoRoot,
 } from './routing-layout.js'
@@ -21,6 +22,7 @@ export type CursorHookRoute =
 export interface RouteCursorHookParams {
   origin: CursorHookOrigin
   kind: CursorHookKind
+  eventName?: string
   payload: Record<string, unknown>
 }
 
@@ -48,6 +50,170 @@ function hookScriptFor(kind: CursorHookKind): string {
     return 'belay-tool-gate.mjs'
   }
   return 'belay-audit.mjs'
+}
+
+function hookCommandFor(kind: CursorHookKind): string {
+  return hookScriptFor(kind).replace(/\.mjs$/, '')
+}
+
+function eventNameFor(params: RouteCursorHookParams): string {
+  if (params.eventName) {
+    return params.eventName
+  }
+  if (params.kind === 'before-submit') {
+    return 'beforeSubmitPrompt'
+  }
+  if (params.kind === 'shell-gate') {
+    return 'beforeShellExecution'
+  }
+  if (params.kind === 'tool-gate') {
+    return typeof params.payload.subagent_type === 'string' ? 'subagentStart' : 'preToolUse'
+  }
+  if (typeof params.payload.error_message === 'string') {
+    return 'postToolUseFailure'
+  }
+  if (typeof params.payload.status === 'string') {
+    return 'stop'
+  }
+  if (typeof params.payload.session_id === 'string') {
+    return 'sessionEnd'
+  }
+  return 'postToolUse'
+}
+
+function selectedRunnerPath(hooksDir: string): string | undefined {
+  const runnerPath = path.join(
+    hooksDir,
+    process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
+  )
+  const canonicalPath = canonicalExistingPath(runnerPath)
+  if (!canonicalPath) {
+    return undefined
+  }
+  try {
+    if (!statSync(canonicalPath).isFile()) {
+      return undefined
+    }
+    accessSync(canonicalPath, process.platform === 'win32' ? constants.R_OK : constants.X_OK)
+    return canonicalPath
+  } catch {
+    return undefined
+  }
+}
+
+function isRegularFile(filePath: string): boolean {
+  const canonicalPath = canonicalExistingPath(filePath)
+  if (!canonicalPath) {
+    return false
+  }
+  try {
+    return statSync(canonicalPath).isFile()
+  } catch {
+    return false
+  }
+}
+
+function expectedHookArgs(kind: CursorHookKind, eventName: string): string[] {
+  return kind === 'tool-gate' || kind === 'audit' ? [eventName] : []
+}
+
+function commandInvokesProjectHook(
+  command: string,
+  runnerPath: string,
+  kind: CursorHookKind,
+  eventName: string,
+): boolean {
+  const hookCommand = hookCommandFor(kind)
+  const args = expectedHookArgs(kind, eventName)
+  if (process.platform !== 'win32') {
+    const expected = [`'${runnerPath.replaceAll("'", "'\\''")}'`, hookCommand, ...args].join(' ')
+    return command === expected
+  }
+  const encoded = command.match(
+    /^"[^"\r\n]+" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)$/,
+  )?.[1]
+  if (!encoded) {
+    return false
+  }
+  const quotePowerShellLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`
+  const expected = [
+    '&',
+    quotePowerShellLiteral(runnerPath),
+    ...[hookCommand, ...args].map(quotePowerShellLiteral),
+  ].join(' ')
+  return Buffer.from(encoded, 'base64').toString('utf16le') === expected
+}
+
+function expectedMatcher(eventName: string, payload: Record<string, unknown>): string | undefined {
+  if (eventName === 'preToolUse') {
+    return typeof payload.tool_name === 'string' ? payload.tool_name : undefined
+  }
+  if (eventName === 'subagentStart') {
+    return typeof payload.subagent_type === 'string' ? payload.subagent_type : undefined
+  }
+  return undefined
+}
+
+function hasManagedProjectHookEntry(
+  repoRoot: string,
+  runnerPath: string,
+  params: RouteCursorHookParams,
+): boolean {
+  const eventName = eventNameFor(params)
+  const matcher = expectedMatcher(eventName, params.payload)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(cursorRoutingHooksSettingsPath(repoRoot), 'utf8'))
+  } catch {
+    return false
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return false
+  }
+  const hooks = (parsed as Record<string, unknown>).hooks
+  if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) {
+    return false
+  }
+  const entries = (hooks as Record<string, unknown>)[eventName]
+  if (!Array.isArray(entries)) {
+    return false
+  }
+  return entries.some((entry: unknown) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      return false
+    }
+    const definition = entry as Record<string, unknown>
+    return (
+      definition.failClosed === true &&
+      definition.matcher === matcher &&
+      typeof definition.command === 'string' &&
+      commandInvokesProjectHook(definition.command, runnerPath, params.kind, eventName)
+    )
+  })
+}
+
+function hasMatchingProjectShim(repoRoot: string, kind: CursorHookKind): boolean {
+  let source: string
+  try {
+    source = readFileSync(path.join(cursorRoutingHooksDir(repoRoot), hookScriptFor(kind)), 'utf8')
+  } catch {
+    return false
+  }
+  return (
+    source.includes("from '../belay/runtime/dispatcher.mjs'") &&
+    source.includes(`origin: ${JSON.stringify({ scope: 'project', repoRoot })}`)
+  )
+}
+
+function hasCallableProjectOwner(repoRoot: string, params: RouteCursorHookParams): boolean {
+  const hooksDir = cursorRoutingHooksDir(repoRoot)
+  const runnerPath = selectedRunnerPath(hooksDir)
+  return Boolean(
+    runnerPath &&
+      isRegularFile(path.join(cursorRoutingRuntimeDir(repoRoot), 'dispatcher.mjs')) &&
+      hasMatchingProjectShim(repoRoot, params.kind) &&
+      hasManagedProjectHookEntry(repoRoot, runnerPath, params),
+  )
 }
 
 function payloadForKind(
@@ -142,18 +308,24 @@ export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute 
       ? { decision: 'execute', repoRoot }
       : { decision: 'neutral' }
   }
-  if (params.origin.scope !== 'project') {
+  if (
+    params.origin.scope === 'project' &&
+    canonicalExistingPath(params.origin.repoRoot) !== repoRoot
+  ) {
     return { decision: 'neutral' }
   }
-  if (canonicalExistingPath(params.origin.repoRoot) !== repoRoot) {
-    return { decision: 'neutral' }
+  const callableProjectOwner = hasCallableProjectOwner(repoRoot, params)
+  if (params.origin.scope === 'global') {
+    return callableProjectOwner
+      ? { decision: 'neutral' }
+      : {
+          decision: 'fail_closed',
+          message:
+            'belay project hook owner is unavailable; the global sentinel blocked this action.',
+        }
   }
-  const hooksDir = cursorRoutingHooksDir(repoRoot)
-  const complete = [
-    path.join(hooksDir, hookScriptFor(params.kind)),
-    path.join(hooksDir, 'belay-runner'),
-    path.join(cursorRoutingRuntimeDir(repoRoot), 'core.mjs'),
-  ].every(existsSync)
+  const complete =
+    callableProjectOwner && isRegularFile(path.join(cursorRoutingRuntimeDir(repoRoot), 'core.mjs'))
   return complete
     ? { decision: 'execute', repoRoot }
     : { decision: 'fail_closed', message: 'belay project hook installation is incomplete.' }

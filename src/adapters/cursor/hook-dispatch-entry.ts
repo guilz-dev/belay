@@ -144,6 +144,7 @@ async function dispatchCursorHookResponse(
     const route = routeCursorHook({
       origin: params.origin,
       kind: params.kind,
+      eventName: params.eventName,
       payload: input.payload,
     })
     if (route.decision === 'neutral') {

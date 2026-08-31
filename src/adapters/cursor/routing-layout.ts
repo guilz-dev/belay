@@ -9,6 +9,10 @@ export function cursorRoutingHooksDir(repoRoot: string): string {
   return path.join(repoRoot, '.cursor', 'hooks')
 }
 
+export function cursorRoutingHooksSettingsPath(repoRoot: string): string {
+  return path.join(repoRoot, '.cursor', 'hooks.json')
+}
+
 export function cursorRoutingRuntimeDir(repoRoot: string): string {
   return path.join(repoRoot, '.cursor', 'belay', 'runtime')
 }

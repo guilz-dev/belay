@@ -1,11 +1,12 @@
 import { realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { routeCursorHook } from '../adapters/cursor/hook-router.js'
+import { getManagedHookEntries } from '../defaults.js'
 
 const tempDirs: string[] = []
 
@@ -27,9 +28,34 @@ async function installProjectHook(
     path.join(repoRoot, '.cursor', 'belay.config.json'),
     `${JSON.stringify({ installScope })}\n`,
   )
-  await writeFile(path.join(repoRoot, '.cursor', 'hooks', hookFile), '')
+  const canonicalRepoRoot = realpathSync(repoRoot)
+  const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+  const groupedHooks: Record<
+    string,
+    Array<{ command: string; matcher?: string; failClosed: true }>
+  > = {}
+  for (const { event, definition } of getManagedHookEntries(process.platform, hooksDir, repoRoot)) {
+    const eventHooks = groupedHooks[event] ?? []
+    groupedHooks[event] = eventHooks
+    eventHooks.push({
+      command: definition.command,
+      ...(definition.matcher === undefined ? {} : { matcher: definition.matcher }),
+      failClosed: true,
+    })
+  }
+  await writeFile(
+    path.join(repoRoot, '.cursor', 'hooks.json'),
+    `${JSON.stringify({ version: 1, hooks: groupedHooks }, null, 2)}\n`,
+  )
+  await writeFile(
+    path.join(hooksDir, hookFile),
+    `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'\nvoid { origin: ${JSON.stringify({ scope: 'project', repoRoot: canonicalRepoRoot })} }\n`,
+  )
   await writeFile(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'), '')
+  await chmod(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'), 0o755)
+  await writeFile(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner.ps1'), '')
   await writeFile(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'), '')
+  await writeFile(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'), '')
 }
 
 describe('routeCursorHook', () => {
@@ -277,6 +303,101 @@ describe('routeCursorHook', () => {
   })
 
   it.each([
+    {
+      name: 'managed hook entry',
+      removeOwnerPart: async (repoRoot: string) => {
+        const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+        const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+          hooks: Record<string, unknown>
+        }
+        delete hooks.hooks.beforeShellExecution
+        await writeFile(hooksPath, `${JSON.stringify(hooks)}\n`)
+      },
+    },
+    {
+      name: 'runner',
+      removeOwnerPart: (repoRoot: string) =>
+        rm(
+          path.join(
+            repoRoot,
+            '.cursor',
+            'hooks',
+            process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
+          ),
+        ),
+    },
+    {
+      name: 'executable runner',
+      removeOwnerPart: (repoRoot: string) =>
+        process.platform === 'win32'
+          ? rm(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner.ps1'))
+          : chmod(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'), 0o644),
+    },
+    {
+      name: 'shim',
+      removeOwnerPart: (repoRoot: string) =>
+        rm(path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs')),
+    },
+    {
+      name: 'dispatcher',
+      removeOwnerPart: (repoRoot: string) =>
+        rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs')),
+    },
+  ])('uses the global origin as a sentinel when the project $name is missing', async ({
+    removeOwnerPart,
+  }) => {
+    const repoRoot = await createTempDir('belay-cursor-project-sentinel-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await removeOwnerPart(repoRoot)
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toMatchObject({
+      decision: 'fail_closed',
+      message: expect.stringMatching(/project hook owner.*unavailable/i),
+    })
+  })
+
+  it('keeps a nonmatching project origin neutral when the matching project owner is missing', async () => {
+    const repoRoot = await createTempDir('belay-cursor-project-sentinel-route-')
+    const otherRepoRoot = await createTempDir('belay-cursor-other-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot: otherRepoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
+  it('keeps the global origin neutral when the callable project owner is missing only core', async () => {
+    const repoRoot = await createTempDir('belay-cursor-project-sentinel-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'))
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
+  it.each([
     { kind: 'shell-gate' as const, hookFile: 'belay-shell-gate.mjs' },
     { kind: 'audit' as const, hookFile: 'belay-audit.mjs' },
   ])('fails closed with a diagnostic when a project $kind runtime is missing', async ({
@@ -301,6 +422,8 @@ describe('routeCursorHook', () => {
   it.each([
     { missingFile: ['.cursor', 'hooks', 'belay-shell-gate.mjs'] },
     { missingFile: ['.cursor', 'hooks', 'belay-runner'] },
+    { missingFile: ['.cursor', 'belay', 'runtime', 'dispatcher.mjs'] },
+    { missingFile: ['.cursor', 'hooks.json'] },
   ])('fails closed when the current project shell-gate $missingFile is missing', async ({
     missingFile,
   }) => {

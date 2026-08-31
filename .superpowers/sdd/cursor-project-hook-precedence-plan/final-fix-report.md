@@ -4,10 +4,11 @@ Baseline for this pass: `caabb27` on `fix/cursor-project-hook-precedence`.
 
 ## Outcome
 
-All seven numbered whole-branch findings plus the shadowed-global doctor minor are fixed. The
-changes preserve the public `installScope: "project" | "global"` contract, policy and EffectPlan
-behavior, config/audit schemas, exact managed-entry ownership proof, sibling/unknown-artifact
-preservation, and Project-over-User routing semantics.
+All seven numbered whole-branch findings, the shadowed-global doctor minor, and the final
+Global-only sentinel follow-up are fixed. The changes preserve the public
+`installScope: "project" | "global"` contract, policy and EffectPlan behavior, config/audit
+schemas, exact managed-entry ownership proof, sibling/unknown-artifact preservation, and
+Project-over-User routing semantics.
 
 ## RED / GREEN evidence
 
@@ -79,8 +80,26 @@ preservation, and Project-over-User routing semantics.
    - RED: malformed global hooks JSON, an unreadable hooks path, and an unreadable shim all rejected
      the `doctorProject` promise.
    - GREEN: doctor catches and reports each inspection failure. Detailed shim/dispatcher problems
-     also make the shadowed global owner unsafe instead of being discarded; a healthy shadowed
-     global installation remains an informational note.
+   also make the shadowed global owner unsafe instead of being discarded; a healthy shadowed
+   global installation remains an informational note.
+
+9. **Global-only fail-closed sentinel for Project-selected config**
+   - RED: five genuine Global-only process installs returned `allow` after their repository config
+     was changed to omitted-scope, malformed, structurally invalid, invalid-scope, or unreadable.
+     Four partial-owner routing cases also left the Global source neutral; matching Project routes
+     ignored a missing dispatcher or managed hook settings. A non-executable POSIX runner was
+     initially mistaken for a callable owner.
+   - GREEN: when a present config resolves or fails safely to Project, the Global source now proves
+     that the exact event/matcher has a current `failClosed: true` Project command, the selected
+     platform runner is callable, the event shim embeds the matching canonical Project origin, and
+     the dispatcher exists. If that launch chain is absent or partial, the Global source returns a
+     structured sentinel denial without importing core. Process markers prove zero core imports
+     and the pre-existing audit file remains empty for all five cases.
+   - Missing config remains neutral and valid Global config still executes Global. A complete
+     Project owner keeps Global neutral and executes once. Core is intentionally not part of the
+     launch-chain proof: if only core is absent, the callable matching Project dispatcher remains
+     sole owner and emits its existing incomplete-install denial. Nonmatching Project origins stay
+     neutral.
 
 ## Self-review
 
@@ -94,6 +113,7 @@ preservation, and Project-over-User routing semantics.
 | Lightweight dispatcher | Actual esbuild import graph excludes policy/audit/default/config modules; no broad source grep is used as the test oracle. |
 | Windows doctor | Cursor PowerShell selection remains intact; Claude/Codex use `.cmd`; Codex TOML escaping is accounted for. |
 | Shadow inspection | Malformed/unreadable settings and shims become issues, never uncaught exceptions; healthy shadow behavior is preserved. |
+| Global sentinel | Project-selected config cannot create a Global-only allow gap: absent/partial matching Project launch chains trigger a routing-only Global denial; complete Project owners remain single-execution, and incomplete callable Project owners still deny themselves. |
 
 No policy, EffectPlan, approval, config, or audit schema was widened. The only host-settings type
 addition is Cursor's supported optional `HookEntry.failClosed`; current generated Cursor
@@ -104,8 +124,10 @@ all process/install coverage uses temporary repository and HOME directories.
 ## Verification
 
 - Focused runtime/installer/router/config/doctor set: 10 files, 156 tests passed.
+- Follow-up Cursor router/dispatcher/process/installer set: 8 files, 117 tests passed; the
+  executable-runner refinement then passed 32 router/bundle tests.
 - Global integrity follow-up: 2 files, 8 selected tests passed.
-- `pnpm test`: 179 files passed; 2,479 passed, 2 skipped (2,481 total), including a fresh build.
+- `pnpm test`: 179 files passed; 2,494 passed, 2 skipped (2,496 total), including a fresh build.
 - `pnpm typecheck`: passed.
 - `pnpm lint`: passed with no errors (the branch retains ten unrelated pre-existing
   non-null-assertion warnings and one unrelated informational lint diagnostic).

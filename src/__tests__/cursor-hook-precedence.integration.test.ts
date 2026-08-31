@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -290,6 +290,83 @@ describe.sequential('Cursor hook source precedence integration', () => {
     expect(JSON.parse(result.stdout)).toEqual({ permission: 'allow' })
     expect(await markerLoads(markerPath)).toEqual(['global-only'])
     expect(await auditRecords(projectRoot)).toHaveLength(1)
+  })
+
+  it.each([
+    { name: 'an omitted scope', config: '{}\n' },
+    { name: 'a malformed config', config: '{not-json\n' },
+    { name: 'a structurally invalid config', config: '[]\n' },
+    { name: 'an invalid scope', config: '{"installScope":"managed"}\n' },
+    { name: 'an unreadable config path', config: null },
+  ])('uses the global-only source as a policy-free sentinel for $name', async ({ config }) => {
+    const homeRoot = await createTempDir('agent-belay-cursor-home-')
+    const projectRoot = await createTempDir('agent-belay-cursor-global-sentinel-')
+    process.env.HOME = homeRoot
+    process.env.USERPROFILE = homeRoot
+    await initProject({ targetDir: projectRoot, scope: 'global' })
+    const globalCursorRoot = path.join(homeRoot, '.cursor')
+    await prependCoreMarker(path.join(globalCursorRoot, 'belay', 'runtime'), 'global-sentinel')
+    const loadedConfig = await loadConfigFile(projectRoot)
+    const auditPath = path.join(projectRoot, loadedConfig.audit.logPath)
+    const configPath = path.join(projectRoot, '.cursor', 'belay.config.json')
+    const markerPath = path.join(homeRoot, 'global-sentinel-core-imports.txt')
+    await writeFile(auditPath, '')
+    if (config === null) {
+      await rm(configPath)
+      await mkdir(configPath)
+    } else {
+      await writeFile(configPath, config)
+    }
+
+    const result = await runManagedCommand(
+      await managedCommand(path.join(globalCursorRoot, 'hooks.json'), 'beforeShellExecution'),
+      { command: 'git status', cwd: projectRoot },
+      homeRoot,
+      markerPath,
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({
+      permission: 'deny',
+      user_message: expect.stringMatching(/project hook owner.*unavailable/i),
+    })
+    expect(await markerLoads(markerPath)).toEqual([])
+    expect(await readFile(auditPath, 'utf8')).toBe('')
+  })
+
+  it('keeps the global source neutral when an omitted scope has a callable project owner', async () => {
+    const homeRoot = await createTempDir('agent-belay-cursor-home-')
+    const projectRoot = await createTempDir('agent-belay-cursor-complete-project-owner-')
+    process.env.HOME = homeRoot
+    process.env.USERPROFILE = homeRoot
+    await initProject({ targetDir: projectRoot, scope: 'global' })
+    await initProject({ targetDir: projectRoot, scope: 'project' })
+    const globalCursorRoot = path.join(homeRoot, '.cursor')
+    const projectCursorRoot = path.join(projectRoot, '.cursor')
+    await prependCoreMarker(path.join(globalCursorRoot, 'belay', 'runtime'), 'global')
+    await prependCoreMarker(path.join(projectCursorRoot, 'belay', 'runtime'), 'project')
+    const markerPath = path.join(homeRoot, 'complete-project-owner-core-imports.txt')
+    await writeFile(path.join(projectCursorRoot, 'belay.config.json'), '{}\n')
+    const payload = { command: 'git status', cwd: projectRoot }
+
+    const globalResult = await runManagedCommand(
+      await managedCommand(path.join(globalCursorRoot, 'hooks.json'), 'beforeShellExecution'),
+      payload,
+      homeRoot,
+      markerPath,
+    )
+    const projectResult = await runManagedCommand(
+      await managedCommand(path.join(projectCursorRoot, 'hooks.json'), 'beforeShellExecution'),
+      payload,
+      projectRoot,
+      markerPath,
+    )
+
+    expect([globalResult, projectResult].map((result) => JSON.parse(result.stdout))).toEqual([
+      { permission: 'allow' },
+      { permission: 'allow' },
+    ])
+    expect(await markerLoads(markerPath)).toEqual(['project'])
   })
 
   it('keeps the global source neutral for an uninitialized repository', async () => {
