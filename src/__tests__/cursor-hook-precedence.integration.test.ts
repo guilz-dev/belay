@@ -80,8 +80,11 @@ async function auditRecords(repoRoot: string): Promise<Array<Record<string, unkn
 async function markerLoads(markerPath: string): Promise<string[]> {
   try {
     return (await readFile(markerPath, 'utf8')).split('\n').filter(Boolean)
-  } catch {
-    return []
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw error
   }
 }
 
@@ -168,6 +171,12 @@ describe.sequential('Cursor hook source precedence integration', () => {
     }
     delete process.env.BELAY_DETERMINISTIC_JUDGE
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('surfaces marker read failures other than a missing file', async () => {
+    const directoryPath = await createTempDir('agent-belay-cursor-marker-directory-')
+
+    await expect(markerLoads(directoryPath)).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('runs one effective gate when Cursor invokes global and two project sources', async () => {
@@ -314,8 +323,21 @@ describe.sequential('Cursor hook source precedence integration', () => {
       workspace_roots: [sources.projectB, sources.projectA],
     }
 
-    await invokeAllSources(sources, 'beforeShellExecution', payload)
-    await invokeAllSources(sources, 'preToolUse', payload, 'Shell')
+    const beforeShellResults = await invokeAllSources(sources, 'beforeShellExecution', payload)
+    const preToolUseResults = await invokeAllSources(sources, 'preToolUse', payload, 'Shell')
+
+    expect(beforeShellResults.map((result) => result.exitCode)).toEqual([0, 0, 0])
+    expect(beforeShellResults.map((result) => JSON.parse(result.stdout))).toEqual([
+      { permission: 'allow' },
+      { permission: 'allow' },
+      { permission: 'allow' },
+    ])
+    expect(preToolUseResults.map((result) => result.exitCode)).toEqual([0, 0, 0])
+    expect(preToolUseResults.map((result) => JSON.parse(result.stdout))).toEqual([
+      { permission: 'allow' },
+      { permission: 'allow' },
+      { permission: 'allow' },
+    ])
 
     expect(await markerLoads(sources.markerPath)).toEqual(['project-a', 'project-a'])
     expect((await auditRecords(sources.projectA)).map((record) => record.event)).toEqual([

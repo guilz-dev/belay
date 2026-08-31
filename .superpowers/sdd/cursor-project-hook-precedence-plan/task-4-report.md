@@ -66,3 +66,23 @@ run again passed all 7 tests.
 - Separate canonical Shell events intentionally produce two core imports and two audit records;
   the documentation does not claim event-id deduplication or repeated-delivery suppression.
 - No unrelated warnings were fixed and no product schema or authorization behavior was changed.
+
+## Review follow-up — test-quality minors
+
+Two minor test-quality findings were fixed in a separate red/green pass:
+
+1. `markerLoads` now treats only `ENOENT` as an absent marker. A regression passes an existing
+   directory to force `EISDIR`; it failed red because the promise resolved to `[]`, then passed
+   green after permission and other I/O errors were rethrown.
+2. The distinct canonical-event case now retains both `invokeAllSources` result arrays and asserts
+   literal `[0, 0, 0]` exit codes plus three `{ permission: "allow" }` protocol responses for both
+   `beforeShellExecution` and `preToolUse: Shell`. With the generated global runner temporarily
+   removed, the strengthened test failed red on `[127, 0, 0]`; restoring the valid fixture returned
+   the complete integration file to 8 passing tests.
+
+Review-fix verification:
+
+- `pnpm vitest run src/__tests__/cursor-hook-precedence.integration.test.ts` — passed: 8 tests.
+- `pnpm typecheck` — passed.
+- `pnpm exec biome check src/__tests__/cursor-hook-precedence.integration.test.ts` — passed.
+- `git diff --check` — passed.
