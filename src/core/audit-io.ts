@@ -9,6 +9,7 @@ export {
   AUDIT_SCHEMA_VERSION,
   appendAuditRecord,
   approvalCorrelationId,
+  canonicalToolUseIdForCorrelation,
   isValidAuditFingerprint,
   isValidAuditTimestamp,
   parseAuditNdjsonLine,

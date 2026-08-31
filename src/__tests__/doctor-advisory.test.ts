@@ -91,4 +91,75 @@ describe('doctor skill-only advisory (T21)', () => {
       health.additionalRiskSignals.some((signal) => signal.includes('after Belay allows')),
     ).toBe(true)
   })
+
+  it('falls back to ~/.cursor when XDG config is missing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-xdg-fallback-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-xdg-home-'))
+    const xdgRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-xdg-empty-'))
+    tempDirs.push(repoRoot, homeDir, xdgRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await mkdir(path.join(homeDir, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(homeDir, '.cursor', 'cli-config.json'),
+      `${JSON.stringify({ version: 1, approvalMode: 'allowlist' })}\n`,
+    )
+
+    const health = await collectHealthSnapshot({
+      targetDir: repoRoot,
+      homeDir,
+      cursorConfigEnv: { XDG_CONFIG_HOME: xdgRoot },
+    })
+
+    expect(
+      health.additionalRiskSignals.some((signal) =>
+        signal.includes('Cursor approval mode is allowlist'),
+      ),
+    ).toBe(true)
+  })
+
+  it('warns when Cursor approval mode is unset', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-default-mode-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-default-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await mkdir(path.join(homeDir, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(homeDir, '.cursor', 'cli-config.json'),
+      `${JSON.stringify({ version: 1 })}\n`,
+    )
+
+    const health = await collectHealthSnapshot({
+      targetDir: repoRoot,
+      homeDir,
+      cursorConfigEnv: {},
+    })
+
+    expect(
+      health.additionalRiskSignals.some((signal) =>
+        signal.includes('Cursor approval mode is default (prompts on each action)'),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not warn when Cursor approval mode is unrestricted', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-unrestricted-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-unrestricted-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await mkdir(path.join(homeDir, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(homeDir, '.cursor', 'cli-config.json'),
+      `${JSON.stringify({ version: 1, approvalMode: 'unrestricted' })}\n`,
+    )
+
+    const health = await collectHealthSnapshot({
+      targetDir: repoRoot,
+      homeDir,
+      cursorConfigEnv: {},
+    })
+
+    expect(
+      health.additionalRiskSignals.some((signal) => signal.includes('after Belay allows')),
+    ).toBe(false)
+  })
 })

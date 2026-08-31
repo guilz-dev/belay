@@ -118,6 +118,7 @@ export async function runShellGateHook() {
       kind: 'shell',
       cwd,
       command,
+      payload,
       sourceEvent: 'beforeShellExecution',
     })
     jsonResponse(gateVerdictToCursorResponse(verdict))
