@@ -67,6 +67,16 @@ export function buildRunnerInvocation(
   return [runnerRef, hookScript, ...args].join(' ')
 }
 
+export function buildAbsoluteRunnerInvocation(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  hookScript: string,
+  ...args: string[]
+): string {
+  const runnerFile = platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner'
+  return [path.resolve(hooksDir, runnerFile), hookScript, ...args].join(' ')
+}
+
 export function resolveScopedPaths(
   layout: AdapterLayout,
   scope: InstallScope,

@@ -1,12 +1,14 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { claudeAdapter } from '../adapters/claude/adapter.js'
+import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { codexAdapter } from '../adapters/codex/adapter.js'
+import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
 import { cursorLayout } from '../adapters/layouts/cursor.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import { doctorProject } from '../commands/doctor.js'
@@ -87,6 +89,111 @@ describe('installer scope (T29)', () => {
     expect(config.installScope).toBe('global')
   })
 
+  it('project upgrade refreshes an existing managed global router without changing project scope', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+
+    const globalRuntimeDir = path.join(homeDir, '.cursor', 'belay', 'runtime')
+    const globalHooksDir = path.join(homeDir, '.cursor', 'hooks')
+    await writeFile(path.join(globalRuntimeDir, 'dispatcher.mjs'), '// old dispatcher\n')
+    await writeFile(path.join(globalRuntimeDir, 'core.mjs'), '// old core\n')
+    await writeFile(
+      path.join(globalHooksDir, 'belay-shell-gate.mjs'),
+      "import { runShellGateHook } from '../belay/runtime/core.mjs'\nawait runShellGateHook()\n",
+    )
+
+    await upgradeProject({ targetDir: repoRoot })
+
+    const config = await loadConfigFile(repoRoot, 'cursor')
+    expect(config.installScope).toBe('project')
+    await expect(readFile(path.join(globalRuntimeDir, 'dispatcher.mjs'), 'utf8')).resolves.toBe(
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'), 'utf8'),
+    )
+    await expect(readFile(path.join(globalRuntimeDir, 'core.mjs'), 'utf8')).resolves.toBe(
+      await readFile(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'), 'utf8'),
+    )
+    const globalShim = await readFile(path.join(globalHooksDir, 'belay-shell-gate.mjs'), 'utf8')
+    expect(globalShim).toContain('origin: {"scope":"global"}')
+    expect(globalShim).toContain("from '../belay/runtime/dispatcher.mjs'")
+  })
+
+  it('global selection removes only stale exact project hooks and artifacts for the current repo', async () => {
+    await createTempHome()
+    const repoRoot = await createTempRepo()
+    const siblingRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await initProject({ targetDir: siblingRoot })
+
+    const projectHooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+    const projectHooks = JSON.parse(await readFile(projectHooksPath, 'utf8')) as {
+      version: number
+      hooks: Record<string, Array<{ command: string; matcher?: string }>>
+    }
+    const unknownEntry = { command: './.cursor/hooks/belay-runner belay-shell-gate --unknown' }
+    projectHooks.hooks.beforeShellExecution = [
+      unknownEntry,
+      ...(projectHooks.hooks.beforeShellExecution ?? []),
+    ]
+    await writeFile(projectHooksPath, `${JSON.stringify(projectHooks, null, 2)}\n`)
+
+    await upgradeProject({ targetDir: repoRoot, scope: 'global' })
+
+    const cleaned = JSON.parse(await readFile(projectHooksPath, 'utf8')) as {
+      hooks: Record<string, Array<{ command: string }>>
+    }
+    expect(cleaned.hooks.beforeShellExecution).toEqual([unknownEntry])
+    expect(
+      Object.values(cleaned.hooks)
+        .flat()
+        .filter((entry) => entry.command !== unknownEntry.command),
+    ).toHaveLength(0)
+    expect(existsSync(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    expect(existsSync(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      false,
+    )
+    expect(existsSync(path.join(siblingRoot, '.cursor', 'hooks', 'belay-runner'))).toBe(true)
+    expect(
+      existsSync(path.join(siblingRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs')),
+    ).toBe(true)
+  })
+
+  it('global selection preserves project artifacts when no exact managed hook proves ownership', async () => {
+    await createTempHome()
+    const repoRoot = await createTempRepo()
+    const projectHooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const projectRuntimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    await mkdir(projectHooksDir, { recursive: true })
+    await mkdir(projectRuntimeDir, { recursive: true })
+    const unknownHooks = {
+      version: 1,
+      hooks: {
+        beforeShellExecution: [
+          { command: './.cursor/hooks/belay-runner belay-shell-gate --unknown' },
+        ],
+      },
+    }
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'hooks.json'),
+      `${JSON.stringify(unknownHooks, null, 2)}\n`,
+    )
+    await writeFile(path.join(projectHooksDir, 'belay-runner'), 'unknown runner\n')
+    await writeFile(path.join(projectRuntimeDir, 'dispatcher.mjs'), '// unknown dispatcher\n')
+
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+
+    expect(
+      JSON.parse(await readFile(path.join(repoRoot, '.cursor', 'hooks.json'), 'utf8')),
+    ).toEqual(unknownHooks)
+    await expect(readFile(path.join(projectHooksDir, 'belay-runner'), 'utf8')).resolves.toBe(
+      'unknown runner\n',
+    )
+    await expect(readFile(path.join(projectRuntimeDir, 'dispatcher.mjs'), 'utf8')).resolves.toBe(
+      '// unknown dispatcher\n',
+    )
+  })
+
   it('keeps the runtime artifact cohort stable across a same-bundle upgrade', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
@@ -158,14 +265,29 @@ describe('installer scope (T29)', () => {
     ).rejects.toThrow(/managed install scope is not implemented/)
   })
 
-  it('project scope runner commands stay repo-relative', async () => {
+  it('project scope uses an absolute Cursor runner path while Claude and Codex stay relative', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
 
     const hooksDir = cursorLayout.hooksDir(repoRoot)
     const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot)
     const shellHook = managed.find((entry) => entry.event === 'beforeShellExecution')?.definition
-    expect(shellHook?.command).toMatch(/^\.\//)
+    expect(shellHook?.command).toBe(
+      `${path.join(hooksDir, process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner')} belay-shell-gate`,
+    )
+
+    const claudeShellHook = getClaudeManagedHookEntries(
+      process.platform,
+      path.join(repoRoot, '.claude', 'hooks'),
+      repoRoot,
+    ).find((entry) => entry.event === 'PreToolUse')?.definition
+    const codexShellHook = getCodexManagedHookEntries(
+      process.platform,
+      path.join(repoRoot, '.codex', 'hooks'),
+      repoRoot,
+    ).find((entry) => entry.event === 'PreToolUse')?.definition
+    expect(claudeShellHook?.command).toMatch(/^\.\//)
+    expect(codexShellHook?.command).toMatch(/^\.\//)
   })
 
   it('claude global scope writes skill under HOME', async () => {
@@ -203,6 +325,9 @@ describe('installer scope (T29)', () => {
     }
     expect(hooksBefore.hooks.beforeShellExecution?.length ?? 0).toBeGreaterThan(0)
     expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(true)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      true,
+    )
 
     const result = await uninstallProject({ targetDir: repoRoot, scope: 'global' })
     expect(result.scope).toBe('global')
@@ -222,6 +347,9 @@ describe('installer scope (T29)', () => {
     expect(belayEntries).toHaveLength(0)
     expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      false,
+    )
     expect(existsSync(path.join(homeDir, '.cursor', 'skills', 'belay', 'SKILL.md'))).toBe(false)
   })
 })

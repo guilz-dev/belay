@@ -5,13 +5,33 @@ function entryMatches(existing: HookEntry, expected: HookEntry): boolean {
   return existing.command === expected.command && existing.matcher === expected.matcher
 }
 
+function legacyManagedEntries(platform: NodeJS.Platform, hooksDir: string, repoRoot: string) {
+  return getManagedHookEntries(platform, hooksDir, repoRoot, 'legacy-relative')
+}
+
+function variantsForDefinition(
+  legacyEntries: ReturnType<typeof getManagedHookEntries>,
+  event: string,
+  definition: HookEntry,
+): HookEntry[] {
+  return [
+    definition,
+    ...legacyEntries
+      .filter((entry) => entry.event === event && entry.definition.matcher === definition.matcher)
+      .map((entry) => entry.definition),
+  ]
+}
+
 function mergeHookEntry(
   current: HookEntry[] | undefined,
   expected: HookEntry,
+  managedVariants: HookEntry[],
   placement: 'prepend' | 'append',
 ): HookEntry[] {
   const entries = Array.isArray(current) ? [...current] : []
-  const filtered = entries.filter((entry) => !entryMatches(entry, expected))
+  const filtered = entries.filter(
+    (entry) => !managedVariants.some((variant) => entryMatches(entry, variant)),
+  )
   if (placement === 'prepend') {
     return [expected, ...filtered]
   }
@@ -51,17 +71,15 @@ export function stripCursorHooksFile(
     hooks: { ...current.hooks },
   }
   const managedEntries = getManagedHookEntries(platform, hooksDir, repoRoot)
+  const legacyEntries = legacyManagedEntries(platform, hooksDir, repoRoot)
   for (const { event, definition } of managedEntries) {
     const entries = next.hooks[event]
     if (!Array.isArray(entries)) {
       continue
     }
+    const variants = variantsForDefinition(legacyEntries, event, definition)
     next.hooks[event] = entries.filter(
-      (entry) =>
-        !entryMatches(entry, {
-          command: definition.command,
-          matcher: definition.matcher,
-        }),
+      (entry) => !variants.some((variant) => entryMatches(entry, variant)),
     )
     if (next.hooks[event].length === 0) {
       delete next.hooks[event]
@@ -81,13 +99,16 @@ export function mergeCursorHooksFile(
     hooks: { ...current.hooks },
   }
   const managedEntries = getManagedHookEntries(platform, hooksDir, repoRoot)
+  const legacyEntries = legacyManagedEntries(platform, hooksDir, repoRoot)
   for (const { event, definition } of managedEntries) {
+    const variants = variantsForDefinition(legacyEntries, event, definition)
     next.hooks[event] = mergeHookEntry(
       next.hooks[event],
       {
         command: definition.command,
         matcher: definition.matcher,
       },
+      variants,
       definition.placement,
     )
   }
@@ -107,4 +128,19 @@ export function hasDuplicateCursorShellGates(
   }
   const shellMatches = preToolUse.filter((entry) => entryMatches(entry, shellEntry))
   return shellMatches.length > 1
+}
+
+export function hasManagedCursorHookEntries(
+  hooks: HooksFile,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): boolean {
+  const managedEntries = [
+    ...getManagedHookEntries(platform, hooksDir, repoRoot),
+    ...legacyManagedEntries(platform, hooksDir, repoRoot),
+  ]
+  return managedEntries.some(({ event, definition }) =>
+    hooks.hooks[event]?.some((entry) => entryMatches(entry, definition)),
+  )
 }

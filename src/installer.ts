@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { mergeCursorHooksFile, stripCursorHooksFile } from './adapters/cursor/hooks.js'
+import {
+  hasManagedCursorHookEntries,
+  mergeCursorHooksFile,
+  stripCursorHooksFile,
+} from './adapters/cursor/hooks.js'
 import { cursorLayout } from './adapters/layouts/cursor.js'
 import { resolveScopedPaths, type ScopedPaths } from './adapters/layouts/scope.js'
 import type { AdapterName } from './adapters/layouts/types.js'
@@ -105,6 +109,9 @@ export async function initCursorProject(
 
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
+  if (scope === 'global') {
+    await cleanupStaleProjectCursorInstall(repoRoot)
+  }
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
   await archiveLegacyAuditLogIfNeeded(repoRoot, config)
   return { repoRoot, withSkill }
@@ -126,8 +133,35 @@ export async function upgradeCursorProject(
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
 
+  if (scope === 'project') {
+    const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
+    if (existsSync(globalPaths.hooksSettingsPath)) {
+      const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
+      if (
+        hasManagedCursorHookEntries(globalHooks, process.platform, globalPaths.hooksDir, repoRoot)
+      ) {
+        await writeRuntimeArtifacts('cursor', globalPaths)
+        const mergedGlobal = mergeCursorHooksFile(
+          globalHooks,
+          process.platform,
+          globalPaths.hooksDir,
+          repoRoot,
+        )
+        await writeFile(
+          globalPaths.hooksSettingsPath,
+          `${JSON.stringify(mergedGlobal, null, 2)}\n`,
+          'utf8',
+        )
+      }
+    }
+  }
+
   if (options.withSkill) {
     await writeSkillArtifacts('cursor', paths)
+  }
+
+  if (scope === 'global') {
+    await cleanupStaleProjectCursorInstall(repoRoot)
   }
 
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
@@ -153,6 +187,27 @@ async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
   if (paths.commandsDir) {
     await rm(path.join(paths.commandsDir, 'belay.md'), { force: true })
   }
+}
+
+async function cleanupStaleProjectCursorInstall(repoRoot: string): Promise<void> {
+  const projectPaths = resolveScopedPaths(cursorLayout, 'project', repoRoot)
+  if (!existsSync(projectPaths.hooksSettingsPath)) {
+    return
+  }
+  const projectHooks = await loadHooksFile(projectPaths.hooksSettingsPath)
+  if (
+    !hasManagedCursorHookEntries(projectHooks, process.platform, projectPaths.hooksDir, repoRoot)
+  ) {
+    return
+  }
+  const stripped = stripCursorHooksFile(
+    projectHooks,
+    process.platform,
+    projectPaths.hooksDir,
+    repoRoot,
+  )
+  await writeFile(projectPaths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  await removeBelayHookArtifacts(projectPaths)
 }
 
 export async function uninstallCursorProject(

@@ -8,6 +8,7 @@ import {
   hasDuplicateCursorShellGates,
   legacyManagedShellPreToolUseEntry,
   mergeCursorHooksFile,
+  stripCursorHooksFile,
 } from '../adapters/cursor/hooks.js'
 import { initProject, upgradeCursorProject } from '../installer.js'
 
@@ -28,6 +29,91 @@ async function readJson(filePath: string) {
 }
 
 describe('cursor hook dedupe', () => {
+  it('migrates exact legacy-relative entries to one absolute entry without reordering custom hooks', () => {
+    const repoRoot = path.resolve('/tmp/project with spaces')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const absoluteRunner = path.join(
+      hooksDir,
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
+    const currentShell = { command: `${absoluteRunner} belay-shell-gate` }
+    const legacyRunner =
+      process.platform === 'win32'
+        ? '.\\.cursor\\hooks\\belay-runner.cmd'
+        : './.cursor/hooks/belay-runner'
+    const legacyShell = { command: `${legacyRunner} belay-shell-gate` }
+    const customBefore = { command: 'custom-before', metadata: { keep: 'byte-for-byte' } }
+    const customMiddle = { command: 'custom-middle', matcher: 'Shell' }
+    const customAfter = { command: 'custom-after' }
+    const unknownBelayLike = { command: `${legacyRunner} belay-shell-gate --custom` }
+    const hooks = {
+      version: 1,
+      hooks: {
+        beforeShellExecution: [
+          customBefore,
+          legacyShell,
+          customMiddle,
+          currentShell,
+          legacyShell,
+          unknownBelayLike,
+          customAfter,
+        ],
+      },
+    }
+
+    const merged = mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: currentShell.command, matcher: undefined },
+      customBefore,
+      customMiddle,
+      unknownBelayLike,
+      customAfter,
+    ])
+  })
+
+  it('strips exact relative and absolute managed entries but preserves unknown commands in order', () => {
+    const repoRoot = path.resolve('/tmp/project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const absoluteShell = {
+      command: `${path.join(
+        hooksDir,
+        process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+      )} belay-shell-gate`,
+    }
+    const legacyRunner =
+      process.platform === 'win32'
+        ? '.\\.cursor\\hooks\\belay-runner.cmd'
+        : './.cursor/hooks/belay-runner'
+    const customBefore = { command: 'custom-before' }
+    const unknownBelayLike = { command: `${legacyRunner} belay-shell-gate --unknown` }
+    const customAfter = { command: 'custom-after' }
+
+    const stripped = stripCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            customBefore,
+            { command: `${legacyRunner} belay-shell-gate` },
+            unknownBelayLike,
+            absoluteShell,
+            customAfter,
+          ],
+        },
+      },
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(stripped.hooks.beforeShellExecution).toEqual([
+      customBefore,
+      unknownBelayLike,
+      customAfter,
+    ])
+  })
+
   it('detects duplicate Shell preToolUse gate entries', () => {
     const repoRoot = '/tmp/project'
     const hooksDir = `${repoRoot}/.cursor/hooks`

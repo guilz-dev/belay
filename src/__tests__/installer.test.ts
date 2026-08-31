@@ -41,7 +41,7 @@ describe('agent-belay installer', () => {
 
     const hooksPath = path.join(cursorDir, 'hooks.json')
     const hooks = await readJson(hooksPath)
-    const managed = getManagedHookEntries(process.platform)
+    const managed = getManagedHookEntries(process.platform, path.join(cursorDir, 'hooks'), repoRoot)
     const managedByEvent = Object.fromEntries(
       managed.map((entry) => [entry.event, entry.definition]),
     )
@@ -123,7 +123,7 @@ describe('agent-belay installer', () => {
     await initProject({ targetDir: repoRoot })
 
     const hooks = await readJson(path.join(cursorDir, 'hooks.json'))
-    const managed = getManagedHookEntries(process.platform)
+    const managed = getManagedHookEntries(process.platform, path.join(cursorDir, 'hooks'), repoRoot)
     const shellHook = managed.find((entry) => entry.event === 'beforeShellExecution')?.definition
     const postHook = managed.find((entry) => entry.event === 'postToolUse')?.definition
     expect(

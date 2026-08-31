@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -23,6 +23,143 @@ afterEach(async () => {
 })
 
 describe('doctorProject', () => {
+  it('reports a selected project shim whose embedded origin is global', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-origin-mismatch-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const shellShim = path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs')
+    const source = await readFile(shellShim, 'utf8')
+    await writeFile(shellShim, source.replace('{"scope":"project"', '{"scope":"global"'))
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) => issue.includes('origin mismatch') && issue.includes('project')),
+    ).toBe(true)
+  })
+
+  it('reports a pre-router shim generation for the intended owner', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-router-generation-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+      "import { runShellGateHook } from '../belay/runtime/core.mjs'\nawait runShellGateHook()\n",
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('router generation mismatch') && issue.includes('upgrade'),
+      ),
+    ).toBe(true)
+  })
+
+  it('reports a pre-router dispatcher generation when integrity pinning is disabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-old-dispatcher-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        controlPlane: { ...config.controlPlane, integrity: 'none' },
+      })}\n`,
+    )
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
+      '// pre-router dispatcher generation\n',
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) => issue.includes('router generation mismatch') && issue.includes('dispatcher'),
+      ),
+    ).toBe(true)
+  })
+
+  it('reports an incomplete intended project owner when its dispatcher is missing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-incomplete-owner-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    await rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.includes('intended project owner is incomplete') && issue.includes('dispatcher'),
+      ),
+    ).toBe(true)
+  })
+
+  it('reports an old managed global install that cannot yield to the project owner', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-old-global-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-old-global-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    await writeFile(
+      path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'),
+      '// pre-router dispatcher generation\n',
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) =>
+        issue.includes('Global Cursor installation cannot yield to the project owner'),
+      ),
+    ).toBe(true)
+  })
+
+  it('notes a healthy global install shadowed by the selected project owner', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadowed-global-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-shadowed-home-'))
+    tempDirs.push(repoRoot, homeDir)
+    process.env.HOME = homeDir
+    delete process.env.XDG_CONFIG_HOME
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(true)
+    expect(
+      report.notes.some((note) => note.includes('Healthy global Cursor install is shadowed')),
+    ).toBe(true)
+    expect(report.warnings.some((warning) => warning.toLowerCase().includes('shadow'))).toBe(false)
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'accepts a canonical-equivalent project origin when doctor runs through a symlink',
+    async () => {
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-canonical-origin-'))
+      const linkParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-canonical-link-'))
+      const linkedRepo = path.join(linkParent, 'repo-link')
+      tempDirs.push(repoRoot, linkParent)
+      await symlink(repoRoot, linkedRepo, 'dir')
+      await initProject({ targetDir: repoRoot })
+
+      const report = await doctorProject({ targetDir: linkedRepo })
+
+      expect(report.issues.some((issue) => issue.includes('origin mismatch'))).toBe(false)
+    },
+  )
+
   it('reports a modified Cursor dispatcher as an integrity failure', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dispatcher-integrity-'))
     tempDirs.push(repoRoot)

@@ -1,9 +1,12 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
 import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
-import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
+import {
+  hasDuplicateCursorShellGates,
+  hasManagedCursorHookEntries,
+} from '../adapters/cursor/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -78,6 +81,67 @@ function hasCursorGlobalWorkspaceResolver(runtimeSource: string): boolean {
     runtimeSource.includes('working_directory') &&
     runtimeSource.includes('tool_input')
   )
+}
+
+const CURSOR_HOOK_SHIMS = [
+  'belay-before-submit.mjs',
+  'belay-shell-gate.mjs',
+  'belay-tool-gate.mjs',
+  'belay-audit.mjs',
+] as const
+
+function hasCursorOwnershipRouter(dispatcherSource: string): boolean {
+  return (
+    dispatcherSource.includes('routeCursorHook') &&
+    dispatcherSource.includes('neutralResponse') &&
+    dispatcherSource.includes('origin')
+  )
+}
+
+async function cursorOriginIssues(
+  hooksDir: string,
+  installScope: 'project' | 'global',
+  repoRoot: string,
+): Promise<string[]> {
+  const canonicalRepoRoot = realpathSync(repoRoot)
+  const issues: string[] = []
+  for (const fileName of CURSOR_HOOK_SHIMS) {
+    const shimPath = path.join(hooksDir, fileName)
+    if (!existsSync(shimPath)) {
+      continue
+    }
+    const source = await readFile(shimPath, 'utf8')
+    if (!source.includes("from '../belay/runtime/dispatcher.mjs'")) {
+      issues.push(
+        `Cursor router generation mismatch for intended ${installScope} owner: ${shimPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+      continue
+    }
+    const originMatch = source.match(/origin:\s*(\{[^\n]+\})/)
+    let originMatches = false
+    if (originMatch?.[1]) {
+      try {
+        const origin = JSON.parse(originMatch[1]) as {
+          scope?: unknown
+          repoRoot?: unknown
+        }
+        originMatches =
+          installScope === 'global'
+            ? origin.scope === 'global'
+            : origin.scope === 'project' &&
+              typeof origin.repoRoot === 'string' &&
+              realpathSync(origin.repoRoot) === canonicalRepoRoot
+      } catch {
+        originMatches = false
+      }
+    }
+    if (!originMatches) {
+      issues.push(
+        `Cursor hook origin mismatch for intended ${installScope} owner: ${shimPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+    }
+  }
+  return issues
 }
 
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
@@ -227,6 +291,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     path.join(hooksDir, 'belay-shell-gate.mjs'),
     path.join(hooksDir, 'belay-tool-gate.mjs'),
     path.join(hooksDir, 'belay-audit.mjs'),
+    ...(adapterName === 'cursor' ? [path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')] : []),
     corePath,
     loadedConfig
       ? pendingApprovalsPath(repoRoot, loadedConfig)
@@ -239,6 +304,60 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   for (const requiredPath of requiredPaths) {
     if (!existsSync(requiredPath)) {
       issues.push(`Missing generated file: ${requiredPath}`)
+      if (adapterName === 'cursor') {
+        issues.push(
+          `Cursor intended ${installScope} owner is incomplete: missing ${requiredPath}. Run belay upgrade --scope ${installScope}.`,
+        )
+      }
+    }
+  }
+  if (adapterName === 'cursor') {
+    issues.push(...(await cursorOriginIssues(hooksDir, installScope, repoRoot)))
+    const dispatcherPath = path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')
+    if (
+      existsSync(dispatcherPath) &&
+      !hasCursorOwnershipRouter(await readFile(dispatcherPath, 'utf8'))
+    ) {
+      issues.push(
+        `Cursor router generation mismatch for intended ${installScope} owner dispatcher: ${dispatcherPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+    }
+    if (installScope === 'project') {
+      const globalPaths = resolveScopedPaths(activeLayout, 'global', repoRoot)
+      if (existsSync(globalPaths.hooksSettingsPath)) {
+        const { loadHooksFile } = await import('../installer.js')
+        const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
+        if (
+          hasManagedCursorHookEntries(globalHooks, process.platform, globalPaths.hooksDir, repoRoot)
+        ) {
+          const globalOwnerFiles = [
+            path.join(globalPaths.hooksDir, 'belay-runner'),
+            path.join(globalPaths.runtimeDir, 'core.mjs'),
+            path.join(globalPaths.runtimeDir, 'dispatcher.mjs'),
+            ...CURSOR_HOOK_SHIMS.map((fileName) => path.join(globalPaths.hooksDir, fileName)),
+          ]
+          const globalProblems = [
+            ...globalOwnerFiles.filter((filePath) => !existsSync(filePath)),
+            ...(await cursorOriginIssues(globalPaths.hooksDir, 'global', repoRoot)),
+          ]
+          const globalDispatcherPath = path.join(globalPaths.runtimeDir, 'dispatcher.mjs')
+          if (
+            existsSync(globalDispatcherPath) &&
+            !hasCursorOwnershipRouter(await readFile(globalDispatcherPath, 'utf8'))
+          ) {
+            globalProblems.push(globalDispatcherPath)
+          }
+          if (globalProblems.length > 0) {
+            issues.push(
+              'Global Cursor installation cannot yield to the project owner. Run belay upgrade from this project to refresh the global router.',
+            )
+          } else {
+            notes.push(
+              'Healthy global Cursor install is shadowed by this project owner and will return neutral for this repository.',
+            )
+          }
+        }
+      }
     }
   }
 
