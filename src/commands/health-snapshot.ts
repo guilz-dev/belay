@@ -87,17 +87,23 @@ export function cursorCliConfigPaths(
   homeDir: string,
   env: Partial<Pick<NodeJS.ProcessEnv, 'CURSOR_CONFIG_DIR' | 'XDG_CONFIG_HOME'>>,
 ): string[] {
-  const cursorConfigDir = env.CURSOR_CONFIG_DIR?.trim()
-  if (cursorConfigDir) {
-    return [path.join(cursorConfigDir, 'cli-config.json')]
+  const candidates: string[] = []
+  const addCandidate = (candidate: string) => {
+    if (!candidates.includes(candidate)) {
+      candidates.push(candidate)
+    }
   }
 
-  const candidates: string[] = []
+  const cursorConfigDir = env.CURSOR_CONFIG_DIR?.trim()
+  if (cursorConfigDir) {
+    addCandidate(path.join(cursorConfigDir, 'cli-config.json'))
+  }
+
   const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
   if (xdgConfigHome) {
-    candidates.push(path.join(xdgConfigHome, 'cursor', 'cli-config.json'))
+    addCandidate(path.join(xdgConfigHome, 'cursor', 'cli-config.json'))
   }
-  candidates.push(path.join(homeDir, '.cursor', 'cli-config.json'))
+  addCandidate(path.join(homeDir, '.cursor', 'cli-config.json'))
   return candidates
 }
 

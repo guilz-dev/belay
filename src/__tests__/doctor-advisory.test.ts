@@ -92,6 +92,34 @@ describe('doctor skill-only advisory (T21)', () => {
     ).toBe(true)
   })
 
+  it('falls back to ~/.cursor when CURSOR_CONFIG_DIR is configured but missing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-config-dir-fallback-'))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-config-dir-home-'))
+    const missingConfigDir = path.join(
+      await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-config-dir-missing-')),
+      'missing-cursor-config',
+    )
+    tempDirs.push(repoRoot, homeDir)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await mkdir(path.join(homeDir, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(homeDir, '.cursor', 'cli-config.json'),
+      `${JSON.stringify({ version: 1, approvalMode: 'allowlist' })}\n`,
+    )
+
+    const health = await collectHealthSnapshot({
+      targetDir: repoRoot,
+      homeDir,
+      cursorConfigEnv: { CURSOR_CONFIG_DIR: missingConfigDir },
+    })
+
+    expect(
+      health.additionalRiskSignals.some((signal) =>
+        signal.includes('Cursor approval mode is allowlist'),
+      ),
+    ).toBe(true)
+  })
+
   it('falls back to ~/.cursor when XDG config is missing', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-xdg-fallback-'))
     const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-xdg-home-'))
