@@ -339,6 +339,33 @@ describe('writeConfigFile', () => {
     expect(saved.overrides.allow).toEqual([])
     expect(saved.overrides.external).toEqual([])
   })
+
+  it('atomically replaces a live config without changing bytes behind an open descriptor', async () => {
+    const { mkdtemp, open, readFile, rm } = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const { writeConfigFile } = await import('../config-io.js')
+    const { mergeConfig } = await import('../core/config.js')
+
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-config-atomic-write-'))
+    const initial = mergeConfig({ mode: 'enforce' })
+    const updated = mergeConfig({ mode: 'audit' })
+    await writeConfigFile(repoRoot, initial)
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const initialBytes = await readFile(configPath, 'utf8')
+    const oldDescriptor = await open(configPath, 'r')
+    try {
+      await writeConfigFile(repoRoot, updated)
+      const descriptorBytes = await oldDescriptor.readFile('utf8')
+      const liveBytes = await readFile(configPath, 'utf8')
+
+      expect(descriptorBytes).toBe(initialBytes)
+      expect(JSON.parse(liveBytes).mode).toBe('audit')
+    } finally {
+      await oldDescriptor.close()
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('policy defaults', () => {

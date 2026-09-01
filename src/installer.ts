@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { mergeCursorHooksFile, stripCursorHooksFile } from './adapters/cursor/hooks.js'
+import {
+  hasManagedCursorHookEntries,
+  mergeCursorHooksFile,
+  stripCursorHooksFile,
+} from './adapters/cursor/hooks.js'
 import { cursorLayout } from './adapters/layouts/cursor.js'
 import { resolveScopedPaths, type ScopedPaths } from './adapters/layouts/scope.js'
 import type { AdapterName } from './adapters/layouts/types.js'
@@ -30,7 +34,11 @@ import {
   resolveInitJudgeConfig,
 } from './core/judge-config.js'
 import { resolveJudgeTransport } from './core/judge-runtime-detection.js'
-import { bootstrapStateFiles, writeSkillArtifacts } from './installer/bootstrap.js'
+import {
+  bootstrapStateFiles,
+  CURSOR_COMMAND_ARTIFACTS,
+  writeSkillArtifacts,
+} from './installer/bootstrap.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
 import { applyConfigPreset } from './presets.js'
@@ -95,7 +103,6 @@ export async function initCursorProject(
 
   await ensureDir(paths.hooksDir)
   const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await applyInstallScope(repoRoot, 'cursor', scope, config)
   await writeRuntimeArtifacts('cursor', paths)
   await bootstrapStateFiles(repoRoot, config, paths)
 
@@ -105,8 +112,12 @@ export async function initCursorProject(
 
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
+  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
+  if (scope === 'global') {
+    await cleanupStaleProjectCursorInstall(repoRoot)
+  }
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
+  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
   return { repoRoot, withSkill }
 }
 
@@ -118,7 +129,6 @@ export async function upgradeCursorProject(
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
 
   const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await applyInstallScope(repoRoot, 'cursor', scope, config)
   await writeRuntimeArtifacts('cursor', paths)
 
   const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
@@ -126,12 +136,40 @@ export async function upgradeCursorProject(
   await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
   await writeFile(paths.hooksSettingsPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
 
+  if (scope === 'project') {
+    const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
+    if (existsSync(globalPaths.hooksSettingsPath)) {
+      const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
+      if (
+        hasManagedCursorHookEntries(globalHooks, process.platform, globalPaths.hooksDir, repoRoot)
+      ) {
+        await writeRuntimeArtifacts('cursor', globalPaths)
+        const mergedGlobal = mergeCursorHooksFile(
+          globalHooks,
+          process.platform,
+          globalPaths.hooksDir,
+          repoRoot,
+        )
+        await writeFile(
+          globalPaths.hooksSettingsPath,
+          `${JSON.stringify(mergedGlobal, null, 2)}\n`,
+          'utf8',
+        )
+      }
+    }
+  }
+
   if (options.withSkill) {
     await writeSkillArtifacts('cursor', paths)
   }
 
+  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
+  if (scope === 'global') {
+    await cleanupStaleProjectCursorInstall(repoRoot)
+  }
+
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, config)
+  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
   return { repoRoot }
 }
 
@@ -142,17 +180,43 @@ const BELAY_HOOK_ARTIFACTS = [
   'belay-audit.mjs',
   'belay-runner',
   'belay-runner.cmd',
+  'belay-runner.ps1',
 ]
 
 async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
   for (const fileName of BELAY_HOOK_ARTIFACTS) {
     await rm(path.join(paths.hooksDir, fileName), { force: true })
   }
-  await rm(paths.runtimeDir, { recursive: true, force: true })
-  await rm(paths.skillsDir, { recursive: true, force: true })
-  if (paths.commandsDir) {
-    await rm(path.join(paths.commandsDir, 'belay.md'), { force: true })
+  for (const fileName of ['core.mjs', 'dispatcher.mjs']) {
+    await rm(path.join(paths.runtimeDir, fileName), { force: true })
   }
+  await rm(path.join(paths.skillsDir, 'SKILL.md'), { force: true })
+  if (paths.commandsDir) {
+    for (const fileName of CURSOR_COMMAND_ARTIFACTS) {
+      await rm(path.join(paths.commandsDir, fileName), { force: true })
+    }
+  }
+}
+
+async function cleanupStaleProjectCursorInstall(repoRoot: string): Promise<void> {
+  const projectPaths = resolveScopedPaths(cursorLayout, 'project', repoRoot)
+  if (!existsSync(projectPaths.hooksSettingsPath)) {
+    return
+  }
+  const projectHooks = await loadHooksFile(projectPaths.hooksSettingsPath)
+  if (
+    !hasManagedCursorHookEntries(projectHooks, process.platform, projectPaths.hooksDir, repoRoot)
+  ) {
+    return
+  }
+  const stripped = stripCursorHooksFile(
+    projectHooks,
+    process.platform,
+    projectPaths.hooksDir,
+    repoRoot,
+  )
+  await writeFile(projectPaths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  await removeBelayHookArtifacts(projectPaths)
 }
 
 export async function uninstallCursorProject(

@@ -1,7 +1,13 @@
 import path from 'node:path'
 
 import { cursorLayout } from './adapters/layouts/cursor.js'
-import { buildRunnerInvocation } from './adapters/layouts/scope.js'
+import {
+  buildAbsoluteRunnerInvocation,
+  buildLegacyAbsoluteRunnerInvocation,
+  buildLegacyBarePowerShellRunnerInvocation,
+  buildLegacyQuotedAbsoluteRunnerInvocation,
+  buildRunnerInvocation,
+} from './adapters/layouts/scope.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3 } from './core/config.js'
 
 export { PACKAGE_NAME } from './branding.js'
@@ -12,23 +18,50 @@ export type ManagedHookDefinition = {
   command: string
   placement: 'prepend' | 'append'
   matcher?: string
+  failClosed?: boolean
 }
+
+export type CursorManagedHookDefinition = ManagedHookDefinition & { failClosed: true }
 
 function runnerCommand(
   platform: NodeJS.Platform,
   hooksDir: string,
-  repoRoot: string,
+  _repoRoot: string,
   hookScript: string,
+  runnerPathMode:
+    | 'absolute'
+    | 'legacy-relative'
+    | 'legacy-absolute'
+    | 'legacy-quoted-absolute'
+    | 'legacy-bare-powershell-absolute',
   ...args: string[]
 ): string {
-  return buildRunnerInvocation(platform, hooksDir, repoRoot, hookScript, ...args)
+  if (runnerPathMode === 'absolute') {
+    return buildAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  if (runnerPathMode === 'legacy-absolute') {
+    return buildLegacyAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  if (runnerPathMode === 'legacy-quoted-absolute') {
+    return buildLegacyQuotedAbsoluteRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  if (runnerPathMode === 'legacy-bare-powershell-absolute') {
+    return buildLegacyBarePowerShellRunnerInvocation(platform, hooksDir, hookScript, ...args)
+  }
+  return buildRunnerInvocation(platform, hooksDir, _repoRoot, hookScript, ...args)
 }
 
 export function getManagedHookEntries(
   platform: NodeJS.Platform = process.platform,
   hooksDir?: string,
   repoRoot?: string,
-): Array<{ event: string; definition: ManagedHookDefinition }> {
+  runnerPathMode:
+    | 'absolute'
+    | 'legacy-relative'
+    | 'legacy-absolute'
+    | 'legacy-quoted-absolute'
+    | 'legacy-bare-powershell-absolute' = 'absolute',
+): Array<{ event: string; definition: CursorManagedHookDefinition }> {
   const resolvedRepo = path.resolve(repoRoot ?? process.cwd())
   const resolvedHooksDir = hooksDir ?? cursorLayout.hooksDir(resolvedRepo)
   const toolGate = runnerCommand(
@@ -36,6 +69,7 @@ export function getManagedHookEntries(
     resolvedHooksDir,
     resolvedRepo,
     'belay-tool-gate',
+    runnerPathMode,
     'preToolUse',
   )
   const subagentGate = runnerCommand(
@@ -43,21 +77,37 @@ export function getManagedHookEntries(
     resolvedHooksDir,
     resolvedRepo,
     'belay-tool-gate',
+    runnerPathMode,
     'subagentStart',
   )
 
-  return [
+  const entries: Array<{
+    event: string
+    definition: Omit<CursorManagedHookDefinition, 'failClosed'>
+  }> = [
     {
       event: 'beforeSubmitPrompt',
       definition: {
-        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-before-submit'),
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-before-submit',
+          runnerPathMode,
+        ),
         placement: 'prepend',
       },
     },
     {
       event: 'beforeShellExecution',
       definition: {
-        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-shell-gate'),
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-shell-gate',
+          runnerPathMode,
+        ),
         placement: 'prepend',
       },
     },
@@ -158,6 +208,7 @@ export function getManagedHookEntries(
           resolvedHooksDir,
           resolvedRepo,
           'belay-audit',
+          runnerPathMode,
           'postToolUse',
         ),
         placement: 'append',
@@ -171,6 +222,7 @@ export function getManagedHookEntries(
           resolvedHooksDir,
           resolvedRepo,
           'belay-audit',
+          runnerPathMode,
           'postToolUseFailure',
         ),
         placement: 'append',
@@ -179,7 +231,14 @@ export function getManagedHookEntries(
     {
       event: 'stop',
       definition: {
-        command: runnerCommand(platform, resolvedHooksDir, resolvedRepo, 'belay-audit', 'stop'),
+        command: runnerCommand(
+          platform,
+          resolvedHooksDir,
+          resolvedRepo,
+          'belay-audit',
+          runnerPathMode,
+          'stop',
+        ),
         placement: 'append',
       },
     },
@@ -191,20 +250,25 @@ export function getManagedHookEntries(
           resolvedHooksDir,
           resolvedRepo,
           'belay-audit',
+          runnerPathMode,
           'sessionEnd',
         ),
         placement: 'append',
       },
     },
   ]
+  return entries.map(({ event, definition }) => ({
+    event,
+    definition: { ...definition, failClosed: true },
+  }))
 }
 
 /** @deprecated Use getManagedHookEntries instead. */
 export function getManagedHookEvents(
   platform: NodeJS.Platform = process.platform,
-): Record<string, ManagedHookDefinition> {
+): Record<string, CursorManagedHookDefinition> {
   const entries = getManagedHookEntries(platform)
-  const result: Record<string, ManagedHookDefinition> = {}
+  const result: Record<string, CursorManagedHookDefinition> = {}
   for (const entry of entries) {
     if (!result[entry.event]) {
       result[entry.event] = entry.definition

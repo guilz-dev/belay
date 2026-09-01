@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,12 +9,20 @@ import {
   hasDuplicateCursorShellGates,
   legacyManagedShellPreToolUseEntry,
   mergeCursorHooksFile,
+  stripCursorHooksFile,
 } from '../adapters/cursor/hooks.js'
+import { getManagedHookEntries } from '../defaults.js'
 import { initProject, upgradeCursorProject } from '../installer.js'
 
 const tempDirs: string[] = []
+const originalSystemRoot = process.env.SystemRoot
 
 afterEach(async () => {
+  if (originalSystemRoot === undefined) {
+    delete process.env.SystemRoot
+  } else {
+    process.env.SystemRoot = originalSystemRoot
+  }
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -28,6 +37,241 @@ async function readJson(filePath: string) {
 }
 
 describe('cursor hook dedupe', () => {
+  it('serializes failClosed for every managed Cursor hook entry', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const hooks = (await readJson(path.join(repoRoot, '.cursor', 'hooks.json'))) as {
+      hooks: Record<
+        string,
+        Array<{ command: string; matcher?: string; failClosed?: boolean }> | undefined
+      >
+    }
+
+    for (const { event, definition } of getManagedHookEntries(
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )) {
+      const installed = hooks.hooks[event]?.find(
+        (entry) => entry.command === definition.command && entry.matcher === definition.matcher,
+      )
+      expect(installed, `${event}:${definition.matcher ?? '*'}`).toMatchObject({
+        failClosed: true,
+      })
+    }
+  })
+
+  it('migrates an exact managed entry without failClosed to the host fail-closed definition', () => {
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'fail-closed-project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot).find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )
+    if (!managed) {
+      throw new Error('missing managed beforeShellExecution definition')
+    }
+    const custom = { command: 'custom-shell-hook', failClosed: false }
+
+    const merged = mergeCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            { command: managed.definition.command },
+            custom,
+            { command: managed.definition.command, failClosed: false },
+          ],
+        },
+      },
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: managed.definition.command, matcher: undefined, failClosed: true },
+      custom,
+    ])
+  })
+
+  it('migrates exact legacy-relative entries to one absolute entry without reordering custom hooks', () => {
+    const canonicalTempDir = realpathSync(os.tmpdir())
+    const repoRoot = path.join(canonicalTempDir, 'project with spaces')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const legacyAbsoluteRunner = path.join(
+      hooksDir,
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
+    const legacyAbsoluteShell = { command: `${legacyAbsoluteRunner} belay-shell-gate` }
+    const canonicalRunner = path.join(
+      canonicalTempDir,
+      'project with spaces',
+      '.cursor',
+      'hooks',
+      process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+    )
+    const quotedCanonicalRunner =
+      process.platform === 'win32'
+        ? `"${canonicalRunner}"`
+        : `'${canonicalRunner.replaceAll("'", "'\\''")}'`
+    const currentShellCommand = `${quotedCanonicalRunner} belay-shell-gate`
+    const legacyRunner =
+      process.platform === 'win32'
+        ? '.\\.cursor\\hooks\\belay-runner.cmd'
+        : './.cursor/hooks/belay-runner'
+    const legacyShell = { command: `${legacyRunner} belay-shell-gate` }
+    const customBefore = { command: 'custom-before', metadata: { keep: 'byte-for-byte' } }
+    const customMiddle = { command: 'custom-middle', matcher: 'Shell' }
+    const customAfter = { command: 'custom-after' }
+    const unknownBelayLike = { command: `${legacyRunner} belay-shell-gate --custom` }
+    const hooks = {
+      version: 1,
+      hooks: {
+        beforeShellExecution: [
+          customBefore,
+          legacyShell,
+          customMiddle,
+          legacyAbsoluteShell,
+          legacyShell,
+          unknownBelayLike,
+          customAfter,
+        ],
+      },
+    }
+
+    const merged = mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: currentShellCommand, matcher: undefined, failClosed: true },
+      customBefore,
+      customMiddle,
+      unknownBelayLike,
+      customAfter,
+    ])
+  })
+
+  it('strips exact relative and absolute managed entries but preserves unknown commands in order', () => {
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const absoluteShell = {
+      command: `${path.join(
+        hooksDir,
+        process.platform === 'win32' ? 'belay-runner.cmd' : 'belay-runner',
+      )} belay-shell-gate`,
+    }
+    const legacyRunner =
+      process.platform === 'win32'
+        ? '.\\.cursor\\hooks\\belay-runner.cmd'
+        : './.cursor/hooks/belay-runner'
+    const customBefore = { command: 'custom-before' }
+    const unknownBelayLike = { command: `${legacyRunner} belay-shell-gate --unknown` }
+    const customAfter = { command: 'custom-after' }
+
+    const stripped = stripCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            customBefore,
+            { command: `${legacyRunner} belay-shell-gate` },
+            unknownBelayLike,
+            absoluteShell,
+            customAfter,
+          ],
+        },
+      },
+      process.platform,
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(stripped.hooks.beforeShellExecution).toEqual([
+      customBefore,
+      unknownBelayLike,
+      customAfter,
+    ])
+  })
+
+  it('migrates the prior quoted Windows cmd command to one encoded PowerShell command', () => {
+    process.env.SystemRoot = 'D:\\Windows'
+    const repoRoot = path.join(realpathSync(os.tmpdir()), 'windows %TEMP% !NAME! project')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const prior = getManagedHookEntries('win32', hooksDir, repoRoot, 'legacy-quoted-absolute').find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )?.definition
+    const current = getManagedHookEntries('win32', hooksDir, repoRoot).find(
+      (entry) => entry.event === 'beforeShellExecution',
+    )?.definition
+    const priorBarePowerShell = getManagedHookEntries(
+      'win32',
+      hooksDir,
+      repoRoot,
+      'legacy-bare-powershell-absolute',
+    ).find((entry) => entry.event === 'beforeShellExecution')?.definition
+    expect(prior).toBeDefined()
+    expect(current).toBeDefined()
+    expect(priorBarePowerShell?.command).toMatch(/^powershell\.exe\b/)
+    if (!prior || !current || !priorBarePowerShell) {
+      throw new Error('Windows managed hook definitions are missing')
+    }
+
+    const customBefore = { command: 'custom-before' }
+    const unknownLookalike = { command: `${prior.command} --unknown` }
+    const unknownBarePowerShell = { command: `${priorBarePowerShell.command} --unknown` }
+    const merged = mergeCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            customBefore,
+            prior,
+            priorBarePowerShell,
+            unknownLookalike,
+            unknownBarePowerShell,
+            prior,
+            priorBarePowerShell,
+          ],
+        },
+      },
+      'win32',
+      hooksDir,
+      repoRoot,
+    )
+
+    expect(merged.hooks.beforeShellExecution).toEqual([
+      { command: current.command, matcher: current.matcher, failClosed: true },
+      customBefore,
+      unknownLookalike,
+      unknownBarePowerShell,
+    ])
+
+    const stripped = stripCursorHooksFile(
+      {
+        version: 1,
+        hooks: {
+          beforeShellExecution: [
+            customBefore,
+            prior,
+            priorBarePowerShell,
+            unknownLookalike,
+            unknownBarePowerShell,
+            prior,
+            priorBarePowerShell,
+          ],
+        },
+      },
+      'win32',
+      hooksDir,
+      repoRoot,
+    )
+    expect(stripped.hooks.beforeShellExecution).toEqual([
+      customBefore,
+      unknownLookalike,
+      unknownBarePowerShell,
+    ])
+  })
+
   it('detects duplicate Shell preToolUse gate entries', () => {
     const repoRoot = '/tmp/project'
     const hooksDir = `${repoRoot}/.cursor/hooks`

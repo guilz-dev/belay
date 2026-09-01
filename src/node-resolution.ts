@@ -253,3 +253,65 @@ echo {}
 exit /b 0
 `
 }
+
+export function buildWindowsPowerShellRunnerScript(defaultNodePath: string): string {
+  const encodedDefault = Buffer.from(defaultNodePath, 'utf8').toString('base64')
+  return `$ErrorActionPreference = 'Stop'
+
+$DefaultNode = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedDefault}'))
+$HookName = if ($args.Count -gt 0) { [string] $args[0] } else { '' }
+$HookArguments = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
+
+function Resolve-Node {
+  if ($DefaultNode -and (Test-Path -LiteralPath $DefaultNode -PathType Leaf)) {
+    return $DefaultNode
+  }
+
+  $PathNode = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+  if ($null -ne $PathNode) {
+    return $PathNode.Source
+  }
+
+  if ($env:USERPROFILE) {
+    $NvmRoot = Join-Path $env:USERPROFILE '.nvm'
+    if (Test-Path -LiteralPath $NvmRoot -PathType Container) {
+      foreach ($VersionDirectory in Get-ChildItem -LiteralPath $NvmRoot -Directory | Sort-Object Name -Descending) {
+        $Candidate = Join-Path $VersionDirectory.FullName 'node.exe'
+        if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+          return $Candidate
+        }
+      }
+    }
+  }
+
+  return $null
+}
+
+function Fail-Audit {
+  [Console]::Error.WriteLine('belay: unable to resolve Node for audit hook')
+  [Console]::Out.WriteLine('{}')
+  exit 0
+}
+
+if (-not $HookName) {
+  Fail-Audit
+}
+
+$NodeBin = Resolve-Node
+if (-not $NodeBin) {
+  if ($HookName -eq 'belay-before-submit') {
+    [Console]::Out.WriteLine('{"continue":false,"user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}')
+    exit 0
+  }
+  if ($HookName -in @('belay-shell-gate', 'belay-tool-gate')) {
+    [Console]::Out.WriteLine('{"permission":"deny","user_message":"belay could not resolve Node. Install or expose Node, run belay doctor, then retry."}')
+    exit 0
+  }
+  Fail-Audit
+}
+
+$ScriptPath = Join-Path $PSScriptRoot "$HookName.mjs"
+& $NodeBin $ScriptPath @HookArguments
+exit $LASTEXITCODE
+`
+}

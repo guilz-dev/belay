@@ -10,6 +10,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Cursor Project-over-User hook precedence** — Cursor may spawn User/global and multiple Project
+  hooks for one event, but Belay now selects one effective owner from the canonical payload-derived
+  action repository before loading the policy core. Non-owners are neutral and cannot append a
+  duplicate gate audit record. Uninitialized repositories stay neutral to global hooks; incomplete
+  selected Project owners fail closed. Distinct canonical events remain separate executions.
+- **Cursor config routing** — An omitted `installScope` now selects its documented Project default.
+  Only an absent config is neutral; a present malformed, unreadable, or invalid config stays with
+  the matching Project owner and fails closed in config loading. Ordinary config writes now use a
+  same-directory atomic replacement.
+- **Cursor scope transition safety** — Init and upgrade stage the complete target owner before
+  publishing `installScope`, then clean only proven previous-owner artifacts. A failed target stage
+  leaves the prior owner selected and effective. Project origins persist canonical repository
+  identity, so installs performed through a symlink survive removal of that alias.
+- **Cursor host and integrity floor** — Managed Cursor entries now serialize `failClosed: true`;
+  actionable hook launch/crash/timeout/invalid-output failures are blocked by Cursor. Post-action
+  events cannot roll back completed work, and `sessionEnd` remains fire-and-forget. Global and
+  Project hash manifests now cover hook settings, shims, platform runners, core, and dispatcher;
+  doctor also rejects unmigrated fail-open managed entries, incomplete pin sets, and tampering.
+- **Cursor dispatcher dependency surface** — Ownership routing no longer imports the full adapter
+  layout, policy, config-default, or audit graph. Non-owner processes remain routing-only.
+- **Cross-platform doctor** — Windows Cursor installs require the PowerShell runner, while Claude
+  and Codex require their installed `.cmd` runner. Shadowed global Cursor hook/shim inspection now
+  reports malformed or unreadable artifacts instead of aborting doctor.
 - **Cursor global hook workspace resolution** — Payload-free global hook invocations now
   fail closed instead of falling back to `process.cwd()` (which could resolve to `$HOME`).
   `beforeSubmitPrompt`, shell/tool gates, and audit hooks share the same payload-first cwd
@@ -32,6 +55,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Cursor router migration and doctor** — Project upgrades refresh exactly recognized managed
+  global artifacts. Pre-router global installs require `belay upgrade --scope global`; doctor
+  reports old generations, origin mismatches, and incomplete owners, and notes healthy global
+  installs shadowed by Project precedence.
 - **Global hook upgrades** — Run `belay upgrade --scope global` after pulling this release so
   global runtime artifacts pick up fail-close cwd resolution and approval reverse lookup.
   In-flight pending approvals may need re-issuance after upgrade (retry the denied action).

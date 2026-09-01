@@ -15,6 +15,7 @@ import {
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { scrubString } from '../core/scrub.js'
+import { writeRuntimeArtifacts } from '../installer/runtime-artifacts.js'
 import { initProject } from '../installer.js'
 import { PACKAGE_VERSION } from '../version.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
@@ -98,6 +99,41 @@ async function auditLogPath(repoRoot: string): Promise<string> {
   return path.join(repoRoot, config.audit.logPath)
 }
 
+async function runHookScript(
+  scriptPath: string,
+  input: string,
+  coreMarkerPath: string,
+  extraArgs: string[] = [],
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [scriptPath, ...extraArgs], {
+    env: { ...process.env, BELAY_CORE_IMPORT_MARKER: coreMarkerPath },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
+  child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)))
+  child.stdin.end(input)
+
+  const exitCode: number = await new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', resolve)
+  })
+  return {
+    exitCode,
+    stdout: Buffer.concat(stdout).toString('utf8').trim(),
+    stderr: Buffer.concat(stderr).toString('utf8').trim(),
+  }
+}
+
+async function coreMarkerLoadCount(markerPath: string): Promise<number> {
+  try {
+    return (await readFile(markerPath, 'utf8')).trim().split('\n').filter(Boolean).length
+  } catch {
+    return 0
+  }
+}
+
 describe('generated hook runtime', () => {
   beforeEach(() => {
     process.env.BELAY_DETERMINISTIC_JUDGE = '1'
@@ -108,6 +144,212 @@ describe('generated hook runtime', () => {
     delete process.env.BELAY_TEST_APPROVAL_REPLAY
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
     await Promise.all(tempFiles.splice(0).map((file) => rm(file, { force: true })))
+  })
+
+  it('loads core exactly once for the owner and never for a non-owner', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const globalRoot = await createTempRepo()
+    const globalHooksDir = path.join(globalRoot, '.cursor', 'hooks')
+    const globalRuntimeDir = path.join(globalRoot, '.cursor', 'belay', 'runtime')
+    await writeRuntimeArtifacts('cursor', {
+      scope: 'global',
+      repoRoot,
+      configPath: path.join(repoRoot, '.cursor', 'belay.config.json'),
+      hooksSettingsPath: path.join(globalRoot, '.cursor', 'hooks.json'),
+      hooksDir: globalHooksDir,
+      runtimeDir: globalRuntimeDir,
+      repoLocalStateDir: path.join(repoRoot, '.cursor', 'belay'),
+      skillsDir: path.join(globalRoot, '.cursor', 'skills', 'belay'),
+    })
+
+    const markerCore = `import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.BELAY_CORE_IMPORT_MARKER, 'loaded\\n')
+const write = (response) => process.stdout.write(JSON.stringify(response) + '\\n')
+export async function handleBeforeSubmitPromptHook() { return { continue: true } }
+export async function handleShellGateHook() { return { permission: 'allow' } }
+export async function handleToolGateHook() { return { permission: 'allow' } }
+export async function handleAuditHook() { return {} }
+export async function runBeforeSubmitPromptHook() { write({ continue: true }) }
+export async function runShellGateHook() { write({ permission: 'allow' }) }
+export async function runToolGateHook() { write({ permission: 'allow' }) }
+export async function runAuditHook() { write({}) }
+`
+    const projectRuntimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    await writeFile(path.join(projectRuntimeDir, 'core.mjs'), markerCore)
+    await writeFile(path.join(globalRuntimeDir, 'core.mjs'), markerCore)
+
+    const nonOwnerMarker = path.join(globalRoot, 'non-owner-core-loads.txt')
+    const ownerMarker = path.join(globalRoot, 'owner-core-loads.txt')
+    const payload = { command: 'git status', cwd: repoRoot }
+    const nonOwnerCases = [
+      ['belay-before-submit.mjs', [], { continue: true }],
+      ['belay-shell-gate.mjs', [], { permission: 'allow' }],
+      ['belay-tool-gate.mjs', ['preToolUse'], { permission: 'allow' }],
+      ['belay-audit.mjs', ['postToolUse'], {}],
+    ] as const
+    for (const [hookName, args, expected] of nonOwnerCases) {
+      const nonOwner = await runHookScript(
+        path.join(globalHooksDir, hookName),
+        JSON.stringify(payload),
+        nonOwnerMarker,
+        [...args],
+      )
+      expect(nonOwner.exitCode).toBe(0)
+      expect(JSON.parse(nonOwner.stdout)).toEqual(expected)
+    }
+    const owner = await runHookScript(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+      JSON.stringify(payload),
+      ownerMarker,
+    )
+
+    expect(await coreMarkerLoadCount(nonOwnerMarker)).toBe(0)
+    expect(owner.exitCode).toBe(0)
+    expect(JSON.parse(owner.stdout)).toEqual({ permission: 'allow' })
+    expect(await coreMarkerLoadCount(ownerMarker)).toBe(1)
+  })
+
+  it('returns neutral without loading core for unrecognized owner payload shapes', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const markerPath = path.join(repoRoot, 'unrecognized-core-loads.txt')
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'),
+      `import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.BELAY_CORE_IMPORT_MARKER, 'loaded\\n')
+export async function handleBeforeSubmitPromptHook() { return { continue: false } }
+export async function handleShellGateHook() { return { permission: 'deny' } }
+export async function handleToolGateHook() { return { permission: 'deny' } }
+export async function handleAuditHook() { return { unexpected: true } }
+`,
+    )
+    const unrecognizedPayload = JSON.stringify({ cwd: repoRoot })
+    const cases = [
+      ['belay-before-submit.mjs', [], { continue: true }],
+      ['belay-shell-gate.mjs', [], { permission: 'allow' }],
+      ['belay-tool-gate.mjs', ['preToolUse'], { permission: 'allow' }],
+      ['belay-tool-gate.mjs', ['subagentStart'], { permission: 'allow' }],
+      ['belay-audit.mjs', ['postToolUse'], {}],
+      ['belay-audit.mjs', ['postToolUseFailure'], {}],
+      ['belay-audit.mjs', ['stop'], {}],
+      ['belay-audit.mjs', ['sessionEnd'], {}],
+    ] as const
+
+    for (const [hookName, args, expected] of cases) {
+      const result = await runHookScript(
+        path.join(repoRoot, '.cursor', 'hooks', hookName),
+        unrecognizedPayload,
+        markerPath,
+        [...args],
+      )
+      expect(result.exitCode).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual(expected)
+    }
+    expect(await coreMarkerLoadCount(markerPath)).toBe(0)
+  })
+
+  it('rejects malformed gate input without loading core and keeps audit input safe', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    const markerPath = path.join(repoRoot, 'malformed-core-loads.txt')
+    await writeFile(
+      path.join(runtimeDir, 'core.mjs'),
+      `import { appendFileSync } from 'node:fs'
+appendFileSync(process.env.BELAY_CORE_IMPORT_MARKER, 'loaded\\n')
+export async function runShellGateHook() { process.stdout.write('{"permission":"allow"}\\n') }
+export async function runAuditHook() { process.stdout.write('{}\\n') }
+`,
+    )
+
+    const gate = await runHookScript(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+      '{not-json',
+      markerPath,
+    )
+    const audit = await runHookScript(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-audit.mjs'),
+      '{not-json',
+      markerPath,
+      ['postToolUse'],
+    )
+
+    expect(gate.exitCode).toBe(0)
+    expect(JSON.parse(gate.stdout)).toMatchObject({ permission: 'deny' })
+    expect(audit.exitCode).toBe(0)
+    expect(JSON.parse(audit.stdout)).toEqual({})
+    expect(await coreMarkerLoadCount(markerPath)).toBe(0)
+  })
+
+  it('fails closed for an incomplete project owner while keeping audit safe', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    const markerPath = path.join(repoRoot, 'incomplete-core-loads.txt')
+    await rm(path.join(runtimeDir, 'core.mjs'))
+    const payload = JSON.stringify({ command: 'git status', cwd: repoRoot })
+
+    const gate = await runHookScript(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+      payload,
+      markerPath,
+    )
+    const audit = await runHookScript(
+      path.join(repoRoot, '.cursor', 'hooks', 'belay-audit.mjs'),
+      payload,
+      markerPath,
+      ['postToolUse'],
+    )
+
+    expect(gate.exitCode).toBe(0)
+    expect(JSON.parse(gate.stdout)).toEqual({
+      permission: 'deny',
+      user_message: 'belay project hook installation is incomplete.',
+    })
+    expect(audit.exitCode).toBe(0)
+    expect(JSON.parse(audit.stdout)).toEqual({})
+    expect(await coreMarkerLoadCount(markerPath)).toBe(0)
+  })
+
+  it('returns the current before-submit response from a parsed payload handler', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtime = (await import('../adapters/cursor/runtime-entry.js')) as unknown as {
+      handleBeforeSubmitPromptHook(payload: Record<string, unknown>): Promise<unknown>
+    }
+
+    await expect(
+      runtime.handleBeforeSubmitPromptHook({ prompt: 'continue working', cwd: repoRoot }),
+    ).resolves.toEqual({ continue: true })
+  })
+
+  it('returns the current shell-gate response from a parsed payload handler', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtime = (await import('../adapters/cursor/runtime-entry.js')) as unknown as {
+      handleShellGateHook(payload: Record<string, unknown>): Promise<unknown>
+    }
+
+    await expect(
+      runtime.handleShellGateHook({ command: 'git status', cwd: repoRoot }),
+    ).resolves.toEqual({ permission: 'allow' })
+  })
+
+  it('returns the current tool-gate response from a parsed payload handler', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtime = (await import('../adapters/cursor/runtime-entry.js')) as unknown as {
+      handleToolGateHook(eventName: string, payload: Record<string, unknown>): Promise<unknown>
+    }
+
+    await expect(
+      runtime.handleToolGateHook('preToolUse', { tool_name: 'Read', cwd: repoRoot }),
+    ).resolves.toEqual({ permission: 'allow' })
+  })
+
+  it('returns the current audit response from a parsed payload handler', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const runtime = (await import('../adapters/cursor/runtime-entry.js')) as unknown as {
+      handleAuditHook(eventName: string, payload: Record<string, unknown>): Promise<unknown>
+    }
+
+    await expect(
+      runtime.handleAuditHook('postToolUse', { tool_name: 'Read', cwd: repoRoot }),
+    ).resolves.toEqual({})
   })
 
   it.each([
@@ -194,7 +436,7 @@ describe('generated hook runtime', () => {
     )
 
     const result = await runRunner(
-      parentRoot,
+      childRoot,
       'belay-tool-gate',
       {
         tool_name: 'Shell',
@@ -316,6 +558,7 @@ describe('generated hook runtime', () => {
 
     const approvedPrompt = await runRunner(repoRoot, 'belay-before-submit', {
       prompt: `/belay-approve ${approvalId}`,
+      cwd: repoRoot,
     })
     const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
     expect(approvedPromptJson.continue).toBe(true)
@@ -368,6 +611,7 @@ describe('generated hook runtime', () => {
 
     const approvedPrompt = await runRunner(repoRoot, 'belay-before-submit', {
       prompt: `/belay-approve ${approvalId}`,
+      cwd: repoRoot,
     })
     const approvedPromptJson = JSON.parse(approvedPrompt.stdout)
     expect(approvedPromptJson.continue).toBe(true)
@@ -480,6 +724,7 @@ describe('generated hook runtime', () => {
         tool_input: {
           description: 'deploy to production after tests pass',
         },
+        cwd: repoRoot,
       },
       ['preToolUse'],
     )
@@ -493,6 +738,7 @@ describe('generated hook runtime', () => {
         tool_input: {
           description: 'deploy to production after smoke tests pass',
         },
+        cwd: repoRoot,
       },
       ['preToolUse'],
     )
@@ -517,6 +763,7 @@ describe('generated hook runtime', () => {
         tool_input: {
           description: 'deploy to production after tests pass',
         },
+        cwd: repoRoot,
       },
       ['preToolUse'],
     )
@@ -588,6 +835,7 @@ describe('generated hook runtime', () => {
       path.join(repoRoot, '.cursor', 'belay.config.json'),
       `${JSON.stringify(
         mergeConfig({
+          ...(await loadConfigFile(repoRoot)),
           mode: 'enforce',
           controlPlane: { enabled: true, configDir: controlPlaneDir, integrity: 'hash-pinned' },
         }),

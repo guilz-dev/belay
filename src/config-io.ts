@@ -271,12 +271,19 @@ export async function writeConfigFile(
   adapter: AdapterName = resolveAdapterName(config),
 ): Promise<void> {
   const configPath = configPathFor(repoRoot, adapter)
-  await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(
-    configPath,
-    `${JSON.stringify(stripForbiddenShellOverrideLists(config), null, 2)}\n`,
-    'utf8',
+  const directory = path.dirname(configPath)
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(configPath)}.${process.pid}.${randomUUID()}.tmp`,
   )
+  const content = `${JSON.stringify(stripForbiddenShellOverrideLists(config), null, 2)}\n`
+  await mkdir(directory, { recursive: true })
+  try {
+    await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' })
+    await rename(temporaryPath, configPath)
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined)
+  }
 }
 
 export async function mergeAndWriteConfig(

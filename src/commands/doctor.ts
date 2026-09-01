@@ -1,9 +1,16 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getClaudeManagedHookEntries } from '../adapters/claude/hooks.js'
-import { getCodexManagedHookEntries } from '../adapters/codex/hooks.js'
-import { hasDuplicateCursorShellGates } from '../adapters/cursor/hooks.js'
+import {
+  codexHooksTomlIncludesCommand,
+  getCodexManagedHookEntries,
+} from '../adapters/codex/hooks.js'
+import { hasCurrentCursorDispatcherGeneration } from '../adapters/cursor/dispatcher-generation.js'
+import {
+  hasDuplicateCursorShellGates,
+  hasManagedCursorHookEntries,
+} from '../adapters/cursor/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -31,7 +38,7 @@ import {
   hasForbiddenShellOverrideLists,
   stripForbiddenShellOverrideLists,
 } from '../core/config.js'
-import { verifyIntegrityManifest } from '../core/integrity.js'
+import { runtimeIntegrityFiles, verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
 import { listRecoveryCheckpoints } from '../core/recovery/checkpoint.js'
@@ -78,6 +85,75 @@ function hasCursorGlobalWorkspaceResolver(runtimeSource: string): boolean {
     runtimeSource.includes('working_directory') &&
     runtimeSource.includes('tool_input')
   )
+}
+
+const CURSOR_HOOK_SHIMS = [
+  'belay-before-submit.mjs',
+  'belay-shell-gate.mjs',
+  'belay-tool-gate.mjs',
+  'belay-audit.mjs',
+] as const
+
+function runnerFileName(adapterName: AdapterName, platform: NodeJS.Platform): string {
+  if (platform !== 'win32') {
+    return 'belay-runner'
+  }
+  return adapterName === 'cursor' ? 'belay-runner.ps1' : 'belay-runner.cmd'
+}
+
+async function cursorOriginIssues(
+  hooksDir: string,
+  installScope: 'project' | 'global',
+  repoRoot: string,
+): Promise<string[]> {
+  const canonicalRepoRoot = realpathSync(repoRoot)
+  const issues: string[] = []
+  for (const fileName of CURSOR_HOOK_SHIMS) {
+    const shimPath = path.join(hooksDir, fileName)
+    if (!existsSync(shimPath)) {
+      continue
+    }
+    let source: string
+    try {
+      source = await readFile(shimPath, 'utf8')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      issues.push(
+        `Unable to inspect Cursor hook shim for intended ${installScope} owner: ${shimPath}: ${detail}. Run belay upgrade --scope ${installScope}.`,
+      )
+      continue
+    }
+    if (!source.includes("from '../belay/runtime/dispatcher.mjs'")) {
+      issues.push(
+        `Cursor router generation mismatch for intended ${installScope} owner: ${shimPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+      continue
+    }
+    const originMatch = source.match(/origin:\s*(\{[^\n]+\})/)
+    let originMatches = false
+    if (originMatch?.[1]) {
+      try {
+        const origin = JSON.parse(originMatch[1]) as {
+          scope?: unknown
+          repoRoot?: unknown
+        }
+        originMatches =
+          installScope === 'global'
+            ? origin.scope === 'global'
+            : origin.scope === 'project' &&
+              typeof origin.repoRoot === 'string' &&
+              realpathSync(origin.repoRoot) === canonicalRepoRoot
+      } catch {
+        originMatches = false
+      }
+    }
+    if (!originMatches) {
+      issues.push(
+        `Cursor hook origin mismatch for intended ${installScope} owner: ${shimPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+    }
+  }
+  return issues
 }
 
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
@@ -200,11 +276,13 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       }
       if (loadedConfig.controlPlane.integrity === 'hash-pinned') {
         notes.push('Integrity: hash-pinned (verify with belay upgrade after runtime changes).')
-        const integrity = await verifyIntegrityManifest(repoRoot, activeLayout)
+        const integrity = await verifyIntegrityManifest(
+          repoRoot,
+          activeLayout,
+          runtimeIntegrityFiles(activeLayout, scopedPaths),
+        )
         if (!integrity.ok) {
-          issues.push(
-            `Integrity verification failed: ${integrity.mismatches.slice(0, 3).join(', ')}`,
-          )
+          issues.push(`Integrity verification failed: ${integrity.mismatches.join(', ')}`)
         }
       }
     } catch (error) {
@@ -220,14 +298,16 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   const repoLocalDir = loadedConfig
     ? repoLocalStateDirFor(repoRoot, loadedConfig)
     : activeLayout.repoLocalStateDir(repoRoot)
-  const requiredPaths = [
-    path.join(hooksDir, 'belay-runner'),
-    path.join(hooksDir, 'belay-runner.cmd'),
+  const routingOwnerPaths = [
+    path.join(hooksDir, runnerFileName(adapterName, process.platform)),
     path.join(hooksDir, 'belay-before-submit.mjs'),
     path.join(hooksDir, 'belay-shell-gate.mjs'),
     path.join(hooksDir, 'belay-tool-gate.mjs'),
     path.join(hooksDir, 'belay-audit.mjs'),
+    ...(adapterName === 'cursor' ? [path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')] : []),
     corePath,
+  ]
+  const operationalPaths = [
     loadedConfig
       ? pendingApprovalsPath(repoRoot, loadedConfig)
       : path.join(repoLocalDir, 'pending-approvals.json'),
@@ -236,9 +316,93 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       : path.join(repoLocalDir, 'approved-approvals.json'),
     path.join(repoRoot, loadedConfig?.audit.logPath ?? activeLayout.defaultAuditLogPath(repoRoot)),
   ]
+  const requiredPaths = [...routingOwnerPaths, ...operationalPaths]
   for (const requiredPath of requiredPaths) {
     if (!existsSync(requiredPath)) {
       issues.push(`Missing generated file: ${requiredPath}`)
+      if (adapterName === 'cursor' && routingOwnerPaths.includes(requiredPath)) {
+        issues.push(
+          `Cursor intended ${installScope} owner is incomplete: missing ${requiredPath}. Run belay upgrade --scope ${installScope}.`,
+        )
+      }
+    }
+  }
+  if (adapterName === 'cursor') {
+    issues.push(...(await cursorOriginIssues(hooksDir, installScope, repoRoot)))
+    const dispatcherPath = path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')
+    if (
+      existsSync(dispatcherPath) &&
+      !hasCurrentCursorDispatcherGeneration(await readFile(dispatcherPath, 'utf8'))
+    ) {
+      issues.push(
+        `Cursor router generation mismatch for intended ${installScope} owner dispatcher: ${dispatcherPath}. Run belay upgrade --scope ${installScope}.`,
+      )
+    }
+    if (installScope === 'project') {
+      const globalPaths = resolveScopedPaths(activeLayout, 'global', repoRoot)
+      if (existsSync(globalPaths.hooksSettingsPath)) {
+        try {
+          const { loadHooksFile } = await import('../installer.js')
+          const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
+          if (
+            hasManagedCursorHookEntries(
+              globalHooks,
+              process.platform,
+              globalPaths.hooksDir,
+              repoRoot,
+            )
+          ) {
+            const globalOwnerFiles = [
+              path.join(globalPaths.hooksDir, runnerFileName('cursor', process.platform)),
+              path.join(globalPaths.runtimeDir, 'core.mjs'),
+              path.join(globalPaths.runtimeDir, 'dispatcher.mjs'),
+              ...CURSOR_HOOK_SHIMS.map((fileName) => path.join(globalPaths.hooksDir, fileName)),
+            ]
+            const globalOriginProblems = await cursorOriginIssues(
+              globalPaths.hooksDir,
+              'global',
+              repoRoot,
+            )
+            issues.push(...globalOriginProblems)
+            const globalProblems = [
+              ...globalOwnerFiles.filter((filePath) => !existsSync(filePath)),
+              ...globalOriginProblems,
+            ]
+            const globalDispatcherPath = path.join(globalPaths.runtimeDir, 'dispatcher.mjs')
+            if (existsSync(globalDispatcherPath)) {
+              try {
+                if (
+                  !hasCurrentCursorDispatcherGeneration(
+                    await readFile(globalDispatcherPath, 'utf8'),
+                  )
+                ) {
+                  globalProblems.push(globalDispatcherPath)
+                }
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error)
+                issues.push(
+                  `Unable to inspect shadowed global Cursor dispatcher at ${globalDispatcherPath}: ${detail}.`,
+                )
+                globalProblems.push(globalDispatcherPath)
+              }
+            }
+            if (globalProblems.length > 0) {
+              issues.push(
+                'Global Cursor installation cannot yield to the project owner. Run belay upgrade from this project to refresh the global router.',
+              )
+            } else {
+              notes.push(
+                'Healthy global Cursor install is shadowed by this project owner and will return neutral for this repository.',
+              )
+            }
+          }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          issues.push(
+            `Unable to inspect shadowed global Cursor hooks at ${globalPaths.hooksSettingsPath}: ${detail}.`,
+          )
+        }
+      }
     }
   }
 
@@ -255,14 +419,18 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       const hooksFile = await loadHooksFile(hooksPath)
       for (const { event, definition } of managedEntries) {
         const entries = hooksFile.hooks[event] ?? []
-        const present = entries.some(
-          (entry: { command?: string; matcher?: string }) =>
+        const matchingEntry = entries.find(
+          (entry: { command?: string; matcher?: string; failClosed?: boolean }) =>
             entry.command === definition.command && entry.matcher === definition.matcher,
         )
-        if (!present) {
+        if (!matchingEntry || matchingEntry.failClosed !== true) {
           hooksOk = false
           const matcherSuffix = definition.matcher ? ` (matcher: ${definition.matcher})` : ''
-          issues.push(`Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`)
+          issues.push(
+            matchingEntry
+              ? `Managed Cursor hook for ${event} must set failClosed: true: ${definition.command}${matcherSuffix}`
+              : `Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`,
+          )
         }
       }
       if (hasDuplicateCursorShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
@@ -275,7 +443,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       // are present in the rendered TOML block.
       const toml = await readFile(hooksPath, 'utf8')
       for (const { event, definition } of managedEntries) {
-        if (!toml.includes(definition.command)) {
+        if (!codexHooksTomlIncludesCommand(toml, definition.command)) {
           hooksOk = false
           issues.push(`Missing Codex managed hook for ${event}: ${definition.command}`)
         }

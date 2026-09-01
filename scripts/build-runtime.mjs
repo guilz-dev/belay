@@ -30,3 +30,17 @@ for (const adapter of adapters) {
   })
   console.log(`Built ${outFile}`)
 }
+
+const cursorDispatcherOutFile = path.join(outDir, 'cursor-dispatcher.mjs')
+await esbuild.build({
+  entryPoints: [path.join(rootDir, 'src/adapters/cursor/hook-dispatch-entry.ts')],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node22',
+  outfile: cursorDispatcherOutFile,
+  banner: {
+    js: '// agent-belay cursor hook dispatcher bundle',
+  },
+})
+console.log(`Built ${cursorDispatcherOutFile}`)

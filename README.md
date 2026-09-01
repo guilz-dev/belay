@@ -213,7 +213,41 @@ npx @guilz-dev/belay upgrade                # refresh hooks/runtime, migrate con
 **Install scope.** `--scope project` (default) writes artifacts under
 `.cursor/` (or `.claude/`, `.codex/`). `--scope global` installs hooks, runtime,
 and skill under `~/.cursor/`, so the gate is user-wide while `belay.config.json`,
-approvals, and audit stay repo-local.
+approvals, and audit stay repo-local. Cursor scope changes stage the complete target owner before
+publishing `installScope`, then remove only exactly recognized artifacts from the previous owner.
+The config file is replaced atomically so a concurrent hook does not observe a truncate-and-rewrite
+window.
+
+**Cursor source precedence.** Cursor may launch User/global hooks and hooks from multiple open
+Projects for the same event. Belay chooses one effective source from the payload-derived action
+repository: its matching Project install wins when `installScope` is `project`; User/global wins
+when it is `global`. Other sources return a neutral Cursor response without loading the policy core
+or writing audit/control-plane state. In a multi-root workspace, Shell
+`tool_input.working_directory`, then `cwd`, then `workspace_roots` selects the action repository;
+canonical paths prevent symlink aliases from becoming two owners; Project shims persist the
+canonical repository identity at install time. An omitted `installScope` uses its documented
+`project` default. A truly uninitialized repository is neutral to the global source, while a
+present but malformed, unreadable, or invalid config remains selected by the matching Project
+source and reaches Belay's fail-closed config path. A selected but incomplete Project owner fails
+closed for gates and prompts (audit hooks remain safe and diagnostic).
+
+Every managed Cursor hook entry is installed with `failClosed: true`. Cursor can therefore stop an
+actionable prompt, shell, tool, or subagent operation when its runner, shim, or dispatcher cannot
+start, crashes, times out, or returns invalid JSON. Post-action audit events cannot undo an action
+that already completed, and Cursor documents `sessionEnd` as fire-and-forget with its response
+unused; `failClosed` on those entries is defense-in-depth and diagnostics, not rollback. With
+hash-pinned integrity enabled, both Project and global settings, runners, shims, core, and Cursor
+dispatcher are pinned and checked by `belay doctor`. The dispatcher itself contains only payload
+routing and filesystem layout logic; policy and audit modules load only for the selected owner.
+
+Run `belay upgrade --scope global` for a pre-router global Cursor install, then run `belay doctor`.
+A Project upgrade also refreshes an exactly recognized managed global install; doctor reports old
+global generations, origin mismatches, incomplete owners, and managed entries that have not gained
+`failClosed: true`, while a healthy global source shadowed by Project precedence is only a note.
+This mechanism resolves competing sources for the same canonical event; it does not combine
+distinct events such as `beforeShellExecution` and `preToolUse: Shell`, and it does not merge
+repeated deliveries to the effective owner. See
+[ADR-008](./docs/adr/ADR-008-cursor-hook-source-precedence.md).
 
 **Skill-only.** The skill is just a UX layer (slash commands + guidance) and does
 **not** enable gating on its own. Install from [skills.sh](https://skills.sh/guilz-dev/belay)
