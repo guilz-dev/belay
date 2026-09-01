@@ -315,7 +315,7 @@ describe('installer scope (T29)', () => {
       }
       expect(after.hooks.beforeShellExecution).toHaveLength(1)
       expect(after.hooks.beforeShellExecution?.[0]?.command).toBe(originalShellCommand)
-      expect(after.hooks.preToolUse?.filter((entry) => entry.matcher === 'Shell')).toHaveLength(1)
+      expect(after.hooks.preToolUse?.filter((entry) => entry.matcher === 'Shell')).toHaveLength(0)
       const report = await doctorProject({ targetDir: linkedRepo })
       expect(report.ok).toBe(true)
       expect(report.issues.some((issue) => issue.includes('Missing managed hook'))).toBe(false)

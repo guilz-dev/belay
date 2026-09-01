@@ -288,10 +288,10 @@ describe('cursor hook dedupe', () => {
       mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot).hooks.preToolUse?.filter(
         (entry) => entry.matcher === 'Shell',
       ),
-    ).toHaveLength(1)
+    ).toHaveLength(0)
   })
 
-  it('dedupes duplicate Shell preToolUse gates on upgrade', async () => {
+  it('removes legacy Shell preToolUse gates on upgrade', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
 
@@ -310,7 +310,24 @@ describe('cursor hook dedupe', () => {
     expect(hasDuplicateCursorShellGates(upgraded, process.platform, hooksDir, repoRoot)).toBe(false)
     expect(
       upgraded.hooks.preToolUse.filter((entry: { matcher?: string }) => entry.matcher === 'Shell'),
-    ).toHaveLength(1)
+    ).toHaveLength(0)
     expect(upgraded.hooks.beforeShellExecution).toHaveLength(1)
+  })
+
+  it('strips legacy Shell preToolUse gates during uninstall-style hook stripping', () => {
+    const repoRoot = '/tmp/project'
+    const hooksDir = `${repoRoot}/.cursor/hooks`
+    const shellEntry = legacyManagedShellPreToolUseEntry(process.platform, hooksDir, repoRoot)
+    const hooks = {
+      version: 1,
+      hooks: {
+        preToolUse: [shellEntry, { command: 'custom-tool.py', matcher: 'Shell' }],
+        beforeShellExecution: [{ command: 'custom-shell.py' }],
+      },
+    }
+
+    const stripped = stripCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
+
+    expect(stripped.hooks.preToolUse).toEqual([{ command: 'custom-tool.py', matcher: 'Shell' }])
   })
 })

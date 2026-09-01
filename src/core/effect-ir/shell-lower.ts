@@ -11,7 +11,7 @@ import {
   tokenizeShell,
 } from '../shell-tokenizer.js'
 import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
-import { decodeEgressEffects } from '../verdict/egress-classify.js'
+import { decodeEgressEffects, isEgressToolHead } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
 import { resolveLauncherRecipe } from '../verdict/launcher-resolve.js'
 import {
@@ -23,6 +23,7 @@ import {
   splitStructuralShellSegments,
   structuralSubstitutionInners,
 } from '../verdict/parser.js'
+import { innerRecipeFromArgvDelegate, peelArgvDelegateArgv } from './argv-delegate.js'
 import { joinEffectOpacity } from './normalize.js'
 import {
   classifyPackageAcquisitionSpec,
@@ -481,16 +482,78 @@ function lowerSegment(
         signals.add(signal)
       }
     } else {
-      requirements.push(
-        ...decodeProcessOrFilesystem({
-          tokens,
-          head,
-          env,
-          cwd: context.cwd,
-          repoRoot: context.repoRoot,
-          segment: commandRedacted,
-        }),
-      )
+      const processRequirements = decodeProcessOrFilesystem({
+        tokens,
+        head,
+        env,
+        cwd: context.cwd,
+        repoRoot: context.repoRoot,
+        segment: commandRedacted,
+      })
+      if (isGrammarUnknownOnly(processRequirements, head)) {
+        const argvDelegate = peelArgvDelegateArgv(tokens)
+        if (
+          argvDelegate &&
+          !argvDelegate.opaque &&
+          shouldApplyArgvDelegate(head, argvDelegate.innerTokens, context.depth)
+        ) {
+          const innerRecipe = innerRecipeFromArgvDelegate(argvDelegate)
+          if (innerRecipe) {
+            requirements.push(
+              processRequirement(head, 'inspect', commandRedacted, [
+                'process.argv_delegate',
+                ...argvDelegate.signals,
+              ]),
+            )
+            for (const signal of argvDelegate.signals) {
+              signals.add(signal)
+            }
+            const nested = lowerTopLevelSegments(innerRecipe, {
+              ...context,
+              command: innerRecipe,
+              env,
+              depth: context.depth + 1,
+            })
+            for (const nestedSegment of nested) {
+              requirements.push(
+                ...nestedSegment.requirements.map((entry) =>
+                  withInnerProvenance(entry, innerRecipe, head, commandRedacted),
+                ),
+              )
+              for (const signal of nestedSegment.signals) {
+                signals.add(signal)
+              }
+              opacity = joinNestedOpacity(opacity, nestedSegment)
+            }
+            return shellSegment(commandRedacted, head, requirements, opacity, signals)
+          }
+        }
+        if (argvDelegate?.opaque) {
+          requirements.push(
+            processRequirement(head, 'spawn', commandRedacted, [
+              'process.argv_delegate',
+              argvDelegate.reason,
+              ...argvDelegate.signals,
+            ]),
+            requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+              argvDelegate.reason,
+              'process.argv_delegate_opaque',
+            ]),
+          )
+          for (const signal of argvDelegate.signals) {
+            signals.add(signal)
+          }
+          signals.add('process.argv_delegate_opaque')
+          return shellSegment(
+            commandRedacted,
+            head,
+            requirements,
+            joinEffectOpacity(opacity, 'opaque'),
+            signals,
+          )
+        }
+      }
+      requirements.push(...processRequirements)
     }
   }
 
@@ -2032,6 +2095,49 @@ function processRequirement(
     { kind: 'executable', command, operation },
     segment,
     signals,
+  )
+}
+
+const ARGV_DELEGATE_INNER_BLOCKLIST = new Set([
+  'sudo',
+  'env',
+  'command',
+  'builtin',
+  'exec',
+  'time',
+  'nice',
+  'nohup',
+  'stdbuf',
+  'setsid',
+  '(',
+])
+
+function shouldApplyArgvDelegate(head: string, innerTokens: string[], depth: number): boolean {
+  if (depth > 0 || isEgressToolHead(head) || head === 'bundle') {
+    return false
+  }
+  if (ARGV_DELEGATE_INNER_BLOCKLIST.has(head)) {
+    return false
+  }
+  const innerHead = path.basename(innerTokens[0] ?? '')
+  if (ARGV_DELEGATE_INNER_BLOCKLIST.has(innerHead)) {
+    return false
+  }
+  return innerTokens.length >= 2
+}
+
+function isGrammarUnknownOnly(requirements: ShellEffectRequirement[], head: string): boolean {
+  if (requirements.length !== 2) {
+    return false
+  }
+  const [spawn, indeterminate] = requirements
+  return (
+    spawn.action === 'process.exec' &&
+    spawn.resource.kind === 'executable' &&
+    spawn.resource.command === head &&
+    spawn.resource.operation === 'spawn' &&
+    indeterminate.action === 'indeterminate' &&
+    indeterminate.evidence.signals.includes('process.grammar_unknown')
   )
 }
 

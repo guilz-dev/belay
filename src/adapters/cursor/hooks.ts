@@ -102,7 +102,7 @@ export function stripCursorHooksFile(
       delete next.hooks[event]
     }
   }
-  return next
+  return stripLegacyManagedShellPreToolUseGates(next, platform, hooksDir, repoRoot)
 }
 
 export function mergeCursorHooksFile(
@@ -130,9 +130,92 @@ export function mergeCursorHooksFile(
       definition.placement,
     )
   }
+  return stripLegacyManagedShellPreToolUseGates(next, platform, hooksDir, repoRoot)
+}
+
+export function legacyManagedShellPreToolUseVariants(
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): HookEntry[] {
+  const shellEntry = managedShellPreToolUseEntry(platform, hooksDir, repoRoot)
+  const legacyEntries = legacyManagedEntries(platform, hooksDir, repoRoot)
+  const commands = new Set<string>([shellEntry.command])
+  for (const entry of legacyEntries) {
+    if (entry.event === 'preToolUse' && entry.definition.matcher === 'Write') {
+      commands.add(entry.definition.command)
+    }
+  }
+  return [...commands].map((command) => ({
+    command,
+    matcher: 'Shell',
+    failClosed: true,
+  }))
+}
+
+function stripLegacyManagedShellPreToolUseGates(
+  hooks: HooksFile,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): HooksFile {
+  const variants = legacyManagedShellPreToolUseVariants(platform, hooksDir, repoRoot)
+  const preToolUse = hooks.hooks.preToolUse
+  if (!Array.isArray(preToolUse) || variants.length === 0) {
+    return hooks
+  }
+  const filtered = preToolUse.filter(
+    (entry) => !variants.some((variant) => entryMatches(entry, variant)),
+  )
+  if (filtered.length === preToolUse.length) {
+    return hooks
+  }
+  const next: HooksFile = {
+    version: hooks.version || 1,
+    hooks: { ...hooks.hooks },
+  }
+  if (filtered.length === 0) {
+    delete next.hooks.preToolUse
+  } else {
+    next.hooks.preToolUse = filtered
+  }
   return next
 }
 
+export function hasLegacyCursorDoubleShellGates(
+  hooks: HooksFile,
+  platform: NodeJS.Platform,
+  hooksDir: string,
+  repoRoot: string,
+): boolean {
+  const shellVariants = legacyManagedShellPreToolUseVariants(platform, hooksDir, repoRoot)
+  const preToolUse = hooks.hooks.preToolUse
+  const beforeShell = hooks.hooks.beforeShellExecution
+  if (!Array.isArray(preToolUse) || !Array.isArray(beforeShell)) {
+    return false
+  }
+  const hasLegacyShellPreToolUse = preToolUse.some((entry) =>
+    shellVariants.some((variant) => entryMatches(entry, variant)),
+  )
+  if (!hasLegacyShellPreToolUse) {
+    return false
+  }
+  const managedEntries = getManagedHookEntries(platform, hooksDir, repoRoot)
+  const shellManaged = managedEntries.find((entry) => entry.event === 'beforeShellExecution')
+  if (!shellManaged) {
+    return false
+  }
+  const shellVariantsForBefore = variantsForDefinition(
+    legacyManagedEntries(platform, hooksDir, repoRoot),
+    'beforeShellExecution',
+    shellManaged.definition,
+  )
+  return beforeShell.some((entry) =>
+    shellVariantsForBefore.some((variant) => entryMatches(entry, variant)),
+  )
+}
+
+/** @deprecated Use {@link hasLegacyCursorDoubleShellGates}. */
 export function hasDuplicateCursorShellGates(
   hooks: HooksFile,
   platform: NodeJS.Platform,
