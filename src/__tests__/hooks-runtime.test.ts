@@ -437,18 +437,14 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
 
     const result = await runRunner(
       childRoot,
-      'belay-tool-gate',
+      'belay-shell-gate',
       {
-        tool_name: 'Shell',
-        tool_input: {
-          command: 'make guarded',
-          working_directory: childRoot,
-        },
-        cwd: parentRoot,
+        command: 'make guarded',
+        cwd: childRoot,
         workspace_roots: [parentRoot, childRoot],
       },
-      ['preToolUse'],
-      parentRoot,
+      ['beforeShellExecution'],
+      childRoot,
     )
 
     expect(JSON.parse(result.stdout)).toMatchObject({ permission: 'deny' })
@@ -824,6 +820,37 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
 
     const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
     expect(auditRaw).toContain('"wouldBlock":true')
+    expect(auditRaw).toContain('"mode":"audit"')
+  })
+
+  it('allows argv-delegated read-only shell actions in audit mode without pending approvals', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const base = await loadConfigFile(repoRoot)
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          ...base,
+          mode: 'audit',
+          policy: { ...base.policy, unknownLocalEffect: 'deny' },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'rtk git status --short',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(allowed.stdout)).toEqual({ permission: 'allow' })
+
+    const config = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+    expect(pending.approvals).toHaveLength(0)
+
+    const auditRaw = await readFile(await auditLogPath(repoRoot), 'utf8')
+    expect(auditRaw).toContain('"wouldBlock":false')
     expect(auditRaw).toContain('"mode":"audit"')
   })
 

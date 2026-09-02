@@ -512,21 +512,22 @@ describe.sequential('Cursor hook source precedence integration', () => {
     },
   )
 
-  it('keeps distinct canonical Shell events as separate effective executions', async () => {
+  it('classifies shell only through beforeShellExecution on managed installs', async () => {
     const sources = await installGlobalAndTwoProjects()
+    const projectHooks = JSON.parse(
+      await readFile(path.join(sources.projectA, '.cursor', 'hooks.json'), 'utf8'),
+    ) as { hooks?: { preToolUse?: Array<{ matcher?: string }> } }
+    expect(
+      projectHooks.hooks?.preToolUse?.filter((entry) => entry.matcher === 'Shell') ?? [],
+    ).toEqual([])
+
     const payload = {
       command: 'git status',
-      tool_name: 'Shell',
-      tool_input: {
-        command: 'git status',
-        working_directory: sources.projectA,
-      },
       cwd: sources.projectB,
       workspace_roots: [sources.projectB, sources.projectA],
     }
 
     const beforeShellResults = await invokeAllSources(sources, 'beforeShellExecution', payload)
-    const preToolUseResults = await invokeAllSources(sources, 'preToolUse', payload, 'Shell')
 
     expect(beforeShellResults.map((result) => result.exitCode)).toEqual([0, 0, 0])
     expect(beforeShellResults.map((result) => JSON.parse(result.stdout))).toEqual([
@@ -534,17 +535,10 @@ describe.sequential('Cursor hook source precedence integration', () => {
       { permission: 'allow' },
       { permission: 'allow' },
     ])
-    expect(preToolUseResults.map((result) => result.exitCode)).toEqual([0, 0, 0])
-    expect(preToolUseResults.map((result) => JSON.parse(result.stdout))).toEqual([
-      { permission: 'allow' },
-      { permission: 'allow' },
-      { permission: 'allow' },
-    ])
 
-    expect(await markerLoads(sources.markerPath)).toEqual(['project-a', 'project-a'])
-    expect((await auditRecords(sources.projectA)).map((record) => record.event)).toEqual([
+    expect(await markerLoads(sources.markerPath)).toEqual(['project-b'])
+    expect((await auditRecords(sources.projectB)).map((record) => record.event)).toEqual([
       'beforeShellExecution',
-      'preToolUse',
     ])
   })
 })

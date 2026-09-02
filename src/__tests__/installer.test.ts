@@ -54,7 +54,7 @@ describe('agent-belay installer', () => {
     )
     expect(
       hooks.hooks.preToolUse.map((entry: { matcher?: string }) => entry.matcher).sort(),
-    ).toEqual(['Delete', 'Shell', 'StrReplace', 'Task', 'Write'])
+    ).toEqual(['Delete', 'StrReplace', 'Task', 'Write'])
     expect(
       hooks.hooks.subagentStart.map((entry: { matcher?: string }) => entry.matcher).sort(),
     ).toEqual(['bugbot', 'computerUse', 'debug', 'explore', 'generalPurpose', 'videoReview'])

@@ -8,7 +8,7 @@ import {
 } from '../adapters/codex/hooks.js'
 import { hasCurrentCursorDispatcherGeneration } from '../adapters/cursor/dispatcher-generation.js'
 import {
-  hasDuplicateCursorShellGates,
+  hasLegacyCursorDoubleShellGates,
   hasManagedCursorHookEntries,
 } from '../adapters/cursor/hooks.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
@@ -433,9 +433,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           )
         }
       }
-      if (hasDuplicateCursorShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
+      if (hasLegacyCursorDoubleShellGates(hooksFile, process.platform, hooksDir, repoRoot)) {
         warnings.push(
-          'Duplicate Cursor Shell preToolUse gates detected. Run belay upgrade to dedupe managed hooks.',
+          'Legacy Cursor Shell preToolUse gate detected alongside beforeShellExecution. Run belay upgrade to remove the managed Shell matcher.',
         )
       }
     } else if (adapterName === 'codex') {

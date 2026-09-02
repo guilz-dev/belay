@@ -9,6 +9,20 @@
   {
     "kind": "shell",
     "category": "provably-benign",
+    "command": "rtk git status",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "fictional-runner git diff",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "git branch",
     "verdict": "allow",
     "reason": "read_only"
