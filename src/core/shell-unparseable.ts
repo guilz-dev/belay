@@ -46,7 +46,9 @@ function hasUnclosedQuote(command: string): boolean {
       continue
     }
     if (char === '\\') {
-      escaping = true
+      if (quote !== "'") {
+        escaping = true
+      }
       continue
     }
     if (quote) {

