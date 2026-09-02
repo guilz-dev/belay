@@ -19,7 +19,7 @@ export function findCommandSubstitutions(command: string): string[] {
       index += 1
       continue
     }
-    if (char === '\\' && (inSingle || inDouble)) {
+    if (char === '\\' && inDouble) {
       escaping = true
       index += 1
       continue
@@ -169,7 +169,7 @@ function extractBalancedParenContent(
       index += 1
       continue
     }
-    if (char === '\\' && (inSingle || inDouble)) {
+    if (char === '\\' && inDouble) {
       escaping = true
       index += 1
       continue
