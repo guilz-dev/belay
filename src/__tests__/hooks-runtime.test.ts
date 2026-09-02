@@ -917,7 +917,6 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     })
     expect(shellGateEvents.some((record) => record.event === 'preToolUse')).toBe(false)
   })
-
   it('stores approvals in the control plane when enabled (T3)', async () => {
     const repoRoot = await createTempRepo()
     const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')

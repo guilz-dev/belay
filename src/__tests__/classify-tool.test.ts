@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
+import { toolFingerprint } from '../core/fingerprint.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { classifyShell } from '../core/verdict/adapter.js'
 
@@ -286,6 +287,28 @@ describe('classifyToolUse', () => {
     )
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('tier1_catastrophic')
+  })
+
+  it('uses distinct fingerprints for tool inputs that only differ after scrubbing', async () => {
+    const first = await classifyToolUse(
+      { tool_name: 'MCP', tool_input: { cmd: 'deploy -p8080 --to staging' } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    const second = await classifyToolUse(
+      { tool_name: 'MCP', tool_input: { cmd: 'deploy -p9090 --to staging' } },
+      repoRoot,
+      cwd,
+      config,
+    )
+
+    expect(first.fingerprint).not.toBe(second.fingerprint)
+    expect(first.summary).toContain('<redacted>')
+    expect(second.summary).toContain('<redacted>')
+    expect(toolFingerprint('MCP', { cmd: 'deploy -p8080 --to staging' }, repoRoot)).toBe(
+      first.fingerprint,
+    )
   })
 
   it('denies writes to the control plane directory (R8)', async () => {
