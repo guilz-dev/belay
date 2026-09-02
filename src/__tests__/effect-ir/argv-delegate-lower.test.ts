@@ -2,8 +2,8 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { collectRequirements, lowerShellEffectPlan } from '../../core/effect-ir/index.js'
 import { mergeConfig } from '../../core/config.js'
+import { collectRequirements, lowerShellEffectPlan } from '../../core/effect-ir/index.js'
 import { classifyShell } from '../../core/verdict/adapter.js'
 
 const repoRoot = '/workspace/project'
