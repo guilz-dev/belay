@@ -1286,6 +1286,7 @@ async function gateDecisionToVerdict(
     event: auditEvent,
     sourceEvent,
     kind,
+    repoLabel: path.basename(ctx.repoRoot),
     ...(auditExtras.toolInvocationCorrelationId
       ? { toolInvocationCorrelationId: auditExtras.toolInvocationCorrelationId }
       : {}),

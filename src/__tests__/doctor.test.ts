@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
@@ -10,6 +12,7 @@ import { pendingApprovalsPath } from '../config-io.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
+const execFileAsync = promisify(execFile)
 const originalHome = process.env.HOME
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
 const originalSystemRoot = process.env.SystemRoot
@@ -627,6 +630,47 @@ describe('doctorProject', () => {
     const report = await doctorProject({ targetDir: repoRoot })
     expect(report.dogfood?.active).toBe(true)
     expect(report.notes.some((note) => note.includes('Dogfood active'))).toBe(true)
+    expect(
+      report.notes.some((note) => note.includes('Host denied after Belay allow (cohort):')),
+    ).toBe(true)
+  })
+
+  it('warns when linked worktrees are not dogfooded while dogfood is active here', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dogfood-worktree-'))
+    const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-linked-'))
+    const linkedWorktree = path.join(worktreeParent, 'linked-worktree')
+    tempDirs.push(repoRoot, worktreeParent)
+    await initProject({ targetDir: repoRoot })
+    await dogfoodProject({ targetDir: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-dogfood-check'], {
+      cwd: repoRoot,
+    })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.includes('Dogfood is active here but') &&
+          warning.includes('has no belay.config.json (defaults to enforce)'),
+      ),
+    ).toBe(true)
   })
 
   it('warns when containment posture is best-effort', async () => {

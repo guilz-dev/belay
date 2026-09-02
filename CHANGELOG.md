@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Cursor shell gate single-source enforcement** — managed defaults now keep shell gating on
+  `beforeShellExecution` only, and upgrade strips legacy managed `preToolUse: Shell` entries to
+  prevent host rewrite mismatches between duplicate shell gates.
+- **Unknown launcher argv delegation** — structural argv-delegate lowering now classifies
+  `WRAPPER REMAINDER...` forms (for example `rtk git status`) from the delegated remainder instead
+  of falling back to opaque unknown-launcher asks.
+- **Dogfood diagnostics for linked worktrees** — doctor now reports host-denial-after-allow counts
+  in dogfood notes and warns when linked worktrees are missing dogfood config, reducing false
+  “audit still blocks” incident triage time.
+
 ## 0.9.3 — 2026-09-01
 
 ### Fixed

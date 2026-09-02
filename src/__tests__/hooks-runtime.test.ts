@@ -854,6 +854,70 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     expect(auditRaw).toContain('"mode":"audit"')
   })
 
+  it('keeps enforce deny for opaque wrapper options under fail-closed unknown policy', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const base = await loadConfigFile(repoRoot)
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          ...base,
+          mode: 'enforce',
+          policy: { ...base.policy, unknownLocalEffect: 'deny' },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const denied = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'unknown-wrapper --network git status --short',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(denied.stdout).permission).toBe('deny')
+
+    const config = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
+    expect(pending.approvals).toHaveLength(1)
+  })
+
+  it('records a single shell gate audit event per shell action', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const base = await loadConfigFile(repoRoot)
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(
+        mergeConfig({
+          ...base,
+          mode: 'audit',
+          policy: { ...base.policy, unknownLocalEffect: 'deny' },
+        }),
+        null,
+        2,
+      )}\n`,
+    )
+
+    const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'rtk git status --short',
+      cwd: repoRoot,
+    })
+    expect(JSON.parse(allowed.stdout)).toEqual({ permission: 'allow' })
+
+    const lines = (await readFile(await auditLogPath(repoRoot), 'utf8'))
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const shellGateEvents = lines.filter((record) => record.kind === 'shell')
+    expect(shellGateEvents).toHaveLength(1)
+    expect(shellGateEvents[0]).toMatchObject({
+      event: 'beforeShellExecution',
+      sourceEvent: 'beforeShellExecution',
+      summary: 'rtk git status --short',
+    })
+    expect(shellGateEvents.some((record) => record.event === 'preToolUse')).toBe(false)
+  })
+
   it('stores approvals in the control plane when enabled (T3)', async () => {
     const repoRoot = await createTempRepo()
     const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
