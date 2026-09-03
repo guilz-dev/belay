@@ -1,7 +1,7 @@
 # 直近の不具合頻発 — 原因分析と再発防止策
 
 - **作成日:** 2026-09-04
-- **最終更新:** 2026-09-04（事実整合・根拠トレース・実行可能性の改稿）
+- **最終更新:** 2026-09-04（事実修正: 213d8af 帰属、R1/D 表現、v0.8.2 脚注）
 - **対象期間:** 2026-07-15 00:00 〜 2026-09-03 23:59:59 UTC（v0.8.0 〜 v0.9.3 + Unreleased）
 - **データソース:** `git log`、PR #82〜#97（`gh pr view`）、CHANGELOG、ADR-007/008、`docs/investigations/2026-09-02-dogfood-block-after-upgrade.md`、`docs/security-review-2026-08-30.md`
 - **目的:** 直近で不具合が頻発した実態を git 履歴から確認し、クラスタごとに根本原因を特定して、再発防止策を提示する。
@@ -20,7 +20,7 @@ git log --since='2026-07-15' --until='2026-09-03 23:59:59' --pretty='%s' \
   | awk '{count[$1]++} END {for (k in count) print k, count[k]}' | sort
 ```
 
-**ルール:** Conventional Commits の先頭トークン（`type(scope)` の `type`）を小文字化。`Fix` / `fix` は同一種別。
+**ルール:** Conventional Commits の先頭トークン（`type(scope)` の `type`）を小文字化。`Fix` / `fix` は同一種別。`harden` / `add` / `clarify` / `complete` は非慣習 subject を機械分類した結果（本来のコミット種別ではない）。
 
 **リリースタグ確認:**
 
@@ -38,7 +38,9 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 ## 1. サマリ
 
-対象期間の **211 コミット** 中、内訳は次のとおり。**修正コミットが全体の約 32%（68 件）** を占め、`feat`(29) を大きく上回っている。同期間にパッチリリースが **6 本**（v0.8.0/0.8.1/0.9.0/0.9.1/0.9.2/0.9.3）出ており、**ホットフィックス駆動のリリースサイクル**になっていた。
+対象期間の **211 コミット** 中、内訳は次のとおり。**修正コミットが全体の約 32%（68 件）** を占め、`feat`(29) を大きく上回っている。同期間に **タグ付きリリースが 6 本**（v0.8.0/0.8.1/0.9.0/0.9.1/0.9.2/0.9.3）出ており、**ホットフィックス駆動のリリースサイクル**になっていた。
+
+※ v0.8.2 は `release: prepare v0.8.2` コミット（PR #75 マージ）と CHANGELOG 記載はあるが、`git tag` 上は未発行。本調査のリリース数はタグ基準で数える。
 
 | 種別 | 件数 |
 |------|------|
@@ -57,12 +59,12 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 不具合は独立して散発したのではなく、**5 つのクラスタに集中**していた。特に問題なのは、**同じ挙動が「直しては壊れる」形で複数回再発**していた点である（下記クラスタ B・C・D）。
 
-| クラスタ | 概要 | 深刻度 | 再発回数 | 主要 PR |
+| クラスタ | 概要 | 深刻度 | 再発状況 | 主要 PR |
 |---------|------|--------|----------|---------|
 | **A. Cursor フック所有権/スコープ解決** | global/project の多重フック・cwd 誤解決 | 高 | 継続的（ADR-007/008 を新設するに至った） | #87, #89, #93 |
-| **B. 並行 PR のマージ回帰** | コンフリクト解消で他 PR の変更が消える | 高 | 2 回（#87→#88 消失、#96 でセキュリティ回帰復旧） | #87, #88, #91, #92, #96 |
+| **B. 並行 PR のマージ回帰** | コンフリクト解消で他 PR の変更が消える | 高 | 2 回（#87→#88 消失、#91/#92 で復元） | #87, #88, #91, #92 |
 | **C. Dogfood シェルブロック** | audit のはずが止まる（二重ゲート等） | 高 | 3 回（調査→#95→#97） | #95, #97 |
-| **D. セキュリティ実装欠陥/回帰** | glob・fingerprint・scrub の穴 | 高 | #96 で一括修正 | #96 |
+| **D. セキュリティ実装欠陥/回帰** | glob・fingerprint・scrub の穴 | 高 | #96 で一括修正（回帰か潜在欠陥かは未確定） | #96 |
 | **E. シェル分類器の網羅漏れ** | ラッパー/インタプリタ/Make の分類漏れ | 中 | 8/26 前後で多数 | #82, #85 |
 
 ---
@@ -100,12 +102,12 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 |----|---------|---------|-----------------|
 | #87 | fix: resolve global hook workspace context from payload | 2026-08-31 | コンフリクト解消で #88 の変更をサイレント削除 |
 | #88 | fix: harden Cursor host-denial correlation and health signals | 2026-08-31 | `tool_use_id` 正規化・監査 join・health snapshot 警告（#87 マージで消失） |
-| #91 | fix: restore PR #88 host-denial correlation lost in #87 merge | 2026-08-31 | #88 復元（1 回目） |
-| #92 | fix: keep Cursor approval warning fallback when CURSOR_CONFIG_DIR is stale | 2026-09-01 | #88 復元（2 回目、`213d8af`） |
+| #91 | fix: restore PR #88 host-denial correlation lost in #87 merge | 2026-08-31 | #88 復元（1 回目、`213d8af`） |
+| #92 | fix: keep Cursor approval warning fallback when CURSOR_CONFIG_DIR is stale | 2026-09-01 | #88 関連の追加修正（2 回目、`0928e9d`、CURSOR_CONFIG_DIR stale 時の fallback） |
 | #96 | fix: restore sensitive-path glob matching and approval fingerprint uniqueness | 2026-09-02 | セキュリティ修正の restore（別系統の回帰） |
 
 - **実例 1:** PR #87 のコンフリクト解消が PR #88 の `tool_use_id` 正規化・監査 join・health snapshot 警告を**サイレントに削除**。#91 → #92 の 2 回に分けて復元する羽目に。
-- **実例 2:** #96 で「sensitive-path glob マッチ」「approval fingerprint の一意性」を **restore**（＝どこかで壊れていた挙動の復旧）。
+- **実例 2:** #96 で「sensitive-path glob マッチ」「approval fingerprint の一意性」を **restore**（コミット名は回帰を示唆するが、セキュリティレビューは実装欠陥として扱っている。真の回帰か潜在欠陥かは未確定）。
 
 **根本原因:**
 1. **ホットファイルへの並行編集**。`runtime-entry.ts` / `audit-*.ts` / `health-snapshot.ts` / `gate-runtime.ts` / `shell-lower.ts` に複数 PR が同時に触れ、コンフリクト解消で取りこぼす。
@@ -165,7 +167,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | # | 横断因子 | 現れたクラスタ |
 |---|----------|----------------|
-| **R1. 挙動が「直しては戻る」** | 削除した `preToolUse: Shell` の復活、消えた PR#88、restore された glob/fingerprint | B, C, D |
+| **R1. 挙動が「直しては戻る」** | 削除した `preToolUse: Shell` の復活、消えた PR#88、`restore` 命名から回帰の可能性がある glob/fingerprint（#96。当初からの潜在欠陥の可能性もあり） | B, C, D（D は要確認） |
 | **R2. ホットファイルへの並行編集でサイレント消失** | runtime-entry / audit-* / health-snapshot / gate-runtime / shell-lower | B |
 | **R3. 安全でない既定 + 環境スキュー** | config 無し＝enforce、兄弟 worktree 未伝播、global/project スキュー、upgrade 後の runtime 混在 | A, C |
 | **R4. ホスト挙動・敵対入力の想定不足** | ホストによる書き換え、cwd=$HOME、多重フック、glob/fingerprint/scrub の穴 | A, C, D, E |
@@ -191,25 +193,25 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 「既に入っているもの（維持・強化）」と「新規に入れるべきもの」を分け、横断因子 R1〜R4 に紐づける。優先度は P0（即時）/ P1（次スプリント）/ P2（計画的）。
 
-各項目は `status / owner / evidence / done-when` で記述する。
+各項目は `status / owner / evidence / done-when` で記述する。`owner` は未割当のため `TBD`（担当確定後に更新）。
 
 ### 5.1 R1（直しては戻る）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | 回帰ロック（tombstone）テストの義務化 | **部分実施** | eng | `cursor-hooks.test.ts`, `installer.test.ts`（#95） | fresh install / upgrade 後に `preToolUse: Shell` が存在しないことを assert するテストが CI 必須 |
-| P0 | PR#88 由来 invariant テスト維持 | **実施済み** | eng | `cursor-host-denial-invariants.test.ts`（#91） | テスト削除で CI が落ちる |
-| P0 | glob/fingerprint 回帰テスト維持 | **実施済み** | eng | `glob.test.ts`, `classify-tool.test.ts`（#96） | テスト削除で CI が落ちる |
-| P1 | managed フック snapshot テスト | **未着手** | eng | `src/defaults.ts` | snapshot テストが CI 必須で、意図しない managed フック復活を検出 |
-| P1 | restore/regress PR 追跡 | **未着手** | eng | PR テンプレ | restore/regress/lost を含む PR に原因 PR + 再発防止テスト記載が必須 |
+| P0 | 回帰ロック（tombstone）テストの義務化 | **部分実施** | TBD | `cursor-hooks.test.ts`, `installer.test.ts`（#95） | fresh install / upgrade 後に `preToolUse: Shell` が存在しないことを assert するテストが CI 必須 |
+| P0 | PR#88 由来 invariant テスト維持 | **実施済み** | TBD | `cursor-host-denial-invariants.test.ts`（#91） | テスト削除で CI が落ちる |
+| P0 | glob/fingerprint 回帰テスト維持 | **実施済み** | TBD | `glob.test.ts`, `classify-tool.test.ts`（#96） | テスト削除で CI が落ちる |
+| P1 | managed フック snapshot テスト | **未着手** | TBD | `src/defaults.ts` | snapshot テストが CI 必須で、意図しない managed フック復活を検出 |
+| P1 | restore/regress PR 追跡 | **未着手** | TBD | PR テンプレ | restore/regress/lost を含む PR に原因 PR + 再発防止テスト記載が必須 |
 
 ### 5.2 R2（並行マージのサイレント消失）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | ホットファイル結合 vitest の CI 必須化 | **未着手** | eng | `.github/pull_request_template.md`（自己申告のみ） | ホットファイル変更 PR で結合 vitest が必須ジョブとして走る |
-| P0 | コンフリクト解消後の両 PR 変更残存確認 | **未着手** | eng | #87/#88 事例 | PR テンプレ + CI でコンフリクト解消 PR を検出し、チェック必須 |
-| P1 | ホットファイル集中期の直列マージ | **未着手** | eng | #87/#88 事例 | 運用ルール文書化 + マージキュー縮小の実践 |
+| P0 | ホットファイル結合 vitest の CI 必須化 | **未着手** | TBD | `.github/pull_request_template.md`（自己申告のみ） | ホットファイル変更 PR で結合 vitest が必須ジョブとして走る |
+| P0 | コンフリクト解消後の両 PR 変更残存確認 | **未着手** | TBD | #87/#88 事例 | PR テンプレ + CI でコンフリクト解消 PR を検出し、チェック必須 |
+| P1 | ホットファイル集中期の直列マージ | **未着手** | TBD | #87/#88 事例 | 運用ルール文書化 + マージキュー縮小の実践 |
 
 **対象ホットファイル:** `src/adapters/cursor/runtime-entry.ts`, `src/core/audit-*.ts`, `src/commands/health-snapshot.ts`, `src/adapters/shared/gate-runtime.ts`, `src/core/effect-ir/shell-lower.ts`, `src/defaults.ts`
 
@@ -217,28 +219,28 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | dogfood 環境スキューの doctor 可視化 | **部分実施** | eng | `doctor.ts` linked-worktree 警告（#97） | worktree skew / runtime 混在が **警告ではなく exit code 非ゼロ** で検出 |
-| P1 | モノレポ dogfood config 伝播 CLI | **未着手** | eng | `2026-09-02` 調査 §7.3 | `belay dogfood --recursive` または doctor fix 提案が利用可能 |
-| P1 | upgrade の runtime 単一化保証 | **未着手** | eng | `2026-09-02` 調査 §5.3 | upgrade 後に旧 runtime が残らず、混在時は doctor が再 upgrade を促す |
-| P2 | 既定モードの再検討 | **要設計合意** | eng | enforce 既定 | enforce deny 時に「未 dogfood」メッセージを表示 |
+| P0 | dogfood 環境スキューの doctor 可視化 | **部分実施** | TBD | `doctor.ts` linked-worktree 警告（#97） | worktree skew / runtime 混在が **警告ではなく exit code 非ゼロ** で検出 |
+| P1 | モノレポ dogfood config 伝播 CLI | **未着手** | TBD | `2026-09-02` 調査 §7.3 | `belay dogfood --recursive` または doctor fix 提案が利用可能 |
+| P1 | upgrade の runtime 単一化保証 | **未着手** | TBD | `2026-09-02` 調査 §5.3 | upgrade 後に旧 runtime が残らず、混在時は doctor が再 upgrade を促す |
+| P2 | 既定モードの再検討 | **要設計合意** | TBD | enforce 既定 | enforce deny 時に「未 dogfood」メッセージを表示 |
 
 ### 5.4 R4（ホスト挙動・敵対入力の想定不足）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | シングルシェルゲート原則の明文化 | **部分実施** | eng | CHANGELOG Unreleased, §4 本節 | ADR-009 採択 + ADR-008 Limits 更新 |
-| P1 | 敵対入力 corpus 拡充 + monotonicity | **部分実施** | eng | `corpus/shell-commands.json`, `pnpm test:corpus` | corpus が CI 必須で ASK→ALLOW 弱化が 0 |
-| P1 | fail-closed 一貫性監査 | **未着手** | eng | H-4（未知ツール allow） | 全アダプタで fail-closed 原則が invariant テストで固定 |
-| P2 | repo config 信頼境界（H-1〜H-3） | **要設計合意** | eng | `security-review-2026-08-30.md` | 権限影響キーの repo レイヤ制限が ADR 化 |
+| P0 | シングルシェルゲート原則の明文化 | **部分実施** | TBD | CHANGELOG Unreleased, §4 本節 | ADR-009 採択 + ADR-008 Limits 更新 |
+| P1 | 敵対入力 corpus 拡充 + monotonicity | **部分実施** | TBD | `corpus/shell-commands.json`, `pnpm test:corpus` | corpus が CI 必須で ASK→ALLOW 弱化が 0 |
+| P1 | fail-closed 一貫性監査 | **未着手** | TBD | H-4（未知ツール allow） | 全アダプタで fail-closed 原則が invariant テストで固定 |
+| P2 | repo config 信頼境界（H-1〜H-3） | **要設計合意** | TBD | `security-review-2026-08-30.md` | 権限影響キーの repo レイヤ制限が ADR 化 |
 
 ### 5.5 プロセス面（クラスタ横断）
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | fix PR に再発防止テストを DoD 化 | **未着手** | eng | superpowers TDD 方針 | fix ラベル PR にテスト差分が無ければ CI が落ちる |
-| P1 | リリース前 dogfood リプレイ | **未着手** | eng | `2026-09-01` 計画 Task 4 | リリース候補で `Belay blocked` が 0 |
-| P1 | ポストモーテムの定着 | **実施済み** | eng | 本ドキュメント + `docs/investigations/` | High 深刻度ごとに 1 ページ調査が残る運用 |
-| P2 | 変更集中期のリリース間隔調整 | **要設計合意** | eng | 6 リリース/6-8 週 | ホットファイル集中期の結合検証強化ルールが文書化 |
+| P0 | fix PR に再発防止テストを DoD 化 | **未着手** | TBD | superpowers TDD 方針 | fix ラベル PR にテスト差分が無ければ CI が落ちる |
+| P1 | リリース前 dogfood リプレイ | **未着手** | TBD | `2026-09-01` 計画 Task 4 | リリース候補で `Belay blocked` が 0 |
+| P1 | ポストモーテムの定着 | **実施済み** | TBD | 本ドキュメント + `docs/investigations/` | High 深刻度ごとに 1 ページ調査が残る運用 |
+| P2 | 変更集中期のリリース間隔調整 | **要設計合意** | TBD | 6 リリース/6-8 週 | ホットファイル集中期の結合検証強化ルールが文書化 |
 
 ---
 
@@ -295,3 +297,4 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 |------|------|
 | 2026-09-04 | 初版 — git 履歴横断でクラスタ分類、横断因子 R1〜R4 と再発防止策を策定 |
 | 2026-09-04 | 改稿 — 集計方法の明記（211 コミット）、PR 根拠トレース、§4 ADR 境界明示、§5 status/owner/evidence/done-when 形式、チェックリストと指標の対応整理 |
+| 2026-09-04 | 事実修正 — `213d8af` を #91 に帰属、R1/D の表現弱化、v0.8.2 脚注、非慣習 subject 注記、owner を TBD に |
