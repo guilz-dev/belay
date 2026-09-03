@@ -1,0 +1,2383 @@
+{
+  "git-status": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "git status --short",
+      "segmentHead": "git",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "git",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.inspect",
+              "git.status"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "git status --short"
+          },
+          "provenances": [
+            {
+              "segment": "git status --short"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.repository.read",
+              "git.status"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "git status --short"
+          },
+          "provenances": [
+            {
+              "segment": "git status --short"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:git-status",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "git.inspect",
+      "git.repository.read",
+      "git.status"
+    ]
+  },
+  "git-diff": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "git diff HEAD",
+      "segmentHead": "git",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "git",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.diff",
+              "git.inspect"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "git diff HEAD"
+          },
+          "provenances": [
+            {
+              "segment": "git diff HEAD"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.diff",
+              "git.repository.read"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "git diff HEAD"
+          },
+          "provenances": [
+            {
+              "segment": "git diff HEAD"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:git-diff",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "git.diff",
+      "git.inspect",
+      "git.repository.read"
+    ]
+  },
+  "docker-info": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "docker info",
+      "segmentHead": "docker",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "docker",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.inspect.docker_info"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "docker info"
+          },
+          "provenances": [
+            {
+              "segment": "docker info"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:docker-info",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.inspect.docker_info"
+    ]
+  },
+  "docker-compose-up": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "docker compose up -d",
+      "segmentHead": "docker",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "docker",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "service.local_mutation"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "docker compose up -d"
+          },
+          "provenances": [
+            {
+              "segment": "docker compose up -d"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:docker-compose-up",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "service.local_mutation"
+    ]
+  },
+  "docker-run": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "docker run --rm alpine echo hi",
+      "segmentHead": "docker",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "docker",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.docker_spawn"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "docker run --rm alpine echo hi"
+          },
+          "provenances": [
+            {
+              "segment": "docker run --rm alpine echo hi"
+            }
+          ]
+        },
+        {
+          "tag": "network.acquire",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "unknown",
+            "protocol": "container-registry",
+            "mode": "ambiguous",
+            "payload": "none"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "docker.image_acquisition_possible"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "docker run --rm alpine echo hi"
+          },
+          "provenances": [
+            {
+              "segment": "docker run --rm alpine echo hi"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:docker-run",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "docker.image_acquisition_possible",
+      "process.docker_spawn"
+    ]
+  },
+  "ruby-rails-routes": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "bundle exec rails routes",
+      "segmentHead": "bundle",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rails",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.inspect.rails_read_only"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "bundle exec rails routes"
+          },
+          "provenances": [
+            {
+              "segment": "bundle exec rails routes"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:ruby-rails-routes",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.inspect.rails_read_only"
+    ]
+  },
+  "rubocop": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "bundle exec rubocop app/models/user.rb",
+      "segmentHead": "bundle",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rubocop",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.inspect.linter"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "bundle exec rubocop app/models/user.rb"
+          },
+          "provenances": [
+            {
+              "segment": "bundle exec rubocop app/models/user.rb"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:rubocop",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.inspect.linter"
+    ]
+  },
+  "rsync-local": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "rsync -a src/ dest/",
+      "segmentHead": "rsync",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rsync",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.rsync_local"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rsync -a src/ dest/"
+          },
+          "provenances": [
+            {
+              "segment": "rsync -a src/ dest/"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/src"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "rsync.local_source"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rsync -a src/ dest/"
+          },
+          "provenances": [
+            {
+              "segment": "rsync -a src/ dest/"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/dest"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "rsync.local_destination"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rsync -a src/ dest/"
+          },
+          "provenances": [
+            {
+              "segment": "rsync -a src/ dest/"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:rsync-local",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.rsync_local",
+      "rsync.local_destination",
+      "rsync.local_source"
+    ]
+  },
+  "rsync-remote": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "rsync -a ./build/ user@host:/var/www/",
+      "segmentHead": "rsync",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rsync",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "rsync.remote"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rsync -a ./build/ user@host:/var/www/"
+          },
+          "provenances": [
+            {
+              "segment": "rsync -a ./build/ user@host:/var/www/"
+            }
+          ]
+        },
+        {
+          "tag": "network.connect",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "remote",
+            "protocol": "rsync",
+            "mode": "mutate",
+            "payload": "present"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "rsync.remote"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rsync -a ./build/ user@host:/var/www/"
+          },
+          "provenances": [
+            {
+              "segment": "rsync -a ./build/ user@host:/var/www/"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:rsync-remote",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "rsync.remote"
+    ]
+  },
+  "rm-file": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "rm -f tmp/cache.txt",
+      "segmentHead": "rm",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rm",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.filesystem_mutation"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rm -f tmp/cache.txt"
+          },
+          "provenances": [
+            {
+              "segment": "rm -f tmp/cache.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/tmp/cache.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "filesystem.write",
+              "rm.remove"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rm -f tmp/cache.txt"
+          },
+          "provenances": [
+            {
+              "segment": "rm -f tmp/cache.txt"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:rm-file",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "filesystem.write",
+      "process.filesystem_mutation",
+      "rm.remove"
+    ]
+  },
+  "cp-file": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "cp src/a.txt dest/b.txt",
+      "segmentHead": "cp",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "cp",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.filesystem_mutation"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "cp src/a.txt dest/b.txt"
+          },
+          "provenances": [
+            {
+              "segment": "cp src/a.txt dest/b.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/src/a.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "cp.source_read"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "cp src/a.txt dest/b.txt"
+          },
+          "provenances": [
+            {
+              "segment": "cp src/a.txt dest/b.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/dest/b.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "cp.destination_write"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "cp src/a.txt dest/b.txt"
+          },
+          "provenances": [
+            {
+              "segment": "cp src/a.txt dest/b.txt"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:cp-file",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "cp.destination_write",
+      "cp.source_read",
+      "process.filesystem_mutation"
+    ]
+  },
+  "mv-file": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "mv old.txt new.txt",
+      "segmentHead": "mv",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "mv",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.filesystem_mutation"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "mv old.txt new.txt"
+          },
+          "provenances": [
+            {
+              "segment": "mv old.txt new.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/old.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "mv.source_read"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "mv old.txt new.txt"
+          },
+          "provenances": [
+            {
+              "segment": "mv old.txt new.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/old.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "mv.source_remove"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "mv old.txt new.txt"
+          },
+          "provenances": [
+            {
+              "segment": "mv old.txt new.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/new.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "mv.destination_write"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "mv old.txt new.txt"
+          },
+          "provenances": [
+            {
+              "segment": "mv old.txt new.txt"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:mv-file",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "mv.destination_write",
+      "mv.source_read",
+      "mv.source_remove",
+      "process.filesystem_mutation"
+    ]
+  },
+  "prisma-migrate": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "prisma migrate dev",
+      "segmentHead": "prisma",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "prisma",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.prisma"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "prisma migrate dev"
+          },
+          "provenances": [
+            {
+              "segment": "prisma migrate dev"
+            }
+          ]
+        },
+        {
+          "tag": "network.connect",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "unknown",
+            "protocol": "database",
+            "mode": "ambiguous",
+            "payload": "present"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "prisma.database_endpoint_unknown"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "prisma migrate dev"
+          },
+          "provenances": [
+            {
+              "segment": "prisma migrate dev"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "prisma.database_endpoint_unknown"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "prisma migrate dev"
+          },
+          "provenances": [
+            {
+              "segment": "prisma migrate dev"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:prisma-migrate",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "prisma.database_endpoint_unknown",
+      "process.prisma"
+    ]
+  },
+  "prisma-generate": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "prisma generate",
+      "segmentHead": "prisma",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "prisma",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.prisma"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "prisma generate"
+          },
+          "provenances": [
+            {
+              "segment": "prisma generate"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "prisma.generate.repo_local"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "prisma generate"
+          },
+          "provenances": [
+            {
+              "segment": "prisma generate"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:prisma-generate",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "prisma.generate.repo_local",
+      "process.prisma"
+    ]
+  },
+  "belay-config-get": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "belay config get judge.mode",
+      "segmentHead": "belay",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "belay",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "belay.config_read",
+              "belay_control_plane_command"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "belay config get judge.mode"
+          },
+          "provenances": [
+            {
+              "segment": "belay config get judge.mode"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:belay-config-get",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "belay.config_read",
+      "belay_control_plane_command"
+    ]
+  },
+  "tsc-no-emit": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "tsc --noEmit",
+      "segmentHead": "tsc",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "tsc",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.inspect.tsc_typecheck"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "tsc --noEmit"
+          },
+          "provenances": [
+            {
+              "segment": "tsc --noEmit"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:tsc-no-emit",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.inspect.tsc_typecheck"
+    ]
+  },
+  "go-build": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "go build ./...",
+      "segmentHead": "go",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "go",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.go_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "go build ./..."
+          },
+          "provenances": [
+            {
+              "segment": "go build ./..."
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "process.go_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "go build ./..."
+          },
+          "provenances": [
+            {
+              "segment": "go build ./..."
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:go-build",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "process.go_grammar_incomplete"
+    ]
+  },
+  "node-script": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "node scripts/build-runtime.mjs",
+      "segmentHead": "node",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "node",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.node_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "node scripts/build-runtime.mjs"
+          },
+          "provenances": [
+            {
+              "segment": "node scripts/build-runtime.mjs"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "process.node_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "node scripts/build-runtime.mjs"
+          },
+          "provenances": [
+            {
+              "segment": "node scripts/build-runtime.mjs"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:node-script",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "process.node_grammar_incomplete"
+    ]
+  },
+  "sed-inplace": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "sed -i '' 's/foo/bar/g' file.txt",
+      "segmentHead": "sed",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "sed",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.sed"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "sed -i '' 's/foo/bar/g' file.txt"
+          },
+          "provenances": [
+            {
+              "segment": "sed -i '' 's/foo/bar/g' file.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/s/foo/bar/g"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "sed.in_place_write"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "sed -i '' 's/foo/bar/g' file.txt"
+          },
+          "provenances": [
+            {
+              "segment": "sed -i '' 's/foo/bar/g' file.txt"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project/file.txt"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "sed.in_place_write"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "sed -i '' 's/foo/bar/g' file.txt"
+          },
+          "provenances": [
+            {
+              "segment": "sed -i '' 's/foo/bar/g' file.txt"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:sed-inplace",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.sed",
+      "sed.in_place_write"
+    ]
+  },
+  "npm-version": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "npm --version",
+      "segmentHead": "npm",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "npm",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.inspect.package_manager"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "npm --version"
+          },
+          "provenances": [
+            {
+              "segment": "npm --version"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:npm-version",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.inspect.package_manager"
+    ]
+  },
+  "pnpm-publish": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "pnpm publish --dry-run",
+      "segmentHead": "pnpm",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "pnpm",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "tier0_external"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "pnpm publish --dry-run"
+          },
+          "provenances": [
+            {
+              "segment": "pnpm publish --dry-run"
+            }
+          ]
+        },
+        {
+          "tag": "network.connect",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "control-plane",
+            "protocol": "pnpm",
+            "mode": "mutate",
+            "payload": "present"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "tier0_external"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "pnpm publish --dry-run"
+          },
+          "provenances": [
+            {
+              "segment": "pnpm publish --dry-run"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:pnpm-publish",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "tier0_external"
+    ]
+  },
+  "npx-package": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "npx vitest run",
+      "segmentHead": "npx",
+      "requirements": [
+        {
+          "tag": "network.acquire",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "registry.npmjs.org",
+            "protocol": "registry",
+            "mode": "read",
+            "payload": "none"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "package_acquire_possible"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "npx vitest run"
+          },
+          "provenances": [
+            {
+              "segment": "npx vitest run"
+            }
+          ]
+        },
+        {
+          "tag": "fs.write",
+          "action": "fs.write",
+          "resource": {
+            "kind": "package-cache",
+            "manager": "npm"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "package_cache_write"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "npx vitest run"
+          },
+          "provenances": [
+            {
+              "segment": "npx vitest run"
+            }
+          ]
+        },
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "vitest",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.known_local_spawn"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "npx vitest run",
+            "innerCommand": "vitest run"
+          },
+          "provenances": [
+            {
+              "segment": "vitest run"
+            },
+            {
+              "segment": "npx vitest run",
+              "innerCommand": "vitest run"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:npx-package",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "package_acquire_possible",
+      "package_cache_write",
+      "package_exec:npx",
+      "process.known_local_spawn"
+    ]
+  },
+  "argv-delegate-rtk": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "rtk git status --short",
+      "segmentHead": "rtk",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "rtk",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.argv_delegate"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "rtk git status --short"
+          },
+          "provenances": [
+            {
+              "segment": "rtk git status --short"
+            }
+          ]
+        },
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "git",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.inspect",
+              "git.status"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "rtk git status --short",
+            "innerCommand": "git status --short"
+          },
+          "provenances": [
+            {
+              "segment": "git status --short"
+            },
+            {
+              "segment": "rtk git status --short",
+              "innerCommand": "git status --short"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.repository.read",
+              "git.status"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "rtk git status --short",
+            "innerCommand": "git status --short"
+          },
+          "provenances": [
+            {
+              "segment": "git status --short"
+            },
+            {
+              "segment": "rtk git status --short",
+              "innerCommand": "git status --short"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:argv-delegate-rtk",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "git.inspect",
+      "git.repository.read",
+      "git.status",
+      "process.argv_delegate"
+    ]
+  },
+  "argv-delegate-generic": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "fictional-runner git diff",
+      "segmentHead": "fictional-runner",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "fictional-runner",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.argv_delegate"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "fictional-runner git diff"
+          },
+          "provenances": [
+            {
+              "segment": "fictional-runner git diff"
+            }
+          ]
+        },
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "git",
+            "operation": "inspect"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.diff",
+              "git.inspect"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "fictional-runner git diff",
+            "innerCommand": "git diff"
+          },
+          "provenances": [
+            {
+              "segment": "git diff"
+            },
+            {
+              "segment": "fictional-runner git diff",
+              "innerCommand": "git diff"
+            }
+          ]
+        },
+        {
+          "tag": "fs.read",
+          "action": "fs.read",
+          "resource": {
+            "kind": "path",
+            "path": "/workspace/project"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "git.diff",
+              "git.repository.read"
+            ],
+            "basis": [
+              "git_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "fictional-runner git diff",
+            "innerCommand": "git diff"
+          },
+          "provenances": [
+            {
+              "segment": "git diff"
+            },
+            {
+              "segment": "fictional-runner git diff",
+              "innerCommand": "git diff"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:argv-delegate-generic",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "git.diff",
+      "git.inspect",
+      "git.repository.read",
+      "process.argv_delegate"
+    ]
+  },
+  "shell-echo": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "echo hello",
+      "segmentHead": "echo",
+      "requirements": []
+    },
+    "inputFingerprint": "baseline:shell-echo",
+    "opacity": "transparent",
+    "disposition": "effect_free",
+    "completeness": "complete",
+    "signals": []
+  },
+  "shell-cd": {
+    "version": 1,
+    "root": {
+      "kind": "merge",
+      "children": [
+        {
+          "kind": "exec",
+          "commandRedacted": "cd src",
+          "segmentHead": "cd",
+          "requirements": []
+        },
+        {
+          "kind": "exec",
+          "commandRedacted": "pwd",
+          "segmentHead": "pwd",
+          "requirements": [
+            {
+              "tag": "process.exec",
+              "action": "process.exec",
+              "resource": {
+                "kind": "executable",
+                "command": "pwd",
+                "operation": "inspect"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "process.pure_inspection"
+                ],
+                "basis": [
+                  "shell_semantic_lowering"
+                ]
+              },
+              "provenance": {
+                "segment": "pwd"
+              },
+              "provenances": [
+                {
+                  "segment": "pwd"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:shell-cd",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.pure_inspection"
+    ]
+  },
+  "env-prefix": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "NODE_ENV=test npm test",
+      "segmentHead": "npm",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "npm",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "launcher.invoke"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "NODE_ENV=test npm test"
+          },
+          "provenances": [
+            {
+              "segment": "NODE_ENV=test npm test"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "launcher.package_json_missing"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "NODE_ENV=test npm test"
+          },
+          "provenances": [
+            {
+              "segment": "NODE_ENV=test npm test"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:env-prefix",
+    "opacity": "opaque",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "launcher.invoke",
+      "launcher.package_json_missing"
+    ]
+  },
+  "curl-egress": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "curl https://example.com/health",
+      "segmentHead": "curl",
+      "requirements": [
+        {
+          "tag": "network.connect",
+          "action": "network.connect",
+          "resource": {
+            "kind": "network",
+            "host": "example.com",
+            "protocol": "https",
+            "mode": "read",
+            "payload": "none"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "egress.curl",
+              "egress.mode.read",
+              "egress.payload.none"
+            ],
+            "basis": [
+              "egress_grammar"
+            ]
+          },
+          "provenance": {
+            "segment": "curl https://example.com/health"
+          },
+          "provenances": [
+            {
+              "segment": "curl https://example.com/health"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:curl-egress",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "egress.curl",
+      "egress.mode.read",
+      "egress.payload.none"
+    ]
+  },
+  "make-target": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "make verify-parallel",
+      "segmentHead": "make",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "make",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "launcher.invoke"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "make verify-parallel"
+          },
+          "provenances": [
+            {
+              "segment": "make verify-parallel"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "launcher.unknown_local_effect"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "make verify-parallel"
+          },
+          "provenances": [
+            {
+              "segment": "make verify-parallel"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:make-target",
+    "opacity": "opaque",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "launcher.invoke",
+      "launcher.unknown_local_effect"
+    ]
+  },
+  "lsof-inspect": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "lsof -i :3000",
+      "segmentHead": "lsof",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "lsof",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.lsof_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "lsof -i :3000"
+          },
+          "provenances": [
+            {
+              "segment": "lsof -i :3000"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "process.lsof_grammar_incomplete"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "lsof -i :3000"
+          },
+          "provenances": [
+            {
+              "segment": "lsof -i :3000"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:lsof-inspect",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "process.lsof_grammar_incomplete"
+    ]
+  },
+  "ps-inspect": {
+    "version": 1,
+    "root": {
+      "kind": "merge",
+      "children": [
+        {
+          "kind": "exec",
+          "commandRedacted": "ps aux",
+          "segmentHead": "ps",
+          "requirements": [
+            {
+              "tag": "process.exec",
+              "action": "process.exec",
+              "resource": {
+                "kind": "executable",
+                "command": "ps",
+                "operation": "inspect"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "process.inspect.ps"
+                ],
+                "basis": [
+                  "shell_semantic_lowering"
+                ]
+              },
+              "provenance": {
+                "segment": "ps aux"
+              },
+              "provenances": [
+                {
+                  "segment": "ps aux"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "exec",
+          "commandRedacted": "grep node",
+          "segmentHead": "grep",
+          "requirements": [
+            {
+              "tag": "process.exec",
+              "action": "process.exec",
+              "resource": {
+                "kind": "executable",
+                "command": "grep",
+                "operation": "inspect"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "process.filesystem_inspect"
+                ],
+                "basis": [
+                  "shell_semantic_lowering"
+                ]
+              },
+              "provenance": {
+                "segment": "grep node"
+              },
+              "provenances": [
+                {
+                  "segment": "grep node"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:ps-inspect",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.filesystem_inspect",
+      "process.inspect.ps"
+    ]
+  },
+  "vite-dev": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "vite dev",
+      "segmentHead": "vite",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "vite",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.local_dev_spawn"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "vite dev"
+          },
+          "provenances": [
+            {
+              "segment": "vite dev"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:vite-dev",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "process.local_dev_spawn"
+    ]
+  },
+  "unknown-wrapper": {
+    "version": 1,
+    "root": {
+      "kind": "exec",
+      "commandRedacted": "unknown-wrapper",
+      "segmentHead": "unknown-wrapper",
+      "requirements": [
+        {
+          "tag": "process.exec",
+          "action": "process.exec",
+          "resource": {
+            "kind": "executable",
+            "command": "unknown-wrapper",
+            "operation": "spawn"
+          },
+          "evidence": {
+            "level": "certain",
+            "signals": [
+              "process.grammar_unknown"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "unknown-wrapper"
+          },
+          "provenances": [
+            {
+              "segment": "unknown-wrapper"
+            }
+          ]
+        },
+        {
+          "tag": "indeterminate",
+          "action": "indeterminate",
+          "resource": {
+            "kind": "unknown"
+          },
+          "evidence": {
+            "level": "indeterminate",
+            "signals": [
+              "process.grammar_unknown"
+            ],
+            "basis": [
+              "shell_semantic_lowering"
+            ]
+          },
+          "provenance": {
+            "segment": "unknown-wrapper"
+          },
+          "provenances": [
+            {
+              "segment": "unknown-wrapper"
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:unknown-wrapper",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "partial",
+    "signals": [
+      "process.grammar_unknown"
+    ]
+  },
+  "pipe-to-shell": {
+    "version": 1,
+    "root": {
+      "kind": "merge",
+      "children": [
+        {
+          "kind": "exec",
+          "commandRedacted": "git log",
+          "segmentHead": "git",
+          "requirements": [
+            {
+              "tag": "process.exec",
+              "action": "process.exec",
+              "resource": {
+                "kind": "executable",
+                "command": "git",
+                "operation": "inspect"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "git.inspect",
+                  "git.log"
+                ],
+                "basis": [
+                  "git_grammar"
+                ]
+              },
+              "provenance": {
+                "segment": "git log"
+              },
+              "provenances": [
+                {
+                  "segment": "git log"
+                }
+              ]
+            },
+            {
+              "tag": "fs.read",
+              "action": "fs.read",
+              "resource": {
+                "kind": "path",
+                "path": "/workspace/project"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "git.log",
+                  "git.repository.read"
+                ],
+                "basis": [
+                  "git_grammar"
+                ]
+              },
+              "provenance": {
+                "segment": "git log"
+              },
+              "provenances": [
+                {
+                  "segment": "git log"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "exec",
+          "commandRedacted": "head",
+          "segmentHead": "head",
+          "requirements": [
+            {
+              "tag": "process.exec",
+              "action": "process.exec",
+              "resource": {
+                "kind": "executable",
+                "command": "head",
+                "operation": "inspect"
+              },
+              "evidence": {
+                "level": "certain",
+                "signals": [
+                  "process.filesystem_inspect"
+                ],
+                "basis": [
+                  "shell_semantic_lowering"
+                ]
+              },
+              "provenance": {
+                "segment": "head"
+              },
+              "provenances": [
+                {
+                  "segment": "head"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "inputFingerprint": "baseline:pipe-to-shell",
+    "opacity": "transparent",
+    "disposition": "effects",
+    "completeness": "complete",
+    "signals": [
+      "git.inspect",
+      "git.log",
+      "git.repository.read",
+      "process.filesystem_inspect"
+    ]
+  }
+}
