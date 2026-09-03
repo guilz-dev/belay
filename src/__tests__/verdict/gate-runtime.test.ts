@@ -55,6 +55,7 @@ describe('gate-runtime integration', () => {
     expect(verdict.axes?.location).toBe('repo_local')
     expect(auditEvents[0]?.schemaVersion).toBe(2)
     expect(auditEvents[0]?.location).toBe('repo_local')
+    expect(auditEvents[0]?.repoLabel).toBe(path.basename(repoRoot))
   })
 
   it('records runtime and configuration provenance with each audit event', async () => {

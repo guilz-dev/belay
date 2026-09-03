@@ -26,6 +26,11 @@ npx @guilz-dev/belay@<version> upgrade --with-skill
 npx @guilz-dev/belay@<version> doctor
 ```
 
+For monorepos or linked Git worktrees, run the same `upgrade` + `doctor` + `dogfood` sequence in
+each worktree where Cursor may execute hooks. A sibling worktree without `belay.config.json` stays
+on defaults (`mode: enforce`) and can still block host actions even when the main worktree is in
+dogfood (`mode: audit`, `unknownLocalEffect: deny`).
+
 See [releasing.md](./releasing.md) for publish steps.
 
 ## Out of scope
