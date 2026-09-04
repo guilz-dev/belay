@@ -34,6 +34,12 @@ async function runManagedCommand(
   const stderr: Buffer[] = []
   child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
   child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)))
+  child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+    // When runner/shim/dispatcher is missing the child can exit before stdin is read.
+    if (error.code !== 'EPIPE') {
+      throw error
+    }
+  })
   child.stdin.end(JSON.stringify(payload))
   const exitCode = await new Promise<number>((resolve, reject) => {
     child.on('error', reject)
