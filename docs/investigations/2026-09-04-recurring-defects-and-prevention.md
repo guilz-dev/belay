@@ -40,7 +40,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 対象期間の **211 コミット** 中、内訳は次のとおり。**修正コミットが全体の約 32%（68 件）** を占め、`feat`(29) を大きく上回っている。同期間に **タグ付きリリースが 6 本**（v0.8.0/0.8.1/0.9.0/0.9.1/0.9.2/0.9.3）出ており、**ホットフィックス駆動のリリースサイクル**になっていた。
 
-※ v0.8.2 は `release: prepare v0.8.2` コミット（PR #75 マージ）と CHANGELOG 記載はあるが、`git tag` 上は未発行。本調査のリリース数はタグ基準で数える。
+※ v0.8.2 は `release: prepare v0.8.2` コミット（PR #75 マージ）があり、prepare 時点の CHANGELOG には記載があったが、現行 `CHANGELOG.md` には残っておらず `git tag` も未発行。本調査のリリース数はタグ基準で数える。
 
 | 種別 | 件数 |
 |------|------|
@@ -103,7 +103,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | #87 | fix: resolve global hook workspace context from payload | 2026-08-31 | コンフリクト解消で #88 の変更をサイレント削除 |
 | #88 | fix: harden Cursor host-denial correlation and health signals | 2026-08-31 | `tool_use_id` 正規化・監査 join・health snapshot 警告（#87 マージで消失） |
 | #91 | fix: restore PR #88 host-denial correlation lost in #87 merge | 2026-08-31 | #88 復元（1 回目、`213d8af`） |
-| #92 | fix: keep Cursor approval warning fallback when CURSOR_CONFIG_DIR is stale | 2026-09-01 | #88 関連の追加修正（2 回目、`0928e9d`、CURSOR_CONFIG_DIR stale 時の fallback） |
+| #92 | fix: keep Cursor approval warning fallback when CURSOR_CONFIG_DIR is stale | 2026-09-01 | #88 復元ブランチ上の追加修正（`0928e9d`、CURSOR_CONFIG_DIR stale 時の fallback） |
 | #96 | fix: restore sensitive-path glob matching and approval fingerprint uniqueness | 2026-09-02 | セキュリティ修正の restore（別系統の回帰） |
 
 - **実例 1:** PR #87 のコンフリクト解消が PR #88 の `tool_use_id` 正規化・監査 join・health snapshot 警告を**サイレントに削除**。#91 → #92 の 2 回に分けて復元する羽目に。
