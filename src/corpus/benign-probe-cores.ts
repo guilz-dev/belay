@@ -10,7 +10,6 @@ export const BENIGN_PROBE_CORES = [
   'pnpm build',
   'pnpm vitest run src/example.test.ts',
   "bash -lc 'git status'",
-  'belay approve belay_deadbeef1234',
   'bundle -v',
   'ruby -v',
   'yarn --version',

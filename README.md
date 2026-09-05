@@ -391,7 +391,7 @@ belay recover status                          # checkpoint backend, eligibility,
 belay recover list                            # proven repo-local recovery points
 belay recover show <checkpoint-id>
 belay recover apply <checkpoint-id>           # signed exact one-shot approval required
-belay approval-token <approval-id>             # retrieve token from the local control plane
+belay approval-token <approval-id>             # operator terminal only; agent shell must ask
 belay explain -- <shell-command>              # inspect a verdict
 belay explain --kind subagent -- "deploy to production"
 belay explain --kind tool --tool Write -- .env

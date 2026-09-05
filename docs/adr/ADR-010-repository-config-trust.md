@@ -70,6 +70,9 @@ sha256(canonicalStringify(parsed raw repo config))
   config snapshot.
 - Operators recover from manual edits with an explicit trust action:
   `belay config trust`.
+- Agent-shell invocations of `belay config trust`, `belay approval-token`, and other approval
+  authority commands are control-plane writes and require a separate human approval; an agent
+  cannot use them to trust its own config or approve its own pending action.
 - Out-of-band deny notifications remain advisory only; signed approval tokens are not serialized to
   webhook payloads or command-hook environment variables. Tokens are issued on demand through the
   local `belay approval-token <approval-id>` control-plane path.
