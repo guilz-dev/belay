@@ -18,7 +18,6 @@ import {
   gateApprovalStoreFromDeps,
   recordApproval,
 } from '../../core/approval-service.js'
-import { issueApprovalToken } from '../../core/approval-token.js'
 import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
@@ -269,7 +268,14 @@ async function loadJsonFile<T>(filePath: string, fallback: T): Promise<T> {
 export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
   return {
     async readConfig(configPath) {
-      return loadJsonFile<Record<string, unknown>>(configPath, {})
+      try {
+        return JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return {}
+        }
+        throw error
+      }
     },
     async appendAudit(ctx, event) {
       const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
@@ -999,7 +1005,25 @@ export async function evaluateGatedAction(
     ...authorization,
     egressProxyActive,
   }
-  const predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
+  let predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
+  if (
+    action.kind === 'tool' &&
+    predicted.reason === 'unclassified_tool' &&
+    (ctx.config.policy.codexUnmappedTool ?? 'deny') === 'deny'
+  ) {
+    predicted = {
+      ...predicted,
+      verdict: 'deny_pending_approval',
+      reason: 'unmapped_tool',
+      assessment: {
+        reversibility: 'irreversible',
+        external: false,
+        blastRadius: 'unknown tool action',
+        confidence: 0.5,
+        signals: ['unmapped_tool'],
+      },
+    }
+  }
 
   if (
     action.kind === 'shell' &&
@@ -1329,21 +1353,6 @@ async function gateDecisionToVerdict(
     if (created) {
       await recordGateApprovalAsk(stateDir, result.reason, false)
     }
-    try {
-      await issueApprovalToken(
-        {
-          approvalId: approval.approvalId,
-          fingerprint: approval.fingerprint,
-          repoRoot: approval.repoRoot,
-          issuedAt: approval.createdAt,
-          expiresAt: approval.expiresAt,
-        },
-        configuredControlPlaneDir(ctx.config),
-      )
-    } catch {
-      // best-effort token pre-issue for local approval UX
-    }
-
     const denialReason = failure?.reason ?? result.reason
     if (ctx.config.notifications.webhookUrl || ctx.config.notifications.commandHook) {
       await notifyDeny(ctx.config.notifications, {

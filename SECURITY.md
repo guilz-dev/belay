@@ -66,7 +66,8 @@ Repository/workspace trust at the host level is not a substitute for Belay repos
 Belay trust is explicit per canonical repo root and adapter and can be refreshed only through
 Belay-managed config writes or `belay config trust`.
 Notification channels are advisory: deny notifications never include signed approval tokens in
-webhook payloads or command-hook environment variables.
+webhook payloads or command-hook environment variables. Retrieve a pending approval token only
+through the local control plane with `belay approval-token <approval-id>`.
 
 ### Audit advice and Recovery v1
 
@@ -81,7 +82,7 @@ webhook payloads or command-hook environment variables.
 - **`belay recover status/list/show`** inspect durable Recovery v1 checkpoints. They do
   not mutate repository files, but may reconcile checkpoint metadata after a crash.
 - **`belay recover apply <checkpoint-id>`** restores only after an exact, expiring,
-  signed out-of-band one-shot human approval. Approval binds repository root, checkpoint
+  signed local-control-plane one-shot human approval. Approval binds repository root, checkpoint
   and manifest hashes, current post-state hash, and the exact path set. Standing allows,
   auto replay, unsigned CLI approval, and force restore cannot authorize this operation.
 

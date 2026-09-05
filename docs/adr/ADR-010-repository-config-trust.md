@@ -71,4 +71,5 @@ sha256(canonicalStringify(parsed raw repo config))
 - Operators recover from manual edits with an explicit trust action:
   `belay config trust`.
 - Out-of-band deny notifications remain advisory only; signed approval tokens are not serialized to
-  webhook payloads or command-hook environment variables.
+  webhook payloads or command-hook environment variables. Tokens are issued on demand through the
+  local `belay approval-token <approval-id>` control-plane path.

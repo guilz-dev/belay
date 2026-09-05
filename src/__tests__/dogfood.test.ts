@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { loadAuditRecords } from '../commands/audit.js'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
 import { checkDogfoodProject } from '../commands/dogfood-check.js'
@@ -257,6 +258,27 @@ describe('dogfood command', () => {
 })
 
 describe('dogfood release check', () => {
+  it('loads audit records for the explicitly selected adapter', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-adapter-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'cursor', dogfood: true })
+    await initProject({ targetDir: repoRoot, adapter: 'claude', dogfood: true })
+    const cursorConfig = await loadConfigFile(repoRoot, 'cursor')
+    const claudeConfig = await loadConfigFile(repoRoot, 'claude')
+    await writeFile(
+      path.join(repoRoot, cursorConfig.audit.logPath),
+      auditRecordLine({ timestamp: new Date().toISOString(), event: 'cursor-only' }),
+    )
+    await writeFile(
+      path.join(repoRoot, claudeConfig.audit.logPath),
+      auditRecordLine({ timestamp: new Date().toISOString(), event: 'claude-only' }),
+    )
+
+    const records = await loadAuditRecords(repoRoot, 'claude')
+
+    expect(records.map((record) => record.event)).toEqual(['claude-only'])
+  })
+
   it('fails with invalid_since when --since is not ISO8601', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-bad-since-'))
     tempDirs.push(repoRoot)

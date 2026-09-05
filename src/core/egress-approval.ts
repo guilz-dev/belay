@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { compactApprovals, createApprovalRecord } from './approval.js'
-import { issueApprovalToken } from './approval-token.js'
 import { mutateApprovalStateWithRetry } from './capability/approval-state-mutation.js'
 import type { BelayConfigV3 } from './config.js'
-import { configuredControlPlaneDir } from './config.js'
 import { addDomainToAllowlist, mutateEgressAllowlist } from './egress/allowlist.js'
 import { parseHostFromSummary } from './egress/fingerprint.js'
 import type { EgressApprovalScope, EgressPolicyResult } from './egress/types.js'
@@ -98,23 +96,6 @@ export async function notifyEgressDeny(params: {
 }): Promise<void> {
   if (!params.config.notifications.webhookUrl && !params.config.notifications.commandHook) {
     return
-  }
-
-  if (params.config.approvalSigning.required) {
-    try {
-      await issueApprovalToken(
-        {
-          approvalId: params.approval.approvalId,
-          fingerprint: params.approval.fingerprint,
-          repoRoot: params.approval.repoRoot,
-          issuedAt: params.approval.createdAt,
-          expiresAt: params.approval.expiresAt,
-        },
-        configuredControlPlaneDir(params.config),
-      )
-    } catch {
-      // best-effort token pre-issue for local approval UX
-    }
   }
 
   await notifyDeny(params.config.notifications, {

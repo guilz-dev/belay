@@ -7,15 +7,15 @@ export function recoveryNotificationConfigured(config: BelayConfigV4): boolean {
 
 export function recoveryApprovalSetupNotes(): string[] {
   return [
-    'Recovery restore flow: run `belay recover apply <checkpoint-id>`, approve with `belay approve <approval-id> --token <signed-token>`, then run the same apply command again.',
-    'Recovery restore always requires a signed out-of-band token, even when approvalSigning.required is false for general approvals.',
+    'Recovery restore flow: run `belay recover apply <checkpoint-id>`, retrieve the token locally with `belay approval-token <approval-id>`, approve with `belay approve <approval-id> --token <signed-token>`, then run the same apply command again.',
+    'Recovery restore always requires a signed local-control-plane token, even when approvalSigning.required is false for general approvals.',
   ]
 }
 
 export function recoveryNotificationSetupWarning(): string {
   return (
-    'Recovery checkpoint restore requires a signed out-of-band approval token, but no notification channel is configured. ' +
-    'Set notifications.webhookUrl or notifications.commandHook (e.g. via `belay config`) so `belay recover apply` can emit approval-required alerts.'
+    'No notification channel is configured, so recovery approval alerts are shown only by the local CLI. ' +
+    'Optionally set notifications.webhookUrl or notifications.commandHook (e.g. via `belay config`) to receive approval IDs out of band.'
   )
 }
 

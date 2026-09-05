@@ -120,7 +120,6 @@ export async function notifyDeny(
     try {
       await deps.execFile(config.commandHook, [], {
         env: {
-          ...process.env,
           BELAY_APPROVAL_ID: event.approvalId,
           BELAY_REASON: event.reason,
           BELAY_SUMMARY: event.summary,

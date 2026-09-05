@@ -9,6 +9,7 @@ const tempDirs: string[] = []
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -56,6 +57,8 @@ describe('notify deny', () => {
 
   it('never exposes BELAY_APPROVAL_TOKEN to command hooks', async () => {
     const repoRoot = await createRepoRoot()
+    vi.stubEnv('BELAY_APPROVAL_TOKEN', 'ambient.signed.token')
+    vi.stubEnv('UNRELATED_SECRET', 'must-not-be-forwarded')
     let env: NodeJS.ProcessEnv | undefined
     await notifyDeny(
       { commandHook: '/usr/local/bin/belay-notify' },
@@ -82,6 +85,7 @@ describe('notify deny', () => {
     expect(env?.BELAY_REPO_ROOT).toBe(repoRoot)
     expect(env?.BELAY_FINGERPRINT).toBe('a'.repeat(64))
     expect(env?.BELAY_APPROVAL_TOKEN).toBeUndefined()
+    expect(env?.UNRELATED_SECRET).toBeUndefined()
   })
 
   it('rejects non-HTTPS remote webhook URLs', async () => {

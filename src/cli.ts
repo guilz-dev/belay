@@ -2,6 +2,7 @@
 import process from 'node:process'
 
 import { CLI_COMMAND } from './branding.js'
+import { issuePendingApprovalToken } from './commands/approval-token.js'
 import { approvePending } from './commands/approve.js'
 import { auditProject, formatAuditReport } from './commands/audit.js'
 import { doctorProject, formatDoctorReport } from './commands/doctor.js'
@@ -637,7 +638,10 @@ function parseArgs(argv: string[]) {
       options.judgeUseProvider = token
       continue
     }
-    if ((command === 'revoke' || command === 'approve') && !options.approvalId) {
+    if (
+      (command === 'revoke' || command === 'approve' || command === 'approval-token') &&
+      !options.approvalId
+    ) {
       options.approvalId = token
       continue
     }
@@ -690,6 +694,7 @@ Usage:
   ${c} judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>] [--timeout <ms>] [--accept-cloud] [--cloud-consent-approval-id <id>] [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
   ${c} judge consent <ollama|codex|claude|cursor> [--endpoint <url>]
   ${c} approve <approval-id> [--replay] [--scope once|domain|path|workspace-root] [--path <path>] [--token <signed-token>] [--target <dir>]
+  ${c} approval-token <approval-id> [--target <dir>] [--json]
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
   ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--json]
@@ -1185,6 +1190,21 @@ async function main() {
         replay: options.approveReplay,
       })
       process.stdout.write(`${result.message}\n`)
+      process.exitCode = result.ok ? 0 : 1
+      return
+    }
+
+    if (command === 'approval-token') {
+      if (!options.approvalId) {
+        throw new Error('approval-token requires an approval ID.')
+      }
+      const result = await issuePendingApprovalToken({
+        targetDir: options.targetDir,
+        approvalId: options.approvalId,
+      })
+      process.stdout.write(
+        options.json ? `${JSON.stringify(result, null, 2)}\n` : `${result.message}\n`,
+      )
       process.exitCode = result.ok ? 0 : 1
       return
     }
