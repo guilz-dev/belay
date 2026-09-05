@@ -4,6 +4,30 @@ Notable changes to `@guilz-dev/belay` are listed here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 0.10.0 — 2026-09-06
+
+### Added
+
+- **Repository config trust boundary** — Repository-managed config has no policy authority until
+  explicitly trusted with `belay config trust`. Manual edits after init or upgrade fail closed at
+  shell and tool gates until the operator re-trusts the config. Doctor reports missing or stale
+  trust records.
+- **`belay dogfood --check`** — Blocking release-window check for dogfood skew: audit-mode deny
+  counts, host-denial-after-allow, duplicate shell gates, cohort mismatches, and undogfooded linked
+  worktrees. Use `scripts/pre-release-dogfood-check.sh` for local pre-release verification.
+
+### Fixed
+
+- **Unmapped Cursor tools** — Unknown Cursor tool names now fail closed with an explicit deny
+  message instead of falling through without a gate decision.
+- **Deny notification token leakage** — Webhook payloads and command-hook environments no longer
+  serialize approval tokens; only allowlisted deny metadata is emitted.
+
+### Changed
+
+- **Codex unmapped tools** — Unmapped Codex tools continue to ask via pending approval (R39); Cursor
+  unmapped tools now deny to match the single-gate shell model documented in ADR-009.
+
 ## 0.9.4 — 2026-09-05
 
 ### Fixed
