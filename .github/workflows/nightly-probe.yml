@@ -19,6 +19,33 @@ permissions:
   issues: write
 
 jobs:
+  test-stable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Flake detection (test:stable)
+        run: pnpm test:stable:run
+
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 30

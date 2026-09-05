@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  merge_group:
 
 jobs:
   verify:
@@ -33,17 +34,22 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Structural suite hard gate
-        run: pnpm test:structural
-
-      - name: Test
-        run: pnpm test:stable
-
-      - name: Corpus
-        run: pnpm corpus
-
       - name: Build
         run: pnpm build
+
+      - name: Structural suite hard gate
+        run: pnpm test:structural:run
+
+      - name: Test
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            pnpm test:run
+          else
+            pnpm test:stable:run
+          fi
+
+      - name: Corpus
+        run: node scripts/corpus.mjs
 
       - name: Check CLI version
         run: pnpm check:version
@@ -68,8 +74,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: pnpm build
+
       - name: Container boundary tests (Docker)
-        run: pnpm test:docker
+        run: pnpm exec vitest run --config vitest.live.config.ts src/__tests__/capability/boundary-container-isolation.test.ts src/__tests__/capability/boundary-container-workspace-mount.test.ts src/__tests__/capability/boundary-driver-container.test.ts src/__tests__/contained-execution-docker.integration.test.ts
 
   verify-macos:
     runs-on: macos-latest
@@ -91,8 +100,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Structural suite hard gate
-        run: pnpm test:structural
+      - name: Build
+        run: pnpm build
 
-      - name: Test
-        run: pnpm test:stable
+      - name: macOS platform tests
+        run: pnpm test:macos

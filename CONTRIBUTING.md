@@ -66,6 +66,15 @@ esbuild-bundled runtimes from `dist/bundle/<adapter>-runtime.mjs`.
 Convenience: `make verify` (lint + typecheck + test), `make verify-parallel`.
 `pnpm test:stable` runs the suite 3× to catch order-dependent flakiness.
 
+CI policy:
+
+- **Pull requests:** `verify` runs `pnpm test:run` once after a single `pnpm build`.
+- **Push to `main`:** `verify` runs `pnpm test:stable:run` (3×) after one build.
+- **Nightly:** `test-stable` job runs `pnpm test:stable:run` for flake detection.
+- **`verify-macos`:** platform-focused subset via `pnpm test:macos` (seatbelt probe, symlinks, hook paths).
+
+Local scripts `test:run`, `test:structural:run`, and `test:stable:run` skip `pnpm build`; CI calls them after an explicit build step.
+
 ### Quality loop (classifier / corpus changes)
 
 When touching the verdict engine, tokenizer, containment, or corpus fixtures, run the
