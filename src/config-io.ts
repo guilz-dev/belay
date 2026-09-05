@@ -19,6 +19,7 @@ import {
   resolveLayeredConfig,
   teamConfigPath,
 } from './core/config-layers.js'
+import { trustRepoConfig } from './core/repo-config-trust.js'
 import type { ApprovalStateFile } from './core/types.js'
 
 export type { LayeredConfigResult }
@@ -286,6 +287,17 @@ export async function writeConfigFile(
   }
 }
 
+export async function writeTrustedConfigFile(
+  repoRoot: string,
+  config: BelayConfigV3,
+  adapter: AdapterName = resolveAdapterName(config),
+): Promise<void> {
+  await writeConfigFile(repoRoot, config, adapter)
+  const configPath = configPathFor(repoRoot, adapter)
+  const parsed = JSON.parse(await readFile(configPath, 'utf8')) as unknown
+  await trustRepoConfig(repoRoot, adapter, parsed)
+}
+
 export async function mergeAndWriteConfig(
   repoRoot: string,
   adapter: AdapterName = 'cursor',
@@ -297,7 +309,7 @@ export async function mergeAndWriteConfig(
     existing = JSON.parse(await readFile(configPath, 'utf8'))
   }
   const merged = mergeConfig(existing, layout.defaultConfig(repoRoot) as BelayConfigV3)
-  await writeConfigFile(repoRoot, merged, adapter)
+  await writeTrustedConfigFile(repoRoot, merged, adapter)
   await ensureBelayStateDir(merged, repoRoot)
   if (merged.controlPlane.enabled) {
     await migrateRepoLocalApprovalsToControlPlane(repoRoot, merged)

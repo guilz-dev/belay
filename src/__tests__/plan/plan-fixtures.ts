@@ -46,6 +46,7 @@ export const PLAN_BELAY_CONFIG_SUBCOMMANDS = [
   'get',
   'set',
   'unset',
+  'trust',
   'credential',
   'judge',
 ] as const

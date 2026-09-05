@@ -286,6 +286,8 @@ export interface DogfoodOptions {
   targetDir?: string
   enforce?: boolean
   force?: boolean
+  check?: boolean
+  since?: string
   adapter?: AdapterName
 }
 
@@ -296,6 +298,25 @@ export interface DogfoodResult {
   configPath: string
   mode: string
   unknownLocalEffect: string
+}
+
+export interface DogfoodCheckOptions {
+  targetDir?: string
+  adapter?: AdapterName
+  since: string
+}
+
+export interface DogfoodCheckResult {
+  ok: boolean
+  repoRoot: string
+  since: string
+  gateEvents: number
+  auditModeDenyCount: number
+  hostDeniedAfterAllowCount: number
+  shellPreToolUseCount: number
+  mismatchedCohortCount: number
+  environmentSkewCount: number
+  failures: string[]
 }
 
 export type ExplainKind = 'shell' | 'tool' | 'subagent'

@@ -5,7 +5,12 @@ import { CLI_COMMAND } from './branding.js'
 import { approvePending } from './commands/approve.js'
 import { auditProject, formatAuditReport } from './commands/audit.js'
 import { doctorProject, formatDoctorReport } from './commands/doctor.js'
-import { dogfoodProject, formatDogfoodResult } from './commands/dogfood.js'
+import {
+  checkDogfoodProject,
+  dogfoodProject,
+  formatDogfoodCheckResult,
+  formatDogfoodResult,
+} from './commands/dogfood.js'
 import { explainCommand, formatExplainReport } from './commands/explain.js'
 import { formatHarvestReport, harvestApplyProject, harvestListProject } from './commands/harvest.js'
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
@@ -59,6 +64,7 @@ function parseArgs(argv: string[]) {
     fix?: boolean
     dryRun?: boolean
     dogfood?: boolean
+    dogfoodCheck?: boolean
     enforce?: boolean
     force?: boolean
     adapter?: 'cursor' | 'claude' | 'codex'
@@ -101,7 +107,7 @@ function parseArgs(argv: string[]) {
     keyStdin?: boolean
     keyEnv?: string
     judgeTimeoutMs?: number
-    configSubcommand?: 'list' | 'get' | 'set' | 'unset' | 'credential' | 'judge'
+    configSubcommand?: 'list' | 'get' | 'set' | 'unset' | 'trust' | 'credential' | 'judge'
     configKey?: string
     configValue?: string
     credentialAction?: 'mode' | 'set' | 'clear'
@@ -135,6 +141,13 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--force') {
       options.force = true
+      continue
+    }
+    if (token === '--check') {
+      if (command !== 'dogfood') {
+        throw new Error('--check is only valid for dogfood.')
+      }
+      options.dogfoodCheck = true
       continue
     }
     if (token === '--adapter') {
@@ -563,13 +576,16 @@ function parseArgs(argv: string[]) {
         token === 'get' ||
         token === 'set' ||
         token === 'unset' ||
+        token === 'trust' ||
         token === 'credential' ||
         token === 'judge'
       ) {
         options.configSubcommand = token
         continue
       }
-      throw new Error('config requires subcommand: list, get, set, unset, credential, or judge')
+      throw new Error(
+        'config requires subcommand: list, get, set, unset, trust, credential, or judge',
+      )
     }
     if (
       command === 'config' &&
@@ -638,10 +654,11 @@ function printHelp() {
 Usage:
   ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--migrate-judge-default] [--with-skill] [--dogfood]
   ${c} config [--target <dir>] [--json]
-  ${c} config list|get|set|unset|judge [--target <dir>] [--json]
+  ${c} config list|get|set|unset|trust|judge [--target <dir>] [--json]
   ${c} config get <judge.path> [--target <dir>] [--json]
   ${c} config set <judge.path> <value> [--target <dir>]
   ${c} config unset <judge.path> [--target <dir>]
+  ${c} config trust [--target <dir>]
   ${c} config credential mode <project|apiKey> [--target <dir>]
   ${c} config credential set [--key-stdin] [--key-env <NAME>] [--target <dir>]
   ${c} config credential clear [--target <dir>]
@@ -651,6 +668,7 @@ Usage:
   ${c} uninstall [--target <dir>] [--adapter cursor] [--scope project|global]
   ${c} where [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--json]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
+  ${c} dogfood --check --since <iso> [--target <dir>] [--adapter cursor|claude|codex] [--json]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
   ${c} metrics [--target <dir>] [--json]
   ${c} quality [--target <dir>] [--corpus <path>] [--json]
@@ -726,6 +744,29 @@ async function main() {
     }
 
     if (command === 'dogfood') {
+      if (options.dogfoodCheck) {
+        if (options.enforce) {
+          throw new Error('--check conflicts with --enforce.')
+        }
+        if (options.force) {
+          throw new Error('--check conflicts with --force.')
+        }
+        if (!options.since) {
+          throw new Error('--check requires --since <iso>.')
+        }
+        const report = await checkDogfoodProject({
+          targetDir: options.targetDir,
+          adapter: options.adapter,
+          since: options.since,
+        })
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+        } else {
+          process.stdout.write(formatDogfoodCheckResult(report))
+        }
+        process.exitCode = report.ok ? 0 : 1
+        return
+      }
       const result = await dogfoodProject({
         targetDir: options.targetDir,
         enforce: options.enforce,

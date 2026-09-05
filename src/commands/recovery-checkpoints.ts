@@ -329,23 +329,26 @@ export async function recoveryCheckpointCommand(options: {
     }
     const notificationConfigured = recoveryNotificationConfigured(config)
     if (notificationConfigured) {
-      const approvalToken = await issueApprovalToken(
-        {
-          approvalId: request.approvalId,
-          fingerprint: request.fingerprint,
-          repoRoot: request.repoRoot,
-          issuedAt: request.createdAt,
-          expiresAt: request.expiresAt,
-        },
-        configuredControlPlaneDir(config),
-      )
+      try {
+        await issueApprovalToken(
+          {
+            approvalId: request.approvalId,
+            fingerprint: request.fingerprint,
+            repoRoot: request.repoRoot,
+            issuedAt: request.createdAt,
+            expiresAt: request.expiresAt,
+          },
+          configuredControlPlaneDir(config),
+        )
+      } catch {
+        // best-effort token pre-issue for local approval UX
+      }
       await notifyDeny(config.notifications, {
         approvalId: request.approvalId,
         reason: request.reason,
         summary: request.summary,
         repoRoot: request.repoRoot,
         fingerprint: request.fingerprint,
-        approvalToken,
       })
     }
     const auditRecorded = await appendRecoveryAudit(repoRoot, config, {
@@ -366,7 +369,7 @@ export async function recoveryCheckpointCommand(options: {
       paths: binding.paths,
       auditRecorded,
       message: notificationConfigured
-        ? `Signed out-of-band approval required for ${request.approvalId}. Use the token delivered through the configured notification channel, then run \`belay approve ${request.approvalId} --token <signed-token>\` and repeat this command.`
+        ? `Signed out-of-band approval required for ${request.approvalId}. Run \`belay approve ${request.approvalId} --token <signed-token>\` with a signed token from your local approval flow, then repeat this command.`
         : `${recoveryNotificationSetupWarning()} Pending approval id: ${request.approvalId}.`,
     }
   }

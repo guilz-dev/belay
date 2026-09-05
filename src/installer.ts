@@ -16,7 +16,7 @@ import {
   detectAdapterName,
   loadConfigFile,
   mergeAndWriteConfig,
-  writeConfigFile,
+  writeTrustedConfigFile,
 } from './config-io.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
 import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
@@ -330,7 +330,7 @@ async function applyInitJudgeConfig(
       'Warning: Cloud judge saved without recorded consent. Tier1 cloud judge will fail closed until consent is granted (belay judge consent + belay approve, or TTY --accept-cloud-judge).\n',
     )
   }
-  await writeConfigFile(repoRoot, configWithJudge, adapterName)
+  await writeTrustedConfigFile(repoRoot, configWithJudge, adapterName)
   if (migrated) {
     await auditJudgeMigrationIfNeeded(
       repoRoot,
@@ -372,7 +372,7 @@ export async function initProject(
     const existing = await loadConfigFile(repoRoot, adapterName)
     const presetConfig = mergeConfig(applyConfigPreset(options.preset))
     const merged = mergeConfig(presetConfig, existing)
-    await writeConfigFile(repoRoot, merged, adapterName)
+    await writeTrustedConfigFile(repoRoot, merged, adapterName)
   }
   if (options.dogfood === true) {
     await dogfoodProject({ targetDir: repoRoot, adapter: adapterName })
@@ -397,7 +397,7 @@ export async function upgradeProject(
     const migrated = migrateImplicitLocalJudgeIfNeeded(mergedConfig.judge, adapterName)
     if (migrated) {
       const configWithJudge = normalizeConfig({ ...mergedConfig, version: 4, judge: migrated })
-      await writeConfigFile(repoRoot, configWithJudge, adapterName)
+      await writeTrustedConfigFile(repoRoot, configWithJudge, adapterName)
       await auditJudgeMigrationIfNeeded(
         repoRoot,
         adapterName,

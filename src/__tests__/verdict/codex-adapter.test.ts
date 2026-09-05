@@ -18,7 +18,7 @@ import {
   gateVerdictToCodexPreToolUseResponse,
   gateVerdictToCodexUserPromptResponse,
 } from '../../adapters/shared/gate-runtime.js'
-import { loadConfigFile, pendingApprovalsPath } from '../../config-io.js'
+import { loadConfigFile, pendingApprovalsPath, writeTrustedConfigFile } from '../../config-io.js'
 import { mergeConfig } from '../../core/config.js'
 import { unnormalizedGateVerdict } from '../../core/gate-contract.js'
 
@@ -218,42 +218,36 @@ describe('codex adapter (experimental)', () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-shell-cwd-parent-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
-      await writeFile(
-        codexLayout.configPath(repoRoot),
-        `${JSON.stringify(
-          mergeConfig({
-            ...(await loadConfigFile(repoRoot)),
-            mode: 'enforce',
-            controlPlane: {
-              enabled: true,
-              configDir: path.join(repoRoot, '.belay-cp'),
-              integrity: 'hash-pinned',
-            },
-          }),
-          null,
-          2,
-        )}\n`,
+      await writeTrustedConfigFile(
+        repoRoot,
+        mergeConfig({
+          ...(await loadConfigFile(repoRoot)),
+          mode: 'enforce',
+          controlPlane: {
+            enabled: true,
+            configDir: path.join(repoRoot, '.belay-cp'),
+            integrity: 'hash-pinned',
+          },
+        }),
+        'codex',
       )
 
       const childRoot = path.join(repoRoot, 'linked-workspace')
       await mkdir(childRoot, { recursive: true })
       await mkdir(path.join(childRoot, '.git'))
       await codexAdapter.install(childRoot, {})
-      await writeFile(
-        codexLayout.configPath(childRoot),
-        `${JSON.stringify(
-          mergeConfig({
-            ...(await loadConfigFile(childRoot)),
-            mode: 'enforce',
-            controlPlane: {
-              enabled: true,
-              configDir: path.join(childRoot, '.belay-cp'),
-              integrity: 'hash-pinned',
-            },
-          }),
-          null,
-          2,
-        )}\n`,
+      await writeTrustedConfigFile(
+        childRoot,
+        mergeConfig({
+          ...(await loadConfigFile(childRoot)),
+          mode: 'enforce',
+          controlPlane: {
+            enabled: true,
+            configDir: path.join(childRoot, '.belay-cp'),
+            integrity: 'hash-pinned',
+          },
+        }),
+        'codex',
       )
 
       const result = await runCodexRunner(

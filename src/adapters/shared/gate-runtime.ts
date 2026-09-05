@@ -135,6 +135,7 @@ import {
   recoveryFailReasonFromSkip,
 } from '../../core/recovery/fail-closed.js'
 import { fingerprintReplayPayload, redactToolInvocationId } from '../../core/replay-scrub.js'
+import { assertRepoConfigTrusted } from '../../core/repo-config-trust.js'
 import {
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
   isTransactionalEligible,
@@ -331,6 +332,7 @@ export async function resolveGateConfig(
   deps: GateRuntimeDeps,
 ): Promise<BelayConfigV3> {
   const loaded = await deps.readConfig(ctx.configPath)
+  await assertRepoConfigTrusted(ctx.repoRoot, ctx.layout.name, loaded)
   let teamConfig: Record<string, unknown> | null = null
   const teamPath = teamConfigPath()
   if (existsSync(teamPath)) {
@@ -1327,9 +1329,8 @@ async function gateDecisionToVerdict(
     if (created) {
       await recordGateApprovalAsk(stateDir, result.reason, false)
     }
-    let approvalToken: string | undefined
     try {
-      approvalToken = await issueApprovalToken(
+      await issueApprovalToken(
         {
           approvalId: approval.approvalId,
           fingerprint: approval.fingerprint,
@@ -1340,7 +1341,7 @@ async function gateDecisionToVerdict(
         configuredControlPlaneDir(ctx.config),
       )
     } catch {
-      approvalToken = undefined
+      // best-effort token pre-issue for local approval UX
     }
 
     const denialReason = failure?.reason ?? result.reason
@@ -1351,7 +1352,6 @@ async function gateDecisionToVerdict(
         summary: result.normalizedCommand ?? result.summary ?? '',
         repoRoot: ctx.repoRoot,
         fingerprint: result.fingerprint,
-        approvalToken,
       })
     }
 

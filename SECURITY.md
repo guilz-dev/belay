@@ -58,9 +58,15 @@ Requires external OS sandbox runtime + running egress proxy. See
 | Boundary | Trust assumption |
 |----------|------------------|
 | Hook runtime (Node) | Runs with the IDE user's OS permissions |
-| Repo-local belay config (`.cursor/` or `.claude/`) | Writable by repo collaborators; protected from agent tool mutation by default |
+| Repo-local belay config (`.cursor/` or `.claude/`) | Workspace-managed input; writable by repo collaborators; policy authority only after explicit `belay config trust` |
 | Control plane (`~/.config/belay/` or `%APPDATA%/belay`) | User-level; must not be writable via gated shell/file tools |
 | Agent shell / tools | Untrusted; classified heuristically |
+
+Repository/workspace trust at the host level is not a substitute for Belay repository-config trust.
+Belay trust is explicit per canonical repo root and adapter and can be refreshed only through
+Belay-managed config writes or `belay config trust`.
+Notification channels are advisory: deny notifications never include signed approval tokens in
+webhook payloads or command-hook environment variables.
 
 ### Audit advice and Recovery v1
 
@@ -83,6 +89,10 @@ Requires external OS sandbox runtime + running egress proxy. See
 
 - **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` only as a compatibility fallback for non-EffectPlan paths, while normalized partial/indeterminate shell plans still ask. `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and the stricter fallback `unknownLocalEffect: deny`. Control plane defaults to enabled.
 - **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but forbidden for use and ignored by shell authorization; `belay doctor` fails when either list is non-empty.
+- **Repository config trust boundary** — manual edits to repository config are fail-closed until an
+  operator re-trusts the current parsed config snapshot with `belay config trust`. Malformed,
+  identity-mismatched, adapter-mismatched, or fingerprint-mismatched trust records are treated as
+  untrusted.
 - **Chain hardening** — denies `eval`/`source`, unparseable shell constructs, newline-separated chains, `find -exec`/`-delete`, unresolved/dynamic substitutions, pipe-to-shell, outside-repo redirects, and protected-path mutations via shell or file tools. Statically recoverable nested effects are retained before the partial plan asks.
 - **Tool gates** — Write/StrReplace/Delete blocked for sensitive paths, paths outside the repo, and protected belay artifacts.
 - **Integrity manifest** — when `controlPlane.integrity` is `hash-pinned`, `belay upgrade` records

@@ -116,31 +116,6 @@ export function getManagedHookEntries(
       definition: {
         command: toolGate,
         placement: 'prepend',
-        matcher: 'Task',
-      },
-    },
-    {
-      event: 'preToolUse',
-      definition: {
-        command: toolGate,
-        placement: 'prepend',
-        matcher: 'Write',
-      },
-    },
-    {
-      event: 'preToolUse',
-      definition: {
-        command: toolGate,
-        placement: 'prepend',
-        matcher: 'StrReplace',
-      },
-    },
-    {
-      event: 'preToolUse',
-      definition: {
-        command: toolGate,
-        placement: 'prepend',
-        matcher: 'Delete',
       },
     },
     {
