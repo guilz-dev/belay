@@ -135,7 +135,7 @@ belay config judge                        # same summary as belay judge status
 |-------|--------|---------|
 | `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"allow_flagged"` |
 | `unparseableShell` | `"deny"` \| `"allow_flagged"` | `"deny"` |
-| `codexUnmappedTool` | `"deny"` \| `"allow"` | `"deny"` (ask on unmapped Codex tools; `allow` records to audit) |
+| `codexUnmappedTool` | `"deny"` \| `"allow"` | `"deny"` (legacy name; shared unmapped-tool policy; `allow` records to audit) |
 | `fenceWarnThreshold` | number | `0.5` (silent-pass rate below which `report`/`doctor` warn of over-blocking) |
 | `confidenceThresholds` | `{ allow, flag }` | `0.88` / `0.72` |
 | `modelAssist` | `{ enabled, timeoutMs }` | off |
@@ -158,9 +158,10 @@ or non-Git `file_checkpoint` when `allowNonGit: true`).
 Restore uses `belay recover apply <checkpoint-id>`. The first invocation creates an
 exact, expiring one-shot approval bound to the repository, manifest hash, post-state
 hash, and path set. Recovery approval always requires the signed token delivered through
-a configured out-of-band notification channel, even when general approval signing is
-optional. After `belay approve <approval-id> --token <signed-token>`, invoke the same restore
-command again. There is no standing allow, auto-replay, `--yes`, or force-restore path.
+the local control plane, even when general approval signing is optional. Retrieve it with
+`belay approval-token <approval-id>`; notifications carry only the approval ID and never the
+token. After `belay approve <approval-id> --token <signed-token>`, invoke the same restore command
+again. There is no standing allow, auto-replay, `--yes`, or force-restore path.
 
 ### `policy.transactional.fileCheckpoint`
 

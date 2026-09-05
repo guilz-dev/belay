@@ -111,7 +111,9 @@ authorization model. It complements
     canonical repository root and adapter. Missing, malformed, identity-mismatched, or
     fingerprint-mismatched records fail closed before policy evaluation. Belay-managed writes
     refresh trust atomically; manual edits require explicit re-trust through
-    `belay config trust` ([ADR-010](./adr/ADR-010-repository-config-trust.md)).
+    `belay config trust`. Agent-shell invocations of trust and approval-authority commands are
+    control-plane writes that require separate human approval
+    ([ADR-010](./adr/ADR-010-repository-config-trust.md)).
 
 ## Policy precedence
 

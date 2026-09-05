@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { runBelayConfig } from '../commands/config.js'
 import { defaultControlPlaneDir } from '../core/config.js'
 import { canonicalPath } from '../core/path-utils.js'
 import {
@@ -11,6 +12,7 @@ import {
   repoConfigTrustPath,
   trustRepoConfig,
 } from '../core/repo-config-trust.js'
+import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
@@ -33,6 +35,24 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 describe('repo config trust', () => {
+  it('shows the exact current repository config when explicitly trusting it', async () => {
+    const home = await createTempDir('belay-trust-home-')
+    const repoRoot = await createTempDir('belay-trust-repo-')
+    process.env.HOME = home
+    process.env.XDG_CONFIG_HOME = path.join(home, '.config')
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const edited = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>
+    edited.mode = 'audit'
+    await writeFile(configPath, `${JSON.stringify(edited, null, 2)}\n`, 'utf8')
+
+    const result = String(await runBelayConfig({ targetDir: repoRoot, subcommand: 'trust' }))
+
+    expect(result).toContain('Repository config trusted:')
+    expect(result).toContain('"mode": "audit"')
+    expect(result.indexOf('"mode": "audit"')).toBeLessThan(result.indexOf('Trusted fingerprint:'))
+  })
+
   it('writes a canonical identity record with 0600 permissions', async () => {
     const home = await createTempDir('belay-trust-home-')
     const repoRoot = await createTempDir('belay-trust-repo-')

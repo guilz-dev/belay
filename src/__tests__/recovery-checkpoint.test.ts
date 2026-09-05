@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { issuePendingApprovalToken } from '../commands/approval-token.js'
 import { approvePending } from '../commands/approve.js'
 import { recoveryCheckpointCommand } from '../commands/recovery-checkpoints.js'
 import { loadApprovalState, writeConfigFile } from '../config-io.js'
@@ -890,19 +891,9 @@ describe('recovery checkpoints', () => {
     await expect(approvePending({ targetDir: repoRoot, approvalId })).resolves.toMatchObject({
       ok: false,
     })
-    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
-    const request = pending.approvals.find((entry) => entry.approvalId === approvalId)
-    expect(request).toBeDefined()
-    const token = await issueApprovalToken(
-      {
-        approvalId,
-        fingerprint: request?.fingerprint ?? '',
-        repoRoot: request?.repoRoot ?? '',
-        issuedAt: request?.createdAt ?? '',
-        expiresAt: request?.expiresAt ?? '',
-      },
-      configuredControlPlaneDir(config),
-    )
+    const issued = await issuePendingApprovalToken({ targetDir: repoRoot, approvalId })
+    expect(issued.ok).toBe(true)
+    const token = issued.token ?? ''
     await expect(approvePending({ targetDir: repoRoot, approvalId, token })).resolves.toMatchObject(
       { ok: true },
     )

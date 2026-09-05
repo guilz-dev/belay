@@ -6,7 +6,6 @@ import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { ensureBelayStateDir, loadConfigFile } from '../config-io.js'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../core/approval.js'
 import { createGateApprovalStore } from '../core/approval-service.js'
-import { issueApprovalToken } from '../core/approval-token.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import { mutateApprovalStateWithRetry } from '../core/capability/approval-state-mutation.js'
 import { boundarySessionStatus } from '../core/capability/boundary-session.js'
@@ -329,20 +328,6 @@ export async function recoveryCheckpointCommand(options: {
     }
     const notificationConfigured = recoveryNotificationConfigured(config)
     if (notificationConfigured) {
-      try {
-        await issueApprovalToken(
-          {
-            approvalId: request.approvalId,
-            fingerprint: request.fingerprint,
-            repoRoot: request.repoRoot,
-            issuedAt: request.createdAt,
-            expiresAt: request.expiresAt,
-          },
-          configuredControlPlaneDir(config),
-        )
-      } catch {
-        // best-effort token pre-issue for local approval UX
-      }
       await notifyDeny(config.notifications, {
         approvalId: request.approvalId,
         reason: request.reason,
@@ -369,8 +354,8 @@ export async function recoveryCheckpointCommand(options: {
       paths: binding.paths,
       auditRecorded,
       message: notificationConfigured
-        ? `Signed out-of-band approval required for ${request.approvalId}. Run \`belay approve ${request.approvalId} --token <signed-token>\` with a signed token from your local approval flow, then repeat this command.`
-        : `${recoveryNotificationSetupWarning()} Pending approval id: ${request.approvalId}.`,
+        ? `Signed approval required for ${request.approvalId}. Run \`belay approval-token ${request.approvalId}\` locally, then \`belay approve ${request.approvalId} --token <signed-token>\`, and repeat this command.`
+        : `${recoveryNotificationSetupWarning()} Pending approval id: ${request.approvalId}. Run \`belay approval-token ${request.approvalId}\` locally to retrieve the signed token.`,
     }
   }
 

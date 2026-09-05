@@ -13,6 +13,7 @@ import {
 import type { AuditFilter, AuditRecord } from '../core/audit-types.js'
 import { type BelayConfigV3, mergeConfig } from '../core/config.js'
 import { diffReclassification } from '../core/reclassify.js'
+import type { AdapterName } from '../types.js'
 
 export type AuditSubcommand = 'query' | 'summarize' | 'replay'
 
@@ -35,8 +36,11 @@ export interface AuditOptions {
   configPath?: string
 }
 
-export async function loadAuditRecords(repoRoot: string): Promise<AuditRecord[]> {
-  const config = await loadConfigFile(repoRoot)
+export async function loadAuditRecords(
+  repoRoot: string,
+  adapter?: AdapterName,
+): Promise<AuditRecord[]> {
+  const config = await loadConfigFile(repoRoot, adapter)
   const auditLogPath = path.join(repoRoot, config.audit.logPath)
   let raw = ''
   try {

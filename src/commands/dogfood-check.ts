@@ -51,7 +51,7 @@ export async function checkDogfoodProject(
     result.failures.push('dogfood_inactive')
   }
 
-  const records = await loadAuditRecords(repoRoot)
+  const records = await loadAuditRecords(repoRoot, adapter)
   const invalidTimestampRecord = records.some((record) => parseTimestamp(record.timestamp) === null)
   if (invalidTimestampRecord) {
     result.failures.push('invalid_timestamp_record')

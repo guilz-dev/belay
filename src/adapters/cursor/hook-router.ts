@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync
 import path from 'node:path'
 
 import { resolveCursorActionCwdDetails } from './cwd-resolution.js'
+import { isTrustedCursorRoutingConfig } from './routing-config-trust.js'
 import {
   cursorRoutingConfigPath,
   cursorRoutingHooksDir,
@@ -284,7 +285,7 @@ function readInstallScope(repoRoot: string): RoutingInstallScope {
       !Array.isArray(parsed) &&
       (parsed as Record<string, unknown>).installScope === 'global'
     ) {
-      return 'global'
+      return isTrustedCursorRoutingConfig(repoRoot, parsed) ? 'global' : 'project'
     }
   } catch {
     // A present config that cannot be read or parsed must retain Project ownership so the

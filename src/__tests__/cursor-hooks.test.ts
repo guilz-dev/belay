@@ -314,6 +314,39 @@ describe('cursor hook dedupe', () => {
     expect(upgraded.hooks.beforeShellExecution).toHaveLength(1)
   })
 
+  it('replaces legacy matched tool gates while preserving third-party hooks', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+
+    const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const hooks = await readJson(hooksPath)
+    const toolGate = getManagedHookEntries(process.platform, hooksDir, repoRoot).find(
+      (entry) => entry.event === 'preToolUse',
+    )?.definition
+    if (!toolGate) {
+      throw new Error('missing managed preToolUse definition')
+    }
+    const thirdParty = { command: toolGate.command, matcher: 'CustomTool', failClosed: true }
+    hooks.hooks.preToolUse = [
+      ...['Task', 'Write', 'StrReplace', 'Delete'].map((matcher) => ({
+        command: toolGate.command,
+        matcher,
+        failClosed: true,
+      })),
+      thirdParty,
+    ]
+    await writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`, 'utf8')
+
+    await upgradeCursorProject({ targetDir: repoRoot })
+    const upgraded = await readJson(hooksPath)
+
+    expect(upgraded.hooks.preToolUse).toEqual([
+      { command: toolGate.command, failClosed: true },
+      thirdParty,
+    ])
+  })
+
   it('strips legacy Shell preToolUse gates during uninstall-style hook stripping', () => {
     const repoRoot = '/tmp/project'
     const hooksDir = `${repoRoot}/.cursor/hooks`

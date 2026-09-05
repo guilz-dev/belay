@@ -15,6 +15,7 @@ import {
   writeTrustedConfigFile,
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
+import { trustRepoConfig } from '../core/repo-config-trust.js'
 import { scrubString } from '../core/scrub.js'
 import { writeRuntimeArtifacts } from '../installer/runtime-artifacts.js'
 import { initProject } from '../installer.js'
@@ -334,12 +335,12 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     }
 
     await expect(
-      runtime.handleToolGateHook('preToolUse', { tool_name: 'Read', cwd: repoRoot }),
-    ).resolves.toEqual({
-      permission: 'deny',
-      user_message:
-        'belay denied unmapped Cursor tool "Read". Run belay doctor, then upgrade belay if needed.',
-    })
+      runtime.handleToolGateHook('preToolUse', {
+        tool_name: 'Read',
+        tool_input: {},
+        cwd: repoRoot,
+      }),
+    ).resolves.toMatchObject({ permission: 'deny' })
   })
 
   it('returns the current audit response from a parsed payload handler', async () => {
@@ -964,6 +965,25 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     })
 
     const loaded = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', loaded)
+    expect(pending.approvals).toHaveLength(0)
+  })
+
+  it('fails closed when malformed repository JSON has the same fallback fingerprint', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const loaded = await loadConfigFile(repoRoot)
+    await writeFile(configPath, '{}\n')
+    await trustRepoConfig(repoRoot, 'cursor', {})
+    await writeFile(configPath, '{not-json\n')
+
+    const shell = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+
+    expect(JSON.parse(shell.stdout)).toMatchObject({ permission: 'deny' })
+    expect(JSON.parse(shell.stdout).user_message).toContain('failed while classifying')
     const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', loaded)
     expect(pending.approvals).toHaveLength(0)
   })

@@ -922,7 +922,12 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
     const record = await trustRepoConfig(repoRoot, adapter, rawConfig)
     const merged = await loadConfigFile(repoRoot, adapter)
     await refreshIntegrityIfPinned(repoRoot, merged)
-    return `Trusted repository config ${record.repoConfigFingerprint.slice(0, 12)} for ${record.repoRoot}.`
+    return [
+      'Repository config trusted:',
+      JSON.stringify(rawConfig, null, 2),
+      `Trusted fingerprint: ${record.repoConfigFingerprint}`,
+      `Repository: ${record.repoRoot}`,
+    ].join('\n')
   }
 
   const config = await loadConfigFile(repoRoot)
