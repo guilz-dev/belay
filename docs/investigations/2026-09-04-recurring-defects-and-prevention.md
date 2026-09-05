@@ -1,7 +1,7 @@
 # 直近の不具合頻発 — 原因分析と再発防止策
 
 - **作成日:** 2026-09-04
-- **最終更新:** 2026-09-04（事実修正: 213d8af 帰属、R1/D 表現、v0.8.2 脚注）
+- **最終更新:** 2026-09-06（PR #103 レビュー是正、Ruleset 実設定と未完了 smoke の区別）
 - **対象期間:** 2026-07-15 00:00 〜 2026-09-03 23:59:59 UTC（v0.8.0 〜 v0.9.3 + Unreleased）
 - **データソース:** `git log`、PR #82〜#97（`gh pr view`）、CHANGELOG、ADR-007/008、`docs/investigations/2026-09-02-dogfood-block-after-upgrade.md`、`docs/security-review-2026-08-30.md`
 - **目的:** 直近で不具合が頻発した実態を git 履歴から確認し、クラスタごとに根本原因を特定して、再発防止策を提示する。
@@ -197,15 +197,15 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | `preToolUse: Shell` tombstone（legacy strip + 二重ゲート防止） | **実施済み** | Belay runtime | `cursor-hooks.test.ts`, `cursor-hook-precedence.integration.test.ts`, `installer-scope.test.ts` | fresh install / upgrade 後に managed `preToolUse: Shell` が 0 で維持される |
-| P0 | シングルシェルゲート原則の ADR 固定 | **実施済み** | Belay runtime | `ADR-009`, `ADR-008 Limits` 更新 | shell 分類は `beforeShellExecution` のみ、`preToolUse: Shell` は neutral allow |
+| P0 | `preToolUse: Shell` tombstone（legacy strip + 二重ゲート防止） | **是正PR作成中** | Belay runtime | `cursor-hooks.test.ts`, `cursor-hook-precedence.integration.test.ts`, `installer-scope.test.ts` | fresh install / upgrade 後に managed `preToolUse: Shell` が 0 で維持される |
+| P0 | シングルシェルゲート原則の ADR 固定 | **是正PR作成中** | Belay runtime | `ADR-009`, `ADR-008 Limits` 更新 | shell 分類は `beforeShellExecution` のみ、`preToolUse: Shell` は config/routing より前に neutral allow |
 | P0 | PR#88 系 invariant の継続固定 | **実施済み** | CI | `cursor-host-denial-invariants.test.ts` | テスト削除/回帰で required checks が失敗する |
 
 ### 5.2 R2（並行マージのサイレント消失）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | merge queue + required checks を主ゲート化 | **実施済み** | GitHub Ruleset | merge_group 上の required checks 運用 | main 直前で未通過変更が混入しない |
+| P0 | merge queue + required checks を主ゲート化 | **設定済み・スモーク待ち** | GitHub Ruleset | Ruleset 17656073（2026-09-06 更新）に strict required checks 3件、merge queue、bypass なし | 実変更PRで `merge_group` の3 checks が green になった後だけ merge される |
 | P0 | 競合しやすい挙動の invariant テストを追加/命名 | **実施済み** | CI | `hooks-runtime.test.ts`, `audit-visibility.test.ts` ほか | 並行マージ時も「期待挙動」で壊れたら即 fail する |
 | P1 | PR テンプレで integration risk 明示 | **実施済み** | Release operator | `.github/pull_request_template.md` `Integration risk` 節 | 重複PRの認知・invariant紐付け・required checks 確認が毎PRで残る |
 
@@ -215,23 +215,23 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | repo config trust 境界（fail-closed） | **実施済み** | Belay runtime | `ADR-010`, `repo-config-trust.ts`, `repo-config-trust.test.ts`, `doctor.test.ts` | 未trust/改ざん config は gate deny + `belay config trust` 要求 |
-| P0 | dogfood skew のブロッキングチェック分離 | **実施済み** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | release window 内の skew を exit 1 で停止できる |
+| P0 | repo config trust 境界（fail-closed） | **是正PR作成中** | Belay runtime | `ADR-010`, `repo-config-trust.ts`, `repo-config-trust.test.ts`, `doctor.test.ts` | 未trust/改ざん config は routing / policy 評価前に gate deny + `belay config trust` 要求 |
+| P0 | dogfood skew のブロッキングチェック分離 | **是正PR作成中** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | 指定 adapter の release window 内 skew を exit 1 で停止できる |
 | P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `dogfood-environment.ts`, `doctor.ts` 警告, `doctor.test.ts` | dogfood active 時に未適用 worktree が可視化される |
 
 ### 5.4 R4（ホスト挙動・敵対入力の想定不足）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | unmapped Cursor tool の fail-closed 化 | **実施済み** | Belay runtime | `runtime-entry.ts`, `adapter-unmapped-tool-invariants.test.ts` | `preToolUse` 未対応ツールは deny されサイレント通過しない |
-| P0 | 通知チャネルから approval token 除去 | **実施済み** | Belay runtime | `notify.ts`, `notify.test.ts` | webhook / commandHook が承認トークンを外部へ出さない |
+| P0 | unmapped Cursor tool の fail-closed 化 | **是正PR作成中** | Belay runtime | `runtime-entry.ts`, `adapter-unmapped-tool-invariants.test.ts` | 未対応ツールは共通 gate を通り、enforce は承認可能な deny、audit は allow + wouldBlock になる |
+| P0 | 通知チャネルから approval token 除去 | **是正PR作成中** | Belay runtime | `notify.ts`, `notify.test.ts`, `belay approval-token` | webhook / commandHook が ambient 値を含む承認トークンを受け取らず、token はローカル取得のみ |
 | P1 | 通知設定の doctor 事前検証 | **実施済み** | Belay runtime | `notificationConfigIssues`, `doctor.ts` | 非HTTPS/危険path等を release 前に検出する |
 
 ### 5.5 プロセス面（クラスタ横断）
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | リリース前 dogfood check 実行（対象ごと） | **実施済み** | Release operator | `docs/ops/releasing.md`, `scripts/pre-release-dogfood-check.sh`, `docs/ops/dogfood-install-targets.md` | すべての active local target で check 成功ログを PR に残す |
+| P0 | リリース前 dogfood check 実行（対象ごと） | **運用確認待ち** | Release operator | `docs/ops/releasing.md`, `scripts/pre-release-dogfood-check.sh`, `docs/ops/dogfood-install-targets.md` | すべての active local target で check 成功ログを PR に残す |
 | P1 | ポストモーテム運用の継続 | **実施済み** | Release operator | 本ドキュメント + `docs/investigations/` | High 事象ごとに原因と再発防止が追記される |
 
 ---
@@ -242,12 +242,12 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | # | 項目 | 因子 | status |
 |---|------|------|--------|
-| 1 | `beforeShellExecution` 単一シェルゲート + `preToolUse:Shell` neutral lock | R1/R4 | 実施済み |
-| 2 | repo config trust fail-closed（manual edit は再trust必須） | R3/R4 | 実施済み |
-| 3 | unmapped Cursor tool fail-closed invariant | R4 | 実施済み |
-| 4 | 通知チャネルの token 非公開 + 設定バリデーション | R4 | 実施済み |
-| 5 | dogfood release check（--since window, cohort/skew blocking） | R3/横断 | 実施済み |
-| 6 | merge queue required checks + integration risk テンプレ運用 | R2/横断 | 実施済み |
+| 1 | `beforeShellExecution` 単一シェルゲート + `preToolUse:Shell` neutral lock | R1/R4 | 是正PR作成中 |
+| 2 | repo config trust fail-closed（manual edit は再trust必須） | R3/R4 | 是正PR作成中 |
+| 3 | unmapped Cursor tool fail-closed invariant | R4 | 是正PR作成中 |
+| 4 | 通知チャネルの token 非公開 + 設定バリデーション | R4 | 是正PR作成中 |
+| 5 | dogfood release check（--since window, cohort/skew blocking） | R3/横断 | 是正PR作成中・運用確認待ち |
+| 6 | merge queue required checks + integration risk テンプレ運用 | R2/横断 | 設定済み・スモーク待ち |
 
 ---
 

@@ -168,14 +168,6 @@ function isCursorPreToolUseEvent(eventName: string): boolean {
   return eventName === 'preToolUse' || eventName === 'PreToolUse'
 }
 
-function unmappedCursorToolDeny(toolName: string): { permission: 'deny'; user_message: string } {
-  const displayName = toolName.trim() ? `"${toolName.trim()}"` : '<missing tool_name>'
-  return {
-    permission: 'deny',
-    user_message: `belay denied unmapped Cursor tool ${displayName}. Run belay doctor, then upgrade belay if needed.`,
-  }
-}
-
 export async function handleBeforeSubmitPromptHook(payload: Record<string, unknown>) {
   try {
     const prompt = String(payload.prompt ?? '')
@@ -265,6 +257,10 @@ export async function runShellGateHook() {
 export async function handleToolGateHook(eventName: string, payload: Record<string, unknown>) {
   try {
     const toolName = String(payload.tool_name ?? '')
+    if (isCursorPreToolUseEvent(eventName) && toolName === 'Shell') {
+      return { permission: 'allow' }
+    }
+
     const resolution = resolveCursorToolActionCwdDetails(
       payload,
       process.cwd(),
@@ -282,10 +278,6 @@ export async function handleToolGateHook(eventName: string, payload: Record<stri
     const cwd = resolution.cwd
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
-
-    if (isCursorPreToolUseEvent(eventName) && toolName === 'Shell') {
-      return { permission: 'allow' }
-    }
 
     if (isSubagentEvent(payload, eventName)) {
       const verdict = await evaluateGatedAction(ctx, deps, {
@@ -319,7 +311,14 @@ export async function handleToolGateHook(eventName: string, payload: Record<stri
     }
 
     if (isCursorPreToolUseEvent(eventName)) {
-      return unmappedCursorToolDeny(toolName)
+      const verdict = await evaluateGatedAction(ctx, deps, {
+        kind: 'tool',
+        cwd,
+        payload,
+        toolName,
+        sourceEvent: eventName,
+      })
+      return gateVerdictToCursorResponse(verdict)
     }
 
     return { permission: 'allow' }

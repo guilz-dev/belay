@@ -34,4 +34,21 @@ describe('belay judge self-command gate', () => {
     const result = await verdict('belay config set gates.mode enforce', context)
     expect(result.permission).not.toBe('allow')
   })
+
+  it('requires human approval for the complete token-mint and self-approval sequence', async () => {
+    for (const command of [
+      'belay approval-token belay_pending',
+      'belay approve belay_pending --token signed.token',
+    ]) {
+      const result = await verdict(command, context)
+      expect(result.permission, command).toBe('ask')
+      expect(result.reason, command).toBe('control_plane_mutation')
+    }
+  })
+
+  it('requires human approval before trusting repository config', async () => {
+    const result = await verdict('belay config trust', context)
+    expect(result.permission).toBe('ask')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
 })

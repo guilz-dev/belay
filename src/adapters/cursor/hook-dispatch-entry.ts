@@ -136,6 +136,13 @@ async function dispatchCursorHookResponse(
   if (!input.ok) {
     return failClosedResponse(params.kind, 'belay received malformed Cursor hook input.')
   }
+  if (
+    params.kind === 'tool-gate' &&
+    (params.eventName === 'preToolUse' || params.eventName === 'PreToolUse') &&
+    input.payload.tool_name === 'Shell'
+  ) {
+    return neutralResponse(params.kind)
+  }
   if (!isRecognizedPayload(params, input.payload)) {
     if (
       params.kind === 'tool-gate' &&

@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { handleToolGateHook } from '../adapters/cursor/runtime-entry.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
+import { mergeConfig } from '../core/config.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { initProject } from '../installer.js'
 
@@ -44,20 +46,82 @@ describe('adapter unmapped tool invariants', () => {
     ).resolves.toEqual({ permission: 'allow' })
   })
 
-  it('fails closed for unmapped preToolUse tools', async () => {
+  it('keeps preToolUse Shell neutral when repository config trust is stale', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as { mode: string }
+    await writeFile(configPath, `${JSON.stringify({ ...config, mode: 'audit' })}\n`)
 
     await expect(
       handleToolGateHook('preToolUse', {
-        tool_name: 'Read',
+        tool_name: 'Shell',
         cwd: repoRoot,
       }),
-    ).resolves.toEqual({
-      permission: 'deny',
-      user_message:
-        'belay denied unmapped Cursor tool "Read". Run belay doctor, then upgrade belay if needed.',
-    })
+    ).resolves.toEqual({ permission: 'allow' })
+  })
+
+  it('keeps malformed preToolUse Shell payloads neutral before dispatcher routing', async () => {
+    const { PassThrough } = await import('node:stream')
+    const { dispatchCursorHookResponse } = await import('../adapters/cursor/hook-dispatch-entry.js')
+    const stdin = new PassThrough()
+    const originalStdin = process.stdin
+    Object.defineProperty(process, 'stdin', { configurable: true, value: stdin })
+
+    try {
+      const responsePromise = dispatchCursorHookResponse({
+        origin: { scope: 'project', repoRoot: '/tmp/project' },
+        kind: 'tool-gate',
+        eventName: 'preToolUse',
+      })
+      stdin.end(JSON.stringify({ tool_name: 'Shell', tool_input: null }))
+      await expect(responsePromise).resolves.toEqual({ permission: 'allow' })
+    } finally {
+      Object.defineProperty(process, 'stdin', { configurable: true, value: originalStdin })
+    }
+  })
+
+  it('evaluates and audits unmapped preToolUse tools in enforce mode', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({ ...(await loadConfigFile(repoRoot)), mode: 'enforce' }),
+    )
+
+    await expect(
+      handleToolGateHook('preToolUse', {
+        tool_name: 'FutureMutationTool',
+        tool_input: {},
+        cwd: repoRoot,
+      }),
+    ).resolves.toMatchObject({ permission: 'deny' })
+
+    const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(audit).toContain('"kind":"tool"')
+    expect(audit).toContain('"wouldBlock":true')
+  })
+
+  it('allows but audits unmapped preToolUse tools in audit mode', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({ ...(await loadConfigFile(repoRoot)), mode: 'audit' }),
+    )
+
+    await expect(
+      handleToolGateHook('preToolUse', {
+        tool_name: 'FutureMutationTool',
+        tool_input: {},
+        cwd: repoRoot,
+      }),
+    ).resolves.toMatchObject({ permission: 'allow' })
+
+    const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    expect(audit).toContain('"kind":"tool"')
+    expect(audit).toContain('"wouldBlock":true')
+    expect(audit).toContain('"mode":"audit"')
   })
 
   it('dispatcher denies preToolUse with tool_name but malformed tool_input', async () => {

@@ -6,9 +6,11 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { routeCursorHook } from '../adapters/cursor/hook-router.js'
+import { trustRepoConfig } from '../core/repo-config-trust.js'
 import { getManagedHookEntries } from '../defaults.js'
 
 const tempDirs: string[] = []
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
 
 async function createTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix))
@@ -21,13 +23,18 @@ async function installProjectHook(
   hookFile: string,
   installScope: 'project' | 'global' = 'project',
 ): Promise<void> {
+  const xdgConfigHome = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-router-xdg-'))
+  tempDirs.push(xdgConfigHome)
+  process.env.XDG_CONFIG_HOME = xdgConfigHome
   await mkdir(path.join(repoRoot, '.git'), { recursive: true })
   await mkdir(path.join(repoRoot, '.cursor', 'hooks'), { recursive: true })
   await mkdir(path.join(repoRoot, '.cursor', 'belay', 'runtime'), { recursive: true })
+  const rawConfig = { installScope }
   await writeFile(
     path.join(repoRoot, '.cursor', 'belay.config.json'),
-    `${JSON.stringify({ installScope })}\n`,
+    `${JSON.stringify(rawConfig)}\n`,
   )
+  await trustRepoConfig(repoRoot, 'cursor', rawConfig)
   const canonicalRepoRoot = realpathSync(repoRoot)
   const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
   const groupedHooks: Record<
@@ -60,6 +67,11 @@ async function installProjectHook(
 
 describe('routeCursorHook', () => {
   afterEach(async () => {
+    if (originalXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME
+    } else {
+      process.env.XDG_CONFIG_HOME = originalXdgConfigHome
+    }
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
@@ -233,6 +245,32 @@ describe('routeCursorHook', () => {
     await mkdir(actionDir, { recursive: true })
     await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
     await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'execute', repoRoot: realpathSync(repoRoot) })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
+  it('does not let an untrusted global installScope disable the project owner', async () => {
+    const repoRoot = await createTempDir('belay-cursor-untrusted-scope-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await installProjectHook(repoRoot, 'belay-shell-gate.mjs')
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify({ installScope: 'global' })}\n`,
+    )
 
     expect(
       routeCursorHook({

@@ -22,12 +22,30 @@ export function decodeBelay(
     section === 'config' &&
     ((['set', 'unset'].includes(operation ?? '') && key?.startsWith('judge.')) ||
       (operation === 'credential' && key === 'mode'))
+  const approvalAuthorityCommand = [
+    'approval-token',
+    'approve',
+    'revoke',
+    'standing-allow',
+  ].includes(section ?? '')
+  const configTrustMutation = section === 'config' && operation === 'trust'
   if (judgeCommand || configRead || configJudgeMutation) {
     return [
       processRequirement('belay', 'inspect', segment, [
         'belay_control_plane_command',
         configJudgeMutation ? 'belay.config_judge_mutation' : 'belay.config_read',
       ]),
+    ]
+  }
+  if (approvalAuthorityCommand || configTrustMutation) {
+    return [
+      requirement(
+        'control_plane.write',
+        'control_plane.write',
+        { kind: 'path', path: path.join(repoRoot, '.belay-control-plane') },
+        segment,
+        [approvalAuthorityCommand ? 'belay.approval_authority' : 'belay.config_trust'],
+      ),
     ]
   }
   if (section === 'config' && ['set', 'unset', 'credential'].includes(operation ?? '')) {

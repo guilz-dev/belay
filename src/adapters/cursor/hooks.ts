@@ -22,7 +22,18 @@ function legacyManagedEntries(platform: NodeJS.Platform, hooksDir: string, repoR
       )
     }
   }
-  return entries
+  const legacyMatchedToolNames = ['Task', 'Write', 'StrReplace', 'Delete']
+  return [
+    ...entries,
+    ...entries.flatMap(({ event, definition }) =>
+      event === 'preToolUse' && definition.matcher === undefined
+        ? legacyMatchedToolNames.map((matcher) => ({
+            event,
+            definition: { ...definition, matcher },
+          }))
+        : [],
+    ),
+  ]
 }
 
 function variantsForDefinition(
@@ -33,7 +44,12 @@ function variantsForDefinition(
   return [
     definition,
     ...legacyEntries
-      .filter((entry) => entry.event === event && entry.definition.matcher === definition.matcher)
+      .filter(
+        (entry) =>
+          entry.event === event &&
+          (entry.definition.matcher === definition.matcher ||
+            (event === 'preToolUse' && definition.matcher === undefined)),
+      )
       .map((entry) => entry.definition),
   ]
 }

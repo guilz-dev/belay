@@ -106,8 +106,8 @@ export interface BelayPolicyConfig {
   confidenceThresholds: BelayConfidenceThresholds
   modelAssist: BelayModelAssistConfig
   transactional: BelayTransactionalConfig
-  // Codex adapter (experimental): how to treat a PreToolUse tool whose name belay does not yet
-  // map to a known kind. 'deny' (default) is the fail-closed floor — an unmapped tool must not
+  // Adapter compatibility name: how to treat a tool whose name belay does not yet map to a known
+  // kind. 'deny' (default) is the fail-closed floor — an unmapped tool must not
   // silently bypass the gate (FN=0). 'allow' is the opt-out: pass the tool but record it to the
   // audit log for vocabulary learning (use only if fail-closed over-blocks in practice). See
   // unknownLocalEffect. Optional; runtime defaults to 'deny' when absent.
