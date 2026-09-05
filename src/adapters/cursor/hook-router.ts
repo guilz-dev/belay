@@ -215,6 +215,14 @@ function hasMatchingProjectShim(repoRoot: string, kind: CursorHookKind): boolean
   )
 }
 
+function hasProjectOwnerInstallation(repoRoot: string): boolean {
+  const hooksDir = cursorRoutingHooksDir(repoRoot)
+  return Boolean(
+    selectedRunnerPath(hooksDir) &&
+      isRegularFile(path.join(cursorRoutingRuntimeDir(repoRoot), 'dispatcher.mjs')),
+  )
+}
+
 function hasCallableProjectOwner(repoRoot: string, params: RouteCursorHookParams): boolean {
   const hooksDir = cursorRoutingHooksDir(repoRoot)
   const runnerPath = selectedRunnerPath(hooksDir)
@@ -285,7 +293,13 @@ function readInstallScope(repoRoot: string): RoutingInstallScope {
       !Array.isArray(parsed) &&
       (parsed as Record<string, unknown>).installScope === 'global'
     ) {
-      return isTrustedCursorRoutingConfig(repoRoot, parsed) ? 'global' : 'project'
+      if (isTrustedCursorRoutingConfig(repoRoot, parsed)) {
+        return 'global'
+      }
+      // Untrusted global scope still routes through the global owner when no project
+      // installation exists. Otherwise a global-only workspace is blocked by the sentinel
+      // even though ADR-008 assigns ownership to the User/global installation.
+      return hasProjectOwnerInstallation(repoRoot) ? 'project' : 'global'
     }
   } catch {
     // A present config that cannot be read or parsed must retain Project ownership so the

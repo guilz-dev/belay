@@ -262,6 +262,32 @@ describe('routeCursorHook', () => {
     ).toEqual({ decision: 'neutral' })
   })
 
+  it('routes an untrusted global installScope through the global owner when no project installation exists', async () => {
+    const repoRoot = await createTempDir('belay-cursor-untrusted-global-only-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    await mkdir(actionDir, { recursive: true })
+    await mkdir(path.join(repoRoot, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify({ installScope: 'global' })}\n`,
+    )
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'execute', repoRoot: realpathSync(repoRoot) })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({ decision: 'neutral' })
+  })
+
   it('does not let an untrusted global installScope disable the project owner', async () => {
     const repoRoot = await createTempDir('belay-cursor-untrusted-scope-route-')
     const actionDir = path.join(repoRoot, 'packages', 'app')
