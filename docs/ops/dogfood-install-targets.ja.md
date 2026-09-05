@@ -26,27 +26,25 @@ Belay を **dogfood モード**（`mode: audit` + `policy.unknownLocalEffect: de
 
 ## リリース後 upgrade
 
-各リポのルートで:
+**guilz-dev/belay 本体**（製品リポジトリ内）では、同名パッケージ解決の都合で `npx @guilz-dev/belay@…` が失敗することがある。ソースビルドを使う:
+
+```bash
+cd /Users/kaz/product/guilz/belay
+pnpm build
+node dist/cli.js upgrade --with-skill
+node dist/cli.js doctor
+node dist/cli.js status
+```
+
+main 同期込み: [update-local-belay スキル](../../.cursor/skills/update-local-belay/SKILL.md)。
+
+**その他の dogfood 導入先**では各リポのルートで:
 
 ```bash
 npx @guilz-dev/belay@<version> upgrade --with-skill
 npx @guilz-dev/belay@<version> doctor
 npx @guilz-dev/belay@<version> status
 ```
-
-`guilz-dev/belay` 本体で `npx` が `belay: command not found` になる場合は、publish 済み tarball の CLI を直接使う:
-
-```bash
-cd /Users/kaz/product/guilz/belay
-TMP=$(mktemp -d)
-npm pack @guilz-dev/belay@<version> --pack-destination "$TMP" >/dev/null
-tar -xzf "$TMP"/guilz-dev-belay-<version>.tgz -C "$TMP"
-node "$TMP/package/dist/cli.js" upgrade --with-skill
-node "$TMP/package/dist/cli.js" doctor
-rm -rf "$TMP"
-```
-
-ソースから揃える場合（npm ではなく main ビルド）: [update-local-belay スキル](../../.cursor/skills/update-local-belay/SKILL.md)。
 
 ## 対象外（この一覧に含めない）
 

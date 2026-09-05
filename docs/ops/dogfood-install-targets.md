@@ -19,7 +19,21 @@ Last upgraded to `@guilz-dev/belay@0.9.1` on 2026-08-22.
 
 ## Post-release upgrade
 
-In each repo root:
+**guilz-dev/belay product repo:** Do not rely on `npx @guilz-dev/belay@…` from inside the
+repository root (same-package name resolution can fail with `belay: command not found`). Use the
+source build instead:
+
+```bash
+cd /path/to/belay
+pnpm build
+node dist/cli.js upgrade --with-skill
+node dist/cli.js doctor
+node dist/cli.js status
+```
+
+For main sync + upgrade: [update-local-belay skill](../../.cursor/skills/update-local-belay/SKILL.md).
+
+**Other dogfood targets:** In each repo root:
 
 ```bash
 npx @guilz-dev/belay@<version> upgrade --with-skill
