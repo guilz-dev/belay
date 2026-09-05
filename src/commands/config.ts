@@ -1,12 +1,15 @@
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { stdin as input, stdout as output } from 'node:process'
 import readline from 'node:readline/promises'
 
 import {
+  configPathFor,
+  detectAdapterName,
   loadConfigFile,
   repoLocalStateDirFor,
   resolveAdapterName,
-  writeConfigFile,
+  writeTrustedConfigFile,
 } from '../config-io.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import type { BelayConfigV4, BelayJudgeConfig, JudgeCredentialRef } from '../core/config.js'
@@ -24,6 +27,7 @@ import {
   detectJudgeRuntimeCapabilities,
   resolveJudgeTransport,
 } from '../core/judge-runtime-detection.js'
+import { trustRepoConfig } from '../core/repo-config-trust.js'
 import {
   getJudgeProviderSpec,
   isJudgeProviderId,
@@ -44,6 +48,7 @@ export const BELAY_CONFIG_SUBCOMMANDS = [
   'get',
   'set',
   'unset',
+  'trust',
   'credential',
   'judge',
 ] as const
@@ -196,7 +201,7 @@ async function persistJudge(
   adapter: ReturnType<typeof resolveAdapterName>,
 ): Promise<BelayConfigV4> {
   const updated: BelayConfigV4 = { ...config, judge: normalizeJudgeConfig(judge) }
-  await writeConfigFile(repoRoot, updated, adapter)
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
   await refreshIntegrityIfPinned(repoRoot, updated)
   return updated
 }
@@ -902,6 +907,24 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
   }
 
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  if (options.subcommand === 'trust') {
+    const adapter = detectAdapterName(repoRoot)
+    const configPath = configPathFor(repoRoot, adapter)
+    let rawConfig: unknown
+    try {
+      rawConfig = JSON.parse(await readFile(configPath, 'utf8')) as unknown
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+        throw new Error(`Missing repository config: ${configPath}`)
+      }
+      throw new Error(`Repository config is malformed JSON: ${configPath}`)
+    }
+    const record = await trustRepoConfig(repoRoot, adapter, rawConfig)
+    const merged = await loadConfigFile(repoRoot, adapter)
+    await refreshIntegrityIfPinned(repoRoot, merged)
+    return `Trusted repository config ${record.repoConfigFingerprint.slice(0, 12)} for ${record.repoRoot}.`
+  }
+
   const config = await loadConfigFile(repoRoot)
 
   if (options.subcommand === 'list') {

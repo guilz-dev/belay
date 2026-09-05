@@ -15,7 +15,7 @@ export function recoveryApprovalSetupNotes(): string[] {
 export function recoveryNotificationSetupWarning(): string {
   return (
     'Recovery checkpoint restore requires a signed out-of-band approval token, but no notification channel is configured. ' +
-    'Set notifications.webhookUrl or notifications.commandHook (e.g. via `belay config`) so `belay recover apply` can deliver the token.'
+    'Set notifications.webhookUrl or notifications.commandHook (e.g. via `belay config`) so `belay recover apply` can emit approval-required alerts.'
   )
 }
 

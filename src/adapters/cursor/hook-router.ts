@@ -144,14 +144,23 @@ function commandInvokesProjectHook(
   return Buffer.from(encoded, 'base64').toString('utf16le') === expected
 }
 
-function expectedMatcher(eventName: string, payload: Record<string, unknown>): string | undefined {
+function expectedMatchers(
+  eventName: string,
+  payload: Record<string, unknown>,
+): Array<string | undefined> {
   if (eventName === 'preToolUse') {
-    return typeof payload.tool_name === 'string' ? payload.tool_name : undefined
+    // Managed preToolUse is intentionally unfiltered. Keep the legacy matcher variant so older
+    // installed hooks still route through the same owner until upgrade.
+    const values: Array<string | undefined> = [undefined]
+    if (typeof payload.tool_name === 'string') {
+      values.push(payload.tool_name)
+    }
+    return values
   }
   if (eventName === 'subagentStart') {
-    return typeof payload.subagent_type === 'string' ? payload.subagent_type : undefined
+    return [typeof payload.subagent_type === 'string' ? payload.subagent_type : undefined]
   }
-  return undefined
+  return [undefined]
 }
 
 function hasManagedProjectHookEntry(
@@ -160,7 +169,7 @@ function hasManagedProjectHookEntry(
   params: RouteCursorHookParams,
 ): boolean {
   const eventName = eventNameFor(params)
-  const matcher = expectedMatcher(eventName, params.payload)
+  const matchers = new Set(expectedMatchers(eventName, params.payload))
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(cursorRoutingHooksSettingsPath(repoRoot), 'utf8'))
@@ -185,7 +194,7 @@ function hasManagedProjectHookEntry(
     const definition = entry as Record<string, unknown>
     return (
       definition.failClosed === true &&
-      definition.matcher === matcher &&
+      matchers.has(definition.matcher as string | undefined) &&
       typeof definition.command === 'string' &&
       commandInvokesProjectHook(definition.command, runnerPath, params.kind, eventName)
     )

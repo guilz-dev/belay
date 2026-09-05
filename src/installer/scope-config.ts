@@ -7,7 +7,7 @@ import {
   type ScopedPaths,
 } from '../adapters/layouts/scope.js'
 import type { AdapterName } from '../adapters/layouts/types.js'
-import { loadConfigFile, writeConfigFile } from '../config-io.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import type { BelayConfigV4 } from '../core/config.js'
 import type { InitOptions, UninstallOptions, UpgradeOptions } from '../types.js'
 
@@ -38,7 +38,7 @@ export async function applyInstallScope(
     return current
   }
   const updated: BelayConfigV4 = { ...current, installScope: scope }
-  await writeConfigFile(repoRoot, updated, adapter)
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
   return updated
 }
 

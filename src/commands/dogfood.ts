@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { configPathFor, loadConfigFile, writeConfigFile } from '../config-io.js'
+import { configPathFor, loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { isDogfoodConfig, loadOperationalInsights } from '../operational-insights.js'
 import type { DogfoodOptions, DogfoodResult } from '../types.js'
@@ -24,7 +24,7 @@ export async function dogfoodProject(options: DogfoodOptions = {}): Promise<Dogf
       unknownLocalEffect: 'deny',
     },
   })
-  await writeConfigFile(repoRoot, updated, adapter)
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
 
   return {
     ok: true,
@@ -67,7 +67,7 @@ async function promoteDogfoodToEnforce(
     ...existing,
     mode: 'enforce',
   })
-  await writeConfigFile(repoRoot, updated, adapter)
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
 
   return {
     ok: true,
@@ -85,4 +85,5 @@ export function formatDogfoodResult(result: DogfoodResult): string {
   return `${result.message}\n`
 }
 
+export { checkDogfoodProject, formatDogfoodCheckResult } from './dogfood-check.js'
 export { isDogfoodConfig, loadOperationalInsights }

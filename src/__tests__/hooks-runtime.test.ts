@@ -12,6 +12,7 @@ import {
   loadApprovalState,
   loadConfigFile,
   pendingApprovalsPath,
+  writeTrustedConfigFile,
 } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { scrubString } from '../core/scrub.js'
@@ -43,16 +44,12 @@ async function initIsolatedRepo() {
     },
     audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
   })
-  await writeFile(
-    path.join(repoRoot, '.cursor', 'belay.config.json'),
-    `${JSON.stringify(
-      mergeConfig({
-        ...config,
-        mode: 'enforce',
-      }),
-      null,
-      2,
-    )}\n`,
+  await writeTrustedConfigFile(
+    repoRoot,
+    mergeConfig({
+      ...config,
+      mode: 'enforce',
+    }),
   )
   return repoRoot
 }
@@ -338,7 +335,11 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
 
     await expect(
       runtime.handleToolGateHook('preToolUse', { tool_name: 'Read', cwd: repoRoot }),
-    ).resolves.toEqual({ permission: 'allow' })
+    ).resolves.toEqual({
+      permission: 'deny',
+      user_message:
+        'belay denied unmapped Cursor tool "Read". Run belay doctor, then upgrade belay if needed.',
+    })
   })
 
   it('returns the current audit response from a parsed payload handler', async () => {
@@ -425,10 +426,7 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
       },
       audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
     })
-    await writeFile(
-      path.join(childRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(childConfig, null, 2)}\n`,
-    )
+    await writeTrustedConfigFile(childRoot, childConfig)
     await writeFile(path.join(parentRoot, 'Makefile'), 'harmless:\n\t@printf parent\\n\n')
     await writeFile(
       path.join(childRoot, 'Makefile'),
@@ -495,10 +493,7 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
       },
       audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: true },
     })
-    await writeFile(
-      path.join(childRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(childConfig, null, 2)}\n`,
-    )
+    await writeTrustedConfigFile(childRoot, childConfig)
 
     const result = await runRunner(
       parentRoot,
@@ -795,17 +790,13 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
   it('allows denied shell actions in audit mode and records wouldBlock without pending approvals', async () => {
     const repoRoot = await initIsolatedRepo()
     const base = await loadConfigFile(repoRoot)
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...base,
-          mode: 'audit',
-          policy: { ...base.policy, unknownLocalEffect: 'deny' },
-        }),
-        null,
-        2,
-      )}\n`,
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...base,
+        mode: 'audit',
+        policy: { ...base.policy, unknownLocalEffect: 'deny' },
+      }),
     )
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -826,17 +817,13 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
   it('allows argv-delegated read-only shell actions in audit mode without pending approvals', async () => {
     const repoRoot = await initIsolatedRepo()
     const base = await loadConfigFile(repoRoot)
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...base,
-          mode: 'audit',
-          policy: { ...base.policy, unknownLocalEffect: 'deny' },
-        }),
-        null,
-        2,
-      )}\n`,
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...base,
+        mode: 'audit',
+        policy: { ...base.policy, unknownLocalEffect: 'deny' },
+      }),
     )
 
     const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -857,17 +844,13 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
   it('keeps enforce deny for opaque wrapper options under fail-closed unknown policy', async () => {
     const repoRoot = await initIsolatedRepo()
     const base = await loadConfigFile(repoRoot)
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...base,
-          mode: 'enforce',
-          policy: { ...base.policy, unknownLocalEffect: 'deny' },
-        }),
-        null,
-        2,
-      )}\n`,
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...base,
+        mode: 'enforce',
+        policy: { ...base.policy, unknownLocalEffect: 'deny' },
+      }),
     )
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -884,17 +867,13 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
   it('records a single shell gate audit event per shell action', async () => {
     const repoRoot = await initIsolatedRepo()
     const base = await loadConfigFile(repoRoot)
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...base,
-          mode: 'audit',
-          policy: { ...base.policy, unknownLocalEffect: 'deny' },
-        }),
-        null,
-        2,
-      )}\n`,
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...base,
+        mode: 'audit',
+        policy: { ...base.policy, unknownLocalEffect: 'deny' },
+      }),
     )
 
     const allowed = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -921,17 +900,13 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     const repoRoot = await createTempRepo()
     const controlPlaneDir = path.join(repoRoot, 'user-config', 'agent-belay')
     await initProject({ targetDir: repoRoot })
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...(await loadConfigFile(repoRoot)),
-          mode: 'enforce',
-          controlPlane: { enabled: true, configDir: controlPlaneDir, integrity: 'hash-pinned' },
-        }),
-        null,
-        2,
-      )}\n`,
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...(await loadConfigFile(repoRoot)),
+        mode: 'enforce',
+        controlPlane: { enabled: true, configDir: controlPlaneDir, integrity: 'hash-pinned' },
+      }),
     )
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {
@@ -950,25 +925,64 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     ).not.toContain(pending.approvals[0].approvalId)
   })
 
+  it('denies shell and tool gates when repository config trust is stale', async () => {
+    const repoRoot = await initIsolatedRepo()
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const tampered = JSON.parse(await readFile(configPath, 'utf8')) as {
+      mode: string
+      policy: { unknownLocalEffect: string }
+    }
+    tampered.mode = 'audit'
+    tampered.policy.unknownLocalEffect = 'deny'
+    await writeFile(configPath, `${JSON.stringify(tampered, null, 2)}\n`)
+
+    const shell = await runRunner(repoRoot, 'belay-shell-gate', {
+      command: 'git push origin main',
+      cwd: repoRoot,
+    })
+    const tool = await runRunner(
+      repoRoot,
+      'belay-tool-gate',
+      {
+        tool_name: 'Write',
+        tool_input: {
+          path: 'README.md',
+          content: 'tampered',
+        },
+        cwd: repoRoot,
+      },
+      ['preToolUse'],
+    )
+
+    expect(JSON.parse(shell.stdout)).toEqual({
+      permission: 'deny',
+      user_message: 'Repository config is not trusted. Review it, then run `belay config trust`.',
+    })
+    expect(JSON.parse(tool.stdout)).toEqual({
+      permission: 'deny',
+      user_message: 'Repository config is not trusted. Review it, then run `belay config trust`.',
+    })
+
+    const loaded = await loadConfigFile(repoRoot)
+    const pending = await loadApprovalState(repoRoot, 'pending-approvals.json', loaded)
+    expect(pending.approvals).toHaveLength(0)
+  })
+
   it('keeps shell gate outcomes unchanged when judge session transport is enabled', async () => {
     const repoRoot = await initIsolatedRepo()
-    await writeFile(
-      path.join(repoRoot, '.cursor', 'belay.config.json'),
-      `${JSON.stringify(
-        mergeConfig({
-          ...(await loadConfigFile(repoRoot)),
-          mode: 'enforce',
-          judge: {
-            ...(await loadConfigFile(repoRoot)).judge,
-            runtime: {
-              session: { enabled: true, providerAllowlist: ['cursor'] },
-              shadow: { enabled: false },
-            },
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...(await loadConfigFile(repoRoot)),
+        mode: 'enforce',
+        judge: {
+          ...(await loadConfigFile(repoRoot)).judge,
+          runtime: {
+            session: { enabled: true, providerAllowlist: ['cursor'] },
+            shadow: { enabled: false },
           },
-        }),
-        null,
-        2,
-      )}\n`,
+        },
+      }),
     )
 
     const denied = await runRunner(repoRoot, 'belay-shell-gate', {

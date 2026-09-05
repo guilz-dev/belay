@@ -89,7 +89,9 @@ also make one repository look like two sources.
 
 This is source precedence, not a general cross-process event-id deduplicator. Different canonical
 events remain different processes and evaluations: for example `beforeShellExecution` and
-`preToolUse: Shell` are not collapsed into one event. If Cursor delivers the same canonical event
+`preToolUse: Shell` are not collapsed into one event. A `preToolUse: Shell` mention here describes
+legacy or third-party hook behavior and is not a Belay-managed shell gate source
+([ADR-009](./ADR-009-single-cursor-shell-gate.md)). If Cursor delivers the same canonical event
 to the effective owner more than once, this ownership rule alone does not merge those repeated
 deliveries. If an entrypoint needed to reach the dispatcher itself is absent, the host process can
 surface its launch failure. Managed actionable entries request Cursor's `failClosed` behavior for

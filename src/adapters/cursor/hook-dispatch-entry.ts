@@ -137,6 +137,16 @@ async function dispatchCursorHookResponse(
     return failClosedResponse(params.kind, 'belay received malformed Cursor hook input.')
   }
   if (!isRecognizedPayload(params, input.payload)) {
+    if (
+      params.kind === 'tool-gate' &&
+      (params.eventName === 'preToolUse' || params.eventName === 'PreToolUse') &&
+      isNonEmptyString(input.payload.tool_name)
+    ) {
+      return failClosedResponse(
+        params.kind,
+        'belay received a malformed preToolUse payload. Run belay doctor, then retry.',
+      )
+    }
     return neutralResponse(params.kind)
   }
 
@@ -167,3 +177,5 @@ export async function dispatchCursorHook(params: DispatchCursorHookParams): Prom
   const response = await dispatchCursorHookResponse(params)
   process.stdout.write(`${JSON.stringify(response)}\n`)
 }
+
+export { dispatchCursorHookResponse }
