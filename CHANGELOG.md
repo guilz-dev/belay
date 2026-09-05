@@ -4,7 +4,7 @@ Notable changes to `@guilz-dev/belay` are listed here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.9.4 — 2026-09-05
 
 ### Fixed
 
@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Dogfood diagnostics for linked worktrees** — doctor now reports host-denial-after-allow counts
   in dogfood notes and warns when linked worktrees are missing dogfood config, reducing false
   “audit still blocks” incident triage time.
+
+### Changed
+
+- **Shell lowering internals** — `shell-lower` is split into decoder modules with no intended
+  behavior change.
+
+## Unreleased
 
 ## 0.9.3 — 2026-09-01
 
