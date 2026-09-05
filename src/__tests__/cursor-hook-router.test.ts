@@ -288,6 +288,50 @@ describe('routeCursorHook', () => {
     ).toEqual({ decision: 'neutral' })
   })
 
+  it('keeps an untrusted global installScope on the project path when a project runtime exists', async () => {
+    const repoRoot = await createTempDir('belay-cursor-untrusted-global-project-runtime-route-')
+    const actionDir = path.join(repoRoot, 'packages', 'app')
+    const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
+    const runtimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
+    await mkdir(actionDir, { recursive: true })
+    await mkdir(hooksDir, { recursive: true })
+    await mkdir(runtimeDir, { recursive: true })
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify({ installScope: 'global' })}\n`,
+    )
+    const runnerPath = path.join(
+      hooksDir,
+      process.platform === 'win32' ? 'belay-runner.ps1' : 'belay-runner',
+    )
+    await writeFile(runnerPath, '')
+    if (process.platform !== 'win32') {
+      await chmod(runnerPath, 0o755)
+    }
+    await writeFile(path.join(runtimeDir, 'dispatcher.mjs'), '')
+
+    expect(
+      routeCursorHook({
+        origin: { scope: 'global' },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toMatchObject({
+      decision: 'fail_closed',
+      message: expect.stringMatching(/project hook owner.*unavailable/i),
+    })
+    expect(
+      routeCursorHook({
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        payload: { cwd: actionDir },
+      }),
+    ).toEqual({
+      decision: 'fail_closed',
+      message: 'belay project hook installation is incomplete.',
+    })
+  })
+
   it('does not let an untrusted global installScope disable the project owner', async () => {
     const repoRoot = await createTempDir('belay-cursor-untrusted-scope-route-')
     const actionDir = path.join(repoRoot, 'packages', 'app')
