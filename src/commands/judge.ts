@@ -8,7 +8,7 @@ import {
   loadConfigFile,
   repoLocalStateDirFor,
   resolveAdapterName,
-  writeConfigFile,
+  writeTrustedConfigFile,
 } from '../config-io.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import { JUDGE_CLOUD_CONSENT_REASON } from '../core/capability/reasons.js'
@@ -256,7 +256,7 @@ export async function judgeUse(options: JudgeCommandOptions) {
   const after = normalizeJudgeConfig(patch.judge)
   const updated: BelayConfigV4 = { ...config, judge: after }
 
-  await writeConfigFile(repoRoot, updated, adapter)
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
   await refreshIntegrityIfPinned(repoRoot, updated)
 
   await appendCliAuditEvent(repoRoot, updated, {

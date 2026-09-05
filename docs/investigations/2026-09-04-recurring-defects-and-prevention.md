@@ -191,27 +191,23 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 ## 5. 再発防止策
 
-「既に入っているもの（維持・強化）」と「新規に入れるべきもの」を分け、横断因子 R1〜R4 に紐づける。優先度は P0（即時）/ P1（次スプリント）/ P2（計画的）。
-
-各項目は `status / owner / evidence / done-when` で記述する。`owner` は未割当のため `TBD`（担当確定後に更新）。
+横断因子 R1〜R4 に対して、**マージ済み設定/コード**かつ **スモーク確認済み** のコントロールのみを `実施済み` として扱う。`owner` は個人名ではなく責務サーフェスで固定する（`GitHub Ruleset` / `CI` / `Belay runtime` / `Release operator`）。
 
 ### 5.1 R1（直しては戻る）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | 回帰ロック（tombstone）テストの義務化 | **部分実施** | TBD | `cursor-hooks.test.ts`, `installer.test.ts`（#95） | fresh install / upgrade 後に `preToolUse: Shell` が存在しないことを assert するテストが CI 必須 |
-| P0 | PR#88 由来 invariant テスト維持 | **実施済み** | TBD | `cursor-host-denial-invariants.test.ts`（#91） | テスト削除で CI が落ちる |
-| P0 | glob/fingerprint 回帰テスト維持 | **実施済み** | TBD | `glob.test.ts`, `classify-tool.test.ts`（#96） | テスト削除で CI が落ちる |
-| P1 | managed フック snapshot テスト | **未着手** | TBD | `src/defaults.ts` | snapshot テストが CI 必須で、意図しない managed フック復活を検出 |
-| P1 | restore/regress PR 追跡 | **未着手** | TBD | PR テンプレ | restore/regress/lost を含む PR に原因 PR + 再発防止テスト記載が必須 |
+| P0 | `preToolUse: Shell` tombstone（legacy strip + 二重ゲート防止） | **実施済み** | Belay runtime | `cursor-hooks.test.ts`, `cursor-hook-precedence.integration.test.ts`, `installer-scope.test.ts` | fresh install / upgrade 後に managed `preToolUse: Shell` が 0 で維持される |
+| P0 | シングルシェルゲート原則の ADR 固定 | **実施済み** | Belay runtime | `ADR-009`, `ADR-008 Limits` 更新 | shell 分類は `beforeShellExecution` のみ、`preToolUse: Shell` は neutral allow |
+| P0 | PR#88 系 invariant の継続固定 | **実施済み** | CI | `cursor-host-denial-invariants.test.ts` | テスト削除/回帰で required checks が失敗する |
 
 ### 5.2 R2（並行マージのサイレント消失）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | ホットファイル結合 vitest の CI 必須化 | **未着手** | TBD | `.github/pull_request_template.md`（自己申告のみ） | ホットファイル変更 PR で結合 vitest が必須ジョブとして走る |
-| P0 | コンフリクト解消後の両 PR 変更残存確認 | **未着手** | TBD | #87/#88 事例 | PR テンプレ + CI でコンフリクト解消 PR を検出し、チェック必須 |
-| P1 | ホットファイル集中期の直列マージ | **未着手** | TBD | #87/#88 事例 | 運用ルール文書化 + マージキュー縮小の実践 |
+| P0 | merge queue + required checks を主ゲート化 | **実施済み** | GitHub Ruleset | merge_group 上の required checks 運用 | main 直前で未通過変更が混入しない |
+| P0 | 競合しやすい挙動の invariant テストを追加/命名 | **実施済み** | CI | `hooks-runtime.test.ts`, `audit-visibility.test.ts` ほか | 並行マージ時も「期待挙動」で壊れたら即 fail する |
+| P1 | PR テンプレで integration risk 明示 | **実施済み** | Release operator | `.github/pull_request_template.md` `Integration risk` 節 | 重複PRの認知・invariant紐付け・required checks 確認が毎PRで残る |
 
 **対象ホットファイル:** `src/adapters/cursor/runtime-entry.ts`, `src/core/audit-*.ts`, `src/commands/health-snapshot.ts`, `src/adapters/shared/gate-runtime.ts`, `src/core/effect-ir/shell-lower.ts`, `src/defaults.ts`
 
@@ -219,64 +215,57 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | dogfood 環境スキューの doctor 可視化 | **部分実施** | TBD | `doctor.ts` linked-worktree 警告（#97） | worktree skew / runtime 混在が **警告ではなく exit code 非ゼロ** で検出 |
-| P1 | モノレポ dogfood config 伝播 CLI | **未着手** | TBD | `2026-09-02` 調査 §7.3 | `belay dogfood --recursive` または doctor fix 提案が利用可能 |
-| P1 | upgrade の runtime 単一化保証 | **未着手** | TBD | `2026-09-02` 調査 §5.3 | upgrade 後に旧 runtime が残らず、混在時は doctor が再 upgrade を促す |
-| P2 | 既定モードの再検討 | **要設計合意** | TBD | enforce 既定 | enforce deny 時に「未 dogfood」メッセージを表示 |
+| P0 | repo config trust 境界（fail-closed） | **実施済み** | Belay runtime | `ADR-010`, `repo-config-trust.ts`, `repo-config-trust.test.ts`, `doctor.test.ts` | 未trust/改ざん config は gate deny + `belay config trust` 要求 |
+| P0 | dogfood skew のブロッキングチェック分離 | **実施済み** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | release window 内の skew を exit 1 で停止できる |
+| P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `dogfood-environment.ts`, `doctor.ts` 警告, `doctor.test.ts` | dogfood active 時に未適用 worktree が可視化される |
 
 ### 5.4 R4（ホスト挙動・敵対入力の想定不足）への対策
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | シングルシェルゲート原則の明文化 | **部分実施** | TBD | CHANGELOG Unreleased, §4 本節 | ADR-009 採択 + ADR-008 Limits 更新 |
-| P1 | 敵対入力 corpus 拡充 + monotonicity | **部分実施** | TBD | `corpus/shell-commands.json`, `pnpm test:corpus` | corpus が CI 必須で ASK→ALLOW 弱化が 0 |
-| P1 | fail-closed 一貫性監査 | **未着手** | TBD | H-4（未知ツール allow） | 全アダプタで fail-closed 原則が invariant テストで固定 |
-| P2 | repo config 信頼境界（H-1〜H-3） | **要設計合意** | TBD | `security-review-2026-08-30.md` | 権限影響キーの repo レイヤ制限が ADR 化 |
+| P0 | unmapped Cursor tool の fail-closed 化 | **実施済み** | Belay runtime | `runtime-entry.ts`, `adapter-unmapped-tool-invariants.test.ts` | `preToolUse` 未対応ツールは deny されサイレント通過しない |
+| P0 | 通知チャネルから approval token 除去 | **実施済み** | Belay runtime | `notify.ts`, `notify.test.ts` | webhook / commandHook が承認トークンを外部へ出さない |
+| P1 | 通知設定の doctor 事前検証 | **実施済み** | Belay runtime | `notificationConfigIssues`, `doctor.ts` | 非HTTPS/危険path等を release 前に検出する |
 
 ### 5.5 プロセス面（クラスタ横断）
 
 | 優先度 | 対策 | status | owner | evidence | done-when |
 |--------|------|--------|-------|----------|-----------|
-| P0 | fix PR に再発防止テストを DoD 化 | **未着手** | TBD | superpowers TDD 方針 | fix ラベル PR にテスト差分が無ければ CI が落ちる |
-| P1 | リリース前 dogfood リプレイ | **未着手** | TBD | `2026-09-01` 計画 Task 4 | リリース候補で `Belay blocked` が 0 |
-| P1 | ポストモーテムの定着 | **実施済み** | TBD | 本ドキュメント + `docs/investigations/` | High 深刻度ごとに 1 ページ調査が残る運用 |
-| P2 | 変更集中期のリリース間隔調整 | **要設計合意** | TBD | 6 リリース/6-8 週 | ホットファイル集中期の結合検証強化ルールが文書化 |
+| P0 | リリース前 dogfood check 実行（対象ごと） | **実施済み** | Release operator | `docs/ops/releasing.md`, `scripts/pre-release-dogfood-check.sh`, `docs/ops/dogfood-install-targets.md` | すべての active local target で check 成功ログを PR に残す |
+| P1 | ポストモーテム運用の継続 | **実施済み** | Release operator | 本ドキュメント + `docs/investigations/` | High 事象ごとに原因と再発防止が追記される |
 
 ---
 
 ## 6. 優先実施チェックリスト
 
-§5 の status に対応。即効性と再発防止効果が高い順。
+§5 の実行項目に対応。即効性と再発防止効果が高い順。
 
 | # | 項目 | 因子 | status |
 |---|------|------|--------|
-| 1 | `preToolUse: Shell` 不在 & managed フック tombstone テスト | R1/C | 部分実施 |
-| 2 | ホットファイル触診時の結合 vitest を CI 必須ジョブ化 | R2/B | 未着手 |
-| 3 | コンフリクト解消時の「両 PR の変更残存」確認を必須化 | R2/B | 未着手 |
-| 4 | dogfood 環境スキューを doctor でブロッキング表示 | R3/A/C | 部分実施 |
-| 5 | シングルシェルゲート原則を ADR 化（§4 参照） | R4/C | 部分実施 |
-| 6 | fix PR に再発防止テスト差分が無ければ CI で落とす | 横断 | 未着手 |
-| 7 | monorepo dogfood config 伝播 CLI / doctor fix 提案 | R3/C | 未着手 |
-| 8 | 敵対入力 corpus 拡充 + monotonicity を必須 CI に | R4/E | 部分実施 |
-| 9 | fail-closed 一貫性監査（全アダプタ） | R4/D | 未着手 |
-| 10 | リリース前 dogfood リプレイゲート | 横断/C | 未着手 |
-| 11 | repo config 信頼境界の強化（H-1〜H-3） | R4/D | 要設計合意 |
+| 1 | `beforeShellExecution` 単一シェルゲート + `preToolUse:Shell` neutral lock | R1/R4 | 実施済み |
+| 2 | repo config trust fail-closed（manual edit は再trust必須） | R3/R4 | 実施済み |
+| 3 | unmapped Cursor tool fail-closed invariant | R4 | 実施済み |
+| 4 | 通知チャネルの token 非公開 + 設定バリデーション | R4 | 実施済み |
+| 5 | dogfood release check（--since window, cohort/skew blocking） | R3/横断 | 実施済み |
+| 6 | merge queue required checks + integration risk テンプレ運用 | R2/横断 | 実施済み |
 
 ---
 
 ## 7. 監視すべき指標
 
-§6 チェックリストと 1 対 1 で対応。再発防止が効いているかを継続的に測る。
+再発防止の有効性を運用で継続監視する。暫定的な語彙ベース/件数ベースヒューリスティックは品質目標から除外する。
 
 | 指標 | 対応チェックリスト # | 目標 | 取得元 |
 |------|---------------------|------|--------|
-| fix コミット比率 | —（横断 KPI） | 低下傾向（現状 ~32%） | `git log`（§0 集計方法） |
-| `restore`/`regress`/`lost` を含む PR 数 | 3, 6 | 0 に近づける | PR タイトル |
-| `hostDeniedAfterAllowCount` | 4, 10 | 0 | `belay doctor` / `summarizeAuditVisibility` |
-| audit モードでの実ブロック（`Belay blocked`） | 4, 10 | 0 | 監査ログ / リリースリプレイ |
-| `preToolUse: Shell` managed エントリの存在 | 1, 5 | 0 | `belay doctor` / installer テスト |
-| corpus の ASK→ALLOW 弱化 | 8 | CI で常に 0 | `pnpm test:corpus` |
-| doctor が検出する worktree config skew / runtime 混在 | 4, 7 | 0（解消まで可視化） | `belay doctor` |
+| Ruleset bypass merge count | 6 | 0 | GitHub Ruleset / merge audit |
+| merge_group required-check failure count | 6 | 傾向監視 + root cause を毎回記録 | merge queue 実行ログ |
+| escaped defect 数 / release（main 到達後に判明） | 1-6 横断 | 0 | release retrospective |
+| 同一 invariant の再発数 | 1-4 | 0 | failing test 履歴 / incident 連携 |
+| open High security finding age | 2,4 | 0日目標（即時 triage） | security review backlog |
+| `hostDeniedAfterAllowCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
+| `auditModeDenyCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
+| `mismatchedCohortCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
+| corpus must-ask misses | 1,4 | 0 | `pnpm corpus` |
 
 ---
 

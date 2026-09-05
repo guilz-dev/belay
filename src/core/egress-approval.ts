@@ -100,10 +100,9 @@ export async function notifyEgressDeny(params: {
     return
   }
 
-  let approvalToken: string | undefined
   if (params.config.approvalSigning.required) {
     try {
-      approvalToken = await issueApprovalToken(
+      await issueApprovalToken(
         {
           approvalId: params.approval.approvalId,
           fingerprint: params.approval.fingerprint,
@@ -114,7 +113,7 @@ export async function notifyEgressDeny(params: {
         configuredControlPlaneDir(params.config),
       )
     } catch {
-      approvalToken = undefined
+      // best-effort token pre-issue for local approval UX
     }
   }
 
@@ -124,7 +123,6 @@ export async function notifyEgressDeny(params: {
     summary: params.policyResult.summary,
     repoRoot: params.repoRoot,
     fingerprint: params.policyResult.fingerprint,
-    approvalToken,
   })
 }
 

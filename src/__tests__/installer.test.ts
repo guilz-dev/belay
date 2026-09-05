@@ -52,9 +52,12 @@ describe('agent-belay installer', () => {
     expect(hooks.hooks.beforeShellExecution[0].command).toBe(
       managedByEvent.beforeShellExecution.command,
     )
-    expect(
-      hooks.hooks.preToolUse.map((entry: { matcher?: string }) => entry.matcher).sort(),
-    ).toEqual(['Delete', 'StrReplace', 'Task', 'Write'])
+    expect(hooks.hooks.preToolUse).toEqual([
+      {
+        command: managed.find((entry) => entry.event === 'preToolUse')?.definition.command,
+        failClosed: true,
+      },
+    ])
     expect(
       hooks.hooks.subagentStart.map((entry: { matcher?: string }) => entry.matcher).sort(),
     ).toEqual(['bugbot', 'computerUse', 'debug', 'explore', 'generalPurpose', 'videoReview'])

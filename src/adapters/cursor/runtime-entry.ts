@@ -7,6 +7,7 @@ import {
   formatAmbiguousApprovalRepoMessage,
 } from '../../core/approval-repo-lookup.js'
 import { DEFAULT_CONFIG_V4 } from '../../core/config.js'
+import { isRepoConfigTrustError } from '../../core/repo-config-trust.js'
 import { cursorLayout } from '../layouts/cursor.js'
 import type { GateRuntimeContext } from '../shared/gate-runtime.js'
 import {
@@ -163,6 +164,18 @@ function isFileMutationTool(toolName: string): boolean {
   return toolName === 'Write' || toolName === 'StrReplace' || toolName === 'Delete'
 }
 
+function isCursorPreToolUseEvent(eventName: string): boolean {
+  return eventName === 'preToolUse' || eventName === 'PreToolUse'
+}
+
+function unmappedCursorToolDeny(toolName: string): { permission: 'deny'; user_message: string } {
+  const displayName = toolName.trim() ? `"${toolName.trim()}"` : '<missing tool_name>'
+  return {
+    permission: 'deny',
+    user_message: `belay denied unmapped Cursor tool ${displayName}. Run belay doctor, then upgrade belay if needed.`,
+  }
+}
+
 export async function handleBeforeSubmitPromptHook(payload: Record<string, unknown>) {
   try {
     const prompt = String(payload.prompt ?? '')
@@ -189,7 +202,13 @@ export async function handleBeforeSubmitPromptHook(payload: Record<string, unkno
       ...(result.user_message ? { user_message: result.user_message } : {}),
       ...(result.replay ? { replay: result.replay } : {}),
     }
-  } catch {
+  } catch (error) {
+    if (isRepoConfigTrustError(error)) {
+      return {
+        continue: false,
+        user_message: error.message,
+      }
+    }
     return {
       continue: false,
       user_message: 'belay failed while processing approval state. Run belay doctor, then retry.',
@@ -224,7 +243,13 @@ export async function handleShellGateHook(payload: Record<string, unknown>) {
       sourceEvent: 'beforeShellExecution',
     })
     return gateVerdictToCursorResponse(verdict)
-  } catch {
+  } catch (error) {
+    if (isRepoConfigTrustError(error)) {
+      return {
+        permission: 'deny',
+        user_message: error.message,
+      }
+    }
     return {
       permission: 'deny',
       user_message:
@@ -258,22 +283,15 @@ export async function handleToolGateHook(eventName: string, payload: Record<stri
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
 
+    if (isCursorPreToolUseEvent(eventName) && toolName === 'Shell') {
+      return { permission: 'allow' }
+    }
+
     if (isSubagentEvent(payload, eventName)) {
       const verdict = await evaluateGatedAction(ctx, deps, {
         kind: 'subagent',
         cwd,
         payload,
-        sourceEvent: eventName,
-      })
-      return gateVerdictToCursorResponse(verdict)
-    }
-
-    if (toolName === 'Shell') {
-      const verdict = await evaluateGatedAction(ctx, deps, {
-        kind: 'shell',
-        cwd,
-        payload,
-        toolName,
         sourceEvent: eventName,
       })
       return gateVerdictToCursorResponse(verdict)
@@ -300,8 +318,18 @@ export async function handleToolGateHook(eventName: string, payload: Record<stri
       return gateVerdictToCursorResponse(verdict)
     }
 
+    if (isCursorPreToolUseEvent(eventName)) {
+      return unmappedCursorToolDeny(toolName)
+    }
+
     return { permission: 'allow' }
-  } catch {
+  } catch (error) {
+    if (isRepoConfigTrustError(error)) {
+      return {
+        permission: 'deny',
+        user_message: error.message,
+      }
+    }
     return {
       permission: 'deny',
       user_message:

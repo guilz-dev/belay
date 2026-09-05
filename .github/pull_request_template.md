@@ -19,12 +19,9 @@
 - [ ] `pnpm corpus`
 - [ ] `pnpm probe:adversarial` (if quality-loop related)
 
-## Parallel merge hazard
+## Integration risk
 
-<!-- Required when this PR touches runtime-entry, audit-*, or health-snapshot
-     AND another open/recently-merged PR touched the same files -->
-
-- [ ] listed overlapping PR(s): #
-- [ ] ran combined verification:
-      pnpm exec vitest run src/__tests__/cursor-host-denial-invariants.test.ts \
-        src/__tests__/hooks-runtime.test.ts src/__tests__/audit-visibility.test.ts
+- [ ] overlapping open/recent PRs identified
+- [ ] behavior-level invariant added or named
+- [ ] merge queue required checks passed on latest main
+- [ ] break-glass bypass not used (or incident link supplied)

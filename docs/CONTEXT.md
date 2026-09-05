@@ -6,7 +6,9 @@ authorization model. It complements
 [ADR-004](./adr/ADR-004-effectplan-shell-authority.md),
 [ADR-005](./adr/ADR-005-command-allowlist-prohibition.md),
 [ADR-006](./adr/ADR-006-contained-unknown-execution.md), and
-[ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
+[ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md),
+[ADR-009](./adr/ADR-009-single-cursor-shell-gate.md), and
+[ADR-010](./adr/ADR-010-repository-config-trust.md).
 
 ## Core objects
 
@@ -99,6 +101,17 @@ authorization model. It complements
     `sessionEnd` is fire-and-forget. This is source precedence only: distinct canonical events and
     repeated effective-owner deliveries remain separate hook processes
     ([ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md)).
+15. **Single Cursor shell classification**: `beforeShellExecution` is the only Belay-managed Cursor
+    shell authority point. Managed hooks must not classify shell actions again via
+    `preToolUse: Shell`; if unfiltered `preToolUse` routing is present, `tool_name: "Shell"` is
+    neutral allow with no policy evaluation, approval mutation, or shell audit append
+    ([ADR-009](./adr/ADR-009-single-cursor-shell-gate.md)).
+16. **Repository config authority requires explicit trust**: repository config cannot influence
+    policy layering until its canonicalized parsed content matches an explicit trust record for the
+    canonical repository root and adapter. Missing, malformed, identity-mismatched, or
+    fingerprint-mismatched records fail closed before policy evaluation. Belay-managed writes
+    refresh trust atomically; manual edits require explicit re-trust through
+    `belay config trust` ([ADR-010](./adr/ADR-010-repository-config-trust.md)).
 
 ## Policy precedence
 

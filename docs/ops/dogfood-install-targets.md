@@ -33,6 +33,18 @@ dogfood (`mode: audit`, `unknownLocalEffect: deny`).
 
 See [releasing.md](./releasing.md) for publish steps.
 
+## Pre-release blocking check
+
+Before tagging a release, pick one release-window cutoff timestamp (`since`, ISO8601) and run
+this command for **each active local target** corresponding to the repositories above:
+
+```bash
+scripts/pre-release-dogfood-check.sh <target-dir> <since-iso>
+```
+
+The check must pass for every active target. Copy the cutoff timestamp and command output into
+the release PR.
+
 ## Out of scope
 
 - **zoe-llc/avoid-shadow** — legacy `enforce` install (0.4.x); not on this roster

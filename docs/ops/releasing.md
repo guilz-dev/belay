@@ -53,7 +53,17 @@ scripts/pre-release-check.sh
 That script runs lint, typecheck, tests, corpus, build, CLI version checks, and
 `npm pack --dry-run`. Do not publish if it fails.
 
-6. Verify Ubuntu and macOS CI are green on the release commit.
+6. Choose one release-window cutoff (`since` ISO8601), then run local dogfood checks for
+   **every active target** listed in [dogfood-install-targets.md](./dogfood-install-targets.md):
+
+```bash
+scripts/pre-release-dogfood-check.sh <target-dir> <since-iso>
+```
+
+   Record the cutoff timestamp and each command output in the release PR.
+   This is a local operator gate; do **not** move it into public GitHub CI.
+
+7. Verify Ubuntu and macOS CI are green on the release commit.
 
 ## Release steps
 

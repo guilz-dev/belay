@@ -54,7 +54,7 @@ function mergeHookEntry(
   return [...filtered, expected]
 }
 
-/** Managed Shell preToolUse gate for Cursor Agent Shell tool invocations. */
+/** Legacy managed Shell preToolUse gate matcher (upgrade/uninstall migration only). */
 export function managedShellPreToolUseEntry(
   platform: NodeJS.Platform,
   hooksDir: string,
@@ -62,7 +62,7 @@ export function managedShellPreToolUseEntry(
 ): HookEntry {
   const managed = getManagedHookEntries(platform, hooksDir, repoRoot)
   const referencePreToolUse = managed.find(
-    (entry) => entry.event === 'preToolUse' && entry.definition.matcher === 'Write',
+    (entry) => entry.event === 'preToolUse' && entry.definition.matcher === undefined,
   )?.definition
   if (!referencePreToolUse) {
     throw new Error('managed hook definitions missing for Shell preToolUse gate')
@@ -142,7 +142,7 @@ export function legacyManagedShellPreToolUseVariants(
   const legacyEntries = legacyManagedEntries(platform, hooksDir, repoRoot)
   const commands = new Set<string>([shellEntry.command])
   for (const entry of legacyEntries) {
-    if (entry.event === 'preToolUse' && entry.definition.matcher === 'Write') {
+    if (entry.event === 'preToolUse') {
       commands.add(entry.definition.command)
     }
   }

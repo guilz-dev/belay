@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
-import { pendingApprovalsPath } from '../config-io.js'
+import { pendingApprovalsPath, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -462,6 +462,46 @@ describe('doctorProject', () => {
     expect(report.warnings.some((warning) => warning.includes('missing "version"'))).toBe(true)
   })
 
+  it('reports repository config trust mismatch after a manual config edit', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-untrusted-config-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>
+    await writeFile(configPath, `${JSON.stringify({ ...config, mode: 'audit' })}\n`)
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.includes('Repository config is not trusted') &&
+          issue.includes('belay config trust'),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not auto-trust manual config edits in doctor --fix', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-untrusted-fix-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>
+    await writeFile(configPath, `${JSON.stringify({ ...config, mode: 'audit' })}\n`)
+
+    const report = await doctorProject({ targetDir: repoRoot, fix: true })
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.includes('Repository config is not trusted') &&
+          issue.includes('belay config trust'),
+      ),
+    ).toBe(true)
+  })
+
   it('warns when global Cursor runtime lacks payload-based workspace resolution', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-cwd-'))
     const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-global-home-'))
@@ -712,6 +752,25 @@ describe('doctorProject', () => {
       report.warnings.some((warning) => warning.includes('notification channel is configured')),
     ).toBe(true)
     expect(report.notes.some((note) => note.includes('Recovery restore flow'))).toBe(true)
+  })
+
+  it('reports invalid notification webhook and command hook settings', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-notify-config-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    await writeTrustedConfigFile(repoRoot, {
+      ...config,
+      notifications: {
+        webhookUrl: 'http://example.com/notify',
+        commandHook: './notify.sh',
+      },
+    })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    expect(report.issues.some((issue) => issue.includes('notifications.webhookUrl'))).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('notifications.commandHook'))).toBe(true)
   })
 
   it('diagnoses incomplete file-checkpoint prerequisites and clone support', async () => {

@@ -369,7 +369,7 @@ describe.sequential('Cursor hook source precedence integration', () => {
     expect(await readFile(auditPath, 'utf8')).toBe('')
   })
 
-  it('keeps the global source neutral when an omitted scope has a callable project owner', async () => {
+  it('keeps the global source neutral when an omitted scope routes to the project owner', async () => {
     const homeRoot = await createTempDir('agent-belay-cursor-home-')
     const projectRoot = await createTempDir('agent-belay-cursor-complete-project-owner-')
     process.env.HOME = homeRoot
@@ -399,7 +399,10 @@ describe.sequential('Cursor hook source precedence integration', () => {
 
     expect([globalResult, projectResult].map((result) => JSON.parse(result.stdout))).toEqual([
       { permission: 'allow' },
-      { permission: 'allow' },
+      {
+        permission: 'deny',
+        user_message: 'Repository config is not trusted. Review it, then run `belay config trust`.',
+      },
     ])
     expect(await markerLoads(markerPath)).toEqual(['project'])
   })
