@@ -95,11 +95,14 @@ authorization model. It complements
     action repository, and the Project origin persisted in shims is canonical rather than the
     lexical install path. Omitted scope means Project; only a missing config is neutral, while a
     present broken config remains Project-owned and fails closed in config loading. Scope changes
-    stage the new owner before publishing the selection. Non-owners are neutral and cannot import
-    the heavy core or touch approval, control-plane, or audit state. Managed Cursor entries set the
-    host's `failClosed` option, but post-action events cannot undo completed effects and
-    `sessionEnd` is fire-and-forget. This is source precedence only: distinct canonical events and
-    repeated effective-owner deliveries remain separate hook processes
+    stage the new owner before publishing the selection. An untrusted global scope retains a
+    detectable existing Project installation as owner; without one, User/global imports the core
+    and the core fails closed on config trust. This continuity check cannot grant repository config
+    policy authority. Non-owners are neutral and cannot import the heavy core or touch approval,
+    control-plane, or audit state. Managed Cursor entries set the host's `failClosed` option, but
+    post-action events cannot undo completed effects and `sessionEnd` is fire-and-forget. This is
+    source precedence only: distinct canonical events and repeated effective-owner deliveries
+    remain separate hook processes
     ([ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md)).
 15. **Single Cursor shell classification**: `beforeShellExecution` is the only Belay-managed Cursor
     shell authority point. Managed hooks must not classify shell actions again via

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { loadConfigFile } from '../config-io.js'
+import { repoConfigTrustPath } from '../core/repo-config-trust.js'
 import { initProject, upgradeProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -325,6 +326,37 @@ describe.sequential('Cursor hook source precedence integration', () => {
     expect(JSON.parse(result.stdout)).toEqual({ permission: 'allow' })
     expect(await markerLoads(markerPath)).toEqual(['global-only'])
     expect(await auditRecords(projectRoot)).toHaveLength(1)
+  })
+
+  it('routes a global-only owner through core when its config trust record is missing', async () => {
+    const homeRoot = await createTempDir('agent-belay-cursor-home-')
+    const projectRoot = await createTempDir('agent-belay-cursor-untrusted-global-only-')
+    process.env.HOME = homeRoot
+    process.env.USERPROFILE = homeRoot
+    await initProject({ targetDir: projectRoot, scope: 'global' })
+    const globalCursorRoot = path.join(homeRoot, '.cursor')
+    await prependCoreMarker(
+      path.join(globalCursorRoot, 'belay', 'runtime'),
+      'untrusted-global-only',
+    )
+    await writeFile(path.join(projectRoot, (await loadConfigFile(projectRoot)).audit.logPath), '')
+    await rm(repoConfigTrustPath(projectRoot, 'cursor'))
+    const markerPath = path.join(homeRoot, 'untrusted-global-only-core-imports.txt')
+
+    const result = await runManagedCommand(
+      await managedCommand(path.join(globalCursorRoot, 'hooks.json'), 'beforeShellExecution'),
+      { command: 'git status', cwd: projectRoot },
+      homeRoot,
+      markerPath,
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({
+      permission: 'deny',
+      user_message: 'Repository config is not trusted. Review it, then run `belay config trust`.',
+    })
+    expect(await markerLoads(markerPath)).toEqual(['untrusted-global-only'])
+    expect(await auditRecords(projectRoot)).toHaveLength(0)
   })
 
   it.each([

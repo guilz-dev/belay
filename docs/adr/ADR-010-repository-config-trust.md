@@ -17,7 +17,10 @@ operator review.
 ## Decision
 
 1. **Explicit trust boundary** — Repository config has no policy authority until explicitly trusted
-   by Belay CLI for the current repository identity and adapter.
+   by Belay CLI for the current repository identity and adapter. Cursor routing may compare trust
+   status only to preserve an already detectable Project owner as specified by ADR-008; that
+   comparison does not grant config authority. A global-only installation still routes through its
+   User/global core so the core can enforce this trust boundary.
 2. **Cursor workspace trust is insufficient** — Host workspace trust is a separate control and does
    not replace Belay's explicit config trust.
 3. **Out-of-scope same-user control-plane tampering** — Environments where the same OS user can
