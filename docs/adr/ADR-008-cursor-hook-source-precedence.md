@@ -26,7 +26,13 @@ also make one repository look like two sources.
 2. **Project precedence** — For an action repository whose config declares
    `installScope: "project"`, the matching Project installation owns the event and User/global and
    nonmatching Project sources are neutral. For a config declaring `installScope: "global"`, the
-   User/global installation owns the event and Project sources are neutral. Omitted scope means
+   User/global installation owns the event and Project sources are neutral. If that global scope is
+   not trusted yet, however, routing retains a detectable existing Project installation as owner so
+   an untrusted workspace edit cannot disable the installed enforcement source. A detectable
+   Project installation has a runnable platform runner and dispatcher. When no such Project
+   installation exists, the User/global source owns the event and imports the core, which rejects
+   the untrusted config before policy evaluation under ADR-010. Trust status therefore preserves
+   owner continuity but never grants repository config policy authority. Omitted scope means
    Project. Only an absent config is neutral; if the config path is present but unreadable,
    malformed, structurally invalid, or declares an invalid scope, routing retains the matching
    Project owner and lets config loading fail closed. Config replacement is same-directory and
@@ -72,9 +78,9 @@ also make one repository look like two sources.
    expected adapter artifact set.
 
 8. **Routing-only dispatcher** — The dispatcher bundle may contain payload validation, canonical
-   repository discovery, scope selection, and artifact-presence probes. It must not bundle the
-   full adapter layout, config defaults, policy, or audit modules. Only the selected owner imports
-   `core.mjs` dynamically.
+   repository discovery, scope selection, config-trust comparison for owner continuity, and
+   artifact-presence probes. It must not bundle the full adapter layout, config defaults, policy,
+   or audit modules. Only the selected owner imports `core.mjs` dynamically.
 
 ## Consequences
 
