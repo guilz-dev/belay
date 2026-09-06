@@ -7,6 +7,7 @@ import {
   getCodexManagedHookEntries,
 } from '../adapters/codex/hooks.js'
 import { hasCurrentCursorDispatcherGeneration } from '../adapters/cursor/dispatcher-generation.js'
+import { cursorHookRoutingIssues } from '../adapters/cursor/hook-routing-health.js'
 import {
   hasLegacyCursorDoubleShellGates,
   hasManagedCursorHookEntries,
@@ -340,6 +341,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   }
   if (adapterName === 'cursor') {
     issues.push(...(await cursorOriginIssues(hooksDir, installScope, repoRoot)))
+    if (adapterName === 'cursor') {
+      issues.push(...cursorHookRoutingIssues(repoRoot))
+    }
     const dispatcherPath = path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')
     if (
       existsSync(dispatcherPath) &&

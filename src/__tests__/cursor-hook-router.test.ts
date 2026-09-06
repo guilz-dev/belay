@@ -410,6 +410,22 @@ describe('routeCursorHook', () => {
     ).toEqual({ decision: 'neutral' })
   })
 
+  it('keeps global hooks neutral when no repository marker can be discovered from an unreadable directory', async () => {
+    const unreadableDir = await createTempDir('belay-cursor-unreadable-unowned-route-')
+    await chmod(unreadableDir, 0o600)
+    try {
+      expect(
+        routeCursorHook({
+          origin: { scope: 'global' },
+          kind: 'shell-gate',
+          payload: { cwd: unreadableDir },
+        }),
+      ).toEqual({ decision: 'neutral' })
+    } finally {
+      await chmod(unreadableDir, 0o700)
+    }
+  })
+
   it.each([
     {
       name: 'managed hook entry',

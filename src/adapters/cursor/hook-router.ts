@@ -20,6 +20,9 @@ export type CursorHookRoute =
   | { decision: 'neutral' }
   | { decision: 'fail_closed'; message: string }
 
+export const CURSOR_GLOBAL_SENTINEL_BLOCK_MESSAGE =
+  'belay project hook owner is unavailable; the global sentinel blocked this action.'
+
 export interface RouteCursorHookParams {
   origin: CursorHookOrigin
   kind: CursorHookKind
@@ -277,6 +280,13 @@ function selectedActionPath(payload: Record<string, unknown>): string | undefine
   return undefined
 }
 
+function hasRoutingRootMarker(dir: string): boolean {
+  return (
+    existsSync(path.join(dir, '.git')) ||
+    (existsSync(path.join(dir, '.cursor')) && existsSync(cursorRoutingConfigPath(dir)))
+  )
+}
+
 function readInstallScope(repoRoot: string): RoutingInstallScope {
   const configPath = cursorRoutingConfigPath(repoRoot)
   let source: string
@@ -319,8 +329,15 @@ export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute 
   if (!canonicalCwd) {
     return { decision: 'fail_closed', message: 'belay could not determine the workspace.' }
   }
-  const repoRoot = canonicalExistingPath(findCursorRoutingRepoRoot(canonicalCwd))
+  const discoveredRepoRoot = findCursorRoutingRepoRoot(canonicalCwd)
+  const repoRoot = canonicalExistingPath(discoveredRepoRoot)
   if (!repoRoot) {
+    return { decision: 'neutral' }
+  }
+  // If repository discovery fell back to the action directory without finding a marker,
+  // keep the global source neutral instead of treating an unreadable/non-repo directory
+  // as a broken project owner.
+  if (repoRoot === canonicalCwd && !hasRoutingRootMarker(repoRoot)) {
     return { decision: 'neutral' }
   }
   const installScope = readInstallScope(repoRoot)
@@ -344,8 +361,7 @@ export function routeCursorHook(params: RouteCursorHookParams): CursorHookRoute 
       ? { decision: 'neutral' }
       : {
           decision: 'fail_closed',
-          message:
-            'belay project hook owner is unavailable; the global sentinel blocked this action.',
+          message: `${CURSOR_GLOBAL_SENTINEL_BLOCK_MESSAGE} Run belay doctor from this repository to diagnose hook routing.`,
         }
   }
   const complete =
