@@ -35,7 +35,9 @@ describe('cursorHookRoutingIssues', () => {
   })
 
   it('flags an incomplete project owner that the global sentinel would block', async () => {
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-routing-health-incomplete-'))
+    const repoRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-cursor-routing-health-incomplete-'),
+    )
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot, scope: 'project' })
     await rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))
@@ -47,7 +49,9 @@ describe('cursorHookRoutingIssues', () => {
   })
 
   it('flags stale partial project artifacts on an untrusted global-only install', async () => {
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-routing-health-stale-global-'))
+    const repoRoot = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-cursor-routing-health-stale-global-'),
+    )
     const homeDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-routing-health-stale-home-'))
     tempDirs.push(repoRoot, homeDir)
     process.env.HOME = homeDir
@@ -55,10 +59,7 @@ describe('cursorHookRoutingIssues', () => {
     await initProject({ targetDir: repoRoot, scope: 'global' })
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
     const config = JSON.parse(await readFile(configPath, 'utf8'))
-    await writeFile(
-      configPath,
-      `${JSON.stringify({ ...config, mode: 'audit' })}\n`,
-    )
+    await writeFile(configPath, `${JSON.stringify({ ...config, mode: 'audit' })}\n`)
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
     const runtimeDir = path.join(repoRoot, '.cursor', 'belay', 'runtime')
     await mkdir(hooksDir, { recursive: true })

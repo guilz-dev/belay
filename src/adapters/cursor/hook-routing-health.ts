@@ -2,8 +2,8 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 
 import {
   CURSOR_GLOBAL_SENTINEL_BLOCK_MESSAGE,
-  routeCursorHook,
   type CursorHookKind,
+  routeCursorHook,
 } from './hook-router.js'
 import { cursorRoutingConfigPath } from './routing-layout.js'
 
