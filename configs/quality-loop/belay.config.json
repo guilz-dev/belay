@@ -13,7 +13,7 @@
   "policy": {
     "unknownLocalEffect": "deny",
     "unparseableShell": "deny",
-    "codexUnmappedTool": "deny",
+    "codexUnmappedTool": "allow",
     "fenceWarnThreshold": 0.5,
     "confidenceThresholds": {
       "allow": 0.88,

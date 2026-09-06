@@ -33,7 +33,7 @@ describe('effect-plan coverage', () => {
         repoRoot: '/repo',
         cwd: '/repo',
         toolName: 'Write',
-        payload: { tool_name: 'Write', tool_input: { file_path: '/repo/out.txt' } },
+        payload: { tool_name: 'Write', tool_input: { path: '/repo/out.txt', contents: 'x' } },
       }),
       DEFAULT_CONFIG_V3,
     )

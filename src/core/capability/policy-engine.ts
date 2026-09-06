@@ -1180,3 +1180,60 @@ export function evaluateFileMutationPolicy(
   )
   return { request, decision }
 }
+
+export interface FileReadCapabilityAnalysis {
+  hookKind: CapabilityHookKind
+  toolKind: string
+  filePath: string
+  resolvedPath: string
+  repoRoot: string
+  cwd: string
+  inputFingerprint: string
+  signals: string[]
+  locationLabel: 'repo_local' | 'outside_repo' | 'sensitive_path' | 'control_plane'
+  trustedWorkspaceRoots?: string[]
+  sensitivePaths?: string[]
+  adapter?: string
+}
+
+export function buildFileReadCapabilityRequest(
+  analysis: FileReadCapabilityAnalysis,
+): CapabilityRequestV1 {
+  return {
+    version: CAPABILITY_REQUEST_VERSION,
+    principal: {
+      adapter: analysis.adapter,
+      repoRoot: analysis.repoRoot,
+      sessionHash: hashSession(`${analysis.repoRoot}:${analysis.cwd}`),
+    },
+    action: 'fs.read',
+    resource: { kind: 'path', path: analysis.resolvedPath },
+    context: {
+      cwd: analysis.cwd,
+      inputFingerprint: analysis.inputFingerprint,
+      hookKind: analysis.hookKind,
+      analysisBasis: [`tool:${analysis.toolKind}`, `location:${analysis.locationLabel}`, 'read'],
+    },
+    evidence: {
+      level: analysis.locationLabel === 'repo_local' ? 'certain' : 'possible',
+      signals: [...analysis.signals, 'effect.fs_read'],
+    },
+  }
+}
+
+export function evaluateFileReadPolicy(
+  analysis: FileReadCapabilityAnalysis,
+  config: BelayConfigV4,
+  auth?: PolicyAuthExtras,
+): { request: CapabilityRequestV1; decision: PolicyDecision } {
+  const request = buildFileReadCapabilityRequest(analysis)
+  const enriched = enrichAuthWithMaterializedGrants(request, config, {
+    ...auth,
+    sensitivePaths: auth?.sensitivePaths ?? analysis.sensitivePaths,
+  })
+  const decision = getDefaultPolicyEngine().evaluate(
+    request,
+    buildAuthorizationContext(config, analysis.trustedWorkspaceRoots, enriched),
+  )
+  return { request, decision }
+}

@@ -416,7 +416,7 @@ export const LEGACY_POLICY_V3: BelayPolicyConfig = {
 export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'deny',
-  codexUnmappedTool: 'deny',
+  codexUnmappedTool: 'allow',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
   transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
@@ -1194,7 +1194,7 @@ export function normalizeConfig(
           : v4.policy?.unparseableShell === 'allow_flagged'
             ? 'allow_flagged'
             : DEFAULT_POLICY_V3.unparseableShell,
-      codexUnmappedTool: v4.policy?.codexUnmappedTool === 'allow' ? 'allow' : 'deny',
+      codexUnmappedTool: 'allow',
       fenceWarnThreshold:
         typeof v4.policy?.fenceWarnThreshold === 'number' &&
         v4.policy.fenceWarnThreshold > 0 &&

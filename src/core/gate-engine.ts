@@ -406,16 +406,8 @@ export function gateEnabledForAction(config: BelayConfigV3, action: GatedAction)
   if (action.kind === 'subagent') {
     return config.gates.subagent
   }
-
-  const toolName = action.toolName ?? String(action.payload?.tool_name ?? '')
-  if (toolName === 'Shell') {
-    return config.gates.toolShell
-  }
-  if (toolName === 'Write' || toolName === 'StrReplace' || toolName === 'Delete') {
-    return config.gates.fileMutation
-  }
-  if (toolName === 'Task') {
-    return config.gates.subagent
+  if (action.kind === 'tool') {
+    return config.gates.fileMutation || config.gates.toolShell
   }
   return true
 }

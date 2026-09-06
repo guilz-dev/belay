@@ -311,7 +311,30 @@ describe('classifyToolUse', () => {
     )
   })
 
-  it('denies writes to the control plane directory (R8)', async () => {
+  it('allows routine Read tool calls via fs.read effect policy', async () => {
+    const filePath = path.join(repoRoot, 'notes.txt')
+    const result = await classifyToolUse(
+      { tool_name: 'Read', tool_input: { file_path: filePath } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('effect.fs_read')
+  })
+
+  it('allows Grep via search-read effect without tool-name allowlist', async () => {
+    const result = await classifyToolUse(
+      { tool_name: 'Grep', tool_input: { pattern: 'foo', path: repoRoot } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('effect.search_read')
+  })
+
+  it('denies control plane writes to the control plane directory (R8)', async () => {
     const controlPlaneDir = '/home/user/.config/agent-belay'
     const result = await classifyToolUse(
       {
