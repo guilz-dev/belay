@@ -218,6 +218,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | P0 | repo config trust 境界（fail-closed） | **是正PR作成中** | Belay runtime | `ADR-010`, `repo-config-trust.ts`, `repo-config-trust.test.ts`, `doctor.test.ts` | 未trust/改ざん config は routing / policy 評価前に gate deny + `belay config trust` 要求 |
 | P0 | dogfood skew のブロッキングチェック分離 | **是正PR作成中** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | 指定 adapter の release window 内 skew を exit 1 で停止できる |
 | P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `dogfood-environment.ts`, `doctor.ts` 警告, `doctor.test.ts` | dogfood active 時に未適用 worktree が可視化される |
+| P1 | global sentinel ブロックの doctor 事前検知 | **実施済み** | Belay runtime | `hook-routing-health.ts`, `doctor.ts`, `cursor-hook-routing-health.test.ts` | `belay doctor` が global sentinel の fail-closed 状態を upgrade/trust 手順付きで報告する |
 
 ### 5.4 R4（ホスト挙動・敵対入力の想定不足）への対策
 
@@ -286,4 +287,4 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 |------|------|
 | 2026-09-04 | 初版 — git 履歴横断でクラスタ分類、横断因子 R1〜R4 と再発防止策を策定 |
 | 2026-09-04 | 改稿 — 集計方法の明記（211 コミット）、PR 根拠トレース、§4 ADR 境界明示、§5 status/owner/evidence/done-when 形式、チェックリストと指標の対応整理 |
-| 2026-09-04 | 事実修正 — `213d8af` を #91 に帰属、R1/D の表現弱化、v0.8.2 脚注、非慣習 subject 注記、owner を TBD に |
+| 2026-09-06 | 追記 — global sentinel ブロック 3 回目（guilz-trace → reg-score/zoe）。PR #107 の routing 修正後も doctor が sentinel ブロックを事前検知できず手動 upgrade/trust が必要だった。`cursorHookRoutingIssues` を doctor に接続し、fail-closed メッセージに修復手順を追加 |

@@ -148,6 +148,23 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
+  it('reports when the global sentinel would block an incomplete project owner', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-sentinel-block-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    await rm(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(report.ok).toBe(false)
+    expect(
+      report.issues.some((issue) => issue.includes('Global Cursor sentinel would block')),
+    ).toBe(true)
+    expect(report.issues.some((issue) => issue.includes('belay upgrade --scope project'))).toBe(
+      true,
+    )
+  })
+
   it('does not mislabel missing audit or approval state as an incomplete routing owner', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-missing-state-'))
     tempDirs.push(repoRoot)
