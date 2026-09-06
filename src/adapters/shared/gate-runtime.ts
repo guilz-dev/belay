@@ -119,7 +119,6 @@ import {
   scrubOptionsFromConfig,
   scrubString,
   scrubValue,
-  toolFingerprint,
 } from '../../core/index.js'
 import {
   extractJudgeFallbackReason,
@@ -1005,25 +1004,7 @@ export async function evaluateGatedAction(
     ...authorization,
     egressProxyActive,
   }
-  let predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
-  if (
-    action.kind === 'tool' &&
-    predicted.reason === 'unclassified_tool' &&
-    (ctx.config.policy.codexUnmappedTool ?? 'deny') === 'deny'
-  ) {
-    predicted = {
-      ...predicted,
-      verdict: 'deny_pending_approval',
-      reason: 'unmapped_tool',
-      assessment: {
-        reversibility: 'irreversible',
-        external: false,
-        blastRadius: 'unknown tool action',
-        confidence: 0.5,
-        signals: ['unmapped_tool'],
-      },
-    }
-  }
+  const predicted = await classifyGatedActionAsync(action, ctx.config, enrichedClassifierOptions)
 
   if (
     action.kind === 'shell' &&
@@ -1180,47 +1161,6 @@ export async function evaluateGatedAction(
     },
     classifierOptions: enrichedClassifierOptions,
     scopeHintPayload: params.payload,
-  })
-}
-
-/** R39: unmapped Codex tools ask via pending approval — not hard deny without approval path. */
-export async function gateUnmappedToolVerdict(
-  ctx: GateRuntimeContext,
-  deps: GateRuntimeDeps,
-  toolName: string,
-  payload: Record<string, unknown>,
-): Promise<GateVerdict> {
-  const scrubOpts = scrubOptionsFromConfig(ctx.config)
-  const replayPayload = fingerprintReplayPayload('tool', payload, scrubOpts) ?? {}
-  const result: ClassifyResult = {
-    verdict: 'deny_pending_approval',
-    reason: 'unmapped_tool',
-    summary: toolName,
-    fingerprint: toolFingerprint(toolName, replayPayload, ctx.repoRoot),
-    assessment: {
-      reversibility: 'irreversible',
-      external: false,
-      blastRadius: 'unknown Codex tool action',
-      confidence: 0.5,
-      signals: ['unmapped_tool'],
-    },
-  }
-  return gateDecisionToVerdict(ctx, deps, 'tool', result, {
-    approvalInput: {
-      input: toolName,
-      inputKind: 'tool',
-      cwd: ctx.repoRoot,
-      toolName,
-      payload: replayPayload,
-    },
-    replayAction: {
-      kind: 'tool',
-      cwd: ctx.repoRoot,
-      toolName,
-      payload: replayPayload,
-      fingerprint: result.fingerprint,
-      repoRoot: ctx.repoRoot,
-    },
   })
 }
 

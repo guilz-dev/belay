@@ -135,7 +135,7 @@ belay config judge                        # same summary as belay judge status
 |-------|--------|---------|
 | `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"allow_flagged"` |
 | `unparseableShell` | `"deny"` \| `"allow_flagged"` | `"deny"` |
-| `codexUnmappedTool` | `"deny"` \| `"allow"` | `"deny"` (legacy name; shared unmapped-tool policy; `allow` records to audit) |
+| `codexUnmappedTool` | `"deny"` \| `"allow"` | `"allow"` (deprecated; ignored at runtime — tools use effect policy) |
 | `fenceWarnThreshold` | number | `0.5` (silent-pass rate below which `report`/`doctor` warn of over-blocking) |
 | `confidenceThresholds` | `{ allow, flag }` | `0.88` / `0.72` |
 | `modelAssist` | `{ enabled, timeoutMs }` | off |

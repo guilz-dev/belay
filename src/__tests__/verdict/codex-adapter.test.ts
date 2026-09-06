@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -179,16 +179,12 @@ describe('codex adapter (experimental)', () => {
       })
     })
 
-    it('unmapped Codex tool asks with pending approval (R39 TD)', async () => {
+    it('unmapped Codex tool uses effect policy instead of tool-name denylist', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-unmapped-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
-      const configPath = codexLayout.configPath(repoRoot)
       const installed = await loadConfigFile(repoRoot)
-      await writeFile(
-        configPath,
-        `${JSON.stringify(mergeConfig({ ...installed, mode: 'enforce' }), null, 2)}\n`,
-      )
+      await writeTrustedConfigFile(repoRoot, mergeConfig({ ...installed, mode: 'enforce' }))
 
       const result = await runCodexRunner(
         repoRoot,
@@ -199,19 +195,8 @@ describe('codex adapter (experimental)', () => {
         },
         ['PreToolUse'],
       )
-      const response = JSON.parse(result.stdout) as {
-        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string }
-      }
-      expect(response.hookSpecificOutput?.permissionDecision).toBe('deny')
-      expect(response.hookSpecificOutput?.permissionDecisionReason).toContain('Approval ID:')
-
-      const config = await loadConfigFile(repoRoot)
-      const pending = JSON.parse(
-        await readFile(pendingApprovalsPath(repoRoot, config), 'utf8'),
-      ) as {
-        approvals: unknown[]
-      }
-      expect(pending.approvals).toHaveLength(1)
+      const response = JSON.parse(result.stdout || '{}') as Record<string, unknown>
+      expect(response).toEqual({})
     })
 
     it('uses Shell action directory for PreToolUse approval state', async () => {
@@ -322,14 +307,14 @@ describe('codex adapter (experimental)', () => {
       expect(events).toContain('SubagentStart')
     })
 
-    it('default belay config sets codexUnmappedTool policy to deny (asks via approval path)', async () => {
+    it('default belay config sets codexUnmappedTool policy to allow (tool-name denylist removed)', async () => {
       const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-codex-policy-'))
       await mkdir(path.join(repoRoot, '.git'))
       await codexAdapter.install(repoRoot, {})
       const config = JSON.parse(await readFile(codexLayout.configPath(repoRoot), 'utf8')) as {
         policy?: { codexUnmappedTool?: string }
       }
-      expect(config.policy?.codexUnmappedTool).toBe('deny')
+      expect(config.policy?.codexUnmappedTool).toBe('allow')
     })
   })
 })

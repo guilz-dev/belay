@@ -255,25 +255,12 @@ export async function runToolGateHook(_eventName: string) {
       return
     }
     if (!mappedKind) {
-      const verdict = claudeFallbackToolVerdict({
-        toolName,
-        payload,
-        repoRoot: ctx.repoRoot,
-        reason: 'unmapped_tool',
-        mode: ctx.config.mode,
-        userMessage: 'belay does not recognize this tool action. Run belay doctor, then retry.',
-        agentMessage: 'Belay denied this action because the tool could not be normalized.',
-      })
-      await deps.appendAudit(ctx, {
-        event: 'preToolUse',
+      const verdict = await evaluateGatedAction(ctx, deps, {
         kind: 'tool',
-        verdict: 'deny_pending_approval',
-        reason: 'unmapped_tool',
-        mode: ctx.config.mode,
-        wouldBlock: true,
-        permission: 'deny',
-        summary: toolName,
-        ...effectPlanAuditFields(verdict.effectPlan),
+        cwd,
+        payload,
+        toolName,
+        sourceEvent: 'PreToolUse',
       })
       jsonResponse(gateVerdictToClaudePreToolUseResponse(verdict))
       return

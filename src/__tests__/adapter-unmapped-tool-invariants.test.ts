@@ -81,7 +81,7 @@ describe('adapter unmapped tool invariants', () => {
     }
   })
 
-  it('evaluates and audits unmapped preToolUse tools in enforce mode', async () => {
+  it('evaluates indeterminate preToolUse tools via effect policy in enforce mode', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     await writeTrustedConfigFile(
@@ -95,14 +95,14 @@ describe('adapter unmapped tool invariants', () => {
         tool_input: {},
         cwd: repoRoot,
       }),
-    ).resolves.toMatchObject({ permission: 'deny' })
+    ).resolves.toMatchObject({ permission: 'allow' })
 
     const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
     expect(audit).toContain('"kind":"tool"')
-    expect(audit).toContain('"wouldBlock":true')
+    expect(audit).not.toContain('"reason":"unmapped_tool"')
   })
 
-  it('allows but audits unmapped preToolUse tools in audit mode', async () => {
+  it('allows and audits indeterminate preToolUse tools in audit mode', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     await writeTrustedConfigFile(
@@ -120,8 +120,8 @@ describe('adapter unmapped tool invariants', () => {
 
     const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
     expect(audit).toContain('"kind":"tool"')
-    expect(audit).toContain('"wouldBlock":true')
     expect(audit).toContain('"mode":"audit"')
+    expect(audit).toContain('"reason":"indeterminate_tool_effect"')
   })
 
   it('dispatcher denies preToolUse with tool_name but malformed tool_input', async () => {

@@ -7,7 +7,6 @@ import {
   appendObservedAudit,
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
-  gateUnmappedToolVerdict,
   gateVerdictToCodexPreToolUseResponse,
   gateVerdictToCodexUserPromptResponse,
   processApprovalPrompt,
@@ -208,7 +207,7 @@ export async function runBeforeSubmitPromptHook() {
 
 // Codex routes all PreToolUse through this unified handler (matcher ".*"), since the exact
 // shell tool name is not yet confirmed. SubagentStart is also routed to this handler.
-// Unmapped tools/events ask with pending approval (R39) to avoid silent bypass without hard block.
+// Unmapped tools use the shared effect-based classifier (no tool-name denylist).
 export async function runToolGateHook(eventName: string) {
   try {
     const payload = await readStdinJson()
@@ -220,15 +219,14 @@ export async function runToolGateHook(eventName: string) {
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
     if (!kind) {
-      // Unmapped Codex tool. Policy-driven: default 'deny' asks with pending approval (R39).
-      // 'allow' is the opt-out — pass the tool but record it to audit for vocabulary learning.
-      const policy = ctx.config.policy?.codexUnmappedTool ?? 'deny'
-      if (policy === 'allow') {
-        await appendObservedAudit(ctx, deps, eventName, payload)
-        jsonResponse({})
-        return
-      }
-      const verdict = await gateUnmappedToolVerdict(ctx, deps, toolName, payload)
+      const normalizedPayload = normalizeCodexToolPayload('tool', payload)
+      const verdict = await evaluateGatedAction(ctx, deps, {
+        kind: 'tool',
+        cwd,
+        payload: normalizedPayload,
+        toolName,
+        sourceEvent: eventName,
+      })
       jsonResponse(gateVerdictToCodexPreToolUseResponse(verdict))
       return
     }

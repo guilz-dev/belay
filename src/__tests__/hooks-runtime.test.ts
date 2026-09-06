@@ -340,7 +340,7 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
         tool_input: {},
         cwd: repoRoot,
       }),
-    ).resolves.toMatchObject({ permission: 'deny' })
+    ).resolves.toMatchObject({ permission: 'allow' })
   })
 
   it('returns the current audit response from a parsed payload handler', async () => {
