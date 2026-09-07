@@ -1,6 +1,7 @@
 const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
 const FD_DUPLICATION_PATTERN = /^\d+[<>]&(?:\d+|-)$/
 const FD_REDIRECT_PATTERN = /^\d+(?:>>?|<)$/
+const HEREDOC_OPERATOR_PATTERN = /^(?:\d+)?<<-?$/
 
 function readDigits(input: string, index: number): string {
   let end = index
@@ -34,6 +35,13 @@ function readShellOperator(input: string, index: number): { token: string; lengt
   if (char === '&' && next === '>') {
     return { token: '&>', length: 2 }
   }
+  if (digitsLength > 0 && afterDigits === '<' && afterDigitsNext === '<') {
+    const stripsTabs = input[index + digitsLength + 2] === '-'
+    return {
+      token: `${digits}<<${stripsTabs ? '-' : ''}`,
+      length: digitsLength + (stripsTabs ? 3 : 2),
+    }
+  }
   if (digitsLength > 0 && (afterDigits === '>' || afterDigits === '<')) {
     if (afterDigitsNext === '&') {
       let end = index + digitsLength + 2
@@ -52,6 +60,10 @@ function readShellOperator(input: string, index: number): { token: string; lengt
   if (char === '>' && next === '>') {
     return { token: '>>', length: 2 }
   }
+  if (char === '<' && next === '<') {
+    const stripsTabs = input[index + 2] === '-'
+    return { token: stripsTabs ? '<<-' : '<<', length: stripsTabs ? 3 : 2 }
+  }
   if (char === '&') {
     return { token: '&', length: 1 }
   }
@@ -67,8 +79,13 @@ export function isRedirectOperator(token: string): boolean {
     token === '>>' ||
     token === '<' ||
     token === '&>' ||
+    HEREDOC_OPERATOR_PATTERN.test(token) ||
     FD_REDIRECT_PATTERN.test(token)
   )
+}
+
+export function isHeredocOperator(token: string): boolean {
+  return HEREDOC_OPERATOR_PATTERN.test(token)
 }
 
 export function isFdDuplication(token: string): boolean {
@@ -97,20 +114,56 @@ export type ShellToken =
     }
   | { kind: 'operator'; value: string; raw: string; start: number; end: number }
 
+export interface ShellHeredoc {
+  operator: {
+    value: string
+    start: number
+    end: number
+  }
+  delimiter: {
+    value: string
+    raw: string
+    quoted: boolean
+    start: number
+    end: number
+  }
+  body: {
+    value: string
+    start: number
+    end: number
+  }
+  terminator: {
+    start: number
+    end: number
+  }
+  expands: boolean
+  complete: boolean
+}
+
 export interface ShellLexResult {
   tokens: ShellToken[]
   complete: boolean
+  syntaxComplete: boolean
+  heredocs: ShellHeredoc[]
 }
 
 export function lexShell(input: string): ShellLexResult {
   const tokens: ShellToken[] = []
+  const heredocs: ShellHeredoc[] = []
   let value = ''
   let wordStart: number | null = null
   let parts: ShellWordPart[] = []
   let quote: Exclude<ShellQuoteMode, 'unquoted'> | null = null
   let quoteStart = -1
   let quoteHadContent = false
-  let complete = true
+  let syntaxComplete = true
+  let heredocsComplete = true
+  let awaitingHeredocOperator: Extract<ShellToken, { kind: 'operator' }> | null = null
+  let pendingHeredocs: Array<{
+    operator: Extract<ShellToken, { kind: 'operator' }>
+    delimiter: Extract<ShellToken, { kind: 'word' }>
+  }> = []
+  type PendingHeredoc = (typeof pendingHeredocs)[number]
 
   const startWord = (index: number) => {
     wordStart ??= index
@@ -147,24 +200,115 @@ export function lexShell(input: string): ShellLexResult {
   }
   const flushWord = (end: number) => {
     if (wordStart === null) return
-    tokens.push({
+    const token: Extract<ShellToken, { kind: 'word' }> = {
       kind: 'word',
       value,
       raw: input.slice(wordStart, end),
       start: wordStart,
       end,
       parts,
-    })
+    }
+    tokens.push(token)
+    if (awaitingHeredocOperator) {
+      pendingHeredocs.push({ operator: awaitingHeredocOperator, delimiter: token })
+      awaitingHeredocOperator = null
+    }
     value = ''
     wordStart = null
     parts = []
   }
   const pushOperator = (token: string, start: number, end: number) => {
-    tokens.push({ kind: 'operator', value: token, raw: input.slice(start, end), start, end })
+    const operator: Extract<ShellToken, { kind: 'operator' }> = {
+      kind: 'operator',
+      value: token,
+      raw: input.slice(start, end),
+      start,
+      end,
+    }
+    tokens.push(operator)
+    if (isHeredocOperator(token)) {
+      if (awaitingHeredocOperator) {
+        syntaxComplete = false
+      }
+      awaitingHeredocOperator = operator
+    }
+  }
+
+  const appendHeredoc = (
+    pending: PendingHeredoc,
+    bodyStart: number,
+    bodyEnd: number,
+    terminatorStart: number,
+    terminatorEnd: number,
+    complete: boolean,
+  ) => {
+    const delimiter = pending.delimiter.value
+    const quoted = pending.delimiter.raw !== delimiter
+    heredocs.push({
+      operator: {
+        value: pending.operator.value,
+        start: pending.operator.start,
+        end: pending.operator.end,
+      },
+      delimiter: {
+        value: delimiter,
+        raw: pending.delimiter.raw,
+        quoted,
+        start: pending.delimiter.start,
+        end: pending.delimiter.end,
+      },
+      body: {
+        value: input.slice(bodyStart, bodyEnd),
+        start: bodyStart,
+        end: bodyEnd,
+      },
+      terminator: { start: terminatorStart, end: terminatorEnd },
+      expands: !quoted,
+      complete,
+    })
+  }
+
+  const scanHeredocBodies = (bodyStart: number): number => {
+    let cursor = bodyStart
+    for (const pending of pendingHeredocs) {
+      const delimiter = pending.delimiter.value
+      const stripsTabs = pending.operator.value.endsWith('<<-')
+      const currentBodyStart = cursor
+      let found = false
+
+      while (cursor < input.length) {
+        const lineStart = cursor
+        const newlineIndex = input.indexOf('\n', cursor)
+        const lineEnd = newlineIndex === -1 ? input.length : newlineIndex
+        const line = input.slice(lineStart, lineEnd).replace(/\r$/, '')
+        const comparable = stripsTabs ? line.replace(/^\t+/, '') : line
+        if (comparable === delimiter) {
+          appendHeredoc(pending, currentBodyStart, lineStart, lineStart, lineEnd, true)
+          cursor = newlineIndex === -1 ? input.length : newlineIndex + 1
+          found = true
+          break
+        }
+        if (newlineIndex === -1) {
+          cursor = input.length
+          break
+        }
+        cursor = newlineIndex + 1
+      }
+
+      if (!found) {
+        appendHeredoc(pending, currentBodyStart, input.length, input.length, input.length, false)
+        heredocsComplete = false
+        cursor = input.length
+        break
+      }
+    }
+    pendingHeredocs = []
+    return cursor
   }
 
   for (let index = 0; index < input.length; index += 1) {
     const char = input[index] ?? ''
+    const nextChar = input[index + 1] ?? ''
 
     if (quote === 'single') {
       if (char === "'") {
@@ -187,7 +331,7 @@ export function lexShell(input: string): ShellLexResult {
         const next = input[index + 1]
         if (next === undefined) {
           append('\\', index, index + 1, 'double', false)
-          complete = false
+          syntaxComplete = false
           continue
         }
         if (next === '$' || next === '`' || next === '"' || next === '\\' || next === '\n') {
@@ -216,7 +360,7 @@ export function lexShell(input: string): ShellLexResult {
       const next = input[index + 1]
       if (next === undefined) {
         append('\\', index, index + 1, 'unquoted', false)
-        complete = false
+        syntaxComplete = false
         continue
       }
       append(next, index, index + 2, 'unquoted', false)
@@ -233,6 +377,17 @@ export function lexShell(input: string): ShellLexResult {
     if (char === '\n' || char === '\r') {
       flushWord(index)
       pushOperator(';', index, index + 1)
+      if (awaitingHeredocOperator) {
+        syntaxComplete = false
+        awaitingHeredocOperator = null
+      }
+      if (pendingHeredocs.length > 0) {
+        const nextIndex = char === '\r' && nextChar === '\n' ? index + 2 : index + 1
+        const resumeIndex = scanHeredocBodies(nextIndex)
+        index = resumeIndex - 1
+      } else if (char === '\r' && nextChar === '\n') {
+        index += 1
+      }
       continue
     }
     if (/\s/.test(char)) {
@@ -242,9 +397,24 @@ export function lexShell(input: string): ShellLexResult {
     append(char, index, index + 1, 'unquoted', char === '$' || char === '`')
   }
 
-  if (quote !== null) complete = false
+  if (quote !== null) syntaxComplete = false
   flushWord(input.length)
-  return { tokens, complete }
+  if (awaitingHeredocOperator) {
+    syntaxComplete = false
+  }
+  if (pendingHeredocs.length > 0) {
+    for (const pending of pendingHeredocs) {
+      appendHeredoc(pending, input.length, input.length, input.length, input.length, false)
+    }
+    pendingHeredocs = []
+    heredocsComplete = false
+  }
+  return {
+    tokens,
+    complete: syntaxComplete && heredocsComplete,
+    syntaxComplete,
+    heredocs,
+  }
 }
 
 export function tokenizeShell(input: string): string[] {
@@ -317,6 +487,10 @@ export function extractRedirectTargets(tokens: string[]): string[] {
       continue
     }
     if (isRedirectOperator(token)) {
+      if (isHeredocOperator(token)) {
+        index += 1
+        continue
+      }
       const next = tokens[index + 1]
       if (next) {
         targets.push(next)

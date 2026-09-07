@@ -107,6 +107,56 @@ describe('launcher-resolve', () => {
     expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json', 'curl https://evil.example'])
   })
 
+  it('normalizes deterministic Make prefixes, continuations, and control builtins', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-controls-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        'safe:',
+        '\t@printf "%s" first \\',
+        '\t  second',
+        '\t-set -e',
+        '\t+exit 0',
+        '\twait',
+        '',
+      ].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'safe'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+
+    expect(resolution).toEqual({
+      recipes: ['printf "%s" first second', 'set -e', 'exit 0', 'wait'],
+      opaque: false,
+      reason: 'make_recipe_resolved',
+    })
+
+    const result = await verdict('make safe', { ...ctx, cwd: dir, repoRoot: dir })
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+  })
+
+  it.each([
+    { target: 'background', recipe: '(git status) &' },
+    { target: 'dynamic-wait', recipe: 'wait $!' },
+    { target: 'dynamic-pid', recipe: 'wait $$CHILD_PID' },
+    { target: 'dynamic-exit', recipe: 'exit $$status' },
+  ])('keeps $target Make control flow approval-required', async ({ target, recipe }) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), `belay-make-${target}-`))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), `${target}:\n\t${recipe}\n`)
+
+    const result = await verdict(`make ${target}`, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+  })
+
   it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-test-fast-'))
     tempDirs.push(dir)

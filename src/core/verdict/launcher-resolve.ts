@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
+import { lexShell } from '../shell-tokenizer.js'
 import {
   expandMakeExpression,
   normalizeMakeRecipeLine,
@@ -178,6 +179,35 @@ interface MakeTarget {
   opaquePrerequisites: boolean
 }
 
+function hasRecipeContinuation(line: string): boolean {
+  let trailingBackslashes = 0
+  for (let index = line.length - 1; index >= 0 && line[index] === '\\'; index -= 1) {
+    trailingBackslashes += 1
+  }
+  return trailingBackslashes % 2 === 1
+}
+
+function logicalMakeRecipeLines(lines: readonly string[]): string[] {
+  const logical: string[] = []
+  let current = ''
+  for (const line of lines) {
+    current = current ? `${current}\n${line}` : line
+    if (hasRecipeContinuation(line)) {
+      continue
+    }
+    logical.push(current)
+    current = ''
+  }
+  if (current) {
+    logical.push(current)
+  }
+  return logical
+}
+
+function hasBackgroundControl(recipe: string): boolean {
+  return lexShell(recipe).tokens.some((token) => token.kind === 'operator' && token.value === '&')
+}
+
 function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
   const targets = new Map<string, MakeTarget>()
   try {
@@ -194,7 +224,9 @@ function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
         }
         targets.set(currentTarget, {
           prerequisites: current.prerequisites,
-          recipes: recipeLines.map((line) => line.trim()).filter((line) => line.length > 0),
+          recipes: logicalMakeRecipeLines(recipeLines)
+            .map(normalizeMakeRecipeLine)
+            .filter((line) => line.length > 0),
           opaquePrerequisites: current.opaquePrerequisites,
         })
       }
@@ -236,7 +268,7 @@ function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
         continue
       }
       if (currentTarget && /^\t/.test(line)) {
-        recipeLines.push(line.trim())
+        recipeLines.push(line.slice(1).replace(/\r$/, ''))
       }
     }
     flush()
@@ -322,6 +354,9 @@ function resolveMakeRecipe(
     if (/\$\(/.test(line) || /\$\{/.test(line)) {
       return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_dynamic' }
     }
+  }
+  if (expandedRecipes.some(hasBackgroundControl)) {
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_background' }
   }
   if (hasDependencyCycle) {
     return { recipes: expandedRecipes, opaque: true, reason: 'make_dependency_cycle' }

@@ -90,6 +90,51 @@ describe('tokenizeShell', () => {
     expect(tokenizeShell('echo hi 12<&-')).toEqual(['echo', 'hi', '12<&-'])
     expect(tokenizeShell('cat < /tmp/in.txt')).toEqual(['cat', '<', '/tmp/in.txt'])
   })
+
+  it('records quoted heredoc delimiter and body boundaries without tokenizing body data', () => {
+    const command = "cat <<'EOF'\ngit push origin main\nEOF"
+    const lexed = lexShell(command)
+    const heredoc = lexed.heredocs[0]
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['cat', '<<', 'EOF', ';'])
+    expect(heredoc).toMatchObject({
+      operator: { value: '<<', start: 4, end: 6 },
+      delimiter: { value: 'EOF', raw: "'EOF'", quoted: true, start: 6, end: 11 },
+      body: { value: 'git push origin main\n', start: 12, end: 33 },
+      terminator: { start: 33, end: 36 },
+      expands: false,
+      complete: true,
+    })
+    expect(command.slice(heredoc?.body.start, heredoc?.body.end)).toBe('git push origin main\n')
+  })
+
+  it('records unquoted heredoc bodies as expansion-capable stdin data', () => {
+    const command = 'cat <<EOF\n$(git status)\nEOF'
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: 'EOF', raw: 'EOF', quoted: false },
+      body: { value: '$(git status)\n' },
+      expands: true,
+      complete: true,
+    })
+  })
+
+  it.each([
+    "cat <<''",
+    "cat <<''\n",
+  ])('marks an empty quoted delimiter without a following body line incomplete: %j', (command) => {
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: '', raw: "''", quoted: true },
+      body: { value: '' },
+      complete: false,
+    })
+  })
 })
 
 describe('extractRedirectTargets', () => {
@@ -114,6 +159,14 @@ describe('extractRedirectTargets', () => {
     expect(extractRedirectTargets(tokenizeShell('echo hi 12<&1'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('echo hi 12<&-'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('cat < /tmp/in.txt'))).toEqual(['/tmp/in.txt'])
+  })
+
+  it('never treats a heredoc marker or delimiter as a filesystem target', () => {
+    const tokens = tokenizeShell("cat <<'EOF'\nfixture\nEOF")
+
+    expect(tokens).toContain('<<')
+    expect(tokens).not.toContain('<')
+    expect(extractRedirectTargets(tokens)).toEqual([])
   })
 })
 
