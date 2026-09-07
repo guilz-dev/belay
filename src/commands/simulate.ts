@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
-import { parseAuditNdjson, toAuditRecord } from '../core/audit-metrics.js'
-import { type BelayConfigV3, mergeConfig } from '../core/config.js'
+import { toAuditRecord } from '../core/audit-metrics.js'
+import { loadRetainedAuditRecords } from '../core/audit-storage.js'
+import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
 import { countMissingActionSnapshots, diffReclassification } from '../core/reclassify.js'
 
 export interface SimulateOptions {
@@ -24,15 +25,16 @@ export async function simulateProject(options: SimulateOptions) {
   const candidateRaw = JSON.parse(await readFile(options.configPath, 'utf8')) as unknown
   const candidateConfig: BelayConfigV3 = mergeConfig(candidateRaw, currentConfig)
 
-  const auditLogPath = path.join(repoRoot, currentConfig.audit.logPath)
-  let raw = ''
-  try {
-    raw = await readFile(auditLogPath, 'utf8')
-  } catch {
-    raw = ''
-  }
-
-  const records = parseAuditNdjson(raw).map(toAuditRecord)
+  const audit = normalizeAuditConfig(currentConfig.audit)
+  const auditLogPath = path.isAbsolute(audit.logPath)
+    ? audit.logPath
+    : path.join(repoRoot, audit.logPath)
+  const { records: retainedRecords } = await loadRetainedAuditRecords({
+    auditPath: auditLogPath,
+    maxFiles: audit.maxFiles,
+    maxLineBytes: audit.maxBytes,
+  })
+  const records = retainedRecords.map(toAuditRecord)
   const missingSnapshotCount = countMissingActionSnapshots(records)
   const diffs = (
     await Promise.all(

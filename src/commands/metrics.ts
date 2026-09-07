@@ -1,14 +1,19 @@
-import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
-import { computeAuditMetrics, parseAuditNdjson } from '../core/audit-metrics.js'
+import { computeAuditMetrics } from '../core/audit-metrics.js'
+import { type AuditLoadDiagnostics, loadRetainedAuditRecords } from '../core/audit-storage.js'
+import { normalizeAuditConfig } from '../core/config.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 export interface MetricsOptions {
   targetDir?: string
   json?: boolean
+}
+
+export type MetricsReport = AuditMetricsReport & {
+  auditStorage: AuditLoadDiagnostics
 }
 
 function formatFingerprintPreview(fingerprint: string): string {
@@ -18,24 +23,28 @@ function formatFingerprintPreview(fingerprint: string): string {
   return `${fingerprint.slice(0, 12)}…`
 }
 
-export async function metricsProject(options: MetricsOptions = {}): Promise<AuditMetricsReport> {
+export async function metricsProject(options: MetricsOptions = {}): Promise<MetricsReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const auditLogPath = path.join(repoRoot, config.audit.logPath)
-  let raw = ''
-  try {
-    raw = await readFile(auditLogPath, 'utf8')
-  } catch {
-    raw = ''
-  }
-  const records = parseAuditNdjson(raw)
-  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
-  return computeAuditMetrics(records, {
-    auditLogPath: config.audit.logPath,
-    mode: config.mode,
-    unknownLocalEffect: config.policy.unknownLocalEffect,
-    activeCohort,
+  const audit = normalizeAuditConfig(config.audit)
+  const auditLogPath = path.isAbsolute(audit.logPath)
+    ? audit.logPath
+    : path.join(repoRoot, audit.logPath)
+  const { records, diagnostics } = await loadRetainedAuditRecords({
+    auditPath: auditLogPath,
+    maxFiles: audit.maxFiles,
+    maxLineBytes: audit.maxBytes,
   })
+  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
+  return {
+    ...computeAuditMetrics(records, {
+      auditLogPath: audit.logPath,
+      mode: config.mode,
+      unknownLocalEffect: config.policy.unknownLocalEffect,
+      activeCohort,
+    }),
+    auditStorage: diagnostics,
+  }
 }
 
 function formatRecoveryMetricsSection(
@@ -92,7 +101,9 @@ function formatRecoveryMetricsSection(
   return lines
 }
 
-export function formatMetricsReport(report: AuditMetricsReport): string {
+export function formatMetricsReport(
+  report: AuditMetricsReport & { auditStorage?: AuditLoadDiagnostics },
+): string {
   const lines = [
     `belay metrics for ${report.auditLogPath}`,
     `Schema: v${report.schemaVersion}`,
@@ -102,6 +113,18 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `All-time approvals recorded during audit: ${report.approvalRecordedCount}`,
     `Contained execution: would mediate ${report.containedExecution.wouldMediate}; complete ${report.containedExecution.complete}; failed ${report.containedExecution.failed}; timed out ${report.containedExecution.timedOut}`,
   ]
+
+  if (report.auditStorage) {
+    lines.push(
+      '',
+      'Retained audit storage:',
+      `- files read: ${report.auditStorage.filesRead}`,
+      `- bytes read: ${report.auditStorage.bytesRead}`,
+      `- parsed records: ${report.auditStorage.parsedRecords}`,
+      `- malformed lines skipped: ${report.auditStorage.malformedLines}`,
+      `- oversized lines skipped: ${report.auditStorage.oversizedLines}`,
+    )
+  }
 
   lines.push('', 'Current readiness cohort:')
   if (report.currentCohort.identity) {

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, createReadStream } from 'node:fs'
 import { type FileHandle, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { createInterface } from 'node:readline'
+import type { AuditRecord } from './audit-types.js'
 import { MAX_AUDIT_FILES } from './config.js'
 
 const AUDIT_LOCK_TIMEOUT_MS = 2_000
@@ -13,6 +15,25 @@ export interface AppendBoundedAuditLineOptions {
   line: string
   maxBytes: number
   maxFiles: number
+}
+
+export interface AuditReadOptions {
+  auditPath: string
+  maxFiles: number
+  maxLineBytes: number
+}
+
+export interface AuditLoadDiagnostics {
+  filesRead: number
+  bytesRead: number
+  parsedRecords: number
+  malformedLines: number
+  oversizedLines: number
+}
+
+export interface AuditLoadResult {
+  records: AuditRecord[]
+  diagnostics: AuditLoadDiagnostics
 }
 
 export interface AuditStorageOperations {
@@ -166,6 +187,128 @@ export function auditGenerationPath(auditPath: string, generation: number): stri
     throw new Error(`Audit generation must be a positive integer: ${generation}`)
   }
   return `${path.resolve(auditPath)}.${generation}`
+}
+
+function validateAuditReadOptions(options: AuditReadOptions): void {
+  if (
+    !Number.isSafeInteger(options.maxFiles) ||
+    options.maxFiles < 1 ||
+    options.maxFiles > MAX_AUDIT_FILES
+  ) {
+    throw new Error(`Audit maxFiles must be an integer from 1 through 100: ${options.maxFiles}`)
+  }
+  if (!Number.isSafeInteger(options.maxLineBytes) || options.maxLineBytes < 1) {
+    throw new Error(`Audit maxLineBytes must be a positive integer: ${options.maxLineBytes}`)
+  }
+}
+
+function emptyAuditLoadDiagnostics(): AuditLoadDiagnostics {
+  return {
+    filesRead: 0,
+    bytesRead: 0,
+    parsedRecords: 0,
+    malformedLines: 0,
+    oversizedLines: 0,
+  }
+}
+
+/**
+ * Read exact retained generations oldest-to-active without taking the writer lock.
+ *
+ * The generator return value contains diagnostics for a fully consumed stream. Blank lines affect
+ * no line counters; malformed, non-object, and oversized lines never become audit evidence.
+ */
+export async function* iterateAuditRecords(
+  options: AuditReadOptions,
+): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
+  validateAuditReadOptions(options)
+  const auditPath = path.resolve(options.auditPath)
+  const diagnostics = emptyAuditLoadDiagnostics()
+  const retainedPaths: string[] = []
+  for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
+    retainedPaths.push(auditGenerationPath(auditPath, generation))
+  }
+  retainedPaths.push(auditPath)
+
+  for (const retainedPath of retainedPaths) {
+    const info = await lstatIfPresent(retainedPath)
+    if (!info) {
+      continue
+    }
+    if (info.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link for retained audit log: ${retainedPath}`)
+    }
+    if (!info.isFile()) {
+      throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
+    }
+
+    let handle: FileHandle
+    try {
+      handle = await open(retainedPath, constants.O_RDONLY | noFollowFlag())
+    } catch (error) {
+      if (errno(error) === 'ENOENT') {
+        continue
+      }
+      throw error
+    }
+    try {
+      const opened = await handle.stat()
+      if (!opened.isFile()) {
+        throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
+      }
+      diagnostics.filesRead += 1
+      const stream = createReadStream(retainedPath, { fd: handle, autoClose: false })
+      const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY })
+      try {
+        for await (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) {
+            continue
+          }
+          if (Buffer.byteLength(line, 'utf8') > options.maxLineBytes) {
+            diagnostics.oversizedLines += 1
+            continue
+          }
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(trimmed)
+          } catch {
+            diagnostics.malformedLines += 1
+            continue
+          }
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            diagnostics.malformedLines += 1
+            continue
+          }
+          diagnostics.parsedRecords += 1
+          yield parsed as AuditRecord
+        }
+      } finally {
+        diagnostics.bytesRead += stream.bytesRead
+        lines.close()
+        stream.destroy()
+      }
+    } finally {
+      await handle.close()
+    }
+  }
+
+  return diagnostics
+}
+
+/** Collect the bounded retained-generation iterator for aggregation-oriented consumers. */
+export async function loadRetainedAuditRecords(
+  options: AuditReadOptions,
+): Promise<AuditLoadResult> {
+  const records: AuditRecord[] = []
+  const iterator = iterateAuditRecords(options)
+  for (;;) {
+    const next = await iterator.next()
+    if (next.done) {
+      return { records, diagnostics: next.value }
+    }
+    records.push(next.value)
+  }
 }
 
 async function activeAuditSize(auditPath: string): Promise<{ exists: boolean; size: number }> {

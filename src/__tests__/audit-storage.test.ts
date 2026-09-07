@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   lstat,
+  mkdir,
   mkdtemp,
   open,
   readdir,
@@ -14,7 +15,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { appendBoundedAuditLine } from '../core/audit-storage.js'
+import {
+  appendBoundedAuditLine,
+  iterateAuditRecords,
+  loadRetainedAuditRecords,
+} from '../core/audit-storage.js'
 
 const tempDirs: string[] = []
 
@@ -375,5 +380,101 @@ describe('appendBoundedAuditLine', () => {
 
     await expectMissing(auditPath)
     await expectMissing(`${auditPath}.lock`)
+  })
+})
+
+describe('retained audit reads', () => {
+  it('iterates only exact retained generations oldest-to-active across gaps', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-order-')
+    const recordsByPath = new Map([
+      [`${auditPath}.4`, { marker: 'oldest' }],
+      [`${auditPath}.2`, { marker: 'middle' }],
+      [auditPath, { marker: 'active' }],
+      [`${auditPath}.5`, { marker: 'outside-retention' }],
+      [`${auditPath}.legacy-20260908T000000Z.ndjson`, { marker: 'legacy-archive' }],
+    ])
+    await Promise.all(
+      [...recordsByPath].map(([filePath, record]) =>
+        writeFile(filePath, `${JSON.stringify(record)}\n`, 'utf8'),
+      ),
+    )
+
+    const markers: unknown[] = []
+    for await (const record of iterateAuditRecords({
+      auditPath,
+      maxFiles: 5,
+      maxLineBytes: 256,
+    })) {
+      markers.push(record.marker)
+    }
+
+    expect(markers).toEqual(['oldest', 'middle', 'active'])
+  })
+
+  it('collects exact diagnostics while blanks and invalid rows contribute no evidence', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-diagnostics-')
+    const oldest = `${JSON.stringify({ marker: 'oldest' })}\n\n{malformed\n`
+    const middle = `"private-non-object"\n${JSON.stringify({ marker: 'middle' })}\r\n`
+    const oversized = JSON.stringify({ marker: 'private-oversized', padding: 'x'.repeat(200) })
+    const active = ` \t\n${oversized}\n${JSON.stringify({ marker: 'active' })}\n`
+    await writeFile(`${auditPath}.2`, oldest, 'utf8')
+    await writeFile(`${auditPath}.1`, middle, 'utf8')
+    await writeFile(auditPath, active, 'utf8')
+
+    const result = await loadRetainedAuditRecords({
+      auditPath,
+      maxFiles: 3,
+      maxLineBytes: 80,
+    })
+
+    expect(result.records.map((record) => record.marker)).toEqual(['oldest', 'middle', 'active'])
+    expect(result.diagnostics).toEqual({
+      filesRead: 3,
+      bytesRead:
+        Buffer.byteLength(oldest, 'utf8') +
+        Buffer.byteLength(middle, 'utf8') +
+        Buffer.byteLength(active, 'utf8'),
+      parsedRecords: 3,
+      malformedLines: 2,
+      oversizedLines: 1,
+    })
+    expect(JSON.stringify(result)).not.toContain('private-non-object')
+    expect(JSON.stringify(result)).not.toContain('private-oversized')
+  })
+
+  it('refuses a retained-generation symlink without reading its target', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-symlink-')
+    const externalPath = path.join(path.dirname(auditPath), 'private-external.ndjson')
+    const external = `${JSON.stringify({ marker: 'private-symlink-target' })}\n`
+    await writeFile(externalPath, external, 'utf8')
+    await symlink(externalPath, `${auditPath}.1`)
+    await writeFile(auditPath, `${JSON.stringify({ marker: 'active' })}\n`, 'utf8')
+
+    await expect(
+      loadRetainedAuditRecords({ auditPath, maxFiles: 2, maxLineBytes: 256 }),
+    ).rejects.toThrow(/symbolic link/i)
+    expect(await readFile(externalPath, 'utf8')).toBe(external)
+  })
+
+  it('surfaces non-missing read errors instead of treating them as an empty audit', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-error-')
+    await mkdir(auditPath)
+
+    await expect(
+      loadRetainedAuditRecords({ auditPath, maxFiles: 1, maxLineBytes: 256 }),
+    ).rejects.toThrow(/regular file/i)
+  })
+
+  it.each([
+    [{ maxFiles: 0, maxLineBytes: 256 }, /maxFiles/i],
+    [{ maxFiles: 1.5, maxLineBytes: 256 }, /maxFiles/i],
+    [{ maxFiles: 101, maxLineBytes: 256 }, /maxFiles/i],
+    [{ maxFiles: 1, maxLineBytes: 0 }, /maxLineBytes/i],
+    [{ maxFiles: 1, maxLineBytes: 1.5 }, /maxLineBytes/i],
+  ])('rejects invalid read bounds before touching storage: %j', async (bounds, message) => {
+    const auditPath = await createAuditPath('belay-audit-storage-invalid-read-bound-')
+
+    await expect(loadRetainedAuditRecords({ auditPath, ...bounds })).rejects.toThrow(message)
+    await expectMissing(auditPath)
   })
 })

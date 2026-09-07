@@ -32,6 +32,7 @@ import {
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
+import type { AuditLoadDiagnostics } from '../core/audit-storage.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
@@ -71,6 +72,10 @@ import { PACKAGE_VERSION } from '../version.js'
 import { loadAuditRecords } from './audit.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
 import { metricsProject } from './metrics.js'
+
+export interface DoctorProjectReport extends DoctorReport {
+  auditStorage: AuditLoadDiagnostics | null
+}
 
 function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterName): AdapterName {
   if (options.adapter) {
@@ -163,11 +168,12 @@ async function cursorOriginIssues(
   return issues
 }
 
-export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
+export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorProjectReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const issues: string[] = []
   const notes: string[] = []
   const warnings: string[] = []
+  let auditStorage: AuditLoadDiagnostics | null = null
 
   let loadedConfig = null
   let configProvenance: DoctorReport['configProvenance'] = []
@@ -579,6 +585,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   if (loadedConfig) {
     const auditRecords = await loadAuditRecords(repoRoot)
     const metrics = await metricsProject({ targetDir: repoRoot })
+    auditStorage = metrics.auditStorage
     const cohortIdentity = metrics.currentCohort.identity
     const cohortAuditRecords = cohortIdentity
       ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
@@ -881,7 +888,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     )
   }
 
-  const report: DoctorReport = {
+  const report: DoctorProjectReport = {
     ok: issues.length === 0 && hooksOk,
     repoRoot,
     configPath,
@@ -892,17 +899,32 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     warnings,
     configProvenance,
     dogfood,
+    auditStorage,
   }
   return report
 }
 
-export function formatDoctorReport(report: DoctorReport): string {
+export function formatDoctorReport(
+  report: DoctorReport & { auditStorage?: AuditLoadDiagnostics | null },
+): string {
   const lines = [
     `belay doctor for ${report.repoRoot}`,
     `Config: ${report.configPath}`,
     `Hooks: ${report.hooksPath}`,
     `Node: ${report.nodeResolution.ok ? report.nodeResolution.path : 'unresolved'}`,
   ]
+
+  if (report.auditStorage) {
+    lines.push(
+      '',
+      'Retained audit storage:',
+      `- files read: ${report.auditStorage.filesRead}`,
+      `- bytes read: ${report.auditStorage.bytesRead}`,
+      `- parsed records: ${report.auditStorage.parsedRecords}`,
+      `- malformed lines skipped: ${report.auditStorage.malformedLines}`,
+      `- oversized lines skipped: ${report.auditStorage.oversizedLines}`,
+    )
+  }
 
   if (report.notes.length > 0) {
     lines.push('', 'Notes:')

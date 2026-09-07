@@ -287,4 +287,64 @@ describe('audit query', () => {
     expect(report.roundTrips).toHaveLength(1)
     expect(report.roundTrips?.[0]?.summary).toBe('curl https://example.com')
   })
+
+  it('joins one correlated ask-approval-replay chain across retained generations', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-generation-trip-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const fingerprint = testFingerprint('retained-generation-round-trip')
+    const approvalCorrelationId = '1234567890abcdef'
+    await writeFile(
+      `${auditPath}.2`,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:01:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:02:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'approved_once',
+        permission: 'allow',
+        fingerprint,
+        summary: 'make build',
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+
+    const report = await auditProject({ targetDir: repoRoot, subcommand: 'summarize' })
+
+    expect(report.roundTrips).toEqual([
+      expect.objectContaining({
+        approvalCorrelationId,
+        approvalTimestamp: '2026-06-01T10:01:00.000Z',
+        executeTimestamp: '2026-06-01T10:02:00.000Z',
+      }),
+    ])
+  })
 })

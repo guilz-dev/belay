@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
-import { formatMetricsReport } from '../commands/metrics.js'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { formatMetricsReport, metricsProject } from '../commands/metrics.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import {
   computeApprovalRatioByReason,
   computeAvailabilityAskCounts,
@@ -19,6 +23,14 @@ import {
   computeRecoveryMetrics,
   sanitizeRecoveryFailureReason,
 } from '../core/audit-recovery-metrics.js'
+import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
 const ACTIVE_COHORT = {
   runtimeArtifactHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -87,6 +99,67 @@ describe('audit-metrics', () => {
     expect(report.gateEvents).toBe(1)
     expect(report.wouldBlockCount).toBe(1)
     expect(report.gateEventsByRuntime).toEqual({ unrecorded: 1 })
+  })
+
+  it('aggregates the current cohort across generations and exposes content-free storage diagnostics', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-metrics-generations-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const initialConfig = await loadConfigFile(repoRoot)
+    await writeTrustedConfigFile(repoRoot, {
+      ...initialConfig,
+      audit: { ...initialConfig.audit, maxBytes: 1_024, maxFiles: 3 },
+    })
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const generation = `${JSON.stringify(
+      cohortGate({ timestamp: '2026-09-08T00:00:00.000Z', ...cohort }),
+    )}\n\n`
+    const activeRecord = JSON.stringify(
+      cohortGate({ timestamp: '2026-09-08T00:00:01.000Z', ...cohort }),
+    )
+    const malformed = '{"private-malformed-marker":'
+    const nonObject = '"private-non-object-marker"'
+    const oversized = JSON.stringify(
+      cohortGate({
+        timestamp: '2026-09-08T00:00:02.000Z',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        wouldBlock: true,
+        summary: 'private-oversized-marker',
+        padding: 'x'.repeat(1_500),
+        ...cohort,
+      }),
+    )
+    const active = `${activeRecord}\n${malformed}\n${nonObject}\n${oversized}\n`
+    await writeFile(`${auditPath}.1`, generation, 'utf8')
+    await writeFile(auditPath, active, 'utf8')
+
+    const report = await metricsProject({ targetDir: repoRoot })
+    const formatted = formatMetricsReport(report)
+
+    expect(report.auditStorage).toEqual({
+      filesRead: 2,
+      bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
+      parsedRecords: 2,
+      malformedLines: 2,
+      oversizedLines: 1,
+    })
+    expect(report.currentCohort.gateEvents).toBe(2)
+    expect(report.currentCohort.wouldBlockCount).toBe(0)
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- files read: 2')
+    expect(formatted).toContain('- malformed lines skipped: 2')
+    expect(formatted).toContain('- oversized lines skipped: 1')
+    expect(formatted).not.toContain('private-malformed-marker')
+    expect(formatted).not.toContain('private-non-object-marker')
+    expect(formatted).not.toContain('private-oversized-marker')
   })
 
   it('computes would-block metrics for dogfood config', () => {

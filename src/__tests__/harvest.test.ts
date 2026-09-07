@@ -225,6 +225,68 @@ describe('harvest', () => {
     ])
   })
 
+  it('groups active-cohort asks and approval evidence across retained generations', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const approvalId = 'belay_retained_generation_harvest'
+    const fingerprint = testFingerprint('retained-generation-harvest')
+    const deny = (timestamp: string) =>
+      serializeAuditRecordV3(
+        {
+          timestamp,
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint,
+          summary: 'pnpm test',
+          reason: 'unknown_local_effect',
+          approvalId,
+          ...cohort,
+        },
+        DEFAULT_REDACTION_V3,
+      )
+    const approval = serializeAuditRecordV3(
+      {
+        timestamp: '2026-09-08T00:00:02.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalId,
+        ...cohort,
+      },
+      DEFAULT_REDACTION_V3,
+    )
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(
+      `${auditPath}.2`,
+      `${JSON.stringify(deny('2026-09-08T00:00:00.000Z'))}\n`,
+      'utf8',
+    )
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify(deny('2026-09-08T00:00:01.000Z'))}\n`,
+      'utf8',
+    )
+    await writeFile(auditPath, `${JSON.stringify(approval)}\n`, 'utf8')
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+
+    expect(report.candidates).toEqual([
+      expect.objectContaining({
+        fingerprint,
+        command: 'pnpm test',
+        askCount: 2,
+        approvedAfterDeny: true,
+        sources: expect.arrayContaining(['deny_then_approve']),
+      }),
+    ])
+  })
+
   it('hides matching-boundary reviews by default and includes them when requested', async () => {
     const repoRoot = await createHarvestFixtureRepo()
     const config = await loadConfigFile(repoRoot)

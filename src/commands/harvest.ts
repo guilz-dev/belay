@@ -322,7 +322,7 @@ export async function harvestApplyProject(
 }
 
 /** Parse audit ndjson for tests without full project layout. */
-export function harvestReportFromNdjson(raw: string): HarvestReport {
-  const records = parseAuditNdjson(raw).map((entry) => toAuditRecord(entry))
+export function harvestReportFromNdjson(ndjson: string): HarvestReport {
+  const records = parseAuditNdjson(ndjson).map((entry) => toAuditRecord(entry))
   return harvestReportFromRecords(records)
 }
