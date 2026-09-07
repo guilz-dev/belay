@@ -451,6 +451,7 @@ function lowerSegment(
         repoRoot: context.repoRoot,
         segment: commandRedacted,
       })
+      let loweredArgvDelegate = false
       if (isGrammarUnknownOnly(processRequirements, head)) {
         const argvDelegate = peelArgvDelegateArgv(tokens)
         if (
@@ -460,21 +461,28 @@ function lowerSegment(
         ) {
           const innerRecipe = innerRecipeFromArgvDelegate(argvDelegate)
           if (innerRecipe) {
-            requirements.push(
-              processRequirement(head, 'inspect', commandRedacted, [
-                'process.argv_delegate',
-                ...argvDelegate.signals,
-              ]),
-            )
-            for (const signal of argvDelegate.signals) {
-              signals.add(signal)
-            }
             const nested = lowerTopLevelSegments(innerRecipe, {
               ...context,
               command: innerRecipe,
               env,
               depth: context.depth + 1,
             })
+            const innerComplete =
+              nested.length > 0 &&
+              nested.every((nestedSegment) => nestedSegment.completeness === 'complete')
+            requirements.push(
+              ...(innerComplete
+                ? [
+                    processRequirement(head, 'inspect', commandRedacted, [
+                      'process.argv_delegate',
+                      ...argvDelegate.signals,
+                    ]),
+                  ]
+                : processRequirements),
+            )
+            for (const signal of argvDelegate.signals) {
+              signals.add(signal)
+            }
             for (const nestedSegment of nested) {
               requirements.push(
                 ...nestedSegment.requirements.map((entry) =>
@@ -486,10 +494,10 @@ function lowerSegment(
               }
               opacity = joinNestedOpacity(opacity, nestedSegment)
             }
-            return shellSegment(commandRedacted, head, requirements, opacity, signals)
+            loweredArgvDelegate = true
           }
         }
-        if (argvDelegate?.opaque) {
+        if (!loweredArgvDelegate && argvDelegate?.opaque) {
           requirements.push(
             processRequirement(head, 'spawn', commandRedacted, [
               'process.argv_delegate',
@@ -514,7 +522,9 @@ function lowerSegment(
           )
         }
       }
-      requirements.push(...processRequirements)
+      if (!loweredArgvDelegate) {
+        requirements.push(...processRequirements)
+      }
     }
   }
 

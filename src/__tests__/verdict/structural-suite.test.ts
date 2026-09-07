@@ -52,6 +52,52 @@ describe('structural suite', () => {
     })
   })
 
+  describe('bounded argv delegates', () => {
+    it('allows a one-token read delegate without trusting the wrapper identity', async () => {
+      const result = await verdict('fictional-runner ls', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+    })
+
+    it('allows one nested delegate level when every inner plan is complete', async () => {
+      const result = await verdict('fictional-runner nested-runner ls', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+    })
+
+    it('keeps a second nested delegate level approval-required', async () => {
+      const result = await verdict(
+        'fictional-runner nested-runner third-fictional-runner ls',
+        context,
+      )
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+    })
+
+    it('keeps delegated shell evaluation approval-required', async () => {
+      const result = await verdict('fictional-runner sh -c "rm -rf ."', context)
+
+      expect(result.permission).toBe('ask')
+    })
+
+    it('preserves dynamic cwd uncertainty through a delegated mutation', async () => {
+      const result = await verdict('cd "$dir" && fictional-runner rm -rf build', context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('dynamic_cwd_transition')
+      expect(result.signals).toContain('shell.cwd_dynamic_transition')
+    })
+
+    it('keeps transparent invocation wrappers blocked as inner delegates', async () => {
+      const result = await verdict('fictional-runner sudo ls', context)
+
+      expect(result.permission).toBe('ask')
+    })
+  })
+
   describe('ADR-002 MUST-ASK ledger (sensitive / persistent redirects)', () => {
     it.each(MUST_ASK_LEDGER)('%s → ask', async (command) => {
       const result = await verdict(command, context)
