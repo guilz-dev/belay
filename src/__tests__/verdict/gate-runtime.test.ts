@@ -322,6 +322,41 @@ describe('gate-runtime integration', () => {
     expect(snapshot?.action).toEqual({ type: 'shell', command: 'rm -rf .git' })
   })
 
+  it('preserves Cursor subagent type and classifier evidence without task text', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-subagent-snapshot-'))
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'subagent',
+      cwd: repoRoot,
+      payload: {
+        subagent_type: 'explore',
+        task: { description: 'publish private release notes' },
+      },
+    })
+
+    const snapshot = auditEvents[0]?.actionSnapshot
+    expect(snapshot).toMatchObject({
+      schemaVersion: 2,
+      kind: 'subagent',
+      action: {
+        type: 'subagent',
+        subagentType: 'explore',
+        externalIntent: true,
+        summaryHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('private release notes')
+  })
+
   it('denies judge infrastructure failures with recovery hints and without approval ids', async () => {
     vi.spyOn(gateEngine, 'classifyGatedActionAsync').mockResolvedValue({
       verdict: 'deny_pending_approval',

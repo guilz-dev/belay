@@ -108,21 +108,13 @@ function buildToolSnapshotAction(
   const path = stringField(input, ['path', 'file_path', 'target_file', 'filePath'])
   if (path) {
     const normalizedName = toolName.trim().toLowerCase()
-    const mutationToolNames = new Set([
-      'write',
-      'edit',
-      'strreplace',
-      'str_replace',
-      'multiedit',
-      'notebookedit',
-    ])
     const hasMutationBody = ['contents', 'old_string', 'new_string', 'newContents'].some(
       (key) => typeof input[key] === 'string',
     )
     const operation =
       normalizedName === 'delete'
         ? 'delete'
-        : hasMutationBody || mutationToolNames.has(normalizedName)
+        : hasMutationBody || typeof input.file_path !== 'string'
           ? 'write'
           : 'read'
     return { type: 'file', operation, path }

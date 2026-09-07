@@ -27,6 +27,24 @@ describe('audit action snapshot v2', () => {
     })
   })
 
+  it('keeps an unknown path-only tool aligned with the mutation fallback', () => {
+    const snapshot = buildAuditActionSnapshot(
+      'tool',
+      { summary: 'CustomPathTool notes.txt' },
+      {
+        kind: 'tool',
+        cwd: '/repo',
+        toolName: 'CustomPathTool',
+        payload: { path: 'notes.txt' },
+      },
+    )
+
+    expect(snapshot).toMatchObject({
+      schemaVersion: 2,
+      action: { type: 'file', operation: 'write', path: 'notes.txt' },
+    })
+  })
+
   it('keeps patch targets including move destinations without patch bodies', () => {
     const snapshot = buildAuditActionSnapshot(
       'tool',
