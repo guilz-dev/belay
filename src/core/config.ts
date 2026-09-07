@@ -23,6 +23,42 @@ import {
 
 export type { UnknownLocalEffectPolicy }
 
+export const DEFAULT_AUDIT_MAX_BYTES = 33_554_432
+export const DEFAULT_AUDIT_MAX_FILES = 5
+
+export interface BelayAuditConfig {
+  logPath: string
+  includeAssessment: boolean
+  /** Optional in source config for backwards compatibility; normalization always supplies it. */
+  maxBytes?: number
+  /** Optional in source config for backwards compatibility; active counts as one retained file. */
+  maxFiles?: number
+}
+
+export interface NormalizedBelayAuditConfig extends BelayAuditConfig {
+  maxBytes: number
+  maxFiles: number
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback
+  }
+  const floored = Math.floor(value)
+  return floored > 0 ? floored : fallback
+}
+
+export function normalizeAuditConfig(
+  audit: Partial<BelayAuditConfig> | undefined,
+): NormalizedBelayAuditConfig {
+  return {
+    logPath: audit?.logPath || 'belay/audit.ndjson',
+    includeAssessment: audit?.includeAssessment !== false,
+    maxBytes: normalizePositiveInteger(audit?.maxBytes, DEFAULT_AUDIT_MAX_BYTES),
+    maxFiles: normalizePositiveInteger(audit?.maxFiles, DEFAULT_AUDIT_MAX_FILES),
+  }
+}
+
 export interface BelayConfigV1 {
   version: 1
   mode: BelayMode
@@ -32,9 +68,7 @@ export interface BelayConfigV1 {
     shell: boolean
     subagent: boolean
   }
-  audit: {
-    logPath: string
-  }
+  audit: Pick<BelayAuditConfig, 'logPath'>
 }
 
 export interface BelayConfigV2 {
@@ -54,10 +88,7 @@ export interface BelayConfigV2 {
     customAllowCommands: string[]
     sensitivePaths: string[]
   }
-  audit: {
-    logPath: string
-    includeAssessment: boolean
-  }
+  audit: BelayAuditConfig
 }
 
 export interface BelayConfidenceThresholds {
@@ -600,6 +631,8 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   audit: {
     logPath: 'belay/audit.ndjson',
     includeAssessment: true,
+    maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+    maxFiles: DEFAULT_AUDIT_MAX_FILES,
   },
 }
 
@@ -923,7 +956,9 @@ function looksLikeV2Config(raw: RawConfigInput): boolean {
     raw.gates?.toolShell !== undefined ||
     raw.classifier?.customAllowCommands !== undefined ||
     raw.classifier?.customExternalCommands !== undefined ||
-    raw.audit?.includeAssessment !== undefined
+    raw.audit?.includeAssessment !== undefined ||
+    raw.audit?.maxBytes !== undefined ||
+    raw.audit?.maxFiles !== undefined
   )
 }
 
@@ -1140,10 +1175,10 @@ export function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2 {
         ? config.classifier.sensitivePaths
         : DEFAULT_CONFIG_V2.classifier.sensitivePaths,
     },
-    audit: {
-      logPath: config.audit?.logPath || DEFAULT_CONFIG_V2.audit.logPath,
-      includeAssessment: config.audit?.includeAssessment !== false,
-    },
+    audit: normalizeAuditConfig({
+      ...DEFAULT_CONFIG_V2.audit,
+      ...config.audit,
+    }),
   }
 }
 
@@ -1356,10 +1391,10 @@ export function normalizeConfig(
       demoteL3External: v4.egress?.demoteL3External !== false,
     },
     sandbox: normalizeSandboxConfig(v4.sandbox),
-    audit: {
-      logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
-      includeAssessment: v4.audit?.includeAssessment !== false,
-    },
+    audit: normalizeAuditConfig({
+      ...DEFAULT_CONFIG_V4.audit,
+      ...v4.audit,
+    }),
     judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA),
   }
   if (version === 5 || v4.capability) {

@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
-import { appendFile, mkdir } from 'node:fs/promises'
-import path from 'node:path'
 import { minimizeAuditShellAction } from './audit-replay-context.js'
+import { appendBoundedAuditLine } from './audit-storage.js'
+import {
+  DEFAULT_AUDIT_MAX_BYTES,
+  DEFAULT_AUDIT_MAX_FILES,
+  type NormalizedBelayAuditConfig,
+} from './config.js'
 import { scrubString, scrubValue } from './scrub.js'
 import type { ScrubOptions } from './types.js'
 
@@ -520,8 +524,11 @@ export async function appendAuditRecord(
   auditPath: string,
   record: Record<string, unknown>,
   options: ScrubOptions,
+  bounds: Pick<NormalizedBelayAuditConfig, 'maxBytes' | 'maxFiles'> = {
+    maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+    maxFiles: DEFAULT_AUDIT_MAX_FILES,
+  },
 ): Promise<void> {
-  await mkdir(path.dirname(auditPath), { recursive: true })
   const line = JSON.stringify(serializeAuditRecordV3(record, options))
-  await appendFile(auditPath, `${line}\n`, 'utf8')
+  await appendBoundedAuditLine({ auditPath, line, ...bounds })
 }

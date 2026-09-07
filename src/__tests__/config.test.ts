@@ -12,8 +12,65 @@ import {
   normalizeConfig,
   resolveControlPlaneDir,
 } from '../core/config.js'
+import { hashDecisionConfig } from '../core/decision-config-fingerprint.js'
 
 describe('config migration', () => {
+  it('normalizes missing audit bounds to 32 MiB and five retained files', () => {
+    const normalized = mergeConfig({})
+
+    expect(normalized.audit.maxBytes).toBe(33_554_432)
+    expect(normalized.audit.maxFiles).toBe(5)
+  })
+
+  it('floors positive audit bounds and defaults non-finite or non-positive values', () => {
+    const fractional = mergeConfig({ audit: { maxBytes: 4_096.9, maxFiles: 3.8 } })
+    expect(fractional.audit.maxBytes).toBe(4_096)
+    expect(fractional.audit.maxFiles).toBe(3)
+
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const normalized = mergeConfig({ audit: { maxBytes: invalid, maxFiles: invalid } })
+      expect(normalized.audit.maxBytes).toBe(33_554_432)
+      expect(normalized.audit.maxFiles).toBe(5)
+    }
+  })
+
+  it.each([
+    { storedVersion: 1, normalizedVersion: 4 },
+    { storedVersion: 2, normalizedVersion: 4 },
+    { storedVersion: 3, normalizedVersion: 4 },
+    { storedVersion: 4, normalizedVersion: 4 },
+    { storedVersion: 5, normalizedVersion: 5 },
+  ])('adds audit bounds to stored v$storedVersion without changing its version contract', ({
+    storedVersion,
+    normalizedVersion,
+  }) => {
+    const stored = {
+      version: storedVersion,
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: false },
+    }
+    const before = structuredClone(stored)
+
+    const migrated = migrateConfig(stored)
+
+    expect(migrated.version).toBe(normalizedVersion)
+    expect(migrated.audit).toMatchObject({
+      logPath: '.cursor/belay/audit.ndjson',
+      maxBytes: 33_554_432,
+      maxFiles: 5,
+    })
+    expect(stored).toEqual(before)
+  })
+
+  it('keeps decisionConfigFingerprint stable when only audit bounds change', () => {
+    const baseline = mergeConfig({ audit: { maxBytes: 1_024, maxFiles: 2 } })
+    const resized = mergeConfig({
+      ...baseline,
+      audit: { ...baseline.audit, maxBytes: 2_048, maxFiles: 9 },
+    })
+
+    expect(hashDecisionConfig(resized)).toBe(hashDecisionConfig(baseline))
+  })
+
   it('migrates v1 config to v3 with new gate and section defaults', () => {
     const migrated = migrateConfig({
       version: 1,

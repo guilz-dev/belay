@@ -25,8 +25,8 @@ import {
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
 import {
+  appendAuditRecord,
   approvalCorrelationId,
-  serializeAuditRecordV3,
   toolInvocationCorrelationId,
 } from '../../core/audit-serialize.js'
 import type { CompactHostTelemetryV1 } from '../../core/audit-types.js'
@@ -73,6 +73,7 @@ import {
   trustedWorkspaceRootsPath,
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
+import { normalizeAuditConfig } from '../../core/config.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import {
   ContainedDockerBoundaryUnavailableError,
@@ -281,7 +282,6 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
     },
     async appendAudit(ctx, event) {
       const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
-      await mkdir(path.dirname(auditPath), { recursive: true })
       const provenance = auditProvenance(ctx.config)
       const record: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
@@ -292,11 +292,12 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment
       }
-      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(ctx.config))
-      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, {
-        encoding: 'utf8',
-        flag: 'a',
-      })
+      await appendAuditRecord(
+        auditPath,
+        record,
+        scrubOptionsFromConfig(ctx.config),
+        normalizeAuditConfig(ctx.config.audit),
+      )
     },
     async loadApprovals(ctx, fileName) {
       const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)

@@ -25,7 +25,7 @@ exhaustive field defaults).
 | `approvalSigning` | object | `required: false` | Signed OOB approval tokens |
 | `egress` | object | disabled | L1 partial — egress proxy |
 | `sandbox` | object | disabled | L1-full — external sandbox broker |
-| `audit` | object | | `logPath`, `includeAssessment` |
+| `audit` | object | bounded storage | `logPath`, `includeAssessment`, `maxBytes`, `maxFiles` |
 | `judge` | object | local-ollama | Tier1 judge provider (see below) |
 
 ## `installScope`
@@ -191,6 +191,26 @@ applied/conflict/rejected outcomes for all-time and active-cohort records. Recov
 observational only; they do not affect authorization, `readyForEnforce`, or automatic feature
 enablement. Older audit records without recovery fields remain readable.
 
+## `audit`
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Active NDJSON file |
+| `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
+| `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
+| `maxFiles` | positive integer | `5` | Total retained files, including the active file |
+
+Positive fractional bounds are floored. Missing, non-finite, zero, or negative bounds use the
+defaults. These storage/display settings do not affect `decisionConfigFingerprint` and do not
+change the stored config schema version.
+
+The active file is `audit.ndjson`; numbered generations are `.1` (newest) through the
+`maxFiles - 1` suffix (oldest). Rotation uses an exclusive sibling `.lock` for at most two seconds
+and occurs before appending the complete newline-terminated record. `maxFiles: 1` keeps only the
+new active record after rotation. A single record larger than `maxBytes` remains intact, so the
+active file can temporarily exceed the threshold by that unavoidable one-record amount. Numbered
+retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files.
+
 ## Audit log (NDJSON schema v3)
 
 Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`
@@ -238,8 +258,8 @@ Records with scrub placeholders in correlation fields (`<timestamp>`, `<high-ent
 `<approval-id>`) are invalid for metrics joins. `belay doctor` warns; `belay upgrade` archives
 such logs to `audit.ndjson.legacy-<timestamp>.ndjson` when placeholders are detected.
 
-Rotation, retention caps, and compact post-tool telemetry are planned (Phase C); the log is
-still unbounded in v0.9.x.
+Gate, CLI, and egress appenders share the bounded storage sink described above. Compact post-tool
+telemetry uses the same rotation and lock path as gate and CLI records.
 
 ## `controlPlane`
 

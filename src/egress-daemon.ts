@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import {
@@ -7,8 +6,8 @@ import {
   loadConfigFile,
   repoLocalStateDirFor,
 } from './config-io.js'
-import { serializeAuditRecordV3 } from './core/audit-serialize.js'
-import { scrubOptionsFromConfig } from './core/config.js'
+import { appendAuditRecord } from './core/audit-serialize.js'
+import { normalizeAuditConfig, scrubOptionsFromConfig } from './core/config.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
 import { resolveActiveAuditCohort } from './runtime-provenance.js'
 import {
@@ -44,7 +43,6 @@ async function main(): Promise<void> {
       return loadApprovalState(repoRoot, 'approved-approvals.json', config)
     },
     async onAudit(event) {
-      await mkdir(path.dirname(auditPath), { recursive: true })
       const cohort = await resolveActiveAuditCohort(repoRoot, config)
       const record = {
         timestamp: new Date().toISOString(),
@@ -61,8 +59,12 @@ async function main(): Promise<void> {
           : {}),
         ...event,
       }
-      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(config))
-      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, { encoding: 'utf8', flag: 'a' })
+      await appendAuditRecord(
+        auditPath,
+        record,
+        scrubOptionsFromConfig(config),
+        normalizeAuditConfig(config.audit),
+      )
     },
   })
 

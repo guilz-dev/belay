@@ -3,7 +3,7 @@ import path from 'node:path'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 import { appendAuditRecord } from './audit-serialize.js'
 import type { BelayConfigV4 } from './config.js'
-import { scrubOptionsFromConfig } from './config.js'
+import { normalizeAuditConfig, scrubOptionsFromConfig } from './config.js'
 
 export {
   AUDIT_SCHEMA_VERSION,
@@ -42,5 +42,6 @@ export async function appendCliAuditEvent(
       ...event,
     },
     scrubOptionsFromConfig(config),
+    normalizeAuditConfig(config.audit),
   )
 }

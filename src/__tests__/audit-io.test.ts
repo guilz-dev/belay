@@ -271,6 +271,47 @@ describe('serializeAuditRecordV3', () => {
     expect(computeRepeatedFingerprintAsks(records)).toHaveLength(0)
   })
 
+  it('serializes compact records before delegating bounded rotation', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-io-rotation-'))
+    tempDirs.push(tempDir)
+    const auditPath = path.join(tempDir, 'audit.ndjson')
+    const bodyMarker = 'task eleven raw body canary'
+    const fingerprints = ['first', 'second'].map((value) =>
+      createHash('sha256').update(value).digest('hex'),
+    )
+
+    for (const fingerprint of fingerprints) {
+      await appendAuditRecord(
+        auditPath,
+        {
+          event: 'preToolUse',
+          kind: 'tool',
+          fingerprint,
+          summary: bodyMarker,
+          tool_input: { contents: bodyMarker },
+          actionSnapshot: {
+            schemaVersion: 2,
+            kind: 'tool',
+            cwd: '/workspace/project',
+            toolName: 'Write',
+            operation: 'write',
+            path: `src/${fingerprint.slice(0, 8)}.ts`,
+          },
+        },
+        scrubOptions,
+        { maxBytes: 1, maxFiles: 2 },
+      )
+    }
+
+    const retained = [
+      JSON.parse((await readFile(`${auditPath}.1`, 'utf8')).trim()),
+      JSON.parse((await readFile(auditPath, 'utf8')).trim()),
+    ] as Record<string, unknown>[]
+    expect(retained.map((record) => record.fingerprint)).toEqual(fingerprints)
+    expect(JSON.stringify(retained)).not.toContain(bodyMarker)
+    expect(retained.every((record) => record.schemaVersion === 3)).toBe(true)
+  })
+
   it('joins ask → approval → approved-once via approvalCorrelationId', () => {
     const approvalId = 'belay_cafebabef00d1234'
     const correlationId = approvalCorrelationId(approvalId)
