@@ -1,4 +1,4 @@
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream, existsSync, readdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
@@ -29,16 +29,27 @@ export function resolveAuditLogFiles(
     return existsSync(auditPath) ? [auditPath] : []
   }
 
-  const files: string[] = []
-  const maxFiles = retention?.maxFiles ?? 0
-  if (maxFiles > 1) {
-    for (let generation = maxFiles - 1; generation >= 1; generation -= 1) {
-      const rotated = rotatedAuditPath(auditPath, generation)
-      if (existsSync(rotated) && !isLegacyArchivePath(rotated)) {
-        files.push(rotated)
-      }
-    }
+  const directory = path.dirname(auditPath)
+  const escapedName = path.basename(auditPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const generationPattern = new RegExp(`^${escapedName}\\.(\\d+)$`)
+  let generations: number[] = []
+  try {
+    generations = readdirSync(directory)
+      .map((entry) => {
+        const match = entry.match(generationPattern)
+        return match ? Number(match[1]) : Number.NaN
+      })
+      .filter((generation) => Number.isSafeInteger(generation) && generation > 0)
+      .sort((left, right) => right - left)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+
+  const rotationDisabled =
+    retention === undefined || retention.maxBytes === 0 || retention.maxFiles === 0
+  const files = generations
+    .filter((generation) => rotationDisabled || generation < retention.maxFiles)
+    .map((generation) => rotatedAuditPath(auditPath, generation))
   if (existsSync(auditPath)) {
     files.push(auditPath)
   }

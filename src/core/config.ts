@@ -954,7 +954,8 @@ function looksLikeV2Config(raw: RawConfigInput): boolean {
     raw.gates?.toolShell !== undefined ||
     raw.classifier?.customAllowCommands !== undefined ||
     raw.classifier?.customExternalCommands !== undefined ||
-    raw.audit?.includeAssessment !== undefined
+    raw.audit?.includeAssessment !== undefined ||
+    raw.audit?.retention !== undefined
   )
 }
 

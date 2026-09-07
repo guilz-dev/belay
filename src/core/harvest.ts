@@ -1,5 +1,7 @@
 import type { CorpusCase } from '../corpus/types.js'
+import { matchesAuditCohort } from '../runtime-provenance.js'
 import { computeRepeatedFingerprintAsks, isAvailabilityCausedAsk } from './audit-analysis.js'
+import type { AuditCohortIdentity } from './audit-metrics.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
@@ -42,8 +44,34 @@ export interface HarvestReport {
   schemaVersion: typeof HARVEST_REPORT_SCHEMA_VERSION
   /** Initial harvest scope — shell audit traces only. */
   scope: 'shell'
+  cohortScope: 'active' | 'all'
+  excludedRecords: number
   candidates: HarvestCandidate[]
   availabilityQueue: AvailabilityQueueItem[]
+}
+
+export interface HarvestCohortSelection {
+  records: AuditRecord[]
+  cohortScope: HarvestReport['cohortScope']
+  excludedRecords: number
+}
+
+export function selectHarvestCohort(
+  records: AuditRecord[],
+  activeCohort: AuditCohortIdentity | null,
+  allCohorts: boolean,
+): HarvestCohortSelection {
+  if (allCohorts) {
+    return { records, cohortScope: 'all', excludedRecords: 0 }
+  }
+  const selected = activeCohort
+    ? records.filter((record) => matchesAuditCohort(record, activeCohort))
+    : []
+  return {
+    records: selected,
+    cohortScope: 'active',
+    excludedRecords: records.length - selected.length,
+  }
 }
 
 const READ_STYLE_COMMAND_PATTERN =
@@ -286,10 +314,17 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
   })
 }
 
-export function buildHarvestReport(records: AuditRecord[]): HarvestReport {
+export function buildHarvestReport(
+  records: AuditRecord[],
+  metadata: Pick<HarvestReport, 'cohortScope' | 'excludedRecords'> = {
+    cohortScope: 'all',
+    excludedRecords: 0,
+  },
+): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
     scope: 'shell',
+    ...metadata,
     candidates: extractHarvestCandidates(records),
     availabilityQueue: extractAvailabilityQueue(records),
   }

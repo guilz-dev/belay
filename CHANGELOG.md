@@ -14,8 +14,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   at `audit.retention.maxBytes` (default 32 MiB) with `audit.retention.maxFiles` (default 5).
   `belay metrics`, `audit`, and `doctor` read rotated files via streaming.
 
+### Changed
+
+- **Cohort-correct harvest** — `belay harvest list` now reviews only the active runtime/config
+  cohort by default; explicit historical review remains available through `--all-cohorts`.
+- **Dogfood multi-target upgrades** — Operator guidance now requires one host shell invocation per
+  repository or linked worktree, with that target supplied as the host working directory.
+
 ### Fixed
 
+- **Audit rotation edge cases** — Rotation now checks the incoming serialized record, safely
+  serializes concurrent writers without reclaiming a live lock, prunes excess generations when
+  `maxFiles` is reduced, and keeps existing generations readable when rotation is disabled.
+- **Single-command argv delegates** — Safe one-token delegated commands such as `rtk ls` now use
+  normal nested EffectPlan lowering, while opaque options and mutating commands retain their
+  existing ask or mutation semantics.
 - **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
   file location at runtime instead of baking in the install-time path. This prevents global sentinel
   fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.

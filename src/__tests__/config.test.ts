@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_AUDIT_RETENTION,
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
   isFreshConfigInput,
@@ -14,6 +15,45 @@ import {
 } from '../core/config.js'
 
 describe('config migration', () => {
+  it('defaults and normalizes bounded audit retention', () => {
+    expect(DEFAULT_CONFIG_V3.audit.retention).toEqual(DEFAULT_AUDIT_RETENTION)
+
+    const normalized = mergeConfig({
+      audit: {
+        retention: {
+          maxBytes: 1024.9,
+          maxFiles: 3.9,
+        },
+      },
+    })
+    expect(normalized.audit.retention).toEqual({ maxBytes: 1024, maxFiles: 3 })
+
+    const invalid = normalizeConfig({
+      ...DEFAULT_CONFIG_V3,
+      audit: {
+        ...DEFAULT_CONFIG_V3.audit,
+        retention: {
+          maxBytes: Number.NaN,
+          maxFiles: -1,
+        },
+      },
+    })
+    expect(invalid.audit.retention).toEqual(DEFAULT_AUDIT_RETENTION)
+  })
+
+  it('preserves audit retention while migrating v2 config', () => {
+    const migrated = migrateConfig({
+      version: 2,
+      audit: {
+        logPath: 'custom.ndjson',
+        includeAssessment: false,
+        retention: { maxBytes: 4096, maxFiles: 2 },
+      },
+    })
+
+    expect(migrated.audit.retention).toEqual({ maxBytes: 4096, maxFiles: 2 })
+  })
+
   it('migrates v1 config to v3 with new gate and section defaults', () => {
     const migrated = migrateConfig({
       version: 1,

@@ -22,6 +22,9 @@ description: >-
 - 作業ディレクトリは **belay リポジトリのルート**（`package.json` の `name` が `@guilz-dev/belay`）
 - Node **22+** と **pnpm** が使えること
 - ローカル install は `belay init` / `belay upgrade` で入った **project scope**（`.cursor/belay.config.json` 等）を想定。`installScope: global` の場合は `~/.cursor/` 側も更新される
+- このスキルは現在の1リポジトリだけを更新する。複数の dogfood 対象や linked worktree を
+  更新するときは、各対象を作業ディレクトリにした別々の shell 呼び出しとして実行する。
+  `cd "$dir"` や `cd "$1"` を含む一括ループは `missing_trusted_cwd` の原因になるため使わない
 
 ## 手順（この順で実行する）
 

@@ -1,14 +1,13 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, open, rename, stat, unlink } from 'node:fs/promises'
+import { appendFile, mkdir, open, readdir, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
-import { appendAuditRecord } from './audit-serialize.js'
+import { serializeAuditRecordV3 } from './audit-serialize.js'
 import type { AuditRetentionConfig } from './config.js'
 import type { ScrubOptions } from './types.js'
 
-const LOCK_RETRIES = 5
-const LOCK_RETRY_MS = 20
-const LOCK_STALE_MS = 60_000
+const LOCK_RETRIES = 500
+const LOCK_RETRY_MS = 5
 
 export interface AuditSinkAppendOptions {
   auditPath: string
@@ -23,19 +22,6 @@ async function sleep(ms: number): Promise<void> {
 
 function lockPath(auditPath: string): string {
   return `${auditPath}.lock`
-}
-
-async function removeStaleLock(lockFile: string): Promise<boolean> {
-  try {
-    const lockStat = await stat(lockFile)
-    if (Date.now() - lockStat.mtimeMs <= LOCK_STALE_MS) {
-      return false
-    }
-    await unlink(lockFile)
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function acquireAuditLock(auditPath: string): Promise<() => Promise<void>> {
@@ -55,24 +41,12 @@ async function acquireAuditLock(auditPath: string): Promise<() => Promise<void>>
       }
     } catch (error) {
       lastError = error
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error
+      }
       if (attempt < LOCK_RETRIES - 1) {
         await sleep(LOCK_RETRY_MS)
       }
-    }
-  }
-  if (await removeStaleLock(lockFile)) {
-    try {
-      const handle = await open(lockFile, 'wx')
-      await handle.close()
-      return async () => {
-        try {
-          await unlink(lockFile)
-        } catch {
-          // best effort
-        }
-      }
-    } catch (error) {
-      lastError = error
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Failed to acquire audit lock')
@@ -86,18 +60,51 @@ export function rotatedAuditPath(auditPath: string, generation: number): string 
   return `${auditPath}.${generation}`
 }
 
+async function auditGenerations(auditPath: string): Promise<number[]> {
+  let entries: string[] = []
+  try {
+    entries = await readdir(path.dirname(auditPath))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const escapedName = path.basename(auditPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const generationPattern = new RegExp(`^${escapedName}\\.(\\d+)$`)
+  return entries
+    .map((entry) => {
+      const match = entry.match(generationPattern)
+      return match ? Number(match[1]) : Number.NaN
+    })
+    .filter((generation) => Number.isSafeInteger(generation) && generation > 0)
+    .sort((left, right) => right - left)
+}
+
+async function pruneExcessGenerations(auditPath: string, maxFiles: number): Promise<void> {
+  if (maxFiles <= 0) return
+  await Promise.all(
+    (await auditGenerations(auditPath))
+      .filter((generation) => generation >= maxFiles)
+      .map(async (generation) => {
+        try {
+          await unlink(rotatedAuditPath(auditPath, generation))
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+      }),
+  )
+}
+
 export async function maybeRotateAuditLog(
   auditPath: string,
   retention: AuditRetentionConfig,
+  incomingBytes = 0,
 ): Promise<boolean> {
   if (!isRetentionEnabled(retention)) {
     return false
   }
-  if (!existsSync(auditPath)) {
-    return false
-  }
+  await pruneExcessGenerations(auditPath, retention.maxFiles)
+  if (!existsSync(auditPath)) return false
   const fileStat = await stat(auditPath)
-  if (fileStat.size < retention.maxBytes) {
+  if (fileStat.size === 0 || fileStat.size + incomingBytes <= retention.maxBytes) {
     return false
   }
 
@@ -116,7 +123,9 @@ export async function maybeRotateAuditLog(
     }
   }
 
-  if (existsSync(auditPath)) {
+  if (maxArchived === 0) {
+    await unlink(auditPath)
+  } else if (existsSync(auditPath)) {
     await rename(auditPath, rotatedAuditPath(auditPath, 1))
   }
 
@@ -130,10 +139,11 @@ export async function appendAuditLine(options: AuditSinkAppendOptions): Promise<
 
   const release = await acquireAuditLock(auditPath)
   try {
+    const line = `${JSON.stringify(serializeAuditRecordV3(record, scrubOptions))}\n`
     if (retention && isRetentionEnabled(retention)) {
-      await maybeRotateAuditLog(auditPath, retention)
+      await maybeRotateAuditLog(auditPath, retention, Buffer.byteLength(line, 'utf8'))
     }
-    await appendAuditRecord(auditPath, record, scrubOptions)
+    await appendFile(auditPath, line, 'utf8')
   } finally {
     await release()
   }

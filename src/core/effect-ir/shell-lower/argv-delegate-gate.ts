@@ -32,7 +32,7 @@ export function shouldApplyArgvDelegate(
   if (ARGV_DELEGATE_INNER_BLOCKLIST.has(innerHead)) {
     return false
   }
-  return innerTokens.length >= 2
+  return innerTokens.length >= 1
 }
 
 export function isGrammarUnknownOnly(

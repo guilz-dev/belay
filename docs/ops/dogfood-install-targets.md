@@ -40,10 +40,17 @@ npx @guilz-dev/belay@<version> upgrade --with-skill
 npx @guilz-dev/belay@<version> doctor
 ```
 
+Run each target as a **separate host shell invocation** and set that invocation's working
+directory to the target repository. Do not combine targets in a shell function or loop that uses
+`cd "$dir"`, `cd "$1"`, or another runtime-expanded directory: Belay intentionally treats a
+mutation or process spawn after an opaque cwd transition as `missing_trusted_cwd`.
+
 For monorepos or linked Git worktrees, run the same `upgrade` + `doctor` + `dogfood` sequence in
-each worktree where Cursor may execute hooks. A sibling worktree without `belay.config.json` stays
-on defaults (`mode: enforce`) and can still block host actions even when the main worktree is in
-dogfood (`mode: audit`, `unknownLocalEffect: deny`).
+each worktree where Cursor may execute hooks. Discover the worktree paths in one read-only
+invocation, then run one upgrade invocation per returned path with that path as the host working
+directory. A sibling worktree without `belay.config.json` stays on defaults (`mode: enforce`) and
+can still block host actions even when the main worktree is in dogfood (`mode: audit`,
+`unknownLocalEffect: deny`).
 
 See [releasing.md](./releasing.md) for publish steps.
 

@@ -16,6 +16,72 @@
   {
     "kind": "shell",
     "category": "provably-benign",
+    "command": "rtk git status --short",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk git status --short --branch",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk git diff -- src/adapters/cursor/runtime-entry.ts src/__tests__/hooks-runtime.test.ts",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk ls",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "rtk vitest src/__tests__/hooks-runtime.test.ts src/__tests__/verdict/codex-adapter.test.ts",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "rtk vitest src/__tests__/verdict/codex-adapter.test.ts -t \"uses Shell action directory for PreToolUse approval state\"",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "dogfood-2026-09-07"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "fictional-runner git diff",
     "verdict": "allow",
     "reason": "read_only"
