@@ -46,6 +46,14 @@ npx @guilz-dev/belay@<version> doctor
 npx @guilz-dev/belay@<version> status
 ```
 
+各対象は **host shell を別々に呼び出し**、呼び出しの作業ディレクトリを対象リポジトリに設定する。
+`cd "$dir"`、`cd "$1"` など実行時展開されるディレクトリを使った shell 関数やループで、複数対象を
+一括処理しない。Belay は不透明な cwd 遷移後の mutation / process spawn を意図的に
+`missing_trusted_cwd` として扱う。
+
+linked worktree は読み取り専用の呼び出しでパスを列挙した後、返された各パスを作業ディレクトリに
+して upgrade / dogfood / doctor を1回ずつ実行する。
+
 ## 対象外（この一覧に含めない）
 
 | GitHub | 理由 |

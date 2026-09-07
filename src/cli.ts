@@ -117,6 +117,7 @@ function parseArgs(argv: string[]) {
     harvestOutcome?: 'provably-benign' | 'accepted-benign' | 'reject'
     harvestCommand?: string
     corpusPath?: string
+    allCohorts?: boolean
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -271,6 +272,13 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--json') {
       options.json = true
+      continue
+    }
+    if (token === '--all-cohorts') {
+      if (command !== 'harvest') {
+        throw new Error('--all-cohorts is only valid for harvest list.')
+      }
+      options.allCohorts = true
       continue
     }
     if (token === '--since') {
@@ -648,6 +656,10 @@ function parseArgs(argv: string[]) {
     throw new Error(`Unknown argument: ${token}`)
   }
 
+  if (options.allCohorts && options.harvestSubcommand !== 'list') {
+    throw new Error('--all-cohorts is only valid for harvest list.')
+  }
+
   return { command: command ?? 'help', options }
 }
 
@@ -697,7 +709,7 @@ Usage:
   ${c} approval-token <approval-id> [--target <dir>] [--json]
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
-  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--json]
+  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--json]
   ${c} harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject [--reason <r>] [--corpus <path>] [--target <dir>]
 `)
 }
@@ -1010,6 +1022,7 @@ async function main() {
           since: options.since,
           until: options.until,
           json: options.json,
+          allCohorts: options.allCohorts,
         })
         if (options.json) {
           process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)

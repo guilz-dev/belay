@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { loadConfigFile } from '../config-io.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import { toAuditRecord } from '../core/audit-query.js'
 import type { AuditRecord } from '../core/audit-types.js'
@@ -9,8 +10,10 @@ import {
   filterRecordsForHarvest,
   type HarvestReport,
   type HarvestReviewOutcome,
+  selectHarvestCohort,
 } from '../core/harvest.js'
 import { parseCorpusCases } from '../corpus/types.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 import { loadAuditRecords } from './audit.js'
 
 export interface HarvestListOptions {
@@ -18,6 +21,7 @@ export interface HarvestListOptions {
   since?: string
   until?: string
   json?: boolean
+  allCohorts?: boolean
 }
 
 export interface HarvestApplyOptions {
@@ -30,19 +34,33 @@ export interface HarvestApplyOptions {
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
   const records = await loadAuditRecords(repoRoot)
-  return harvestReportFromRecords(records, {
+  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
+  const selected = selectHarvestCohort(records, activeCohort, options.allCohorts === true)
+  return harvestReportFromRecords(selected.records, {
     since: options.since,
     until: options.until,
+    cohortScope: selected.cohortScope,
+    excludedRecords: selected.excludedRecords,
   })
 }
 
 export function harvestReportFromRecords(
   records: AuditRecord[],
-  options: { since?: string; until?: string } = {},
+  options: {
+    since?: string
+    until?: string
+    cohortScope?: HarvestReport['cohortScope']
+    excludedRecords?: number
+  } = {},
 ): HarvestReport {
   return buildHarvestReport(
     filterRecordsForHarvest(records, { since: options.since, until: options.until }),
+    {
+      cohortScope: options.cohortScope ?? 'all',
+      excludedRecords: options.excludedRecords ?? 0,
+    },
   )
 }
 
@@ -50,6 +68,7 @@ export function formatHarvestReport(report: HarvestReport): string {
   const lines = [
     `belay harvest (scope: ${report.scope} audit traces only)`,
     `Schema: v${report.schemaVersion}`,
+    `Cohort scope: ${report.cohortScope} (${report.excludedRecords} record(s) excluded)`,
     '',
     `Benign candidates (${report.candidates.length}):`,
   ]
@@ -79,6 +98,7 @@ export function formatHarvestReport(report: HarvestReport): string {
     '',
     'Candidates are review-only signals — approve in audit does not auto-promote to corpus.',
     'Time filters (--since/--until) keep paired deny/approval rows for round-trip detection.',
+    'Use --all-cohorts only for explicit historical review.',
     'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject',
   )
   return lines.join('\n')

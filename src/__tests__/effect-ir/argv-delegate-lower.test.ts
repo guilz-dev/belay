@@ -39,6 +39,35 @@ describe('argv-delegate lowering', () => {
     expect(wrapped.reason).toBe(direct.reason)
   })
 
+  it('lowers a single-argument delegated inspection like its direct command', async () => {
+    const direct = await classify('ls')
+    const wrapped = await classify('rtk ls')
+    expect(wrapped.verdict).toBe(direct.verdict)
+    expect(wrapped.reason).toBe(direct.reason)
+  })
+
+  it('does not weaken a single-argument delegated mutation', async () => {
+    const direct = await classify('rm target')
+    const wrapped = await classify('rtk rm target')
+    expect(wrapped.verdict).toBe(direct.verdict)
+    expect(wrapped.reason).toBe(direct.reason)
+    expect(wrapped.effectPlan).toEqual(
+      expect.objectContaining({
+        completeness: 'complete',
+      }),
+    )
+  })
+
+  it('keeps delegated wrapper options opaque', async () => {
+    const wrapped = await classify('rtk --network ls')
+    expect(wrapped.verdict).toBe('deny_pending_approval')
+    expect(wrapped.effectPlan).toEqual(
+      expect.objectContaining({
+        completeness: 'partial',
+      }),
+    )
+  })
+
   it('inherits make lowering for argv-delegated make invocations', async () => {
     const direct = await classify('make test-fast ARGS=foo')
     const wrapped = await classify('rtk make test-fast ARGS=foo')

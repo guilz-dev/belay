@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { auditProject } from '../commands/audit.js'
+import { auditProject, loadAuditRecords } from '../commands/audit.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   buildApprovalRoundTrips,
@@ -286,5 +286,28 @@ describe('audit query', () => {
     expect(report.subcommand).toBe('summarize')
     expect(report.roundTrips).toHaveLength(1)
     expect(report.roundTrips?.[0]?.summary).toBe('curl https://example.com')
+  })
+
+  it('loads retained audit generations in chronological order', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-generations-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify({ timestamp: '2026-06-01T10:00:00.000Z', summary: 'older' })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({ timestamp: '2026-06-01T10:01:00.000Z', summary: 'newer' })}\n`,
+      'utf8',
+    )
+
+    expect((await loadAuditRecords(repoRoot)).map((record) => record.summary)).toEqual([
+      'older',
+      'newer',
+    ])
   })
 })

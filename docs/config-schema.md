@@ -196,6 +196,13 @@ enablement. Older audit records without recovery fields remain readable.
 Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`
 (`src/core/audit-serialize.ts`). Schema version is implicit v3 (no per-line version field).
 
+Audit storage is bounded by `audit.retention`. `maxBytes` defaults to 33,554,432 bytes (32 MiB)
+and `maxFiles` defaults to 5 files total, including the active log. Before an append would cross
+`maxBytes`, Belay rotates the active file to `.1`, shifts older generations upward, and removes
+the oldest excess generation. Readers stream retained generations from oldest to newest. Set
+either value to `0` to disable rotation; an individual record larger than `maxBytes` is retained
+whole in the active file rather than split.
+
 ### Preserved correlation fields
 
 These fields are written literally and are **not** subject to high-entropy scrubbing:
