@@ -185,6 +185,13 @@ describe('structural suite', () => {
       expect(result.signals).toContain('shell.cwd_dynamic_transition')
     })
 
+    it('preserves an unknown cwd through a later relative cd', async () => {
+      const result = await verdict('cd "$dir" && cd child && rm -rf build', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('dynamic_cwd_transition')
+      expect(result.signals).toContain('shell.cwd_dynamic_transition')
+    })
+
     it('keeps a literal absolute cd statically known', async () => {
       const result = await verdict('cd /tmp && rm -rf build', context)
       expect(result.permission).toBe('ask')

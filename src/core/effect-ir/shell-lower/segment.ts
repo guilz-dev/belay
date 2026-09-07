@@ -54,6 +54,7 @@ export function startsLocalPostgresService(command: string): boolean {
 export function resolveCdTransition(
   command: string,
   currentCwd: string,
+  currentCwdKnown = true,
 ): CdTransition | null {
   const tokens = tokenizeShell(command)
   if (path.basename(tokens[0] ?? '') !== 'cd') {
@@ -61,6 +62,9 @@ export function resolveCdTransition(
   }
   const target = tokens[1] ?? ''
   if (!target || target === '-' || target.includes('$') || target.includes('`')) {
+    return { cwd: currentCwd, known: false, signal: 'shell.cwd_dynamic_transition' }
+  }
+  if (!currentCwdKnown && !path.isAbsolute(target)) {
     return { cwd: currentCwd, known: false, signal: 'shell.cwd_dynamic_transition' }
   }
   return { cwd: resolvePathOperand(target, currentCwd), known: true }

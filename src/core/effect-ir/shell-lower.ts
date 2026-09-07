@@ -138,7 +138,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
         DATABASE_URL: 'postgresql://127.0.0.1:5432/local',
       }
     }
-    const nextCwd = resolveCdTransition(segment, cwd)
+    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown)
     if (nextCwd) {
       cwd = nextCwd.cwd
       cwdKnown = nextCwd.known
