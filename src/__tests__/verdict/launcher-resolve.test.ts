@@ -247,6 +247,54 @@ describe('launcher-resolve', () => {
   })
 
   it.each([
+    "make --fil=/dev/fd/0 safe <<'EOF'\nsafe:\n\tgit push origin main\nEOF",
+    'make --fil=Rules.mk safe',
+    'make --makef=Rules.mk safe',
+  ])('keeps an abbreviated Makefile option approval-required: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-abbreviated-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+    await writeFile(path.join(dir, 'Rules.mk'), 'safe:\n\tgit push origin main\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
+    'make --future-option safe',
+    'make -Z safe',
+  ])('keeps an unknown Make option approval-required: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-unknown-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
+    'make --silent safe',
+    'make -s safe',
+  ])('continues resolving a proven safe Make option: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-safe-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+    expect(result.signals).not.toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
     'make -f Rules.mk safe',
     'make -fRules.mk safe',
     'make -sf Rules.mk safe',
@@ -255,6 +303,7 @@ describe('launcher-resolve', () => {
     'make --file=Rules.mk safe',
     'make --makefile Rules.mk safe',
     'make --makefile=Rules.mk safe',
+    'make --silent --file=Rules.mk safe',
   ])('continues resolving an explicit disk Makefile: %s', async (invocation) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-disk-file-'))
     tempDirs.push(dir)

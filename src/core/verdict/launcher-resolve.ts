@@ -209,6 +209,31 @@ function hasBackgroundControl(recipe: string): boolean {
 }
 
 const MAKE_GROUPABLE_SHORT_FLAGS_PATTERN = /^[bmBdehikLnpqrRsStvw]*$/
+const MAKE_NO_OPERAND_LONG_FLAGS = new Set([
+  '--always-make',
+  '--check-symlink-times',
+  '--debug',
+  '--dry-run',
+  '--environment-overrides',
+  '--help',
+  '--ignore-errors',
+  '--just-print',
+  '--keep-going',
+  '--no-builtin-rules',
+  '--no-builtin-variables',
+  '--no-keep-going',
+  '--no-print-directory',
+  '--print-data-base',
+  '--print-directory',
+  '--question',
+  '--quiet',
+  '--recon',
+  '--silent',
+  '--stop',
+  '--touch',
+  '--version',
+  '--warn-undefined-variables',
+])
 
 interface MakefileOperand {
   value: string | null
@@ -218,6 +243,7 @@ interface MakefileOperand {
 interface MakefileOptions {
   explicit: boolean
   complete: boolean
+  opaque: boolean
   sources: string[]
   operandIndexes: Set<number>
 }
@@ -258,12 +284,25 @@ function parseMakefileOptions(tokens: readonly string[]): MakefileOptions {
   const operandIndexes = new Set<number>()
   let explicit = false
   let complete = true
+  let opaque = false
   for (let index = 1; index < tokens.length; index += 1) {
-    if (tokens[index] === '--') {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
       break
     }
-    const operand = makefileOperand(tokens[index] ?? '', tokens[index + 1])
+    const operand = makefileOperand(token, tokens[index + 1])
     if (!operand) {
+      if (
+        token.startsWith('-') &&
+        !(
+          token.length > 1 &&
+          !token.startsWith('--') &&
+          MAKE_GROUPABLE_SHORT_FLAGS_PATTERN.test(token.slice(1))
+        ) &&
+        !MAKE_NO_OPERAND_LONG_FLAGS.has(token)
+      ) {
+        opaque = true
+      }
       continue
     }
     explicit = true
@@ -277,7 +316,7 @@ function parseMakefileOptions(tokens: readonly string[]): MakefileOptions {
     }
     sources.push(operand.value)
   }
-  return { explicit, complete, sources, operandIndexes }
+  return { explicit, complete, opaque, sources, operandIndexes }
 }
 
 function readExplicitMakefile(source: string, cwd: string): MakefileSnapshot | null {
@@ -501,6 +540,9 @@ export function resolveLauncherRecipe(params: {
       return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
     }
     const makefileOptions = parseMakefileOptions(tokens)
+    if (makefileOptions.opaque) {
+      return { recipes: [], opaque: true, reason: 'make_option_opaque' }
+    }
     let explicitMakefile: MakefileSnapshot | undefined
     if (makefileOptions.explicit) {
       if (!makefileOptions.complete || makefileOptions.sources.length !== 1) {
