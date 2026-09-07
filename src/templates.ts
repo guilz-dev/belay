@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CURSOR_DISPATCHER_GENERATION_HEADER } from './adapters/cursor/dispatcher-generation.js'
 import type { CursorHookOrigin } from './adapters/cursor/hook-router.js'
-import { renderCursorProjectHookRepoRoot } from './adapters/cursor/project-hook-shim.js'
+import { renderCursorProjectHookShim } from './adapters/cursor/project-hook-shim.js'
 import type { AdapterName } from './adapters/layouts/types.js'
 import type { BelayConfigV3 } from './core/config.js'
 import { hashValue } from './core/fingerprint.js'
@@ -30,18 +30,7 @@ function renderCursorDispatchHook(
   eventName: string,
 ): string {
   if (origin.scope === 'project') {
-    return `import { fileURLToPath } from 'node:url'
-import path from 'node:path'
-import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
-
-${renderCursorProjectHookRepoRoot()}
-
-await dispatchCursorHook({
-  origin: { scope: 'project', repoRoot },
-  kind: ${JSON.stringify(kind)},
-  eventName: ${eventName},
-})
-`
+    return renderCursorProjectHookShim(kind, eventName)
   }
   return `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
 

@@ -4,11 +4,41 @@ import path from 'node:path'
 export const CURSOR_PROJECT_HOOK_REPO_ROOT_RESOLVER =
   "path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')"
 
-const CURSOR_PROJECT_HOOK_DISPATCH_RE =
-  /await\s+dispatchCursorHook\(\{\s*origin:\s*\{\s*scope:\s*'project',\s*repoRoot\s*\},/
+const CURSOR_PROJECT_HOOKS = [
+  ['before-submit', '"beforeSubmitPrompt"'],
+  ['shell-gate', '"beforeShellExecution"'],
+  ['tool-gate', "process.argv[2] ?? 'preToolUse'"],
+  ['audit', "process.argv[2] ?? 'postToolUse'"],
+] as const
 
 export function renderCursorProjectHookRepoRoot(): string {
   return `const repoRoot = ${CURSOR_PROJECT_HOOK_REPO_ROOT_RESOLVER}`
+}
+
+export function renderCursorProjectHookShim(kind: string, eventName: string): string {
+  return `import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+${renderCursorProjectHookRepoRoot()}
+
+await dispatchCursorHook({
+  origin: { scope: 'project', repoRoot },
+  kind: ${JSON.stringify(kind)},
+  eventName: ${eventName},
+})
+`
+}
+
+function renderLegacyProjectHookShim(kind: string, eventName: string, repoRoot: string): string {
+  return `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+await dispatchCursorHook({
+  origin: ${JSON.stringify({ scope: 'project', repoRoot })},
+  kind: ${JSON.stringify(kind)},
+  eventName: ${eventName},
+})
+`
 }
 
 export function hasCursorDispatcherShim(source: string): boolean {
@@ -16,10 +46,8 @@ export function hasCursorDispatcherShim(source: string): boolean {
 }
 
 export function hasDynamicProjectHookShim(source: string): boolean {
-  return (
-    hasCursorDispatcherShim(source) &&
-    source.includes(renderCursorProjectHookRepoRoot()) &&
-    CURSOR_PROJECT_HOOK_DISPATCH_RE.test(source)
+  return CURSOR_PROJECT_HOOKS.some(
+    ([kind, eventName]) => source === renderCursorProjectHookShim(kind, eventName),
   )
 }
 
@@ -30,9 +58,9 @@ export function hasLegacyProjectHookShim(source: string, repoRoot: string): bool
   } catch {
     canonicalRepoRoot = path.resolve(repoRoot)
   }
-  return (
-    hasCursorDispatcherShim(source) &&
-    source.includes(`origin: ${JSON.stringify({ scope: 'project', repoRoot: canonicalRepoRoot })}`)
+  return CURSOR_PROJECT_HOOKS.some(
+    ([kind, eventName]) =>
+      source === renderLegacyProjectHookShim(kind, eventName, canonicalRepoRoot),
   )
 }
 

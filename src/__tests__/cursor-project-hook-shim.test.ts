@@ -82,6 +82,31 @@ await dispatchCursorHook({
     expect(hasDynamicProjectHookShim(source)).toBe(false)
     expect(hasManagedProjectHookShim(source, '/tmp/current-worktree')).toBe(false)
   })
+
+  it('rejects a foreign fixed origin hidden behind a commented dynamic dispatch', () => {
+    const source = `import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+/*
+await dispatchCursorHook({
+  origin: { scope: 'project', repoRoot },
+  kind: "shell-gate",
+  eventName: "beforeShellExecution",
+})
+*/
+await dispatchCursorHook({
+  origin: { scope: 'project', repoRoot: '/tmp/other-worktree' },
+  kind: "shell-gate",
+  eventName: "beforeShellExecution",
+})
+`
+
+    expect(hasDynamicProjectHookShim(source)).toBe(false)
+    expect(hasManagedProjectHookShim(source, '/tmp/current-worktree')).toBe(false)
+  })
 })
 
 describe('dynamic project hook shims and routing', () => {
