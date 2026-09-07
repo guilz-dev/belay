@@ -23,6 +23,35 @@ import {
 
 export type { UnknownLocalEffectPolicy }
 
+export interface AuditRetentionConfig {
+  maxBytes: number
+  maxFiles: number
+}
+
+export const DEFAULT_AUDIT_RETENTION: AuditRetentionConfig = {
+  maxBytes: 33_554_432,
+  maxFiles: 5,
+}
+
+export function normalizeAuditRetention(raw?: Partial<AuditRetentionConfig>): AuditRetentionConfig {
+  return {
+    maxBytes:
+      typeof raw?.maxBytes === 'number' && raw.maxBytes >= 0
+        ? Math.floor(raw.maxBytes)
+        : DEFAULT_AUDIT_RETENTION.maxBytes,
+    maxFiles:
+      typeof raw?.maxFiles === 'number' && raw.maxFiles >= 0
+        ? Math.floor(raw.maxFiles)
+        : DEFAULT_AUDIT_RETENTION.maxFiles,
+  }
+}
+
+export function auditRetentionFromConfig(config: {
+  audit?: { retention?: Partial<AuditRetentionConfig> }
+}): AuditRetentionConfig {
+  return normalizeAuditRetention(config.audit?.retention)
+}
+
 export interface BelayConfigV1 {
   version: 1
   mode: BelayMode
@@ -57,6 +86,7 @@ export interface BelayConfigV2 {
   audit: {
     logPath: string
     includeAssessment: boolean
+    retention?: AuditRetentionConfig
   }
 }
 
@@ -600,6 +630,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   audit: {
     logPath: 'belay/audit.ndjson',
     includeAssessment: true,
+    retention: { ...DEFAULT_AUDIT_RETENTION },
   },
 }
 
@@ -1034,6 +1065,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
     audit: {
       ...DEFAULT_CONFIG_V3.audit,
       ...(raw.audit ?? {}),
+      retention: normalizeAuditRetention({
+        ...DEFAULT_CONFIG_V3.audit.retention,
+        ...(raw.audit?.retention ?? {}),
+      }),
     },
   })
 }
@@ -1087,6 +1122,7 @@ export function migrateConfig(loaded: unknown): BelayConfigV4 {
       audit: {
         ...baseV2.audit,
         logPath: raw.audit?.logPath ?? baseV2.audit.logPath,
+        retention: normalizeAuditRetention(baseV2.audit.retention),
       },
     })
     return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw)
@@ -1107,6 +1143,10 @@ export function migrateConfig(loaded: unknown): BelayConfigV4 {
     audit: {
       ...baseV2.audit,
       ...(raw.audit ?? {}),
+      retention: normalizeAuditRetention({
+        ...baseV2.audit.retention,
+        ...(raw.audit?.retention ?? {}),
+      }),
     },
   })
 
@@ -1143,6 +1183,7 @@ export function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2 {
     audit: {
       logPath: config.audit?.logPath || DEFAULT_CONFIG_V2.audit.logPath,
       includeAssessment: config.audit?.includeAssessment !== false,
+      retention: normalizeAuditRetention(config.audit?.retention),
     },
   }
 }
@@ -1359,6 +1400,7 @@ export function normalizeConfig(
     audit: {
       logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
       includeAssessment: v4.audit?.includeAssessment !== false,
+      retention: normalizeAuditRetention(v4.audit?.retention),
     },
     judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA),
   }
@@ -1461,6 +1503,10 @@ export function mergeConfig(
     audit: {
       ...defaults.audit,
       ...migrated.audit,
+      retention: normalizeAuditRetention({
+        ...defaults.audit.retention,
+        ...(migrated.audit?.retention ?? {}),
+      }),
     },
     ...(migrated.installScope ? { installScope: migrated.installScope } : {}),
     ...(migrated.version === 5 || migrated.capability

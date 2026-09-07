@@ -22,11 +22,9 @@ import {
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
-import {
-  approvalCorrelationId,
-  serializeAuditRecordV3,
-  toolInvocationCorrelationId,
-} from '../../core/audit-serialize.js'
+import { approvalCorrelationId, toolInvocationCorrelationId } from '../../core/audit-serialize.js'
+import { appendAuditLine } from '../../core/audit-sink.js'
+import { projectObservedAudit } from '../../core/audit-telemetry-projection.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
@@ -107,6 +105,7 @@ import {
 import {
   approvalCommandMatch,
   approvedApprovalsFile,
+  auditRetentionFromConfig,
   type BelayConfigV3,
   belayStateDir,
   type ClassifyResult,
@@ -132,7 +131,7 @@ import {
   recoveryFailClosedResult,
   recoveryFailReasonFromSkip,
 } from '../../core/recovery/fail-closed.js'
-import { fingerprintReplayPayload, redactToolInvocationId } from '../../core/replay-scrub.js'
+import { fingerprintReplayPayload } from '../../core/replay-scrub.js'
 import { assertRepoConfigTrusted } from '../../core/repo-config-trust.js'
 import {
   FILE_CHECKPOINT_ISOLATION_UNAVAILABLE,
@@ -277,8 +276,9 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       }
     },
     async appendAudit(ctx, event) {
-      const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
-      await mkdir(path.dirname(auditPath), { recursive: true })
+      const auditPath = path.isAbsolute(ctx.config.audit.logPath)
+        ? ctx.config.audit.logPath
+        : path.join(ctx.repoRoot, ctx.config.audit.logPath)
       const provenance = auditProvenance(ctx.config)
       const record: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
@@ -289,10 +289,11 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment
       }
-      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(ctx.config))
-      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, {
-        encoding: 'utf8',
-        flag: 'a',
+      await appendAuditLine({
+        auditPath,
+        record,
+        scrubOptions: scrubOptionsFromConfig(ctx.config),
+        retention: auditRetentionFromConfig(ctx.config),
       })
     },
     async loadApprovals(ctx, fileName) {
@@ -1841,7 +1842,8 @@ export async function appendObservedAudit(
   payload: Record<string, unknown>,
 ): Promise<void> {
   const rawToolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
-  const summaryPayload = redactToolInvocationId(payload, rawToolUseId) as Record<string, unknown>
+  const scrubOptions = scrubOptionsFromConfig(ctx.config)
+  const projection = projectObservedAudit(payload, eventName, ctx.repoRoot, scrubOptions)
   await deps.appendAudit(ctx, {
     event: eventName,
     kind: 'audit',
@@ -1850,16 +1852,23 @@ export async function appendObservedAudit(
     ...(rawToolUseId
       ? { toolInvocationCorrelationId: toolInvocationCorrelationId(rawToolUseId) }
       : {}),
-    ...(typeof summaryPayload.tool_name === 'string' ? { toolName: summaryPayload.tool_name } : {}),
-    ...(typeof summaryPayload.failure_type === 'string'
-      ? { failureType: summaryPayload.failure_type }
-      : {}),
-    ...(typeof summaryPayload.error_message === 'string'
-      ? { errorMessage: summaryPayload.error_message }
+    ...(typeof payload.tool_name === 'string' ? { toolName: payload.tool_name } : {}),
+    ...(typeof payload.failure_type === 'string' ? { failureType: payload.failure_type } : {}),
+    ...(typeof payload.error_message === 'string'
+      ? {
+          errorMessage:
+            rawToolUseId !== undefined
+              ? payload.error_message.replaceAll(rawToolUseId, '<tool-use-id>')
+              : payload.error_message,
+        }
       : {}),
     ...(typeof payload.duration === 'number' ? { durationMs: payload.duration } : {}),
     ...(typeof payload.is_interrupt === 'boolean' ? { isInterrupt: payload.is_interrupt } : {}),
-    summary: canonicalStringify(summaryPayload),
+    observedInputBytes: projection.observedInputBytes,
+    observedOutputBytes: projection.observedOutputBytes,
+    observedPayloadHash: projection.observedPayloadHash,
+    ...(projection.observedCwd ? { observedCwd: projection.observedCwd } : {}),
+    summary: projection.summary,
   })
 }
 

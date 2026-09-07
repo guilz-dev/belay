@@ -25,7 +25,7 @@ exhaustive field defaults).
 | `approvalSigning` | object | `required: false` | Signed OOB approval tokens |
 | `egress` | object | disabled | L1 partial — egress proxy |
 | `sandbox` | object | disabled | L1-full — external sandbox broker |
-| `audit` | object | | `logPath`, `includeAssessment` |
+| `audit` | object | | `logPath`, `includeAssessment`, `retention` |
 | `judge` | object | local-ollama | Tier1 judge provider (see below) |
 
 ## `installScope`
@@ -238,8 +238,16 @@ Records with scrub placeholders in correlation fields (`<timestamp>`, `<high-ent
 `<approval-id>`) are invalid for metrics joins. `belay doctor` warns; `belay upgrade` archives
 such logs to `audit.ndjson.legacy-<timestamp>.ndjson` when placeholders are detected.
 
-Rotation, retention caps, and compact post-tool telemetry are planned (Phase C); the log is
-still unbounded in v0.9.x.
+Rotation, retention caps, and compact post-tool telemetry are enabled by default:
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `retention.maxBytes` | `33554432` (32 MiB) | Active log rotates when size reached; `0` disables rotation |
+| `retention.maxFiles` | `5` | Active + archived generations (`audit.ndjson`, `audit.ndjson.1`, …) |
+
+Observed post-tool rows store compact metadata (`observedInputBytes`, `observedOutputBytes`,
+`observedPayloadHash`, repo-relative `observedCwd`) and a one-line summary — not full tool payloads.
+Legacy archives (`*.legacy-*.ndjson`) are excluded from metrics readers.
 
 ## `controlPlane`
 

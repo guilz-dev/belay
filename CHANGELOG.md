@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Bounded audit storage (Phase C)** — Observed post-tool telemetry is stored as compact
+  projections (`observedInputBytes`, `observedPayloadHash`, human-readable summaries) instead of
+  full host payloads. Gate tool/subagent summaries omit large `tool_input` bodies. Audit logs rotate
+  at `audit.retention.maxBytes` (default 32 MiB) with `audit.retention.maxFiles` (default 5).
+  `belay metrics`, `audit`, and `doctor` read rotated files via streaming.
+
 ### Fixed
 
 - **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim

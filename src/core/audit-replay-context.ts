@@ -92,7 +92,7 @@ export function parseAuditActionSnapshot(record: {
 
 export function buildAuditReplayContext(
   kind: GatedActionKind,
-  result: Pick<ClassifyResult, 'normalizedCommand' | 'summary'>,
+  _result: Pick<ClassifyResult, 'normalizedCommand' | 'summary'>,
   replayAction?: ReplayActionLike,
 ): AuditReplayContext | undefined {
   if (!replayAction?.cwd) {
@@ -104,9 +104,8 @@ export function buildAuditReplayContext(
   return {
     cwd: replayAction.cwd,
     kind: resolvedKind,
-    command: replayAction.command ?? result.normalizedCommand ?? result.summary,
+    ...(replayAction.command ? { command: replayAction.command } : {}),
     ...(replayAction.toolName ? { toolName: replayAction.toolName } : {}),
-    ...(replayAction.payload ? { payload: replayAction.payload } : {}),
   }
 }
 
@@ -130,8 +129,5 @@ export function parseAuditReplayContext(record: {
     kind,
     ...(typeof ctx.command === 'string' ? { command: ctx.command } : {}),
     ...(typeof ctx.toolName === 'string' ? { toolName: ctx.toolName } : {}),
-    ...(ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload)
-      ? { payload: ctx.payload as Record<string, unknown> }
-      : {}),
   }
 }

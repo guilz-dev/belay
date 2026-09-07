@@ -64,18 +64,23 @@ describe('reclassify replay fidelity', () => {
       },
     })
 
-    const payload = { path: 'src/index.ts' }
     const record: AuditRecord = {
       event: 'preToolUse',
       kind: 'tool',
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
-      summary: 'Read',
+      summary: 'Read src/index.ts',
+      actionSnapshot: {
+        schemaVersion: 1,
+        kind: 'tool',
+        cwd: `${repoRoot}/src`,
+        normalizedAction: 'Read src/index.ts',
+        toolName: 'Read',
+      },
       replayContext: {
         cwd: `${repoRoot}/src`,
         kind: 'tool',
         toolName: 'Read',
-        payload,
       },
     }
 
@@ -86,7 +91,10 @@ describe('reclassify replay fidelity', () => {
         kind: 'tool',
         cwd: `${repoRoot}/src`,
         toolName: 'Read',
-        payload,
+        payload: {
+          tool_name: 'Read',
+          tool_input: { command: 'Read src/index.ts' },
+        },
       }),
       config,
       expect.anything(),

@@ -1,9 +1,9 @@
 import path from 'node:path'
 
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
-import { appendAuditRecord } from './audit-serialize.js'
+import { appendAuditLine } from './audit-sink.js'
 import type { BelayConfigV4 } from './config.js'
-import { scrubOptionsFromConfig } from './config.js'
+import { auditRetentionFromConfig, scrubOptionsFromConfig } from './config.js'
 
 export {
   AUDIT_SCHEMA_VERSION,
@@ -26,9 +26,9 @@ export async function appendCliAuditEvent(
     ? config.audit.logPath
     : path.join(repoRoot, config.audit.logPath)
   const cohort = await resolveActiveAuditCohort(repoRoot, config)
-  await appendAuditRecord(
+  await appendAuditLine({
     auditPath,
-    {
+    record: {
       source: 'belay-cli',
       ...(cohort
         ? {
@@ -41,6 +41,7 @@ export async function appendCliAuditEvent(
         : {}),
       ...event,
     },
-    scrubOptionsFromConfig(config),
-  )
+    scrubOptions: scrubOptionsFromConfig(config),
+    retention: auditRetentionFromConfig(config),
+  })
 }

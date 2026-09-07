@@ -4,14 +4,15 @@ import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
-import { parseAuditNdjson, toAuditRecord } from '../core/audit-metrics.js'
+import { toAuditRecord } from '../core/audit-metrics.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
+import { readAuditRecordsFromPath, resolveRepoAuditPath } from '../core/audit-reader.js'
 import type { AuditFilter, AuditRecord } from '../core/audit-types.js'
-import { type BelayConfigV3, mergeConfig } from '../core/config.js'
+import { auditRetentionFromConfig, type BelayConfigV3, mergeConfig } from '../core/config.js'
 import { diffReclassification } from '../core/reclassify.js'
 import type { AdapterName } from '../types.js'
 
@@ -41,14 +42,10 @@ export async function loadAuditRecords(
   adapter?: AdapterName,
 ): Promise<AuditRecord[]> {
   const config = await loadConfigFile(repoRoot, adapter)
-  const auditLogPath = path.join(repoRoot, config.audit.logPath)
-  let raw = ''
-  try {
-    raw = await readFile(auditLogPath, 'utf8')
-  } catch {
-    raw = ''
-  }
-  return parseAuditNdjson(raw).map(toAuditRecord)
+  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
+  const retention = auditRetentionFromConfig(config)
+  const { records } = await readAuditRecordsFromPath(auditLogPath, retention)
+  return records.map(toAuditRecord)
 }
 
 export async function auditProject(options: AuditOptions) {
