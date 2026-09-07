@@ -458,6 +458,7 @@ Phase A 完了までは all-time would-block rate、repeat fingerprint、approva
 | heredoc/Make lowering | `src/core/shell-tokenizer.ts`, `src/core/effect-ir/shell-lower.ts`, `src/core/verdict/launcher-resolve.ts` |
 | compact snapshot | `src/core/audit-replay-context.ts`, `src/core/reclassify.ts` |
 | bounded storage | audit sink、metrics/report streaming reader、config schema、doctor |
+| immutable remediation baseline | [docs/ops/dogfood-readiness-baseline-2026-09-07.md](./ops/dogfood-readiness-baseline-2026-09-07.md) |
 
 ## 10. 非対応とする短絡策
 
