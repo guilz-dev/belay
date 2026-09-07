@@ -404,6 +404,46 @@ describe('harvest', () => {
     expect(
       await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
     ).toEqual({ version: 1, reviews: [] })
+
+    const malformedFingerprint = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'reject',
+      fingerprint: 'not-a-fingerprint',
+    })
+    expect(malformedFingerprint.ok).toBe(false)
+    expect(malformedFingerprint.message).toMatch(/fingerprint.*64-hex/i)
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toEqual({ version: 1, reviews: [] })
+
+    const missingPair = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'reject',
+      fingerprint: testFingerprint('not-a-candidate-for-command'),
+    })
+    expect(missingPair.ok).toBe(false)
+    expect(missingPair.message).toMatch(/command and fingerprint/i)
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toEqual({ version: 1, reviews: [] })
+
+    const selected = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'reject',
+      fingerprint: secondFingerprint,
+    })
+    expect(selected.ok).toBe(true)
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toMatchObject({
+      reviews: [{ fingerprint: secondFingerprint, outcome: 'reject' }],
+    })
   })
 
   it('separates availability-caused asks from benign candidates', () => {

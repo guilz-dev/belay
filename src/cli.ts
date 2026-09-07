@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 import { CLI_COMMAND } from './branding.js'
 import { issuePendingApprovalToken } from './commands/approval-token.js'
@@ -34,6 +36,7 @@ import { revokeStandingAllow } from './commands/standing-allow.js'
 import { formatStatusReport, statusProject } from './commands/status.js'
 import { formatWhereReport, whereProject } from './commands/where.js'
 import { loadConfigFile } from './config-io.js'
+import { isValidAuditFingerprint } from './core/audit-serialize.js'
 import { rejectDeprecatedJudgeModelAuto } from './core/judge-model-policy.js'
 import { initProject, uninstallProject, upgradeProject } from './installer.js'
 import type { ConfigPresetName } from './presets.js'
@@ -47,7 +50,7 @@ import {
 import { formatSandboxStatusReport, sandboxStatus } from './services/sandbox-service.js'
 import { PACKAGE_VERSION } from './version.js'
 
-function parseArgs(argv: string[]) {
+export function parseArgs(argv: string[]) {
   const [command, ...rest] = argv
   const options: {
     targetDir?: string
@@ -344,7 +347,14 @@ function parseArgs(argv: string[]) {
       continue
     }
     if (token === '--fingerprint') {
-      options.fingerprint = rest[index + 1]
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--fingerprint requires a value.')
+      }
+      if (command === 'harvest' && !isValidAuditFingerprint(next)) {
+        throw new Error('--fingerprint for harvest apply requires a lowercase 64-hex value.')
+      }
+      options.fingerprint = next
       index += 1
       continue
     }
@@ -667,9 +677,9 @@ function parseArgs(argv: string[]) {
   return { command: command ?? 'help', options }
 }
 
-function printHelp() {
+export function formatCliHelp(): string {
   const c = CLI_COMMAND
-  process.stdout.write(`${c}
+  return `${c}
 
 Usage:
   ${c} init [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--preset strict|standard|audit-first|l1-full-recommended] [--judge-profile local-ollama|cursor|claude|codex] [--judge-provider ollama|openai-compatible] [--judge-model <id>] [--judge-endpoint <url>] [--accept-cloud-judge] [--migrate-judge-default] [--with-skill] [--dogfood]
@@ -714,8 +724,12 @@ Usage:
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
   ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--include-reviewed] [--json]
-  ${c} harvest apply --command "<text>" --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
-`)
+  ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
+`
+}
+
+function printHelp() {
+  process.stdout.write(formatCliHelp())
 }
 
 async function main() {
@@ -1050,6 +1064,7 @@ async function main() {
           reason: options.reason,
           corpusPath: options.corpusPath,
           allCohorts: options.allCohorts,
+          fingerprint: options.fingerprint,
         })
         process.stdout.write(`${result.message}\n`)
         process.exitCode = result.ok ? 0 : 1
@@ -1269,4 +1284,18 @@ async function main() {
   }
 }
 
-await main()
+function isDirectExecution(): boolean {
+  const entryPath = process.argv[1]
+  if (!entryPath) {
+    return false
+  }
+  try {
+    return realpathSync(entryPath) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (isDirectExecution()) {
+  await main()
+}

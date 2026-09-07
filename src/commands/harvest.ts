@@ -8,6 +8,7 @@ import {
   isShellGateRecord,
   toAuditRecord,
 } from '../core/audit-query.js'
+import { isValidAuditFingerprint } from '../core/audit-serialize.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import {
   applyHarvestReview,
@@ -45,6 +46,8 @@ export interface HarvestApplyOptions {
   corpusPath?: string
   /** Explicit forensic mode; the command must still exactly match the mixed report. */
   allCohorts?: boolean
+  /** Optional discriminator when one displayed command has multiple candidate fingerprints. */
+  fingerprint?: string
 }
 
 function auditLogPath(repoRoot: string, configuredPath: string): string {
@@ -218,23 +221,35 @@ export async function harvestApplyProject(
   options: HarvestApplyOptions,
 ): Promise<{ ok: boolean; message: string; corpusPath: string }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
   const corpusPath = path.resolve(
     repoRoot,
     options.corpusPath ?? path.join('corpus', 'shell-commands.json'),
   )
+  if (options.fingerprint && !isValidAuditFingerprint(options.fingerprint)) {
+    return {
+      ok: false,
+      message: 'Harvest apply fingerprint must be a lowercase 64-hex value.',
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+  const config = await loadConfigFile(repoRoot)
 
   const report = await harvestListProject({
     targetDir: repoRoot,
     allCohorts: options.allCohorts,
     includeReviewed: true,
   })
-  const matchingCandidates = report.candidates.filter((entry) => entry.command === options.command)
+  const commandMatches = report.candidates.filter((entry) => entry.command === options.command)
+  const matchingCandidates = options.fingerprint
+    ? commandMatches.filter((entry) => entry.fingerprint === options.fingerprint)
+    : commandMatches
   const [candidate] = matchingCandidates
   if (!candidate) {
     return {
       ok: false,
-      message: `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`,
+      message: options.fingerprint
+        ? `No candidate matches the exact command and fingerprint ${options.fingerprint} in the selected harvest report.`
+        : `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
@@ -242,7 +257,7 @@ export async function harvestApplyProject(
   if (matchingFingerprints.size > 1) {
     return {
       ok: false,
-      message: `Multiple candidate fingerprints match ${JSON.stringify(options.command)}; inspect harvest list --include-reviewed --json and use a report where the command resolves unambiguously.`,
+      message: `Multiple candidate fingerprints match ${JSON.stringify(options.command)}; inspect harvest list --include-reviewed --json and retry with --fingerprint <64-hex>.`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
