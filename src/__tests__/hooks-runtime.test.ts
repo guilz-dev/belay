@@ -460,9 +460,10 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
     const auditRecord = JSON.parse(auditLines.at(-1) ?? '{}') as Record<string, unknown>
     expect(auditRecord).toMatchObject({
       actionSnapshot: {
+        schemaVersion: 2,
         kind: 'shell',
         cwd: scrubString(childRoot, { ...childConfig.redaction, maskHighEntropyStrings: true }),
-        normalizedAction: 'make guarded',
+        action: { type: 'shell', command: 'make guarded' },
       },
       effectPlanRequestActions: expect.arrayContaining(['network.connect']),
       effectPlanRequirements: expect.arrayContaining([

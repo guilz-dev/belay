@@ -632,6 +632,7 @@ function toolAuditSummary(
     payload.tool_input ?? {},
     canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
     options.scrubOptions ?? DEFAULT_REDACTION_V3,
+    typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined,
   )
 }
 

@@ -49,6 +49,32 @@ describe('serializeAuditRecordV3', () => {
     expect(String(serialized.summary)).not.toContain('a'.repeat(48))
   })
 
+  it('preserves validated hashes inside a v2 action snapshot', () => {
+    const hash = createHash('sha256').update('snapshot evidence').digest('hex')
+    const serialized = serializeAuditRecordV3(
+      {
+        actionSnapshot: {
+          schemaVersion: 2,
+          kind: 'subagent',
+          cwd: '/repo',
+          payloadHash: hash,
+          action: {
+            type: 'subagent',
+            subagentType: 'Task',
+            externalIntent: true,
+            summaryHash: hash,
+          },
+        },
+      },
+      scrubOptions,
+    )
+
+    expect(serialized.actionSnapshot).toMatchObject({
+      payloadHash: hash,
+      action: { summaryHash: hash },
+    })
+  })
+
   it('masks raw approval IDs and stores approvalCorrelationId', () => {
     const approvalId = 'belay_deadbeef12345678'
     const serialized = serializeAuditRecordV3(

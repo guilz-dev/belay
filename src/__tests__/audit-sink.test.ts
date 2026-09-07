@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -44,6 +44,32 @@ describe('audit-sink', () => {
     expect(files.some((filePath) => filePath.endsWith('.5'))).toBe(false)
   })
 
+  it('keeps only the active file when maxFiles is one', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    await writeFile(auditPath, '{"event":"active-old"}\n', 'utf8')
+    await writeFile(`${auditPath}.1`, '{"event":"archive-old"}\n', 'utf8')
+
+    await maybeRotateAuditLog(auditPath, { maxBytes: 1, maxFiles: 1 })
+
+    expect((await readdir(dir)).sort()).toEqual(['audit.ndjson'])
+  })
+
+  it('removes generations above a reduced maxFiles setting', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    await writeFile(auditPath, '{"event":"active"}\n', 'utf8')
+    for (let generation = 1; generation <= 4; generation += 1) {
+      await writeFile(`${auditPath}.${generation}`, `{"event":"old-${generation}"}\n`, 'utf8')
+    }
+
+    await maybeRotateAuditLog(auditPath, { maxBytes: 1, maxFiles: 2 })
+
+    expect((await readdir(dir)).sort()).toEqual(['audit.ndjson', 'audit.ndjson.1'])
+  })
+
   it('appends NDJSON lines through the sink', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-'))
     tempDirs.push(dir)
@@ -73,5 +99,29 @@ describe('audit-reader', () => {
 
     const { records } = await readAuditRecordsFromPath(auditPath, { maxBytes: 100, maxFiles: 3 })
     expect(records.map((record) => record.event)).toEqual(['old', 'new'])
+  })
+
+  it('does not omit a generation when rotation starts during a read', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-reader-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    const retention = { maxBytes: 1, maxFiles: 3 }
+    const archiveRows = [
+      '{"event":"archive-before"}',
+      ...Array.from({ length: 50_000 }, (_, index) => `{"event":"filler-${index}"}`),
+    ]
+    await writeFile(`${auditPath}.1`, `${archiveRows.join('\n')}\n`, 'utf8')
+    await writeFile(auditPath, '{"event":"active-before"}\n', 'utf8')
+
+    const reading = readAuditRecordsFromPath(auditPath, retention)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await maybeRotateAuditLog(auditPath, retention)
+    const { records } = await reading
+
+    expect(
+      records
+        .map((record) => record.event)
+        .filter((event) => event === 'archive-before' || event === 'active-before'),
+    ).toEqual(['archive-before', 'active-before'])
   })
 })

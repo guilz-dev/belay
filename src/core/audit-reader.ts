@@ -1,10 +1,10 @@
 import { createReadStream, existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { type FileHandle, open, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { parseAuditNdjsonLine } from './audit-serialize.js'
-import { rotatedAuditPath } from './audit-sink.js'
+import { rotatedAuditPath, withAuditLock } from './audit-sink.js'
 import type { AuditRetentionConfig } from './config.js'
 
 export interface AuditStorageStats {
@@ -99,8 +99,56 @@ export async function readAuditRecordsFromPath(
   auditPath: string,
   retention?: AuditRetentionConfig,
 ): Promise<{ records: Record<string, unknown>[]; malformedLines: number }> {
-  const files = resolveAuditLogFiles(auditPath, retention)
-  return readAuditNdjsonFiles(files)
+  const snapshots = await withAuditLock(auditPath, async () => {
+    const opened: Array<{ handle: FileHandle; size: number }> = []
+    try {
+      for (const filePath of resolveAuditLogFiles(auditPath, retention)) {
+        try {
+          const handle = await open(filePath, 'r')
+          const fileStat = await handle.stat()
+          opened.push({ handle, size: fileStat.size })
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error
+          }
+        }
+      }
+      return opened
+    } catch (error) {
+      await Promise.all(opened.map(({ handle }) => handle.close()))
+      throw error
+    }
+  })
+
+  const records: Record<string, unknown>[] = []
+  let malformedLines = 0
+  try {
+    for (const { handle, size } of snapshots) {
+      if (size === 0) {
+        continue
+      }
+      const input = handle.createReadStream({
+        encoding: 'utf8',
+        start: 0,
+        end: size - 1,
+        autoClose: false,
+      })
+      const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY })
+      for await (const line of lines) {
+        const parsed = parseAuditNdjsonLine(line)
+        if (!parsed) {
+          if (line.trim()) {
+            malformedLines += 1
+          }
+          continue
+        }
+        records.push(parsed)
+      }
+    }
+  } finally {
+    await Promise.all(snapshots.map(({ handle }) => handle.close()))
+  }
+  return { records, malformedLines }
 }
 
 export async function statAuditStorage(
@@ -122,7 +170,7 @@ export async function statAuditStorage(
     }
   }
 
-  const { malformedLines } = await readAuditNdjsonFiles(files)
+  const { malformedLines } = await readAuditRecordsFromPath(auditPath, retention)
 
   return {
     activeBytes,

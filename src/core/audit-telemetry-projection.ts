@@ -45,10 +45,7 @@ function repoRelativePath(repoRoot: string, cwd: string): string {
   const resolvedRepo = path.resolve(repoRoot)
   const resolvedCwd = path.resolve(cwd)
   const relative = path.relative(resolvedRepo, resolvedCwd)
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    return resolvedCwd
-  }
-  return relative
+  return relative || '.'
 }
 
 function extractToolInputRecord(toolInput: unknown): Record<string, unknown> | null {
@@ -81,13 +78,15 @@ export function compactToolGateSummary(
   toolInput: unknown,
   fallback = '',
   scrubOptions?: ScrubOptions,
+  rawToolUseId?: string,
 ): string {
-  const input = extractToolInputRecord(toolInput)
+  const rawInput = extractToolInputRecord(toolInput)
   const normalizedName = toolName.trim() || 'Tool'
 
-  if (!input) {
+  if (!rawInput) {
     return fallback.trim() || normalizedName
   }
+  const input = redactToolInvocationId(rawInput, rawToolUseId) as Record<string, unknown>
 
   const filePath = extractFilePathFromInput(input)
   if (filePath) {
@@ -112,17 +111,15 @@ export function compactToolGateSummary(
   }
 
   if (typeof input.pattern === 'string' && input.pattern.trim()) {
-    return `${normalizedName} pattern=${input.pattern.trim()}`
+    const pattern = input.pattern.trim()
+    return `${normalizedName} pattern (${utf8ByteLength(pattern)}B, hash ${hashText(pattern)})`
   }
 
   const keys = Object.keys(input).filter((key) => key !== 'working_directory')
   if (scrubOptions && keys.length > 0) {
     const scrubbed = scrubValue(input, { ...scrubOptions, maskHighEntropyStrings: true })
     const serialized = canonicalStringify(scrubbed)
-    if (serialized.length <= 160) {
-      return `${normalizedName} ${serialized}`
-    }
-    return `${normalizedName} (${serialized.length}B, hash ${hashText(serialized)})`
+    return `${normalizedName} (${utf8ByteLength(serialized)}B, hash ${hashText(serialized)})`
   }
   if (keys.length === 0) {
     return normalizedName
@@ -163,7 +160,9 @@ export function projectObservedAudit(
   scrubOptions: ScrubOptions,
 ): ObservedAuditProjection {
   const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : 'tool'
-  const toolInput = payload.tool_input
+  const rawToolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
+  const summaryPayload = redactToolInvocationId(payload, rawToolUseId) as Record<string, unknown>
+  const toolInput = summaryPayload.tool_input
   const toolOutput = payload.tool_output
   const inputBytes = utf8ByteLength(toolInput)
   const outputBytes = utf8ByteLength(toolOutput)
@@ -177,7 +176,14 @@ export function projectObservedAudit(
     ? repoRelativePath(repoRoot, cwdCandidate.trim())
     : undefined
 
-  const inputSummary = compactToolGateSummary(toolName, toolInput)
+  const input = extractToolInputRecord(toolInput)
+  const filePath = input ? extractFilePathFromInput(input) : undefined
+  const serializedInput = canonicalStringify(
+    scrubValue(input ?? {}, { ...scrubOptions, maskHighEntropyStrings: true }),
+  )
+  const inputSummary = filePath
+    ? `${toolName} ${filePath}`
+    : `${toolName} (${utf8ByteLength(serializedInput)}B, hash ${hashText(serializedInput)})`
   const failureSuffix =
     eventName === 'postToolUseFailure' && typeof payload.failure_type === 'string'
       ? ` failed:${payload.failure_type}`

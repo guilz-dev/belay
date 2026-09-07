@@ -16,6 +16,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Bounded audit follow-up** — Audit snapshots now preserve minimal discriminated classifier
+  inputs without prompt or patch bodies, rotation honors `maxFiles` reductions, concurrent readers
+  pin a consistent generation snapshot, and doctor always reports storage and malformed lines.
 - **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
   file location at runtime instead of baking in the install-time path. This prevents global sentinel
   fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.

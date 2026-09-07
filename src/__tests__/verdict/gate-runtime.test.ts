@@ -287,10 +287,10 @@ describe('gate-runtime integration', () => {
     expect(verdict.axes?.would).toBe('ask')
     expect(auditEvents[0]?.effect).toBeDefined()
     const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
-    expect(snapshot?.schemaVersion).toBe(1)
+    expect(snapshot?.schemaVersion).toBe(2)
     expect(snapshot?.kind).toBe('shell')
     expect(snapshot?.cwd).toBe(repoRoot)
-    expect(snapshot?.normalizedAction).toBeTruthy()
+    expect(snapshot?.action).toEqual({ type: 'shell', command: 'rm -rf .git' })
   })
 
   it('writes actionSnapshot with subdirectory cwd for simulate replay', async () => {
@@ -319,7 +319,7 @@ describe('gate-runtime integration', () => {
 
     const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
     expect(snapshot?.cwd).toBe(srcCwd)
-    expect(snapshot?.normalizedAction).toContain('rm')
+    expect(snapshot?.action).toEqual({ type: 'shell', command: 'rm -rf .git' })
   })
 
   it('denies judge infrastructure failures with recovery hints and without approval ids', async () => {

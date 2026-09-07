@@ -120,6 +120,46 @@ function scrubAuditContainer(value: unknown, options: ScrubOptions): unknown {
   })
 }
 
+function scrubAuditActionSnapshot(value: unknown, options: ScrubOptions): unknown {
+  const scrubbed = scrubAuditContainer(value, options)
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    scrubbed === null ||
+    typeof scrubbed !== 'object' ||
+    Array.isArray(scrubbed)
+  ) {
+    return scrubbed
+  }
+
+  const source = value as Record<string, unknown>
+  const target = scrubbed as Record<string, unknown>
+  if (typeof source.payloadHash === 'string' && isValidAuditFingerprint(source.payloadHash)) {
+    target.payloadHash = source.payloadHash
+  }
+
+  if (
+    source.action !== null &&
+    typeof source.action === 'object' &&
+    !Array.isArray(source.action) &&
+    target.action !== null &&
+    typeof target.action === 'object' &&
+    !Array.isArray(target.action)
+  ) {
+    const sourceAction = source.action as Record<string, unknown>
+    const targetAction = target.action as Record<string, unknown>
+    if (
+      typeof sourceAction.summaryHash === 'string' &&
+      isValidAuditFingerprint(sourceAction.summaryHash)
+    ) {
+      targetAction.summaryHash = sourceAction.summaryHash
+    }
+  }
+
+  return target
+}
+
 function serializeAuditField(key: string, value: unknown, options: ScrubOptions): unknown {
   if (value === undefined) {
     return undefined
@@ -174,6 +214,10 @@ function serializeAuditField(key: string, value: unknown, options: ScrubOptions)
 
   if (PRESERVED_HASH_FIELDS.has(key) && typeof value === 'string') {
     return isValidPreservedHashField(key, value) ? value : undefined
+  }
+
+  if (key === 'actionSnapshot') {
+    return scrubAuditActionSnapshot(value, options)
   }
 
   if (SCRUBBED_CONTAINER_FIELDS.has(key)) {

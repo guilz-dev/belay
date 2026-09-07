@@ -2,6 +2,7 @@ import { getAdapter } from '../adapters/registry.js'
 import { repoShellClassifierOptions } from '../adapters/shared/gate-runtime.js'
 import { detectAdapterName } from '../config-io.js'
 import {
+  type AuditActionSnapshot,
   type AuditReplayContext,
   hashReplayPayload,
   parseAuditActionSnapshot,
@@ -53,6 +54,39 @@ function trustedReplayContext(
   return replay
 }
 
+function toolPayloadFromV2Snapshot(
+  snapshot: Extract<AuditActionSnapshot, { schemaVersion: 2 }>,
+): Record<string, unknown> {
+  const toolName = snapshot.toolName ?? 'Tool'
+  const action = snapshot.action
+  if (action.type === 'shell') {
+    return { tool_name: toolName, tool_input: { command: action.command } }
+  }
+  if (action.type === 'file') {
+    if (action.operation === 'write') {
+      return { tool_name: toolName, tool_input: { file_path: action.path, contents: '' } }
+    }
+    if (action.operation === 'delete') {
+      return { tool_name: 'Delete', tool_input: { path: action.path } }
+    }
+    return { tool_name: toolName, tool_input: { file_path: action.path } }
+  }
+  if (action.type === 'patch') {
+    const lines = action.targets.map(
+      (target) =>
+        `*** ${target.operation[0]?.toUpperCase()}${target.operation.slice(1)} File: ${target.path}`,
+    )
+    return {
+      tool_name: toolName,
+      tool_input: { patch: ['*** Begin Patch', ...lines, '*** End Patch'].join('\n') },
+    }
+  }
+  if (action.type === 'search') {
+    return { tool_name: toolName, tool_input: { pattern: '' } }
+  }
+  return { tool_name: toolName, tool_input: {} }
+}
+
 export async function reclassifyAuditRecord(
   record: AuditRecord,
   config: BelayConfigV3,
@@ -74,7 +108,13 @@ export async function reclassifyAuditRecord(
   try {
     if (kind === 'shell') {
       const command =
-        snapshot?.normalizedAction ?? replay?.command ?? shellCommandFromSummary(summary)
+        (snapshot?.schemaVersion === 2 && snapshot.action.type === 'shell'
+          ? snapshot.action.command
+          : snapshot?.schemaVersion === 1
+            ? snapshot.normalizedAction
+            : undefined) ??
+        replay?.command ??
+        shellCommandFromSummary(summary)
       if (!command) {
         return null
       }
@@ -90,10 +130,17 @@ export async function reclassifyAuditRecord(
     if (kind === 'subagent') {
       const payload =
         replay?.payload ??
-        ({
-          tool_name: 'Task',
-          tool_input: { description: summary },
-        } as Record<string, unknown>)
+        (snapshot?.schemaVersion === 2 && snapshot.action.type === 'subagent'
+          ? {
+              tool_name: snapshot.action.subagentType,
+              tool_input: {
+                description: snapshot.action.externalIntent ? 'deploy' : 'review',
+              },
+            }
+          : ({
+              tool_name: 'Task',
+              tool_input: { description: summary },
+            } as Record<string, unknown>))
       const action = normalizeGatedAction({
         kind: 'subagent',
         repoRoot,
@@ -106,10 +153,14 @@ export async function reclassifyAuditRecord(
     const toolName = snapshot?.toolName ?? replay?.toolName ?? 'Shell'
     const payload =
       replay?.payload ??
-      ({
-        tool_name: toolName,
-        tool_input: { command: snapshot?.normalizedAction ?? replay?.command ?? summary },
-      } as Record<string, unknown>)
+      (snapshot?.schemaVersion === 2
+        ? toolPayloadFromV2Snapshot(snapshot)
+        : ({
+            tool_name: toolName,
+            tool_input: {
+              command: snapshot?.normalizedAction ?? replay?.command ?? summary,
+            },
+          } as Record<string, unknown>))
     const action = normalizeGatedAction({
       kind: 'tool',
       repoRoot,

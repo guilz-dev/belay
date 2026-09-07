@@ -304,8 +304,10 @@ describe('classifyToolUse', () => {
     )
 
     expect(first.fingerprint).not.toBe(second.fingerprint)
-    expect(first.summary).toContain('<redacted>')
-    expect(second.summary).toContain('<redacted>')
+    expect(first.summary).toContain('hash')
+    expect(second.summary).toContain('hash')
+    expect(first.summary).not.toContain('deploy')
+    expect(second.summary).not.toContain('deploy')
     expect(toolFingerprint('MCP', { cmd: 'deploy -p8080 --to staging' }, repoRoot)).toBe(
       first.fingerprint,
     )

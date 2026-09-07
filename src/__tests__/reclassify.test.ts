@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { AuditSnapshotActionV2 } from '../core/audit-replay-context.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import { mergeConfig } from '../core/config.js'
 import * as gateEngine from '../core/gate-engine.js'
@@ -49,7 +50,7 @@ describe('reclassify replay fidelity', () => {
     )
   })
 
-  it('uses preserved tool replayContext instead of generic Shell fallback', async () => {
+  it('replays a v2 Read snapshot with its classifier path input', async () => {
     const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
       verdict: 'allow',
       reason: 'read_only',
@@ -71,11 +72,15 @@ describe('reclassify replay fidelity', () => {
       reason: 'unknown_local_effect',
       summary: 'Read src/index.ts',
       actionSnapshot: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: 'tool',
         cwd: `${repoRoot}/src`,
-        normalizedAction: 'Read src/index.ts',
         toolName: 'Read',
+        action: {
+          type: 'file',
+          operation: 'read',
+          path: 'src/index.ts',
+        },
       },
       replayContext: {
         cwd: `${repoRoot}/src`,
@@ -93,8 +98,87 @@ describe('reclassify replay fidelity', () => {
         toolName: 'Read',
         payload: {
           tool_name: 'Read',
-          tool_input: { command: 'Read src/index.ts' },
+          tool_input: { file_path: 'src/index.ts' },
         },
+      }),
+      config,
+      expect.anything(),
+    )
+  })
+
+  const toolSnapshotCases: Array<{
+    label: string
+    toolName: string
+    action: AuditSnapshotActionV2
+    toolInput: Record<string, unknown>
+  }> = [
+    {
+      label: 'Write',
+      toolName: 'Write',
+      action: { type: 'file', operation: 'write', path: 'src/index.ts' },
+      toolInput: { file_path: 'src/index.ts', contents: '' },
+    },
+    {
+      label: 'Patch',
+      toolName: 'ApplyPatch',
+      action: {
+        type: 'patch',
+        targets: [
+          { operation: 'update', path: 'src/index.ts' },
+          { operation: 'delete', path: 'src/old.ts' },
+        ],
+      },
+      toolInput: {
+        patch:
+          '*** Begin Patch\n*** Update File: src/index.ts\n*** Delete File: src/old.ts\n*** End Patch',
+      },
+    },
+  ]
+
+  it.each(toolSnapshotCases)('replays a v2 $label snapshot with minimal classifier inputs', async ({
+    toolName,
+    action,
+    toolInput,
+  }) => {
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
+      verdict: 'allow_flagged',
+      reason: 'file_mutation',
+      summary: toolName,
+      fingerprint: 'tool-fp',
+      assessment: {
+        reversibility: 'recoverable_with_cost',
+        external: false,
+        blastRadius: 'this repository',
+        confidence: 1,
+        signals: [],
+      },
+    })
+
+    await reclassifyAuditRecord(
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        verdict: 'allow_flagged',
+        reason: 'file_mutation',
+        summary: toolName,
+        actionSnapshot: {
+          schemaVersion: 2,
+          kind: 'tool',
+          cwd: `${repoRoot}/src`,
+          toolName,
+          action,
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(classifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool',
+        cwd: `${repoRoot}/src`,
+        toolName,
+        payload: { tool_name: toolName, tool_input: toolInput },
       }),
       config,
       expect.anything(),

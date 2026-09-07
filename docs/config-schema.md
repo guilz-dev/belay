@@ -249,6 +249,11 @@ Observed post-tool rows store compact metadata (`observedInputBytes`, `observedO
 `observedPayloadHash`, repo-relative `observedCwd`) and a one-line summary — not full tool payloads.
 Legacy archives (`*.legacy-*.ndjson`) are excluded from metrics readers.
 
+Gate rows use `actionSnapshot.schemaVersion: 2` with a discriminated action shape. Shell snapshots
+retain the scrubbed normalized command; file and patch snapshots retain paths and operations but no
+file or patch bodies; subagent snapshots retain only the type, an external-intent classifier signal,
+and a one-way summary hash. Schema v1 snapshots remain readable for existing audit generations.
+
 ## `controlPlane`
 
 | Field | Notes |
