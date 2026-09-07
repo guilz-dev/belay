@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
-import { toAuditRecord } from '../core/audit-query.js'
+import { isApprovalRecorded, isShellGateRecord, toAuditRecord } from '../core/audit-query.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import {
   applyHarvestReview,
@@ -11,6 +11,8 @@ import {
   type HarvestReviewOutcome,
 } from '../core/harvest.js'
 import { parseCorpusCases } from '../corpus/types.js'
+import { loadConfigFile } from '../config-io.js'
+import { matchesAuditCohort, resolveActiveAuditCohort } from '../runtime-provenance.js'
 import { loadAuditRecords } from './audit.js'
 
 export interface HarvestListOptions {
@@ -18,6 +20,8 @@ export interface HarvestListOptions {
   since?: string
   until?: string
   json?: boolean
+  /** Explicit forensic mode; mixed history must never be bulk-promoted. */
+  allCohorts?: boolean
 }
 
 export interface HarvestApplyOptions {
@@ -30,11 +34,78 @@ export interface HarvestApplyOptions {
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
   const records = await loadAuditRecords(repoRoot)
-  return harvestReportFromRecords(records, {
+  const cohort = await resolveActiveAuditCohort(repoRoot, config)
+  const shellGateRecords = records.filter(isShellGateRecord)
+  const matchingGateRecords = cohort
+    ? shellGateRecords.filter((record) => matchesAuditCohort(record, cohort))
+    : []
+
+  if (!cohort && !options.allCohorts) {
+    return scopedHarvestReport([], {
+      cohort: null,
+      matchingGateEvents: 0,
+      excludedGateEvents: shellGateRecords.length,
+      notes: [
+        'Active audit cohort is unavailable; no historical records were harvested. Use --all-cohorts only for forensic review.',
+      ],
+    })
+  }
+
+  const harvestRecords = options.allCohorts
+    ? records
+    : recordsForActiveCohort(records, matchingGateRecords)
+  return scopedHarvestReport(harvestRecords, {
+    cohort,
+    matchingGateEvents: matchingGateRecords.length,
+    excludedGateEvents: shellGateRecords.length - matchingGateRecords.length,
+    notes: options.allCohorts
+      ? ['Mixed-history forensic mode: do not bulk-promote candidates.']
+      : [],
     since: options.since,
     until: options.until,
   })
+}
+
+function recordsForActiveCohort(
+  records: AuditRecord[],
+  matchingGateRecords: AuditRecord[],
+): AuditRecord[] {
+  const matchingSet = new Set(matchingGateRecords)
+  const approvalIds = new Set(
+    matchingGateRecords
+      .map((record) => record.approvalId)
+      .filter((approvalId): approvalId is string => typeof approvalId === 'string'),
+  )
+  return records.filter(
+    (record) =>
+      matchingSet.has(record) ||
+      (isApprovalRecorded(record) &&
+        typeof record.approvalId === 'string' &&
+        approvalIds.has(record.approvalId)),
+  )
+}
+
+function scopedHarvestReport(
+  records: AuditRecord[],
+  options: {
+    cohort: HarvestReport['cohort']
+    matchingGateEvents: number
+    excludedGateEvents: number
+    notes: string[]
+    since?: string
+    until?: string
+  },
+): HarvestReport {
+  const report = harvestReportFromRecords(records, options)
+  return {
+    ...report,
+    cohort: options.cohort,
+    matchingGateEvents: options.matchingGateEvents,
+    excludedGateEvents: options.excludedGateEvents,
+    notes: options.notes,
+  }
 }
 
 export function harvestReportFromRecords(
@@ -50,6 +121,9 @@ export function formatHarvestReport(report: HarvestReport): string {
   const lines = [
     `belay harvest (scope: ${report.scope} audit traces only)`,
     `Schema: v${report.schemaVersion}`,
+    `Active cohort: ${report.cohort ? report.cohort.runtimeBuildStamp : 'unavailable'}`,
+    `Matching gate events: ${report.matchingGateEvents}`,
+    `Excluded historical/mismatched gate events: ${report.excludedGateEvents}`,
     '',
     `Benign candidates (${report.candidates.length}):`,
   ]
@@ -77,6 +151,7 @@ export function formatHarvestReport(report: HarvestReport): string {
 
   lines.push(
     '',
+    ...report.notes,
     'Candidates are review-only signals — approve in audit does not auto-promote to corpus.',
     'Time filters (--since/--until) keep paired deny/approval rows for round-trip detection.',
     'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject',

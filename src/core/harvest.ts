@@ -8,9 +8,10 @@ import {
   isShellGateRecord,
   parseTimestamp,
 } from './audit-query.js'
+import type { AuditCohortIdentity } from './audit-metrics.js'
 import type { AuditRecord } from './audit-types.js'
 
-export const HARVEST_REPORT_SCHEMA_VERSION = 1
+export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
 export type HarvestCandidateSource = 'deny_then_approve' | 'repeated_ask' | 'read_style_signal'
 
@@ -46,8 +47,12 @@ export interface HarvestReport {
   schemaVersion: typeof HARVEST_REPORT_SCHEMA_VERSION
   /** Initial harvest scope — shell audit traces only. */
   scope: 'shell'
+  cohort: AuditCohortIdentity | null
+  matchingGateEvents: number
+  excludedGateEvents: number
   candidates: HarvestCandidate[]
   availabilityQueue: AvailabilityQueueItem[]
+  notes: string[]
 }
 
 const READ_STYLE_COMMAND_PATTERN =
@@ -297,8 +302,12 @@ export function buildHarvestReport(records: AuditRecord[]): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
     scope: 'shell',
+    cohort: null,
+    matchingGateEvents: shellRecords(records).length,
+    excludedGateEvents: 0,
     candidates: extractHarvestCandidates(records),
     availabilityQueue: extractAvailabilityQueue(records),
+    notes: [],
   }
 }
 

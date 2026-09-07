@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { harvestReportFromNdjson } from '../commands/harvest.js'
+import { harvestListProject, harvestReportFromNdjson } from '../commands/harvest.js'
+import { loadConfigFile } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-query.js'
 import {
   applyHarvestReview,
@@ -10,6 +14,17 @@ import {
   extractHarvestCandidates,
   filterRecordsForHarvest,
 } from '../core/harvest.js'
+import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+const tempDirs: string[] = []
+
+async function createHarvestFixtureRepo(): Promise<string> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-harvest-'))
+  tempDirs.push(repoRoot)
+  await initProject({ targetDir: repoRoot })
+  return repoRoot
+}
 
 function testFingerprint(label: string): string {
   return createHash('sha256').update(label).digest('hex')
@@ -26,6 +41,128 @@ function shellDeny(params: Record<string, unknown>) {
 }
 
 describe('harvest', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('scopes default project harvest to the installed active cohort', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+
+    const oldCohort = {
+      ...cohort!,
+      runtimeArtifactHash: testFingerprint('old-runtime-artifact'),
+    }
+    const currentCohort = cohort!
+    const records = [
+      ...[1, 2].map((index) => ({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: testFingerprint('old-repeated-ask'),
+        summary: 'old command',
+        reason: 'unknown_local_effect',
+        ...oldCohort,
+        timestamp: `2026-01-01T00:00:0${index}.000Z`,
+      })),
+      ...[1, 2].map((index) => ({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: testFingerprint('current-repeated-ask'),
+        summary: 'current command',
+        reason: 'unknown_local_effect',
+        ...currentCohort,
+        timestamp: `2026-01-02T00:00:0${index}.000Z`,
+      })),
+    ]
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const currentReport = await harvestListProject({ targetDir: repoRoot })
+    const allReport = await harvestListProject({ targetDir: repoRoot, allCohorts: true })
+
+    expect(currentReport.candidates.map((entry) => entry.command)).toEqual(['current command'])
+    expect(currentReport.excludedGateEvents).toBe(2)
+    expect(allReport.candidates.map((entry) => entry.command)).toEqual([
+      'current command',
+      'old command',
+    ])
+  })
+
+  it('fails closed when the active cohort cannot be resolved', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${JSON.stringify({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: testFingerprint('historical-ask'),
+        summary: 'historical command',
+        reason: 'unknown_local_effect',
+      })}\n`,
+    )
+    await unlink(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'))
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+
+    expect(report.candidates).toEqual([])
+    expect(report.notes.join(' ')).toMatch(/active audit cohort.*unavailable/i)
+  })
+
+  it('excludes a stale wrapper ask while current allow evidence remains non-candidate', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    const oldCohort = {
+      ...cohort!,
+      runtimeArtifactHash: testFingerprint('stale-wrapper-runtime'),
+    }
+    const records = [
+      ...[1, 2].map((index) => ({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint: testFingerprint('stale-wrapper-ask'),
+        summary: 'rtk git status --short',
+        reason: 'unknown_local_effect',
+        ...oldCohort,
+        timestamp: `2026-01-01T00:00:0${index}.000Z`,
+      })),
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        wouldBlock: false,
+        fingerprint: testFingerprint('current-wrapper-allow'),
+        summary: 'rtk git status --short',
+        reason: 'read_only',
+        ...cohort!,
+        timestamp: '2026-01-02T00:00:00.000Z',
+      },
+    ]
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+
+    expect(report.candidates).toEqual([])
+    expect(report.excludedGateEvents).toBe(2)
+  })
+
   it('separates availability-caused asks from benign candidates', () => {
     const records = [
       shellDeny({

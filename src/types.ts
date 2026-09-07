@@ -20,6 +20,7 @@ export type {
   ClassifyResult,
   HookVerdict,
 } from './core/types.js'
+export type { AuditCohortIdentity } from './core/audit-metrics.js'
 
 import type { InstallScope } from './adapters/layouts/scope.js'
 import type { RecentAskEntry, RecentHostDenialEntry } from './core/audit-summary.js'

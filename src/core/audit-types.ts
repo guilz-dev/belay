@@ -26,6 +26,9 @@ export interface AuditRecord {
   mode?: string
   runtimeVersion?: string
   runtimeBuildStamp?: string
+  runtimeArtifactHash?: string
+  decisionConfigFingerprint?: string
+  boundaryProfile?: string
   configFingerprint?: string
   assessment?: Assessment
   predictedAssessment?: Assessment
