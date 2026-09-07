@@ -192,14 +192,68 @@ describe('harvest review ledger', () => {
     const invalidRecords = [
       { ...valid, reviewedAt: 'yesterday' },
       { ...valid, fingerprint: 'not-a-fingerprint' },
+      { ...valid, boundaryProfile: '' },
+      { ...valid, boundaryProfile: 'future\nboundary' },
       { ...valid, boundaryProfile: '../authority' },
-      { ...valid, boundaryProfile: 'unknown-profile' },
+      { ...valid, boundaryProfile: 'x'.repeat(129) },
       { ...valid, outcome: 'allow' },
     ]
 
     for (const review of invalidRecords) {
       await writeFile(ledgerPath, `${JSON.stringify({ version: 1, reviews: [review] })}\n`)
       await expect(loadHarvestReviewLedger(ledgerPath)).rejects.toThrow(/harvest review/i)
+    }
+  })
+
+  it('accepts a syntactically valid legacy or future boundary profile identity', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-future-boundary-'))
+    tempDirs.push(dir)
+    const ledgerPath = path.join(dir, 'harvest-reviews.json')
+    await writeFile(
+      ledgerPath,
+      `${JSON.stringify({
+        version: 1,
+        reviews: [
+          {
+            fingerprint: fingerprint('future-boundary-review'),
+            kind: 'shell',
+            boundaryProfile: 'future-contained-boundary-v2',
+            outcome: 'reject',
+            reviewedAt: '2026-09-07T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+
+    expect(await loadHarvestReviewLedger(ledgerPath)).toMatchObject({
+      reviews: [{ boundaryProfile: 'future-contained-boundary-v2' }],
+    })
+  })
+
+  it('persists reject without reading a missing or malformed corpus', async () => {
+    for (const corpusState of ['missing', 'malformed'] as const) {
+      const command = `opaque reject ${corpusState}`
+      const fixture = await createFixture({ command })
+      if (corpusState === 'missing') {
+        await rm(fixture.corpusPath)
+      } else {
+        await writeFile(fixture.corpusPath, '{ malformed corpus')
+      }
+
+      const result = await harvestApplyProject({
+        targetDir: fixture.repoRoot,
+        corpusPath: fixture.corpusPath,
+        command,
+        outcome: 'reject',
+      })
+
+      expect(result.ok).toBe(true)
+      expect(await loadHarvestReviewLedger(fixture.ledgerPath)).toMatchObject({
+        reviews: [{ fingerprint: fixture.fingerprint, outcome: 'reject' }],
+      })
+      if (corpusState === 'malformed') {
+        expect(await readFile(fixture.corpusPath, 'utf8')).toBe('{ malformed corpus')
+      }
     }
   })
 

@@ -229,11 +229,20 @@ export async function harvestApplyProject(
     allCohorts: options.allCohorts,
     includeReviewed: true,
   })
-  const candidate = report.candidates.find((entry) => entry.command === options.command)
+  const matchingCandidates = report.candidates.filter((entry) => entry.command === options.command)
+  const [candidate] = matchingCandidates
   if (!candidate) {
     return {
       ok: false,
       message: `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`,
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+  const matchingFingerprints = new Set(matchingCandidates.map((entry) => entry.fingerprint))
+  if (matchingFingerprints.size > 1) {
+    return {
+      ok: false,
+      message: `Multiple candidate fingerprints match ${JSON.stringify(options.command)}; inspect harvest list --include-reviewed --json and use a report where the command resolves unambiguously.`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
@@ -260,6 +269,21 @@ export async function harvestApplyProject(
     version: 1,
     reviews: [...ledger.reviews, review],
   })
+
+  if (options.outcome === 'reject') {
+    const result = applyHarvestReview([], {
+      command: options.command,
+      outcome: options.outcome,
+      reason: options.reason,
+      fingerprint: candidate.fingerprint,
+      reviewedAt,
+    })
+    return {
+      ok: result.ok,
+      message: result.message,
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
 
   const raw = await readFile(corpusPath, 'utf8')
   const cases = parseCorpusCases(JSON.parse(raw))

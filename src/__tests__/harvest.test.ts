@@ -20,7 +20,7 @@ import {
   extractHarvestCandidates,
   filterRecordsForHarvest,
 } from '../core/harvest.js'
-import { writeHarvestReviewLedgerAtomic } from '../core/harvest-review.js'
+import { loadHarvestReviewLedger, writeHarvestReviewLedgerAtomic } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -361,6 +361,49 @@ describe('harvest', () => {
     expect(scoped.ok).toBe(false)
     expect(scoped.message).toMatch(/selected harvest report/i)
     expect(forensic.ok).toBe(true)
+  })
+
+  it('fails closed when an exact command matches multiple candidate fingerprints', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const command = 'git diff --stat'
+    const firstFingerprint = testFingerprint('same-command-first-cwd')
+    const secondFingerprint = testFingerprint('same-command-second-cwd')
+    const records = [firstFingerprint, secondFingerprint].flatMap((fingerprint, fingerprintIndex) =>
+      [1, 2].map((askIndex) => ({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        fingerprint,
+        summary: command,
+        reason: 'unknown_local_effect',
+        ...cohort,
+        timestamp: `2026-09-07T00:0${fingerprintIndex}:0${askIndex}.000Z`,
+      })),
+    )
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    const corpusPath = path.join(repoRoot, 'shell-commands.json')
+    await writeFile(corpusPath, '[]\n')
+
+    const result = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'reject',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/multiple candidate fingerprints/i)
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toEqual({ version: 1, reviews: [] })
   })
 
   it('separates availability-caused asks from benign candidates', () => {

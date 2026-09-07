@@ -3,11 +3,6 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import { isValidAuditFingerprint, isValidAuditTimestamp } from './audit-serialize.js'
-import {
-  BOUNDARY_PROFILE_L1_ATTESTED,
-  BOUNDARY_PROFILE_L3_L4_ONLY,
-  BOUNDARY_PROFILE_L3_POLICY,
-} from './capability/boundary-profile.js'
 
 export type HarvestReviewOutcome = 'provably-benign' | 'accepted-benign' | 'must-ask' | 'reject'
 
@@ -40,11 +35,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+}
+
 function isValidBoundaryProfile(value: string): boolean {
   return (
-    value === BOUNDARY_PROFILE_L1_ATTESTED ||
-    value === BOUNDARY_PROFILE_L3_L4_ONLY ||
-    value === BOUNDARY_PROFILE_L3_POLICY
+    value.length > 0 &&
+    value.length <= 128 &&
+    value.trim() === value &&
+    !hasControlCharacter(value) &&
+    !value.includes('/') &&
+    !value.includes('\\') &&
+    !value.includes('..')
   )
 }
 
