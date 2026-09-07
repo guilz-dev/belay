@@ -1,11 +1,33 @@
 import type { AuditActionSnapshot, AuditReplayContext } from './audit-replay-context.js'
 import type { Assessment } from './types.js'
 
-export type { AuditActionSnapshot, AuditReplayContext } from './audit-replay-context.js'
+export type {
+  AuditActionSnapshot,
+  AuditActionSnapshotV1,
+  AuditActionSnapshotV2,
+  AuditReplayContext,
+  AuditReplayNonReplayableReason,
+  AuditToolOperation,
+  ParsedAuditActionSnapshot,
+} from './audit-replay-context.js'
 
 export const AUDIT_METRICS_SCHEMA_VERSION = 4
 
 export const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
+
+export interface CompactHostTelemetryV1 {
+  schemaVersion: 1
+  event: string
+  toolName?: string
+  success?: boolean
+  durationMs?: number
+  cwdRelative?: string
+  inputBytes?: number
+  outputBytes?: number
+  failureType?: string
+  errorMessage?: string
+  toolInvocationCorrelationId?: string
+}
 
 export interface AuditRecord {
   timestamp?: string
@@ -18,6 +40,11 @@ export interface AuditRecord {
   approvalId?: string
   toolInvocationCorrelationId?: string
   toolName?: string
+  success?: boolean
+  durationMs?: number
+  cwdRelative?: string
+  inputBytes?: number
+  outputBytes?: number
   failureType?: string
   errorMessage?: string
   wouldBlock?: boolean

@@ -2,6 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { cursorLayout } from '../adapters/layouts/cursor.js'
+import {
+  appendObservedAudit,
+  createDefaultGateRuntimeDeps,
+} from '../adapters/shared/gate-runtime.js'
 import { doctorProject } from '../commands/doctor.js'
 import { formatReport, reportProject } from '../commands/report.js'
 import { formatStatusReport, statusProject } from '../commands/status.js'
@@ -13,6 +18,7 @@ import {
   inferAuditTier,
   summarizeAuditVisibility,
 } from '../core/audit-summary.js'
+import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -71,6 +77,60 @@ const VISIBILITY_FIXTURE = [
 ]
 
 describe('audit visibility (T-V1)', () => {
+  it('projects post-tool failures to compact body-free host telemetry', async () => {
+    const repoRoot = '/Users/example/project'
+    const toolInputMarker = 'task ten compact input canary'
+    const toolOutputMarker = 'task ten compact output canary'
+    const rawToolUseId = 'tool_f5be1fa7-4c96-4568-817d-098e61fbf891'
+    const toolInput = { path: 'src/index.ts', contents: toolInputMarker }
+    const toolOutput = `failed output: ${toolOutputMarker}`
+    const auditEvents: Record<string, unknown>[] = []
+    const ctx = {
+      layout: cursorLayout,
+      repoRoot,
+      config: mergeConfig({ mode: 'audit' }),
+      configPath: cursorLayout.configPath(repoRoot),
+    }
+    const deps = {
+      ...createDefaultGateRuntimeDeps(),
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await appendObservedAudit(ctx, deps, 'postToolUseFailure', {
+      tool_name: 'Write',
+      tool_use_id: rawToolUseId,
+      cwd: `${repoRoot}/packages/app`,
+      tool_input: toolInput,
+      tool_output: toolOutput,
+      success: false,
+      duration: 17.8,
+      failure_type: ' Permission Denied ',
+      error_message: 'Command denied by Cursor Run Mode',
+    })
+
+    expect(auditEvents).toHaveLength(1)
+    expect(auditEvents[0]).toEqual({
+      schemaVersion: 1,
+      event: 'postToolUseFailure',
+      toolName: 'Write',
+      success: false,
+      durationMs: 18,
+      cwdRelative: 'packages/app',
+      inputBytes: Buffer.byteLength(JSON.stringify(toolInput), 'utf8'),
+      outputBytes: Buffer.byteLength(toolOutput, 'utf8'),
+      failureType: 'permission_denied',
+      errorMessage: 'Command denied by Cursor Run Mode',
+      toolInvocationCorrelationId: expect.stringMatching(/^[a-f0-9]{16}$/),
+    })
+    const serialized = JSON.stringify(auditEvents[0])
+    expect(serialized).not.toContain(toolInputMarker)
+    expect(serialized).not.toContain(toolOutputMarker)
+    expect(serialized).not.toContain(rawToolUseId)
+    expect(serialized).not.toContain('/Users/example')
+  })
+
   it('summarizes ask/flag/allow and silent-pass rate from gate events', () => {
     const records = VISIBILITY_FIXTURE.map((entry) => toAuditRecord(entry))
     const summary = summarizeAuditVisibility(records)

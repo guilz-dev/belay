@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import { minimizeAuditShellAction } from './audit-replay-context.js'
 import { scrubString, scrubValue } from './scrub.js'
 import type { ScrubOptions } from './types.js'
 
@@ -19,6 +20,7 @@ const PRESERVED_HASH_FIELDS = new Set([
   'runtimeArtifactHash',
   'decisionConfigFingerprint',
   'receiptHash',
+  'summaryHash',
 ])
 
 const PRESERVED_LITERAL_FIELDS = new Set([
@@ -46,6 +48,35 @@ const SCRUBBED_CONTAINER_FIELDS = new Set([
   'predictedAssessment',
   'observedAssessment',
 ])
+
+const ORDINARY_GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
+const ORDINARY_HOST_EVENTS = new Set(['postToolUse', 'postToolUseFailure'])
+const RAW_BODY_FIELDS = new Set([
+  'content',
+  'contents',
+  'input',
+  'newContents',
+  'newString',
+  'new_string',
+  'oldString',
+  'old_string',
+  'output',
+  'patch',
+  'prompt',
+  'source',
+  'sourceBody',
+  'source_body',
+  'stderr',
+  'stdout',
+  'text',
+  'toolInput',
+  'toolOutput',
+  'toolResponse',
+  'tool_input',
+  'tool_output',
+  'tool_response',
+])
+const SHELL_TEXT_FIELDS = new Set(['command', 'commandRedacted', 'normalizedAction', 'segment'])
 
 export function approvalCorrelationId(approvalId: string): string {
   return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
@@ -101,25 +132,174 @@ function isValidPreservedHashField(field: string, value: string): boolean {
   return isValidAuditFingerprint(value)
 }
 
-function scrubAuditContainer(value: unknown, options: ScrubOptions): unknown {
-  const withoutRawToolIds = (input: unknown): unknown => {
-    if (Array.isArray(input)) return input.map(withoutRawToolIds)
+function scrubAuditContainer(
+  value: unknown,
+  options: ScrubOptions,
+  minimizeBodies = false,
+): unknown {
+  const withoutRawBodies = (input: unknown, parentKey?: string): unknown => {
+    if (
+      typeof input === 'string' &&
+      minimizeBodies &&
+      parentKey &&
+      SHELL_TEXT_FIELDS.has(parentKey)
+    ) {
+      return minimizeAuditShellAction(input)
+    }
+    if (Array.isArray(input)) return input.map((child) => withoutRawBodies(child, parentKey))
     if (input && typeof input === 'object') {
       return Object.fromEntries(
         Object.entries(input)
-          .filter(([key]) => key !== 'tool_use_id')
-          .map(([key, child]) => [key, withoutRawToolIds(child)]),
+          .filter(
+            ([key]) => key !== 'tool_use_id' && (!minimizeBodies || !RAW_BODY_FIELDS.has(key)),
+          )
+          .map(([key, child]) => [key, withoutRawBodies(child, key)]),
       )
     }
     return input
   }
-  return scrubValue(withoutRawToolIds(value), {
+  return scrubValue(withoutRawBodies(value), {
     ...options,
     maskHighEntropyStrings: true,
   })
 }
 
-function serializeAuditField(key: string, value: unknown, options: ScrubOptions): unknown {
+function scrubbedAuditString(value: string, options: ScrubOptions): string {
+  return scrubString(value, { ...options, maskHighEntropyStrings: true })
+}
+
+function serializeReplayContext(value: unknown, options: ScrubOptions): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  if (
+    typeof raw.cwd !== 'string' ||
+    (raw.kind !== 'shell' && raw.kind !== 'tool' && raw.kind !== 'subagent')
+  ) {
+    return undefined
+  }
+  return {
+    cwd: scrubbedAuditString(raw.cwd, options),
+    kind: raw.kind,
+    ...(raw.kind === 'shell' && typeof raw.command === 'string'
+      ? { command: scrubbedAuditString(minimizeAuditShellAction(raw.command), options) }
+      : {}),
+    ...(typeof raw.toolName === 'string'
+      ? { toolName: scrubbedAuditString(raw.toolName, options) }
+      : {}),
+  }
+}
+
+function serializeActionSnapshot(value: unknown, options: ScrubOptions): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  if (
+    (raw.schemaVersion !== 1 && raw.schemaVersion !== 2) ||
+    (raw.kind !== 'shell' && raw.kind !== 'tool' && raw.kind !== 'subagent') ||
+    typeof raw.cwd !== 'string'
+  ) {
+    return undefined
+  }
+  const base = {
+    schemaVersion: raw.schemaVersion,
+    kind: raw.kind,
+    cwd: scrubbedAuditString(raw.cwd, options),
+  }
+  if (raw.schemaVersion === 1) {
+    if (typeof raw.normalizedAction !== 'string') {
+      return undefined
+    }
+    return {
+      ...base,
+      normalizedAction: scrubbedAuditString(
+        raw.kind === 'shell'
+          ? minimizeAuditShellAction(raw.normalizedAction)
+          : raw.normalizedAction,
+        options,
+      ),
+      ...(typeof raw.toolName === 'string'
+        ? { toolName: scrubbedAuditString(raw.toolName, options) }
+        : {}),
+      ...(typeof raw.payloadHash === 'string' && HEX64_PATTERN.test(raw.payloadHash)
+        ? { payloadHash: raw.payloadHash }
+        : {}),
+    }
+  }
+  if (raw.kind === 'shell') {
+    return typeof raw.normalizedAction === 'string'
+      ? {
+          ...base,
+          normalizedAction: scrubbedAuditString(
+            minimizeAuditShellAction(raw.normalizedAction),
+            options,
+          ),
+        }
+      : undefined
+  }
+  if (raw.kind === 'tool') {
+    if (typeof raw.toolName !== 'string') {
+      return undefined
+    }
+    return {
+      ...base,
+      toolName: scrubbedAuditString(raw.toolName, options),
+      ...(typeof raw.operation === 'string'
+        ? { operation: scrubbedAuditString(raw.operation, options) }
+        : {}),
+      ...(typeof raw.path === 'string' ? { path: scrubbedAuditString(raw.path, options) } : {}),
+      ...(typeof raw.payloadHash === 'string' && HEX64_PATTERN.test(raw.payloadHash)
+        ? { payloadHash: raw.payloadHash }
+        : {}),
+    }
+  }
+  return typeof raw.summaryHash === 'string' && HEX64_PATTERN.test(raw.summaryHash)
+    ? {
+        ...base,
+        ...(typeof raw.toolName === 'string'
+          ? { toolName: scrubbedAuditString(raw.toolName, options) }
+          : {}),
+        summaryHash: raw.summaryHash,
+      }
+    : undefined
+}
+
+function compactGateSummary(record: Record<string, unknown>): string | undefined {
+  const snapshot = record.actionSnapshot
+  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
+    const raw = snapshot as Record<string, unknown>
+    if (raw.kind === 'shell' && typeof raw.normalizedAction === 'string') {
+      return minimizeAuditShellAction(raw.normalizedAction)
+    }
+    if (raw.kind === 'tool') {
+      return [raw.toolName, raw.operation, raw.path]
+        .filter((part): part is string => typeof part === 'string' && Boolean(part.trim()))
+        .join(' ')
+    }
+    if (raw.kind === 'subagent') {
+      const toolName = typeof raw.toolName === 'string' ? raw.toolName : 'subagent'
+      const hashPrefix = typeof raw.summaryHash === 'string' ? raw.summaryHash.slice(0, 12) : ''
+      return hashPrefix ? `${toolName} ${hashPrefix}` : toolName
+    }
+  }
+
+  if (record.kind === 'shell' && typeof record.summary === 'string') {
+    return minimizeAuditShellAction(record.summary)
+  }
+  if (record.kind === 'tool' || record.kind === 'subagent') {
+    return typeof record.toolName === 'string' ? record.toolName : String(record.kind)
+  }
+  return undefined
+}
+
+function serializeAuditField(
+  key: string,
+  value: unknown,
+  options: ScrubOptions,
+  minimizeBodies: boolean,
+): unknown {
   if (value === undefined) {
     return undefined
   }
@@ -175,16 +355,24 @@ function serializeAuditField(key: string, value: unknown, options: ScrubOptions)
     return isValidPreservedHashField(key, value) ? value : undefined
   }
 
+  if (key === 'replayContext') {
+    return serializeReplayContext(value, options)
+  }
+
+  if (key === 'actionSnapshot') {
+    return serializeActionSnapshot(value, options)
+  }
+
   if (SCRUBBED_CONTAINER_FIELDS.has(key)) {
-    return scrubAuditContainer(value, options)
+    return scrubAuditContainer(value, options, minimizeBodies)
   }
 
   if (typeof value === 'string') {
-    return scrubString(value, { ...options, maskHighEntropyStrings: true })
+    return scrubbedAuditString(value, options)
   }
 
   if (value !== null && typeof value === 'object') {
-    return scrubAuditContainer(value, options)
+    return scrubAuditContainer(value, options, minimizeBodies)
   }
 
   return value
@@ -194,6 +382,12 @@ export function serializeAuditRecordV3(
   record: Record<string, unknown>,
   options: ScrubOptions,
 ): Record<string, unknown> {
+  const event = typeof record.event === 'string' ? record.event : undefined
+  const minimizeBodies = Boolean(
+    event && (ORDINARY_GATE_EVENTS.has(event) || ORDINARY_HOST_EVENTS.has(event)),
+  )
+  const compactSummary =
+    event && ORDINARY_GATE_EVENTS.has(event) ? compactGateSummary(record) : undefined
   const timestamp =
     typeof record.timestamp === 'string' && isValidAuditTimestamp(record.timestamp)
       ? record.timestamp
@@ -225,7 +419,18 @@ export function serializeAuditRecordV3(
     ) {
       continue
     }
-    const next = serializeAuditField(key, value, options)
+    if (minimizeBodies && RAW_BODY_FIELDS.has(key)) {
+      continue
+    }
+    if (minimizeBodies && ORDINARY_HOST_EVENTS.has(event ?? '') && key === 'summary') {
+      continue
+    }
+    const next = serializeAuditField(
+      key,
+      key === 'summary' && compactSummary !== undefined ? compactSummary : value,
+      options,
+      minimizeBodies,
+    )
     if (next !== undefined) {
       serialized[key] = next
     }

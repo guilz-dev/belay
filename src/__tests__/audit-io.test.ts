@@ -106,6 +106,65 @@ describe('serializeAuditRecordV3', () => {
     expect(serialized.effectIRHash).toBeUndefined()
   })
 
+  it('removes source, prompt, patch, tool input, and tool output bodies from new gate records', () => {
+    const markers = {
+      source: 'task ten source body canary',
+      prompt: 'task ten prompt body canary',
+      patch: 'task ten patch body canary',
+      input: 'task ten tool input body canary',
+      output: 'task ten tool output body canary',
+    }
+    const payloadHash = createHash('sha256').update(markers.input).digest('hex')
+    const serialized = serializeAuditRecordV3(
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        summary: markers.prompt,
+        source: markers.source,
+        prompt: markers.prompt,
+        patch: markers.patch,
+        input: markers.input,
+        output: markers.output,
+        tool_input: { contents: markers.input },
+        tool_output: { text: markers.output },
+        replayContext: {
+          cwd: '/workspace/project',
+          kind: 'tool',
+          toolName: 'Write',
+          payload: { contents: markers.input },
+        },
+        actionSnapshot: {
+          schemaVersion: 2,
+          kind: 'tool',
+          cwd: '/workspace/project',
+          toolName: 'Write',
+          operation: 'write',
+          path: 'src/index.ts',
+          payloadHash,
+        },
+      },
+      scrubOptions,
+    )
+    const serializedText = JSON.stringify(serialized)
+
+    for (const marker of Object.values(markers)) {
+      expect(serializedText).not.toContain(marker)
+    }
+    expect(serialized.actionSnapshot).toMatchObject({
+      schemaVersion: 2,
+      kind: 'tool',
+      toolName: 'Write',
+      operation: 'write',
+      path: 'src/index.ts',
+      payloadHash,
+    })
+    expect(serialized.replayContext).toEqual({
+      cwd: '/workspace/project',
+      kind: 'tool',
+      toolName: 'Write',
+    })
+  })
+
   it('supports reader filters and daily buckets after disk round-trip', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-io-'))
     tempDirs.push(tempDir)

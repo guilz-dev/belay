@@ -294,7 +294,7 @@ export async function runAuditHook(eventName: string) {
     const cwd = resolveCodexActionCwd(payload, process.cwd(), { includeToolInputCwd })
     const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
-    await appendObservedAudit(ctx, deps, eventName, payload)
+    await appendObservedAudit(ctx, deps, eventName, payload, cwd)
     jsonResponse({})
   } catch (error) {
     console.error(
