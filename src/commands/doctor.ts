@@ -12,6 +12,10 @@ import {
   hasLegacyCursorDoubleShellGates,
   hasManagedCursorHookEntries,
 } from '../adapters/cursor/hooks.js'
+import {
+  hasDynamicProjectHookShim,
+  hasLegacyProjectHookShim,
+} from '../adapters/cursor/project-hook-shim.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { protectedArtifactRoots } from '../adapters/layouts/protected-paths.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
@@ -133,23 +137,21 @@ async function cursorOriginIssues(
       )
       continue
     }
-    const originMatch = source.match(/origin:\s*(\{[^\n]+\})/)
     let originMatches = false
-    if (originMatch?.[1]) {
-      try {
-        const origin = JSON.parse(originMatch[1]) as {
-          scope?: unknown
-          repoRoot?: unknown
+    if (installScope === 'global') {
+      const originMatch = source.match(/origin:\s*(\{[^\n]+\})/)
+      if (originMatch?.[1]) {
+        try {
+          const origin = JSON.parse(originMatch[1]) as { scope?: unknown }
+          originMatches = origin.scope === 'global'
+        } catch {
+          originMatches = false
         }
-        originMatches =
-          installScope === 'global'
-            ? origin.scope === 'global'
-            : origin.scope === 'project' &&
-              typeof origin.repoRoot === 'string' &&
-              realpathSync(origin.repoRoot) === canonicalRepoRoot
-      } catch {
-        originMatches = false
       }
+    } else if (hasDynamicProjectHookShim(source)) {
+      originMatches = true
+    } else {
+      originMatches = hasLegacyProjectHookShim(source, canonicalRepoRoot)
     }
     if (!originMatches) {
       issues.push(

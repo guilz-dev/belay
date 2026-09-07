@@ -49,6 +49,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
+  file location at runtime instead of baking in the install-time path. This prevents global sentinel
+  fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.
+  Doctor and routing health checks recognize both dynamic and legacy shims until upgrade.
+
 ## 0.10.1 — 2026-09-07
 
 ### Fixed

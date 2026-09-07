@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync
 import path from 'node:path'
 
 import { resolveCursorActionCwdDetails } from './cwd-resolution.js'
+import { hasManagedProjectHookShim } from './project-hook-shim.js'
 import { isTrustedCursorRoutingConfig } from './routing-config-trust.js'
 import {
   cursorRoutingConfigPath,
@@ -212,10 +213,7 @@ function hasMatchingProjectShim(repoRoot: string, kind: CursorHookKind): boolean
   } catch {
     return false
   }
-  return (
-    source.includes("from '../belay/runtime/dispatcher.mjs'") &&
-    source.includes(`origin: ${JSON.stringify({ scope: 'project', repoRoot })}`)
-  )
+  return hasManagedProjectHookShim(source, repoRoot)
 }
 
 function hasProjectOwnerInstallation(repoRoot: string): boolean {
