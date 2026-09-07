@@ -157,6 +157,43 @@ describe('launcher-resolve', () => {
     expect(result.effectPlan?.completeness).toBe('partial')
   })
 
+  it('keeps literal stdin inert when Make resolves a target from the default disk Makefile', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-default-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict("make safe <<'EOF'\nfixture data\nEOF", {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+  })
+
+  it.each([
+    'make -f - safe',
+    'make -f- safe',
+    'make --file=- safe',
+    'make --makefile - safe',
+  ])('keeps a Makefile read from heredoc stdin approval-required: %s', async (invocation) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-stdin-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(`${invocation} <<'EOF'\nsafe:\n\tgit push origin main\nEOF`, {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.make_stdin_makefile')
+  })
+
   it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-test-fast-'))
     tempDirs.push(dir)

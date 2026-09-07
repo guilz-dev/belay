@@ -2,6 +2,8 @@ const ENV_PREFIX_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)$/
 const FD_DUPLICATION_PATTERN = /^\d+[<>]&(?:\d+|-)$/
 const FD_REDIRECT_PATTERN = /^\d+(?:>>?|<)$/
 const HEREDOC_OPERATOR_PATTERN = /^(?:\d+)?<<-?$/
+const HERE_STRING_OPERATOR_PATTERN = /^(?:\d+)?<<<$/
+const LINE_CONTINUATION_OPERATORS = new Set(['|', '|&', '&&', '||'])
 
 function readDigits(input: string, index: number): string {
   let end = index
@@ -36,6 +38,9 @@ function readShellOperator(input: string, index: number): { token: string; lengt
     return { token: '&>', length: 2 }
   }
   if (digitsLength > 0 && afterDigits === '<' && afterDigitsNext === '<') {
+    if (input[index + digitsLength + 2] === '<') {
+      return { token: `${digits}<<<`, length: digitsLength + 3 }
+    }
     const stripsTabs = input[index + digitsLength + 2] === '-'
     return {
       token: `${digits}<<${stripsTabs ? '-' : ''}`,
@@ -61,6 +66,9 @@ function readShellOperator(input: string, index: number): { token: string; lengt
     return { token: '>>', length: 2 }
   }
   if (char === '<' && next === '<') {
+    if (input[index + 2] === '<') {
+      return { token: '<<<', length: 3 }
+    }
     const stripsTabs = input[index + 2] === '-'
     return { token: stripsTabs ? '<<-' : '<<', length: stripsTabs ? 3 : 2 }
   }
@@ -80,12 +88,17 @@ export function isRedirectOperator(token: string): boolean {
     token === '<' ||
     token === '&>' ||
     HEREDOC_OPERATOR_PATTERN.test(token) ||
+    HERE_STRING_OPERATOR_PATTERN.test(token) ||
     FD_REDIRECT_PATTERN.test(token)
   )
 }
 
 export function isHeredocOperator(token: string): boolean {
   return HEREDOC_OPERATOR_PATTERN.test(token)
+}
+
+export function isHereStringOperator(token: string): boolean {
+  return HERE_STRING_OPERATOR_PATTERN.test(token)
 }
 
 export function isFdDuplication(token: string): boolean {
@@ -159,6 +172,7 @@ export function lexShell(input: string): ShellLexResult {
   let syntaxComplete = true
   let heredocsComplete = true
   let awaitingHeredocOperator: Extract<ShellToken, { kind: 'operator' }> | null = null
+  let awaitingPostHeredocCommand = false
   let pendingHeredocs: Array<{
     operator: Extract<ShellToken, { kind: 'operator' }>
     delimiter: Extract<ShellToken, { kind: 'word' }>
@@ -209,6 +223,9 @@ export function lexShell(input: string): ShellLexResult {
       parts,
     }
     tokens.push(token)
+    if (awaitingPostHeredocCommand) {
+      awaitingPostHeredocCommand = false
+    }
     if (awaitingHeredocOperator) {
       pendingHeredocs.push({ operator: awaitingHeredocOperator, delimiter: token })
       awaitingHeredocOperator = null
@@ -367,6 +384,15 @@ export function lexShell(input: string): ShellLexResult {
       index += 1
       continue
     }
+    if (char === '#' && wordStart === null) {
+      const commentEnd = input.slice(index).search(/[\r\n]/)
+      if (commentEnd === -1) {
+        index = input.length
+        break
+      }
+      index += commentEnd - 1
+      continue
+    }
     const operator = readShellOperator(input, index)
     if (operator) {
       flushWord(index)
@@ -376,6 +402,11 @@ export function lexShell(input: string): ShellLexResult {
     }
     if (char === '\n' || char === '\r') {
       flushWord(index)
+      const lastLineToken = tokens.at(-1)
+      const awaitsPostHeredocCommand =
+        pendingHeredocs.length > 0 &&
+        lastLineToken?.kind === 'operator' &&
+        LINE_CONTINUATION_OPERATORS.has(lastLineToken.value)
       pushOperator(';', index, index + 1)
       if (awaitingHeredocOperator) {
         syntaxComplete = false
@@ -387,6 +418,9 @@ export function lexShell(input: string): ShellLexResult {
         index = resumeIndex - 1
       } else if (char === '\r' && nextChar === '\n') {
         index += 1
+      }
+      if (awaitsPostHeredocCommand) {
+        awaitingPostHeredocCommand = true
       }
       continue
     }
@@ -400,6 +434,9 @@ export function lexShell(input: string): ShellLexResult {
   if (quote !== null) syntaxComplete = false
   flushWord(input.length)
   if (awaitingHeredocOperator) {
+    syntaxComplete = false
+  }
+  if (awaitingPostHeredocCommand) {
     syntaxComplete = false
   }
   if (pendingHeredocs.length > 0) {
@@ -487,7 +524,7 @@ export function extractRedirectTargets(tokens: string[]): string[] {
       continue
     }
     if (isRedirectOperator(token)) {
-      if (isHeredocOperator(token)) {
+      if (isHeredocOperator(token) || isHereStringOperator(token)) {
         index += 1
         continue
       }

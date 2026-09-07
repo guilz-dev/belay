@@ -122,6 +122,63 @@ describe('tokenizeShell', () => {
     })
   })
 
+  it('collects the body before resuming a trailing pipeline after the terminator', () => {
+    const command = "cat <<'EOF' |\nfixture\nEOF\nwc -c"
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<',
+      'EOF',
+      '|',
+      ';',
+      'wc',
+      '-c',
+    ])
+    expect(lexed.heredocs[0]?.body.value).toBe('fixture\n')
+  })
+
+  it('marks a trailing pipeline without a post-terminator command incomplete', () => {
+    const command = "cat <<'EOF' |\nsh\ngit push origin main\nEOF"
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['cat', '<<', 'EOF', '|', ';'])
+    expect(lexed.heredocs[0]?.body.value).toBe('sh\ngit push origin main\n')
+  })
+
+  it('keeps quoted and embedded hashes while ignoring heredoc syntax in a shell comment', () => {
+    const lexed = lexShell("echo '# <<EOF' foo#bar # <<'FAKE'\ngit status")
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'echo',
+      '# <<EOF',
+      'foo#bar',
+      ';',
+      'git',
+      'status',
+    ])
+  })
+
+  it('recognizes a here-string without consuming following lines as a heredoc body', () => {
+    const lexed = lexShell('cat <<< fixture\ngit status')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<<',
+      'fixture',
+      ';',
+      'git',
+      'status',
+    ])
+    expect(extractRedirectTargets(lexed.tokens.map((token) => token.value))).toEqual([])
+  })
+
   it.each([
     "cat <<''",
     "cat <<''\n",

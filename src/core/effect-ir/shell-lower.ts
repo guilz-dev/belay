@@ -1,6 +1,11 @@
 import path from 'node:path'
 
-import { isHeredocOperator, lexShell, type ShellHeredoc } from '../shell-tokenizer.js'
+import {
+  isHeredocOperator,
+  isHereStringOperator,
+  lexShell,
+  type ShellHeredoc,
+} from '../shell-tokenizer.js'
 import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
@@ -195,6 +200,28 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
       ),
     )
   }
+  if (
+    !commandLexed.syntaxComplete &&
+    !lowered.some((segment) => segment.signals.includes('shell.grammar_incomplete'))
+  ) {
+    lowered.push(
+      shellSegment(
+        '[shell grammar boundary]',
+        'shell-boundary',
+        [
+          requirement(
+            'indeterminate',
+            'indeterminate',
+            { kind: 'unknown' },
+            '[shell grammar boundary]',
+            ['shell.grammar_incomplete'],
+          ),
+        ],
+        'unparseable',
+        new Set(['shell.grammar_incomplete']),
+      ),
+    )
+  }
   return lowered
 }
 
@@ -241,8 +268,23 @@ function lowerSegment(
     opacity = joinEffectOpacity(opacity, 'unparseable')
   }
 
-  addRedirectEffects(requirements, stripHeredocRedirects(rawTokens), env, context, commandRedacted)
+  addRedirectEffects(
+    requirements,
+    stripStdinDataRedirects(rawTokens),
+    env,
+    context,
+    commandRedacted,
+  )
   addSubstitutionEffects(requirements, command, context, commandRedacted, signals)
+  if (rawTokens.some(isHereStringOperator)) {
+    requirements.push(
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        'shell.here_string_opaque',
+      ]),
+    )
+    signals.add('shell.here_string_opaque')
+    opacity = joinEffectOpacity(opacity, 'opaque')
+  }
   let executableHeredoc = false
   for (const heredoc of heredocs) {
     const heredocSignal = heredoc.expands
@@ -684,21 +726,22 @@ function scanHeredocCommandSubstitutions(input: string): {
   inners: string[]
   complete: boolean
 } {
+  const folded = input.replace(/\\\r?\n/g, '')
   const inners: string[] = []
   let index = 0
-  while (index < input.length) {
-    const char = input[index] ?? ''
-    const next = input[index + 1] ?? ''
+  while (index < folded.length) {
+    const char = folded[index] ?? ''
+    const next = folded[index + 1] ?? ''
     if (char === '\\' && (next === '\\' || next === '$' || next === '`')) {
       index += 2
       continue
     }
     if (char === '`') {
-      const end = findHeredocBacktickEnd(input, index + 1)
+      const end = findHeredocBacktickEnd(folded, index + 1)
       if (end === -1) {
         return { inners, complete: false }
       }
-      const inner = input.slice(index + 1, end).trim()
+      const inner = folded.slice(index + 1, end).trim()
       if (inner) {
         inners.push(inner)
       }
@@ -706,7 +749,7 @@ function scanHeredocCommandSubstitutions(input: string): {
       continue
     }
     if (char === '$' && next === '(') {
-      const closed = extractHeredocDollarParen(input, index + 2)
+      const closed = extractHeredocDollarParen(folded, index + 2)
       if (!closed) {
         return { inners, complete: false }
       }
@@ -780,11 +823,11 @@ function extractHeredocDollarParen(
   return null
 }
 
-function stripHeredocRedirects(tokens: readonly string[]): string[] {
+function stripStdinDataRedirects(tokens: readonly string[]): string[] {
   const stripped: string[] = []
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? ''
-    if (isHeredocOperator(token)) {
+    if (isHeredocOperator(token) || isHereStringOperator(token)) {
       index += 1
       continue
     }

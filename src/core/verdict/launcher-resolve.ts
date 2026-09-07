@@ -208,6 +208,23 @@ function hasBackgroundControl(recipe: string): boolean {
   return lexShell(recipe).tokens.some((token) => token.kind === 'operator' && token.value === '&')
 }
 
+function readsMakefileFromStdin(tokens: readonly string[]): boolean {
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? ''
+    if (token === '-f' || token === '--file' || token === '--makefile') {
+      if (tokens[index + 1] === '-') {
+        return true
+      }
+      index += 1
+      continue
+    }
+    if (token === '-f-' || token === '--file=-' || token === '--makefile=-') {
+      return true
+    }
+  }
+  return false
+}
+
 function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
   const targets = new Map<string, MakeTarget>()
   try {
@@ -406,6 +423,9 @@ export function resolveLauncherRecipe(params: {
   if (tokens[0] === 'make') {
     if (params.depth >= MAX_RESOLVE_DEPTH) {
       return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
+    }
+    if (readsMakefileFromStdin(tokens)) {
+      return { recipes: [], opaque: true, reason: 'make_stdin_makefile' }
     }
     if (tokens.includes('-n') || tokens.includes('--dry-run')) {
       return null

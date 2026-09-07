@@ -239,6 +239,115 @@ describe('structural suite', () => {
       expect(result.effectPlan?.completeness).toBe('complete')
     })
 
+    it.each([
+      {
+        name: 'pipeline',
+        command: "cat <<'EOF' |\nfixture\nEOF\nwc -c",
+        expectedExecutable: 'wc',
+      },
+      {
+        name: 'and-list',
+        command: "cat <<'EOF' &&\nfixture\nEOF\ngit status",
+        signal: 'git.status',
+      },
+      {
+        name: 'or-list',
+        command: "cat <<'EOF' ||\nfixture\nEOF\ngit status",
+        signal: 'git.status',
+      },
+    ])('retains the safe post-terminator command for a trailing $name operator', async ({
+      command,
+      expectedExecutable,
+      signal,
+    }) => {
+      const result = await verdict(command, context)
+      const requirements = result.effectPlan ? collectRequirements(result.effectPlan.root) : []
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(
+        expectedExecutable
+          ? requirements.some(
+              (requirement) =>
+                requirement.action === 'process.exec' &&
+                requirement.resource.kind === 'executable' &&
+                requirement.resource.command === expectedExecutable,
+            )
+          : result.signals.includes(signal ?? ''),
+      ).toBe(true)
+    })
+
+    it.each([
+      {
+        name: 'pipeline',
+        command: "cat <<'EOF' |\nsh\ngit push origin main\nEOF",
+      },
+      {
+        name: 'and-list',
+        command: "cat <<'EOF' &&\ngit push origin main\nEOF",
+      },
+      {
+        name: 'or-list',
+        command: "cat <<'EOF' ||\ngit push origin main\nEOF",
+      },
+    ])('fails closed when a trailing $name has no post-terminator command', async ({ command }) => {
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+      expect(result.signals).toContain('shell.grammar_incomplete')
+      expect(result.signals).not.toContain('pipe_to_shell')
+      expect(result.signals).not.toContain('git.push')
+    })
+
+    it('ignores comment-only heredoc syntax and retains a following read-only command', async () => {
+      const result = await verdict("echo ok # <<'EOF'\ngit status", context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.status')
+      expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
+    })
+
+    it('does not let comment-only heredoc syntax mask a following push', async () => {
+      const result = await verdict("echo ok # <<'EOF'\ngit push origin main\nEOF", context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('git.push')
+      expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
+    })
+
+    it('keeps an unsupported literal here-string fail-closed while retaining later reads', async () => {
+      const result = await verdict('cat <<< fixture\ngit status', context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+      expect(result.signals).toContain('git.status')
+    })
+
+    it('does not let a here-string mask a following push and terminator-shaped command', async () => {
+      const result = await verdict('cat <<< fixture\ngit push origin main\nfixture', context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('git.push')
+    })
+
+    it('folds backslash-newline before scanning an unquoted heredoc substitution', async () => {
+      const result = await verdict('cat <<EOF\n$\\\n(git push origin main)\nEOF', context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.push')
+    })
+
+    it('preserves a quoted dollar across heredoc backslash-newline folding', async () => {
+      const result = await verdict('cat <<EOF\n\\$\\\n(git push origin main)\nEOF', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).not.toContain('git.push')
+    })
+
     it('keeps the current make verify-parallel background/PID recipe approval-required', async () => {
       const root = process.cwd()
       const result = await verdict('make verify-parallel', {
