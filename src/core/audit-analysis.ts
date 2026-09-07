@@ -251,6 +251,9 @@ export function isAvailabilityCausedAsk(record: AuditRecord): boolean {
   if (record.reason === 'missing_trusted_cwd') {
     return true
   }
+  if (record.reason === 'dynamic_cwd_transition') {
+    return true
+  }
   return judgeFallbackReason(record).length > 0
 }
 
@@ -258,6 +261,7 @@ export function computeAvailabilityAskCounts(records: AuditRecord[]): Availabili
   const counts: AvailabilityAskCounts = {
     total: 0,
     missingTrustedCwd: 0,
+    dynamicCwdTransition: 0,
     judgeTimeout: 0,
     judgeFallback: 0,
   }
@@ -269,6 +273,12 @@ export function computeAvailabilityAskCounts(records: AuditRecord[]): Availabili
 
     if (record.reason === 'missing_trusted_cwd') {
       counts.missingTrustedCwd += 1
+      counts.total += 1
+      continue
+    }
+
+    if (record.reason === 'dynamic_cwd_transition') {
+      counts.dynamicCwdTransition += 1
       counts.total += 1
       continue
     }

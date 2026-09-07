@@ -163,7 +163,8 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
 
   if (report.availabilityAsks.total > 0) {
     lines.push('', 'Availability-caused asks (infrastructure, not classifier ground truth):')
-    lines.push(`- missing trusted cwd: ${report.availabilityAsks.missingTrustedCwd}`)
+    lines.push(`- missing action/trusted cwd: ${report.availabilityAsks.missingTrustedCwd}`)
+    lines.push(`- dynamic cwd transition: ${report.availabilityAsks.dynamicCwdTransition}`)
     lines.push(`- judge timeout: ${report.availabilityAsks.judgeTimeout}`)
     lines.push(`- other judge fallback: ${report.availabilityAsks.judgeFallback}`)
     lines.push(`- total: ${report.availabilityAsks.total}`)

@@ -472,6 +472,13 @@ describe('audit-metrics', () => {
       {
         event: 'beforeShellExecution',
         verdict: 'deny_pending_approval',
+        reason: 'dynamic_cwd_transition',
+        wouldBlock: true,
+        fingerprint: testFingerprint('fp-dynamic-cwd'),
+      },
+      {
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
         judgeFallbackReason: 'eval_timeout',
@@ -495,8 +502,9 @@ describe('audit-metrics', () => {
     ].map(toAuditRecord)
 
     expect(computeAvailabilityAskCounts(records)).toEqual({
-      total: 3,
+      total: 4,
       missingTrustedCwd: 1,
+      dynamicCwdTransition: 1,
       judgeTimeout: 1,
       judgeFallback: 1,
     })
@@ -504,7 +512,8 @@ describe('audit-metrics', () => {
 
     const formatted = formatMetricsReport(computeAuditMetrics(records))
     expect(formatted).toContain('Availability-caused asks')
-    expect(formatted).toContain('missing trusted cwd: 1')
+    expect(formatted).toContain('missing action/trusted cwd: 1')
+    expect(formatted).toContain('dynamic cwd transition: 1')
     expect(formatted).toContain('Would-block by reason')
     expect(formatted).not.toContain('Repeated fingerprint asks')
   })
@@ -524,6 +533,7 @@ describe('audit-metrics', () => {
     expect(computeAvailabilityAskCounts(records)).toEqual({
       total: 1,
       missingTrustedCwd: 1,
+      dynamicCwdTransition: 0,
       judgeTimeout: 0,
       judgeFallback: 0,
     })

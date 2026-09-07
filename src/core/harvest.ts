@@ -26,7 +26,11 @@ export interface HarvestCandidate {
   approvedAfterDeny: boolean
 }
 
-export type AvailabilitySignal = 'missing_trusted_cwd' | 'judge_timeout' | 'judge_fallback'
+export type AvailabilitySignal =
+  | 'missing_trusted_cwd'
+  | 'dynamic_cwd_transition'
+  | 'judge_timeout'
+  | 'judge_fallback'
 
 export interface AvailabilityQueueItem {
   kind: 'shell'
@@ -59,6 +63,9 @@ function availabilitySignal(record: AuditRecord): AvailabilitySignal | null {
   }
   if (record.reason === 'missing_trusted_cwd') {
     return 'missing_trusted_cwd'
+  }
+  if (record.reason === 'dynamic_cwd_transition') {
+    return 'dynamic_cwd_transition'
   }
   const fallback = typeof record.judgeFallbackReason === 'string' ? record.judgeFallbackReason : ''
   if (fallback.includes('timeout')) {

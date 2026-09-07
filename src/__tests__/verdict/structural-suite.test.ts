@@ -170,16 +170,26 @@ describe('structural suite', () => {
       expect(result.reason).toBe('outside_repo_mutation')
     })
 
-    it('asks on mutation after opaque cd chain', async () => {
-      const result = await verdict('cd $HOME && rm -rf foo', context)
+    it('identifies a dynamic cwd transition separately from a missing initial cwd', async () => {
+      const result = await verdict('cd "$dir" && rm -rf build', context)
       expect(result.permission).toBe('ask')
-      expect(result.reason).toBe('missing_trusted_cwd')
+      expect(result.reason).toBe('dynamic_cwd_transition')
+      expect(result.signals).toContain('shell.cwd_dynamic_transition')
+      expect(result.signals).not.toContain('missing_action_cwd')
     })
 
-    it('allows pure read-only command after opaque cd chain', async () => {
-      const result = await verdict('cd $HOME && git status', context)
-      expect(result.permission).toBe('allow')
-      expect(result.location).toBe('unknown')
+    it('does not infer a cwd when cd has no target', async () => {
+      const result = await verdict('cd && rm -rf build', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('dynamic_cwd_transition')
+      expect(result.signals).toContain('shell.cwd_dynamic_transition')
+    })
+
+    it('keeps a literal absolute cd statically known', async () => {
+      const result = await verdict('cd /tmp && rm -rf build', context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('outside_repo_mutation')
+      expect(result.signals).not.toContain('shell.cwd_dynamic_transition')
     })
 
     it('distinguishes fingerprint for resolved cd chain', async () => {

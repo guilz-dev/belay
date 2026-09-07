@@ -121,6 +121,7 @@ export interface RepeatedFingerprintAsk {
 export interface AvailabilityAskCounts {
   total: number
   missingTrustedCwd: number
+  dynamicCwdTransition: number
   judgeTimeout: number
   judgeFallback: number
 }

@@ -35,6 +35,11 @@ describe('harvest', () => {
         judgeFallbackReason: 'eval_timeout',
       }),
       shellDeny({
+        fingerprint: testFingerprint('fp-dynamic-cwd'),
+        summary: 'cd "$dir" && rm -rf build',
+        reason: 'dynamic_cwd_transition',
+      }),
+      shellDeny({
         fingerprint: testFingerprint('fp-classifier'),
         summary: 'git status',
         reason: 'unknown_local_effect',
@@ -47,10 +52,21 @@ describe('harvest', () => {
     ]
 
     const report = buildHarvestReport(records)
-    expect(report.availabilityQueue).toHaveLength(1)
-    expect(report.availabilityQueue[0]?.availabilitySignal).toBe('judge_timeout')
+    expect(report.availabilityQueue).toHaveLength(2)
+    expect(report.availabilityQueue).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ availabilitySignal: 'judge_timeout' }),
+        expect.objectContaining({
+          availabilitySignal: 'dynamic_cwd_transition',
+          reason: 'dynamic_cwd_transition',
+        }),
+      ]),
+    )
     expect(
       report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-avail')),
+    ).toBe(false)
+    expect(
+      report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-dynamic-cwd')),
     ).toBe(false)
     expect(
       report.candidates.some((entry) => entry.fingerprint === testFingerprint('fp-classifier')),

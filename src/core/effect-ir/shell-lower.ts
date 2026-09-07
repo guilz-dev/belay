@@ -37,6 +37,7 @@ import {
   withProvenances,
 } from './shell-lower/requirement.js'
 import {
+  type CdTransition,
   joinNestedOpacity,
   requiresKnownCwd,
   resolveCdTransition,
@@ -83,6 +84,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
   const lowered: ShellEffectSegment[] = []
   let cwd = context.cwd
   let cwdKnown = true
+  let cwdTransitionSignal: Extract<CdTransition, { known: false }>['signal'] | null = null
   let inferredEnv = { ...context.env }
   for (const segment of commands) {
     let result = lowerSegment(segment, {
@@ -106,7 +108,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
             'indeterminate',
             { kind: 'unknown' },
             result.commandRedacted,
-            ['shell.cwd_unknown'],
+            cwdTransitionSignal ? [cwdTransitionSignal] : ['shell.cwd_unknown'],
           ),
         )
       }
@@ -119,7 +121,14 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
               opacity: joinEffectOpacity(result.opacity, 'opaque'),
             }
           : {}),
-        signals: [...new Set([...result.signals, 'shell.cwd_unknown'])],
+        signals: requiresCwd
+          ? [
+              ...new Set([
+                ...result.signals,
+                ...(cwdTransitionSignal ? [cwdTransitionSignal] : ['shell.cwd_unknown']),
+              ]),
+            ]
+          : result.signals,
       }
     }
     lowered.push(result)
@@ -133,6 +142,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
     if (nextCwd) {
       cwd = nextCwd.cwd
       cwdKnown = nextCwd.known
+      cwdTransitionSignal = nextCwd.known ? null : nextCwd.signal
     }
   }
   if (
