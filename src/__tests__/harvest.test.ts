@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { harvestListProject, harvestReportFromNdjson } from '../commands/harvest.js'
 import { loadConfigFile } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-query.js'
+import { approvalCorrelationId, serializeAuditRecordV3 } from '../core/audit-serialize.js'
+import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 import {
   applyHarvestReview,
   buildHarvestReport,
@@ -161,6 +163,58 @@ describe('harvest', () => {
 
     expect(report.candidates).toEqual([])
     expect(report.excludedGateEvents).toBe(2)
+  })
+
+  it('retains serialized v3 approval correlation for active-cohort round trips', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    const approvalId = 'belay_harvest_correlation_fixture'
+    const fingerprint = testFingerprint('serialized-approval-round-trip')
+    const serializedRecords = [
+      serializeAuditRecordV3(
+        {
+          timestamp: '2026-01-02T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint,
+          summary: 'pnpm test',
+          reason: 'unknown_local_effect',
+          approvalId,
+          ...cohort!,
+        },
+        DEFAULT_REDACTION_V3,
+      ),
+      serializeAuditRecordV3(
+        {
+          timestamp: '2026-01-02T00:00:01.000Z',
+          event: 'approval',
+          reason: 'approval_recorded',
+          approvalId,
+          ...cohort!,
+        },
+        DEFAULT_REDACTION_V3,
+      ),
+    ]
+    expect(serializedRecords[0]?.approvalId).toBeUndefined()
+    expect(serializedRecords[0]?.approvalCorrelationId).toBe(approvalCorrelationId(approvalId))
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${serializedRecords.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+
+    expect(report.candidates).toEqual([
+      expect.objectContaining({
+        command: 'pnpm test',
+        approvedAfterDeny: true,
+        sources: expect.arrayContaining(['deny_then_approve']),
+      }),
+    ])
   })
 
   it('separates availability-caused asks from benign candidates', () => {

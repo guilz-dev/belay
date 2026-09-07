@@ -1,7 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
-import { isApprovalRecorded, isShellGateRecord, toAuditRecord } from '../core/audit-query.js'
+import {
+  auditApprovalCorrelationId,
+  isApprovalRecorded,
+  isShellGateRecord,
+  toAuditRecord,
+} from '../core/audit-query.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import {
   applyHarvestReview,
@@ -78,12 +83,23 @@ function recordsForActiveCohort(
       .map((record) => record.approvalId)
       .filter((approvalId): approvalId is string => typeof approvalId === 'string'),
   )
+  const approvalCorrelationIds = new Set(
+    matchingGateRecords
+      .map(auditApprovalCorrelationId)
+      .filter((correlationId): correlationId is string => correlationId !== undefined),
+  )
+  const isPairedApproval = (record: AuditRecord): boolean => {
+    if (!isApprovalRecorded(record)) {
+      return false
+    }
+    const correlationId = auditApprovalCorrelationId(record)
+    if (correlationId) {
+      return approvalCorrelationIds.has(correlationId)
+    }
+    return typeof record.approvalId === 'string' && approvalIds.has(record.approvalId)
+  }
   return records.filter(
-    (record) =>
-      matchingSet.has(record) ||
-      (isApprovalRecorded(record) &&
-        typeof record.approvalId === 'string' &&
-        approvalIds.has(record.approvalId)),
+    (record) => matchingSet.has(record) || isPairedApproval(record),
   )
 }
 
