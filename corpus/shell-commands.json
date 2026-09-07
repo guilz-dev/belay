@@ -682,5 +682,18 @@
       "sourceCaseId": "46992d5f6cea8c2a4e642b3624da55f7d1a3893a9a983a86e23bfb2516f8e5b3",
       "reviewedAt": "2026-09-07T15:50:45.852Z"
     }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git log --oneline origin/main..HEAD && git merge-base origin/main HEAD && git diff --stat origin/main...HEAD && git diff origin/main...HEAD",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "4845906a8f3fdca1e7ecd66815c426c78919be7bda40f1e18cc10bc9b6e84dfb",
+      "reviewedAt": "2026-09-07T15:50:46.200Z"
+    }
   }
 ]

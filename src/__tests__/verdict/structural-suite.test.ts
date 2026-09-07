@@ -146,6 +146,46 @@ describe('structural suite', () => {
   })
 
   describe('fixed edge cases', () => {
+    it.each([
+      'git diff origin/main...HEAD',
+      'git diff HEAD~3..HEAD',
+      'git log --oneline origin/main..HEAD',
+      'git merge-base origin/main HEAD',
+    ])('%s is repository inspection', async (command) => {
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('allow')
+      expect(result.reason).toBe('read_only')
+      expect(result.signals).not.toContain('git.grammar_incomplete')
+    })
+
+    it('allows the reviewed read-only Git range composition', async () => {
+      const result = await verdict(
+        'git log --oneline origin/main..HEAD && git merge-base origin/main HEAD && git diff --stat origin/main...HEAD && git diff origin/main...HEAD',
+        context,
+      )
+
+      expect(result.permission).toBe('allow')
+      expect(result.reason).toBe('read_only')
+      expect(result.signals).not.toContain('git.grammar_incomplete')
+    })
+
+    it.each([
+      'git push origin/main:main',
+      'git update-ref refs/heads/main HEAD',
+    ])('%s remains approval-required', async (command) => {
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('ask')
+    })
+
+    it('keeps git branch -D as a local mutation', async () => {
+      const result = await verdict('git branch -D origin/main', context)
+
+      expect(result.reason).toBe('repo_local_mutation')
+      expect(result.signals).toContain('git.branch')
+    })
+
     it('git reset --hard is ask', async () => {
       const result = await verdict('git reset --hard', context)
       expect(result.permission).toBe('ask')

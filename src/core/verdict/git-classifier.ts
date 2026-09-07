@@ -88,6 +88,7 @@ const READ_ONLY_SUBCOMMANDS = new Set([
   'verify-commit',
   'whatchanged',
   'shortlog',
+  'merge-base',
   'help',
   'version',
 ])
@@ -137,6 +138,8 @@ const COMPOUND_SUBCOMMAND_HEADS = new Set(['worktree', 'stash', 'tag'])
 
 /** Positional args before `--` are refs/revisions, not worktree paths. */
 const REF_ONLY_WITHOUT_TERMINATOR = new Set(['checkout', 'show', 'log'])
+
+const READ_ONLY_REVISION_OPERAND_SUBCOMMANDS = new Set(['diff', 'log', 'merge-base'])
 
 function isGitExecutable(token: string): boolean {
   return path.basename(token) === 'git'
@@ -367,6 +370,26 @@ function looksLikeDiffPathOperand(token: string): boolean {
   return token.includes('.')
 }
 
+/**
+ * Revision syntax is recognized solely while decoding read-only Git invocations.
+ * Mutating subcommands retain their own ref and path grammar.
+ */
+function isReadOnlyGitRevisionOperand(subcommand: string, token: string): boolean {
+  if (!READ_ONLY_REVISION_OPERAND_SUBCOMMANDS.has(subcommand) || !token || token === '--') {
+    return false
+  }
+  if (/^[^\s.][^\s]*\.\.\.?[^\s.][^\s]*$/.test(token)) {
+    return true
+  }
+  if (/^HEAD(?:~\d+|\^\d*)?$/.test(token)) {
+    return true
+  }
+  return (
+    /^[A-Za-z_][A-Za-z0-9._-]*(?:\/[A-Za-z_][A-Za-z0-9._-]*)*$/.test(token) &&
+    !looksLikeDiffPathOperand(token)
+  )
+}
+
 function resolveGitWorkTree(
   baseCwd: string,
   effectiveCwd: string | undefined,
@@ -425,7 +448,7 @@ function extractGitFileOperands(subcommand: string, args: string[]): string[] {
       continue
     }
     if (baseSubcommand === 'diff' && optionTerminator < 0) {
-      if (looksLikeDiffPathOperand(token)) {
+      if (!isReadOnlyGitRevisionOperand(subcommand, token) && looksLikeDiffPathOperand(token)) {
         operands.push(token)
       }
       continue
