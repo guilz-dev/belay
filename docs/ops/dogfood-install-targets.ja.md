@@ -26,25 +26,34 @@ Belay を **dogfood モード**（`mode: audit` + `policy.unknownLocalEffect: de
 
 ## リリース後 upgrade
 
-**guilz-dev/belay 本体**（製品リポジトリ内）では、同名パッケージ解決の都合で `npx @guilz-dev/belay@…` が失敗することがある。ソースビルドを使う:
+active な各リポジトリで、`dogfood`、`upgrade`、`doctor`、`status` をそれぞれ別の host Shell action として実行する。host action の `working_directory` には対象リポジトリの絶対パスを設定する。この値は host が渡すものであり、hook プロセスのカレントディレクトリで policy や state を選択してはならない。
+
+各 action はコマンドを一つだけ実行し、同じリポジトリの絶対パスをリテラルの `--target` に指定する。変数由来のパス（`dir` や `wt` など）へ移動する shell function や loop でコマンドをまとめてはならない。readiness 収集は動的なディレクトリ遷移をサポートしない。
+
+**guilz-dev/belay 本体**（製品リポジトリ内）では、同名パッケージ解決の都合で `npx @guilz-dev/belay@…` が失敗することがある。Shell action の `working_directory` を `/absolute/path/to/belay` に設定し、ソースビルドを別々の action で使う:
 
 ```bash
-cd /Users/kaz/product/guilz/belay
 pnpm build
-node dist/cli.js upgrade --with-skill
-node dist/cli.js doctor
-node dist/cli.js status
+node /absolute/path/to/belay/dist/cli.js dogfood --target /absolute/path/to/belay
+node /absolute/path/to/belay/dist/cli.js upgrade --with-skill --target /absolute/path/to/belay
+node /absolute/path/to/belay/dist/cli.js doctor --target /absolute/path/to/belay
+node /absolute/path/to/belay/dist/cli.js status --target /absolute/path/to/belay
 ```
 
 main 同期込み: [update-local-belay スキル](../../.cursor/skills/update-local-belay/SKILL.md)。
 
-**その他の dogfood 導入先**では各リポのルートで:
+**その他の dogfood 導入先**では、対象リポジトリの絶対パスを `working_directory` に設定し、別々の Shell action を作成する:
 
 ```bash
-npx @guilz-dev/belay@<version> upgrade --with-skill
-npx @guilz-dev/belay@<version> doctor
-npx @guilz-dev/belay@<version> status
+npx -y @guilz-dev/belay@<version> dogfood --target /absolute/target/path
+npx -y @guilz-dev/belay@<version> upgrade --with-skill --target /absolute/target/path
+npx -y @guilz-dev/belay@<version> doctor --target /absolute/target/path
+npx -y @guilz-dev/belay@<version> status --target /absolute/target/path
 ```
+
+monorepo や linked Git worktree では、Cursor が hook を実行しうる各 worktree にこの action セットを作成する。`belay.config.json` がない sibling worktree は default（`mode: enforce`）のままであり、main worktree が dogfood（`mode: audit`、`unknownLocalEffect: deny`）でも host action を block しうる。
+
+`npx -y`、パッケージ公開、push、control-plane mutation は、引き続き正確な approval を要求することがある。これらは classifier による effect の判断であり、action の working directory を利用できない失敗ではない。
 
 ## 対象外（この一覧に含めない）
 

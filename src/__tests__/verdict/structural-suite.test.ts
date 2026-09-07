@@ -199,6 +199,15 @@ describe('structural suite', () => {
       expect(result.signals).not.toContain('shell.cwd_dynamic_transition')
     })
 
+    it('does not report cwd availability failure for an explicit target without dynamic cd', async () => {
+      const result = await verdict(
+        'node /workspace/belay/dist/cli.js doctor --target /workspace/target',
+        context,
+      )
+      expect(result.reason).not.toBe('missing_trusted_cwd')
+      expect(result.reason).not.toBe('dynamic_cwd_transition')
+    })
+
     it('distinguishes fingerprint for resolved cd chain', async () => {
       const chained = await verdict('cd subdir && rm -rf build', context)
       const bare = await verdict('rm -rf build', context)

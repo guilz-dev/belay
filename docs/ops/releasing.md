@@ -81,8 +81,30 @@ git push origin v0.0.2
 4. Publish to npm:
 
 ```bash
+npm whoami
 npm publish
 ```
+
+   **Do not use `--otp`.** OTP-based publish is not part of this project's release
+   workflow and cannot be used by agents or non-interactive automation.
+
+   | Method | Role |
+   | --- | --- |
+   | Granular Access Token (Bypass 2FA) | Primary path for local/CI publish; set in `~/.npmrc` or `NPM_TOKEN` with publish rights for `@guilz-dev` |
+   | OIDC trusted publishing | Tokenless publish from GitHub Actions (migration target before bypass-GAT direct publish ends ~2027-01) |
+   | `--otp` | **Not used here.** Requires interactive TOTP; not a valid release unblock for agents |
+
+   Before publishing, `npm whoami` must succeed. On `EOTP`, `ENEEDAUTH`, or `E403`:
+
+   - Configure a publish-capable Granular Access Token (Bypass 2FA) in `~/.npmrc` /
+     `NPM_TOKEN`; do not ask the operator for an OTP.
+   - An `EOTP` with a successful `npm whoami` usually means a 2FA login session is
+     active but no bypass publish token is configured.
+   - Regenerate the token at [npmjs.com/settings/~/tokens](https://www.npmjs.com/settings/~/tokens) if needed.
+
+   npm revoked classic tokens (Nov 2025). Bypass-2FA GAT direct publish is scheduled
+   to end around Jan 2027; plan OIDC or staged publishing before then. See
+   [GitHub Changelog 2026-07-31](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/).
 
 5. Create the GitHub Release for the same tag and reuse the `CHANGELOG.md`
    summary as release notes.
@@ -112,6 +134,36 @@ npx @guilz-dev/belay@0.0.2 --version
 3. Confirm the GitHub tag and GitHub Release both point to the intended commit.
 4. If the release changed installation or workflow guidance, verify the README
    quick start against the published package.
+
+5. Run `dogfood`, `upgrade`, `doctor`, and `status` as separate host Shell actions in
+   every active repository listed in [dogfood-install-targets.md](./dogfood-install-targets.md).
+   Give each action the repository's absolute `working_directory` and one command with
+   that same literal absolute `--target`; do not collect readiness through a shell loop
+   or function that changes to a variable-derived directory.
+
+   `npx -y`, package publishing, push, and control-plane mutation may still need exact
+   approval. These are classifier decisions, not action-working-directory availability
+   failures.
+
+## npm authentication
+
+This project does **not** use OTP (`npm publish --otp`) for releases. Agents must not
+ask operators for OTP codes.
+
+| Method | Notes |
+| --- | --- |
+| Granular Access Token (Bypass 2FA) | Publish scope for `@guilz-dev`; set in `~/.npmrc` or `NPM_TOKEN` |
+| OIDC trusted publishing | Tokenless CI publish; preferred long-term path |
+| `--otp` | **Not used** — interactive TOTP only; not available as an agent/automation unblock |
+
+Verify auth before every publish:
+
+```bash
+npm whoami
+```
+
+If publish fails with `EOTP`, switch to a Bypass-2FA Granular Access Token rather than
+waiting for OTP input.
 
 ## Notes
 
