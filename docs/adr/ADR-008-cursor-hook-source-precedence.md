@@ -41,9 +41,12 @@ also make one repository look like two sources.
 3. **Action-repository selection** — Ownership uses ADR-007's payload-first action directory:
    `tool_input.working_directory` for `preToolUse: Shell`, otherwise top-level `cwd`, then the first
    non-empty `workspace_roots[]` entry. Belay finds the nearest initialized repository from that
-   directory. Existing paths and project origins are canonicalized, so symlink-equivalent paths do
-   not create another owner. The canonical repository identity is embedded at install time, so a
-   shim does not depend on the continued existence of the lexical symlink used for installation.
+   directory. A Project shim derives its source root at invocation time from its own installed file
+   URL, while the dispatcher canonicalizes both that root and the payload-derived action repository
+   before comparing them. Symlink-equivalent paths therefore do not create another owner, and a
+   shim copied between linked worktrees adopts the recipient worktree rather than retaining a
+   foreign install-time identity. A same-root legacy embedded origin remains callable only for
+   rolling migration.
 
 4. **Neutral and fail-closed routes** — A non-owner returns the host-appropriate neutral response
    without importing `core.mjs`: `{ "permission": "allow" }` for gates,
@@ -58,7 +61,10 @@ also make one repository look like two sources.
    global bundle must run `belay upgrade --scope global` (or upgrade a managed Project installation
    that can prove the global entry belongs to Belay). `belay doctor` reports pre-router global
    bundles, origin/generation mismatches, and incomplete intended owners as issues. A healthy
-   router-aware global source shadowed by a Project owner is an informational note.
+   router-aware global source shadowed by a Project owner is an informational note. The blocking
+   dogfood release check applies the same routing-health probe to the current repository and its
+   initialized linked worktrees, so a foreign-root or incomplete Project owner cannot pass only
+   because a previous healthy audit cohort exists.
 
 6. **Publish ownership last** — Init and upgrade render the target runtime, dispatcher, runners,
    shims, hook settings, and requested skill artifacts before changing `installScope`. They publish
@@ -90,6 +96,8 @@ also make one repository look like two sources.
 - No config, policy, EffectPlan, approval, or audit schema changes are introduced.
 - Hook settings retain exact managed-entry migration rules; unrelated hooks and sibling projects
   are not rewritten or removed.
+- Project shim files are path-portable across linked worktrees; action-repository selection remains
+  payload-first and is not inferred from the shim location.
 
 ## Limits
 
@@ -107,9 +115,11 @@ fire-and-forget. `belay doctor` is the preflight detection and repair path.
 ## Verification
 
 The process integration creates an isolated temporary Cursor home and two initialized Project
-repositories, invokes all three generated commands with one action-repository payload, and asserts
-one core import and one audit record. It also covers Project-only, global-only, uninitialized,
-incomplete-Project, canonical symlink, and distinct-event cases.
+repositories, copies generated prompt and shell shims between the projects, invokes all three
+generated commands with the recipient action-repository payload, and asserts one recipient core
+import and one shell audit record. It also covers Project-only, global-only, uninitialized,
+incomplete-Project, canonical symlink, and distinct-event cases. Dogfood tests replace a linked
+worktree shim with a foreign-root legacy generation and require the release check to fail.
 Behavioral coverage also removes runner/shim/dispatcher artifacts from serialized managed hooks,
 simulates target-stage interruption, tampers with global integrity-pinned files, removes an install
 symlink before invoke/doctor/upgrade, and checks the dispatcher's esbuild import graph.

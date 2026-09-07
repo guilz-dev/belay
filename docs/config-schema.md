@@ -50,7 +50,10 @@ or has an invalid scope remains routed to the matching Project owner so config l
 closed. A router-visible incomplete selected Project owner fails closed for gates/prompts and is
 audit-safe. Multi-root selection follows Shell
 `tool_input.working_directory` → `cwd` → first non-empty `workspace_roots[]`, with canonical path
-comparison.
+comparison. Project shims derive their source root from their own installed file URL at invocation
+time; the dispatcher canonicalizes it before comparison with the action repository. Moving or
+copying a generated shim between linked worktrees therefore cannot preserve a foreign baked-in
+owner root. Same-root legacy embedded origins are accepted only during rolling upgrade.
 
 This behavior adds no config field or schema migration. Pre-router global Cursor artifacts must be
 refreshed with `belay upgrade --scope global`; `belay doctor` reports old generations, origin
@@ -61,6 +64,8 @@ events, but does not retroactively undo post-action events and does not change `
 fire-and-forget semantics. Source precedence applies only within the same canonical event: distinct
 events and repeated deliveries to the effective owner remain separate hook processes. See
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
+When dogfood is active, the blocking release check applies Cursor routing-health diagnostics to the
+current repository and initialized linked worktrees and reports `hook_routing_skew` on failure.
 
 ## `judge` (Tier1 provider)
 

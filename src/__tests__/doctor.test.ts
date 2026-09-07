@@ -40,7 +40,10 @@ describe('doctorProject', () => {
     await initProject({ targetDir: repoRoot })
     const shellShim = path.join(repoRoot, '.cursor', 'hooks', 'belay-shell-gate.mjs')
     const source = await readFile(shellShim, 'utf8')
-    await writeFile(shellShim, source.replace('{"scope":"project"', '{"scope":"global"'))
+    await writeFile(
+      shellShim,
+      source.replace("origin: { scope: 'project', repoRoot }", "origin: { scope: 'global' }"),
+    )
 
     const report = await doctorProject({ targetDir: repoRoot })
 

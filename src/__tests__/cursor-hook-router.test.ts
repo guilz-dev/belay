@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { routeCursorHook } from '../adapters/cursor/hook-router.js'
+import { renderCursorProjectHookShim } from '../adapters/cursor/project-hook-shim.js'
 import { trustRepoConfig } from '../core/repo-config-trust.js'
 import { getManagedHookEntries } from '../defaults.js'
 
@@ -35,7 +36,6 @@ async function installProjectHook(
     `${JSON.stringify(rawConfig)}\n`,
   )
   await trustRepoConfig(repoRoot, 'cursor', rawConfig)
-  const canonicalRepoRoot = realpathSync(repoRoot)
   const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
   const groupedHooks: Record<
     string,
@@ -54,9 +54,18 @@ async function installProjectHook(
     path.join(repoRoot, '.cursor', 'hooks.json'),
     `${JSON.stringify({ version: 1, hooks: groupedHooks }, null, 2)}\n`,
   )
+  const projectHookDefinition = {
+    'belay-before-submit.mjs': ['before-submit', '"beforeSubmitPrompt"'],
+    'belay-shell-gate.mjs': ['shell-gate', '"beforeShellExecution"'],
+    'belay-tool-gate.mjs': ['tool-gate', "process.argv[2] ?? 'preToolUse'"],
+    'belay-audit.mjs': ['audit', "process.argv[2] ?? 'postToolUse'"],
+  }[hookFile]
+  if (!projectHookDefinition) {
+    throw new Error(`unsupported project hook fixture: ${hookFile}`)
+  }
   await writeFile(
     path.join(hooksDir, hookFile),
-    `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'\nvoid { origin: ${JSON.stringify({ scope: 'project', repoRoot: canonicalRepoRoot })} }\n`,
+    renderCursorProjectHookShim(projectHookDefinition[0], projectHookDefinition[1]),
   )
   await writeFile(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'), '')
   await chmod(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'), 0o755)

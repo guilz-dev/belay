@@ -61,7 +61,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 
 | クラスタ | 概要 | 深刻度 | 再発状況 | 主要 PR |
 |---------|------|--------|----------|---------|
-| **A. Cursor フック所有権/スコープ解決** | global/project の多重フック・cwd 誤解決 | 高 | 継続的（ADR-007/008 を新設するに至った） | #87, #89, #93 |
+| **A. Cursor フック所有権/スコープ解決** | global/project の多重フック・cwd/owner 誤解決 | 高 | 4 回目（別 worktree origin 焼き込み） | #87, #89, #93, #107, #114 |
 | **B. 並行 PR のマージ回帰** | コンフリクト解消で他 PR の変更が消える | 高 | 2 回（#87→#88 消失、#91/#92 で復元） | #87, #88, #91, #92 |
 | **C. Dogfood シェルブロック** | audit のはずが止まる（二重ゲート等） | 高 | 3 回（調査→#95→#97） | #95, #97 |
 | **D. セキュリティ実装欠陥/回帰** | glob・fingerprint・scrub の穴 | 高 | #96 で一括修正（回帰か潜在欠陥かは未確定） | #96 |
@@ -89,8 +89,12 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 1. **フックプロセスの cwd がアクション対象リポジトリを表さない**（`$HOME/.cursor` から起動）。`process.cwd()` 由来の repoRoot 解決が $HOME に落ちる。
 2. **ホスト(Cursor)が同一イベントに複数のフックソースを発火させうる**（User/global + 複数 Project）。所有権境界がないと全ソースがポリシーを評価する。
 3. **インストール位置が config ソース選択に結びついていた**。
+4. **Project shim に install 時の絶対 `repoRoot` を焼き込んでいた**。別 worktree 由来の
+   shim が配置されると Project source は origin mismatch で neutral になり、global
+   sentinel も callable owner を確認できず fail-closed した。既存 doctor は診断可能でも
+   手動 preflight であり、dogfood blocking check は worktree の config mode しか見ていなかった。
 
-**恒久対策として既に入ったもの:** ADR-007（payload-first cwd 解決 + global フックの fail-closed）、ADR-008（1 イベント 1 オーナーの dispatcher 先行ルーティング、Project 優先、canonical repo 同定）。→ これらは正しい方向。**未達は §5 の予防策で補強する。**
+**恒久対策として既に入ったもの:** ADR-007（payload-first cwd 解決 + global フックの fail-closed）、ADR-008（1 イベント 1 オーナーの dispatcher 先行ルーティング、Project 優先、canonical repo 同定）。PR #114 では Project source identity を shim 自身の file URL から実行時に導出し、別 worktree shim の実プロセス回帰と dogfood routing-skew gate を追加する。**マージ・実環境 smoke 前は再発防止完了と扱わない。**
 
 ### クラスタ B — 並行 PR のマージ回帰（最重要）
 
@@ -219,6 +223,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | P0 | dogfood skew のブロッキングチェック分離 | **是正PR作成中** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | 指定 adapter の release window 内 skew を exit 1 で停止できる |
 | P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `dogfood-environment.ts`, `doctor.ts` 警告, `doctor.test.ts` | dogfood active 時に未適用 worktree が可視化される |
 | P1 | global sentinel ブロックの doctor 事前検知 | **実施済み** | Belay runtime | `hook-routing-health.ts`, `doctor.ts`, `cursor-hook-routing-health.test.ts` | `belay doctor` が global sentinel の fail-closed 状態を upgrade/trust 手順付きで報告する |
+| P0 | linked worktree hook routing の blocking check | **是正PR #114** | Release operator | `dogfood-environment.ts`, `dogfood-check.ts`, `dogfood.test.ts` | current root と initialized linked worktree の routing issue が `hook_routing_skew` で release を停止する |
 
 ### 5.4 R4（ホスト挙動・敵対入力の想定不足）への対策
 
@@ -247,7 +252,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | 2 | repo config trust fail-closed（manual edit は再trust必須） | R3/R4 | 是正PR作成中 |
 | 3 | unmapped Cursor tool fail-closed invariant | R4 | 是正PR作成中 |
 | 4 | 通知チャネルの token 非公開 + 設定バリデーション | R4 | 是正PR作成中 |
-| 5 | dogfood release check（--since window, cohort/skew blocking） | R3/横断 | 是正PR作成中・運用確認待ち |
+| 5 | dogfood release check（--since window, cohort/config/hook-routing skew blocking） | R3/横断 | PR #114・運用確認待ち |
 | 6 | merge queue required checks + integration risk テンプレ運用 | R2/横断 | 設定済み・スモーク待ち |
 
 ---
@@ -266,6 +271,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | `hostDeniedAfterAllowCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
 | `auditModeDenyCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
 | `mismatchedCohortCount`（release window） | 5 | 0 | `belay dogfood --check --since` |
+| `hookRoutingSkewCount`（release preflight） | 5 | 0 | `belay dogfood --check --since` |
 | corpus must-ask misses | 1,4 | 0 | `pnpm corpus` |
 
 ---
@@ -288,3 +294,4 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 | 2026-09-04 | 初版 — git 履歴横断でクラスタ分類、横断因子 R1〜R4 と再発防止策を策定 |
 | 2026-09-04 | 改稿 — 集計方法の明記（211 コミット）、PR 根拠トレース、§4 ADR 境界明示、§5 status/owner/evidence/done-when 形式、チェックリストと指標の対応整理 |
 | 2026-09-06 | 追記 — global sentinel ブロック 3 回目（guilz-trace → reg-score/zoe）。PR #107 の routing 修正後も doctor が sentinel ブロックを事前検知できず手動 upgrade/trust が必要だった。`cursorHookRoutingIssues` を doctor に接続し、fail-closed メッセージに修復手順を追加 |
+| 2026-09-07 | 追記 — freelance の別 worktree `repoRoot` 焼き込みで4回目。Project shim の source identity を実行時に導出し、shim transplant の実プロセステストと linked-worktree routing の blocking dogfood check を PR #114 に追加。マージと live smoke 完了までは再発防止を未完了扱いとする |

@@ -92,8 +92,11 @@ authorization model. It complements
     one canonical event, but exactly one Belay source may evaluate it. The matching initialized
     Project owner takes precedence over User/global and nonmatching projects; a repository
     configured for global scope selects User/global. Selection uses the canonical payload-derived
-    action repository, and the Project origin persisted in shims is canonical rather than the
-    lexical install path. Omitted scope means Project; only a missing config is neutral, while a
+    action repository. A Project shim derives its source root at invocation time from its own
+    installed file URL; the dispatcher canonicalizes that root before comparing it with the action
+    repository. Copying a shim between linked worktrees therefore rebinds it to the recipient
+    worktree instead of preserving a foreign owner identity. Same-root legacy embedded origins are
+    accepted only for rolling migration. Omitted scope means Project; only a missing config is neutral, while a
     present broken config remains Project-owned and fails closed in config loading. Scope changes
     stage the new owner before publishing the selection. An untrusted global scope retains a
     detectable existing Project installation as owner; without one, User/global imports the core
@@ -102,7 +105,8 @@ authorization model. It complements
     control-plane, or audit state. Managed Cursor entries set the host's `failClosed` option, but
     post-action events cannot undo completed effects and `sessionEnd` is fire-and-forget. This is
     source precedence only: distinct canonical events and repeated effective-owner deliveries
-    remain separate hook processes
+    remain separate hook processes. Doctor diagnoses one workspace; the blocking dogfood release
+    check also verifies Cursor routing health across the initialized linked-worktree set
     ([ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md)).
 15. **Single Cursor shell classification**: `beforeShellExecution` is the only Belay-managed Cursor
     shell authority point. Managed hooks must not classify shell actions again via
