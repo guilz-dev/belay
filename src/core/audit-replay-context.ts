@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 import type { GatedActionKind } from './gate-contract.js'
-import { lexShell } from './shell-tokenizer.js'
+import { isHereStringOperator, lexShell, type ShellToken } from './shell-tokenizer.js'
 import type { ClassifyResult } from './types.js'
 
 /** Preserved action context for simulate triage — not a safety gate. */
@@ -91,24 +91,207 @@ export interface ReplayActionLike {
 const HASH_PATTERN = /^[a-f0-9]{64}$/
 const AUDIT_SOURCE_PLACEHOLDER = '[belay audit source omitted]'
 const EXPANDING_HEREDOC_PLACEHOLDER = '$(belay-audit-source-omitted)'
-const INLINE_SOURCE_FLAGS = new Map<string, ReadonlySet<string>>([
-  ['bash', new Set(['-c'])],
-  ['dash', new Set(['-c'])],
-  ['fish', new Set(['-c'])],
-  ['node', new Set(['-e', '--eval'])],
-  ['osascript', new Set(['-e'])],
-  ['perl', new Set(['-e', '-E'])],
-  ['python', new Set(['-c'])],
-  ['python3', new Set(['-c'])],
-  ['ruby', new Set(['-e'])],
-  ['sh', new Set(['-c'])],
-  ['zsh', new Set(['-c'])],
-])
+const QUOTED_AUDIT_SOURCE_PLACEHOLDER = `'${AUDIT_SOURCE_PLACEHOLDER}'`
+const COMMAND_BOUNDARY_OPERATORS = new Set(['&', '&&', ';', '|', '|&', '||'])
+
+interface InlineSourceProfile {
+  shortFlags: ReadonlySet<string>
+  longFlags: ReadonlySet<string>
+}
+
+const SHELL_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['c']),
+  longFlags: new Set([]),
+}
+const FISH_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['c', 'C']),
+  longFlags: new Set(['--command', '--init-command']),
+}
+const NODE_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['e', 'p']),
+  longFlags: new Set(['--eval', '--print']),
+}
+const PERL_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['e', 'E']),
+  longFlags: new Set([]),
+}
+const PYTHON_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['c']),
+  longFlags: new Set([]),
+}
+const RUBY_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['e']),
+  longFlags: new Set([]),
+}
+const OSASCRIPT_SOURCE_PROFILE: InlineSourceProfile = {
+  shortFlags: new Set(['e']),
+  longFlags: new Set([]),
+}
 
 interface TextReplacement {
   start: number
   end: number
   value: string
+}
+
+type WordToken = Extract<ShellToken, { kind: 'word' }>
+
+function inlineSourceProfile(interpreterPath: string): InlineSourceProfile | undefined {
+  const interpreter = path
+    .basename(interpreterPath)
+    .toLowerCase()
+    .replace(/\.exe$/, '')
+  if (['bash', 'dash', 'sh', 'zsh'].includes(interpreter)) {
+    return SHELL_SOURCE_PROFILE
+  }
+  if (interpreter === 'fish') {
+    return FISH_SOURCE_PROFILE
+  }
+  if (interpreter === 'node' || interpreter === 'nodejs') {
+    return NODE_SOURCE_PROFILE
+  }
+  if (interpreter === 'perl') {
+    return PERL_SOURCE_PROFILE
+  }
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(interpreter)) {
+    return PYTHON_SOURCE_PROFILE
+  }
+  if (interpreter === 'ruby') {
+    return RUBY_SOURCE_PROFILE
+  }
+  if (interpreter === 'osascript') {
+    return OSASCRIPT_SOURCE_PROFILE
+  }
+  return undefined
+}
+
+function commandSegmentBounds(
+  tokens: readonly ShellToken[],
+  tokenIndex: number,
+): { start: number; end: number } {
+  let start = tokenIndex
+  while (start > 0) {
+    const previous = tokens[start - 1]
+    if (previous?.kind === 'operator' && COMMAND_BOUNDARY_OPERATORS.has(previous.value)) {
+      break
+    }
+    start -= 1
+  }
+
+  let end = tokenIndex + 1
+  while (end < tokens.length) {
+    const next = tokens[end]
+    if (next?.kind === 'operator' && COMMAND_BOUNDARY_OPERATORS.has(next.value)) {
+      break
+    }
+    end += 1
+  }
+  return { start, end }
+}
+
+function exactSourceFlag(value: string, profile: InlineSourceProfile): boolean {
+  return (
+    (value.length === 2 && value.startsWith('-') && profile.shortFlags.has(value[1] ?? '')) ||
+    profile.longFlags.has(value)
+  )
+}
+
+function inlineSourceFlagReplacement(
+  token: WordToken,
+  profile: InlineSourceProfile,
+): string | null | undefined {
+  for (const flag of profile.longFlags) {
+    if (token.value === flag) {
+      return undefined
+    }
+    if (token.value.startsWith(`${flag}=`)) {
+      return `${flag}=${QUOTED_AUDIT_SOURCE_PLACEHOLDER}`
+    }
+  }
+  if (!token.value.startsWith('-') || token.value.startsWith('--') || token.value === '-') {
+    return null
+  }
+  const sourceFlag = [...token.value.slice(1)].find((flag) => profile.shortFlags.has(flag))
+  if (!sourceFlag) {
+    return null
+  }
+  return token.value === `-${sourceFlag}` ? undefined : `-${sourceFlag}`
+}
+
+function addReplacement(
+  replacements: Map<string, TextReplacement>,
+  start: number,
+  end: number,
+  value: string,
+): void {
+  replacements.set(`${start}:${end}`, { start, end, value })
+}
+
+function redactInlineSourceSegment(
+  replacements: Map<string, TextReplacement>,
+  tokens: readonly ShellToken[],
+  interpreterIndex: number,
+  profile: InlineSourceProfile,
+  start: number,
+  end: number,
+): void {
+  let sourceFlagIndex = -1
+  let sourceFlagReplacement: string | undefined
+  for (let index = interpreterIndex + 1; index < end; index += 1) {
+    const candidate = tokens[index]
+    if (candidate?.kind !== 'word') {
+      continue
+    }
+    if (candidate.value === '--') {
+      break
+    }
+    const replacement = inlineSourceFlagReplacement(candidate, profile)
+    if (replacement !== null) {
+      sourceFlagIndex = index
+      sourceFlagReplacement = replacement
+      break
+    }
+  }
+  if (sourceFlagIndex === -1) {
+    return
+  }
+
+  for (let index = start; index < end; index += 1) {
+    const candidate = tokens[index]
+    if (
+      candidate?.kind !== 'word' ||
+      index === interpreterIndex ||
+      exactSourceFlag(candidate.value, profile)
+    ) {
+      continue
+    }
+    addReplacement(replacements, candidate.start, candidate.end, QUOTED_AUDIT_SOURCE_PLACEHOLDER)
+  }
+
+  if (sourceFlagReplacement !== undefined) {
+    const sourceFlag = tokens[sourceFlagIndex]
+    if (sourceFlag?.kind === 'word') {
+      addReplacement(replacements, sourceFlag.start, sourceFlag.end, sourceFlagReplacement)
+    }
+  }
+}
+
+function redactExecutableHereStrings(
+  replacements: Map<string, TextReplacement>,
+  tokens: readonly ShellToken[],
+  start: number,
+  end: number,
+): void {
+  for (let index = start; index < end; index += 1) {
+    const token = tokens[index]
+    if (token?.kind !== 'operator' || !isHereStringOperator(token.value)) {
+      continue
+    }
+    const operand = tokens.slice(index + 1, end).find((candidate) => candidate.kind === 'word')
+    if (operand?.kind === 'word') {
+      addReplacement(replacements, operand.start, operand.end, QUOTED_AUDIT_SOURCE_PLACEHOLDER)
+    }
+  }
 }
 
 function applyTextReplacements(input: string, replacements: TextReplacement[]): string {
@@ -126,56 +309,33 @@ function applyTextReplacements(input: string, replacements: TextReplacement[]): 
  */
 export function minimizeAuditShellAction(command: string): string {
   const lexed = lexShell(command)
-  const replacements: TextReplacement[] = lexed.heredocs
-    .filter((heredoc) => heredoc.body.end > heredoc.body.start)
-    .map((heredoc) => ({
-      start: heredoc.body.start,
-      end: heredoc.body.end,
-      value: `${heredoc.expands ? EXPANDING_HEREDOC_PLACEHOLDER : AUDIT_SOURCE_PLACEHOLDER}\n`,
-    }))
+  const replacements = new Map<string, TextReplacement>()
+  for (const heredoc of lexed.heredocs) {
+    if (heredoc.body.end > heredoc.body.start) {
+      addReplacement(
+        replacements,
+        heredoc.body.start,
+        heredoc.body.end,
+        `${heredoc.expands ? EXPANDING_HEREDOC_PLACEHOLDER : AUDIT_SOURCE_PLACEHOLDER}\n`,
+      )
+    }
+  }
 
   for (let index = 0; index < lexed.tokens.length; index += 1) {
     const token = lexed.tokens[index]
     if (token?.kind !== 'word') {
       continue
     }
-    const interpreter = path.basename(token.value).toLowerCase()
-    const flags = INLINE_SOURCE_FLAGS.get(interpreter)
-    if (!flags) {
+    const profile = inlineSourceProfile(token.value)
+    if (!profile) {
       continue
     }
-
-    for (let cursor = index + 1; cursor < lexed.tokens.length; cursor += 1) {
-      const candidate = lexed.tokens[cursor]
-      if (!candidate || candidate.kind === 'operator') {
-        break
-      }
-      const exactFlag = flags.has(candidate.value)
-      const assignedFlag = [...flags].find((flag) => candidate.value.startsWith(`${flag}=`))
-      if (assignedFlag) {
-        replacements.push({
-          start: candidate.start,
-          end: candidate.end,
-          value: `${assignedFlag}='${AUDIT_SOURCE_PLACEHOLDER}'`,
-        })
-        break
-      }
-      if (!exactFlag) {
-        continue
-      }
-      const source = lexed.tokens[cursor + 1]
-      if (source?.kind === 'word') {
-        replacements.push({
-          start: source.start,
-          end: source.end,
-          value: `'${AUDIT_SOURCE_PLACEHOLDER}'`,
-        })
-      }
-      break
-    }
+    const { start, end } = commandSegmentBounds(lexed.tokens, index)
+    redactInlineSourceSegment(replacements, lexed.tokens, index, profile, start, end)
+    redactExecutableHereStrings(replacements, lexed.tokens, start, end)
   }
 
-  return applyTextReplacements(command, replacements)
+  return applyTextReplacements(command, [...replacements.values()])
 }
 
 export function hashReplayPayload(payload: Record<string, unknown>): string {

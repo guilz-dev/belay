@@ -49,9 +49,30 @@ const SCRUBBED_CONTAINER_FIELDS = new Set([
   'observedAssessment',
 ])
 
-const ORDINARY_GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
-const ORDINARY_HOST_EVENTS = new Set(['postToolUse', 'postToolUseFailure'])
+const ORDINARY_GATE_EVENT_KEYS = new Set(['beforeshellexecution', 'pretooluse', 'subagentgate'])
+const ORDINARY_HOST_EVENT_KEYS = new Set(['posttooluse', 'posttoolusefailure'])
+const COMPACT_HOST_TELEMETRY_FIELDS = [
+  'event',
+  'toolName',
+  'success',
+  'durationMs',
+  'cwdRelative',
+  'inputBytes',
+  'outputBytes',
+  'failureType',
+  'errorMessage',
+  'toolInvocationCorrelationId',
+] as const
+const COMPACT_HOST_PROVENANCE_FIELDS = [
+  'runtimeVersion',
+  'runtimeBuildStamp',
+  'runtimeArtifactHash',
+  'decisionConfigFingerprint',
+  'boundaryProfile',
+  'configFingerprint',
+] as const
 const RAW_BODY_FIELDS = new Set([
+  'arguments',
   'content',
   'contents',
   'input',
@@ -63,6 +84,7 @@ const RAW_BODY_FIELDS = new Set([
   'output',
   'patch',
   'prompt',
+  'result',
   'source',
   'sourceBody',
   'source_body',
@@ -71,9 +93,11 @@ const RAW_BODY_FIELDS = new Set([
   'text',
   'toolInput',
   'toolOutput',
+  'toolResult',
   'toolResponse',
   'tool_input',
   'tool_output',
+  'tool_result',
   'tool_response',
 ])
 const SHELL_TEXT_FIELDS = new Set(['command', 'commandRedacted', 'normalizedAction', 'segment'])
@@ -166,6 +190,21 @@ function scrubAuditContainer(
 
 function scrubbedAuditString(value: string, options: ScrubOptions): string {
   return scrubString(value, { ...options, maskHighEntropyStrings: true })
+}
+
+function auditEventKey(event: string | undefined): string | undefined {
+  const key = event?.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  return key || undefined
+}
+
+function isOrdinaryGateEvent(event: string | undefined): boolean {
+  const key = auditEventKey(event)
+  return Boolean(key && ORDINARY_GATE_EVENT_KEYS.has(key))
+}
+
+function isOrdinaryHostEvent(event: string | undefined): boolean {
+  const key = auditEventKey(event)
+  return Boolean(key && ORDINARY_HOST_EVENT_KEYS.has(key))
 }
 
 function serializeReplayContext(value: unknown, options: ScrubOptions): unknown {
@@ -378,22 +417,46 @@ function serializeAuditField(
   return value
 }
 
+function serializeCompactHostRecord(
+  record: Record<string, unknown>,
+  options: ScrubOptions,
+  timestamp: string,
+): Record<string, unknown> {
+  const serialized: Record<string, unknown> = {
+    schemaVersion: AUDIT_SCHEMA_VERSION,
+    timestamp,
+  }
+  for (const key of [...COMPACT_HOST_TELEMETRY_FIELDS, ...COMPACT_HOST_PROVENANCE_FIELDS]) {
+    if ((key === 'failureType' || key === 'errorMessage') && record.success !== false) {
+      continue
+    }
+    const next = serializeAuditField(key, record[key], options, true)
+    if (next !== undefined) {
+      serialized[key] = next
+    }
+  }
+  return serialized
+}
+
 export function serializeAuditRecordV3(
   record: Record<string, unknown>,
   options: ScrubOptions,
 ): Record<string, unknown> {
   const event = typeof record.event === 'string' ? record.event : undefined
-  const minimizeBodies = Boolean(
-    event && (ORDINARY_GATE_EVENTS.has(event) || ORDINARY_HOST_EVENTS.has(event)),
-  )
-  const compactSummary =
-    event && ORDINARY_GATE_EVENTS.has(event) ? compactGateSummary(record) : undefined
+  const ordinaryGateEvent = isOrdinaryGateEvent(event)
+  const ordinaryHostEvent = isOrdinaryHostEvent(event)
+  const minimizeBodies = ordinaryGateEvent || ordinaryHostEvent
+  const compactSummary = ordinaryGateEvent ? compactGateSummary(record) : undefined
   const timestamp =
     typeof record.timestamp === 'string' && isValidAuditTimestamp(record.timestamp)
       ? record.timestamp
       : typeof record.ts === 'string' && isValidAuditTimestamp(record.ts)
         ? record.ts
         : new Date().toISOString()
+
+  if (ordinaryHostEvent) {
+    return serializeCompactHostRecord(record, options, timestamp)
+  }
 
   const serialized: Record<string, unknown> = {
     schemaVersion: AUDIT_SCHEMA_VERSION,
@@ -420,9 +483,6 @@ export function serializeAuditRecordV3(
       continue
     }
     if (minimizeBodies && RAW_BODY_FIELDS.has(key)) {
-      continue
-    }
-    if (minimizeBodies && ORDINARY_HOST_EVENTS.has(event ?? '') && key === 'summary') {
       continue
     }
     const next = serializeAuditField(

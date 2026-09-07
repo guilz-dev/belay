@@ -165,6 +165,67 @@ describe('serializeAuditRecordV3', () => {
     })
   })
 
+  it.each([
+    { event: 'PostToolUse', success: true },
+    { event: 'post_tool_use_failure', success: false },
+  ])('allowlists compact $event telemetry across host event casing', ({ event, success }) => {
+    const timestamp = '2026-08-22T05:00:00.000Z'
+    const bodyMarker = 'task ten serializer host body canary'
+    const successFailureMarker = 'task ten success failure metadata canary'
+    const correlationId = '1234567890abcdef'
+    const failureType = success ? successFailureMarker : 'permission_denied'
+    const errorMessage = success ? successFailureMarker : 'Command denied safely'
+    const serialized = serializeAuditRecordV3(
+      {
+        timestamp,
+        schemaVersion: 1,
+        event,
+        toolName: 'Read',
+        success,
+        durationMs: 19,
+        cwdRelative: 'packages/app',
+        inputBytes: 23,
+        outputBytes: 29,
+        failureType,
+        errorMessage,
+        toolInvocationCorrelationId: correlationId,
+        tool_input: { value: bodyMarker },
+        toolInput: { value: bodyMarker },
+        input: bodyMarker,
+        arguments: { value: bodyMarker },
+        tool_output: bodyMarker,
+        toolOutput: bodyMarker,
+        tool_response: bodyMarker,
+        toolResponse: bodyMarker,
+        tool_result: bodyMarker,
+        output: bodyMarker,
+        result: bodyMarker,
+        stdout: bodyMarker,
+        stderr: bodyMarker,
+        message: bodyMarker,
+        error: bodyMarker,
+        metadata: { value: bodyMarker },
+      },
+      scrubOptions,
+    )
+
+    expect(serialized).toEqual({
+      schemaVersion: 3,
+      timestamp,
+      event,
+      toolName: 'Read',
+      success,
+      durationMs: 19,
+      cwdRelative: 'packages/app',
+      inputBytes: 23,
+      outputBytes: 29,
+      ...(success ? {} : { failureType, errorMessage }),
+      toolInvocationCorrelationId: correlationId,
+    })
+    expect(JSON.stringify(serialized)).not.toContain(bodyMarker)
+    expect(JSON.stringify(serialized)).not.toContain(successFailureMarker)
+  })
+
   it('supports reader filters and daily buckets after disk round-trip', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-io-'))
     tempDirs.push(tempDir)

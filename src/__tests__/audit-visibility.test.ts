@@ -131,6 +131,104 @@ describe('audit visibility (T-V1)', () => {
     expect(serialized).not.toContain('/Users/example')
   })
 
+  it('does not promote generic success messages or errors into failure telemetry', async () => {
+    const repoRoot = '/workspace/project'
+    const messageMarker = 'task ten successful completion message body'
+    const errorMarker = 'task ten successful completion error body'
+    const toolInput = { path: 'src/index.ts' }
+    const toolResult = { status: 'ok' }
+    const auditEvents: Record<string, unknown>[] = []
+    const ctx = {
+      layout: cursorLayout,
+      repoRoot,
+      config: mergeConfig({ mode: 'audit' }),
+      configPath: cursorLayout.configPath(repoRoot),
+    }
+    const deps = {
+      ...createDefaultGateRuntimeDeps(),
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await appendObservedAudit(ctx, deps, 'PostToolUse', {
+      tool_name: 'Read',
+      success: true,
+      arguments: toolInput,
+      tool_result: toolResult,
+      failure_type: 'not a failure',
+      message: messageMarker,
+      error: errorMarker,
+    })
+
+    expect(auditEvents).toEqual([
+      {
+        schemaVersion: 1,
+        event: 'PostToolUse',
+        toolName: 'Read',
+        success: true,
+        cwdRelative: '.',
+        inputBytes: Buffer.byteLength(JSON.stringify(toolInput), 'utf8'),
+        outputBytes: Buffer.byteLength(JSON.stringify(toolResult), 'utf8'),
+      },
+    ])
+    expect(JSON.stringify(auditEvents)).not.toContain(messageMarker)
+    expect(JSON.stringify(auditEvents)).not.toContain(errorMarker)
+  })
+
+  it('scrubs portable and configured absolute home paths while retaining relative diagnostics', async () => {
+    const repoRoot = '/workspace/project'
+    const configuredHome = '/srv/private-homes/current-user'
+    const configuredWindowsHome = 'E:\\Profiles\\current-user'
+    const previousHome = process.env.HOME
+    const previousUserProfile = process.env.USERPROFILE
+    process.env.HOME = configuredHome
+    process.env.USERPROFILE = configuredWindowsHome
+    const auditEvents: Record<string, unknown>[] = []
+    const ctx = {
+      layout: cursorLayout,
+      repoRoot,
+      config: mergeConfig({ mode: 'audit' }),
+      configPath: cursorLayout.configPath(repoRoot),
+    }
+    const deps = {
+      ...createDefaultGateRuntimeDeps(),
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    try {
+      await appendObservedAudit(ctx, deps, 'postToolUseFailure', {
+        tool_name: 'Read',
+        success: false,
+        failure_type: 'read error',
+        error_message:
+          `Failed at /root/.config/token, /var/home/alice/private, ${configuredHome}/secret, ` +
+          `C:\\Users\\alice\\private and ${configuredWindowsHome}\\secret; ` +
+          'packages/app/index.ts remains relative and /rooted/shared.txt remains absolute',
+      })
+    } finally {
+      process.env.HOME = previousHome
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE
+      } else {
+        process.env.USERPROFILE = previousUserProfile
+      }
+    }
+
+    const message = String(auditEvents[0]?.errorMessage)
+    expect(message).not.toContain('/root/.config/token')
+    expect(message).not.toContain('/var/home')
+    expect(message).not.toContain(configuredHome)
+    expect(message).not.toContain('C:\\Users')
+    expect(message).not.toContain(configuredWindowsHome)
+    expect(message).not.toContain('/var<home-path>')
+    expect(message).toContain('<home-path>')
+    expect(message).toContain('packages/app/index.ts remains relative')
+    expect(message).toContain('/rooted/shared.txt remains absolute')
+  })
+
   it('summarizes ask/flag/allow and silent-pass rate from gate events', () => {
     const records = VISIBILITY_FIXTURE.map((entry) => toAuditRecord(entry))
     const summary = summarizeAuditVisibility(records)

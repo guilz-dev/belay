@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
 import {
@@ -1892,6 +1893,45 @@ function normalizedFailureType(value: unknown): string | undefined {
   return normalized || undefined
 }
 
+const POSIX_USER_HOME_PATTERN =
+  /(?<![A-Za-z0-9:])(?:\/(?:var\/home|Users|home)\/[^/\\\s"'`,;:!?()]+|\/root)(?:\/[^/\\\s"'`,;:!?()]+)*(?:\/)?(?=$|[\s"'`,;:!?()])/g
+const WINDOWS_USER_HOME_PATTERN =
+  /[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`,;:!?()]+(?:[\\/][^\s"'`,;:!?()]+)*/gi
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function configuredHomeRoots(): string[] {
+  const driveHome =
+    process.env.HOMEDRIVE && process.env.HOMEPATH
+      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
+      : undefined
+  const candidates = [process.env.HOME, process.env.USERPROFILE, driveHome, homedir()]
+  return [
+    ...new Set(
+      candidates
+        .filter((candidate): candidate is string => Boolean(candidate?.trim()))
+        .map((candidate) => candidate.trim().replace(/[\\/]+$/, ''))
+        .filter((candidate) => path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)),
+    ),
+  ].sort((left, right) => right.length - left.length)
+}
+
+function scrubAbsoluteHomePaths(value: string): string {
+  let scrubbed = value
+  for (const homeRoot of configuredHomeRoots()) {
+    const pattern = new RegExp(
+      `${escapeRegExp(homeRoot)}(?:[\\\\/][^\\\\/\\s"'\`,;:!?()]+)*(?=$|[\\s"'\`,;:!?()])`,
+      'gi',
+    )
+    scrubbed = scrubbed.replace(pattern, '<home-path>')
+  }
+  return scrubbed
+    .replace(POSIX_USER_HOME_PATTERN, '<home-path>')
+    .replace(WINDOWS_USER_HOME_PATTERN, '<home-path>')
+}
+
 function normalizedFailureMessage(
   value: unknown,
   rawToolUseId: string | undefined,
@@ -1903,10 +1943,7 @@ function normalizedFailureMessage(
   const withoutCorrelationId = rawToolUseId
     ? value.replaceAll(rawToolUseId, '<tool-use-id>')
     : value
-  const withoutHomePaths = withoutCorrelationId
-    .replace(/\/Users\/[^/\s]+(?:\/[^\s"'`]*)?/g, '<home-path>')
-    .replace(/\/home\/[^/\s]+(?:\/[^\s"'`]*)?/g, '<home-path>')
-    .replace(/[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s"'`]*)?/g, '<home-path>')
+  const withoutHomePaths = scrubAbsoluteHomePaths(withoutCorrelationId)
   const normalized = scrubString(
     withoutHomePaths.replace(/\s+/g, ' ').trim(),
     scrubOptionsFromConfig(ctx.config),
@@ -1968,14 +2005,19 @@ function compactHostTelemetry(
     output = { stdout: payload.stdout, stderr: payload.stderr }
   }
   const failureType = normalizedFailureType(
-    firstDefinedPayloadValue(payload, ['failure_type', 'failureType', 'error_type', 'errorType']),
+    success === false
+      ? firstDefinedPayloadValue(payload, [
+          'failure_type',
+          'failureType',
+          'error_type',
+          'errorType',
+        ])
+      : undefined,
   )
-  const errorValue = firstDefinedPayloadValue(payload, [
-    'error_message',
-    'errorMessage',
-    'message',
-    'error',
-  ])
+  const errorValue =
+    success === false
+      ? firstDefinedPayloadValue(payload, ['error_message', 'errorMessage', 'message', 'error'])
+      : undefined
   const toolName = firstDefinedPayloadValue(payload, ['tool_name', 'toolName'])
   const cwdRelative = telemetryCwdRelative(ctx.repoRoot, payload, actionCwd)
   const inputBytes = auditPayloadByteLength(input)
