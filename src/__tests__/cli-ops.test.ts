@@ -171,5 +171,7 @@ describe('v0.2 operational commands', () => {
     })
 
     expect(output).toMatch(/mixed-history.*do not bulk-promote/i)
+    expect(output).toContain('--include-reviewed')
+    expect(output).toContain('must-ask')
   })
 })

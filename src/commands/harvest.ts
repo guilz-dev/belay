@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { loadConfigFile } from '../config-io.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import {
   auditApprovalCorrelationId,
@@ -15,8 +16,13 @@ import {
   type HarvestReport,
   type HarvestReviewOutcome,
 } from '../core/harvest.js'
+import {
+  type HarvestReviewRecordV1,
+  latestHarvestReviews,
+  loadHarvestReviewLedger,
+  writeHarvestReviewLedgerAtomic,
+} from '../core/harvest-review.js'
 import { parseCorpusCases } from '../corpus/types.js'
-import { loadConfigFile } from '../config-io.js'
 import { matchesAuditCohort, resolveActiveAuditCohort } from '../runtime-provenance.js'
 import { loadAuditRecords } from './audit.js'
 
@@ -27,6 +33,8 @@ export interface HarvestListOptions {
   json?: boolean
   /** Explicit forensic mode; mixed history must never be bulk-promoted. */
   allCohorts?: boolean
+  /** Include candidates already reviewed at the active boundary. */
+  includeReviewed?: boolean
 }
 
 export interface HarvestApplyOptions {
@@ -35,6 +43,19 @@ export interface HarvestApplyOptions {
   outcome: HarvestReviewOutcome
   reason?: string
   corpusPath?: string
+  /** Explicit forensic mode; the command must still exactly match the mixed report. */
+  allCohorts?: boolean
+}
+
+function auditLogPath(repoRoot: string, configuredPath: string): string {
+  return path.isAbsolute(configuredPath) ? configuredPath : path.join(repoRoot, configuredPath)
+}
+
+function harvestReviewLedgerPath(repoRoot: string, configuredAuditPath: string): string {
+  return path.join(
+    path.dirname(auditLogPath(repoRoot, configuredAuditPath)),
+    'harvest-reviews.json',
+  )
 }
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
@@ -61,7 +82,7 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
   const harvestRecords = options.allCohorts
     ? records
     : recordsForActiveCohort(records, matchingGateRecords)
-  return scopedHarvestReport(harvestRecords, {
+  const report = scopedHarvestReport(harvestRecords, {
     cohort,
     matchingGateEvents: matchingGateRecords.length,
     excludedGateEvents: shellGateRecords.length - matchingGateRecords.length,
@@ -71,6 +92,25 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
     since: options.since,
     until: options.until,
   })
+  if (options.includeReviewed || !cohort) {
+    return report
+  }
+  const ledger = await loadHarvestReviewLedger(
+    harvestReviewLedgerPath(repoRoot, config.audit.logPath),
+  )
+  const reviewedFingerprints = new Set(
+    [...latestHarvestReviews(ledger).values()]
+      .filter(
+        (review) => review.kind === 'shell' && review.boundaryProfile === cohort.boundaryProfile,
+      )
+      .map((review) => review.fingerprint),
+  )
+  return {
+    ...report,
+    candidates: report.candidates.filter(
+      (candidate) => !reviewedFingerprints.has(candidate.fingerprint),
+    ),
+  }
 }
 
 function recordsForActiveCohort(
@@ -98,9 +138,7 @@ function recordsForActiveCohort(
     }
     return typeof record.approvalId === 'string' && approvalIds.has(record.approvalId)
   }
-  return records.filter(
-    (record) => matchingSet.has(record) || isPairedApproval(record),
-  )
+  return records.filter((record) => matchingSet.has(record) || isPairedApproval(record))
 }
 
 function scopedHarvestReport(
@@ -170,7 +208,8 @@ export function formatHarvestReport(report: HarvestReport): string {
     ...report.notes,
     'Candidates are review-only signals — approve in audit does not auto-promote to corpus.',
     'Time filters (--since/--until) keep paired deny/approval rows for round-trip detection.',
-    'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject',
+    'Use --include-reviewed to display candidates already reviewed at the active boundary.',
+    'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|must-ask|reject',
   )
   return lines.join('\n')
 }
@@ -179,10 +218,48 @@ export async function harvestApplyProject(
   options: HarvestApplyOptions,
 ): Promise<{ ok: boolean; message: string; corpusPath: string }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
   const corpusPath = path.resolve(
     repoRoot,
     options.corpusPath ?? path.join('corpus', 'shell-commands.json'),
   )
+
+  const report = await harvestListProject({
+    targetDir: repoRoot,
+    allCohorts: options.allCohorts,
+    includeReviewed: true,
+  })
+  const candidate = report.candidates.find((entry) => entry.command === options.command)
+  if (!candidate) {
+    return {
+      ok: false,
+      message: `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`,
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+  if (!report.cohort) {
+    return {
+      ok: false,
+      message: 'Active audit cohort is unavailable; cannot bind the review to a boundary profile.',
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+
+  const reviewedAt = new Date().toISOString()
+  const ledgerPath = harvestReviewLedgerPath(repoRoot, config.audit.logPath)
+  const ledger = await loadHarvestReviewLedger(ledgerPath)
+  const review: HarvestReviewRecordV1 = {
+    fingerprint: candidate.fingerprint,
+    kind: candidate.kind,
+    boundaryProfile: report.cohort.boundaryProfile,
+    outcome: options.outcome,
+    ...(options.reason?.trim() ? { reason: options.reason.trim() } : {}),
+    reviewedAt,
+  }
+  await writeHarvestReviewLedgerAtomic(ledgerPath, {
+    version: 1,
+    reviews: [...ledger.reviews, review],
+  })
 
   const raw = await readFile(corpusPath, 'utf8')
   const cases = parseCorpusCases(JSON.parse(raw))
@@ -190,6 +267,8 @@ export async function harvestApplyProject(
     command: options.command,
     outcome: options.outcome,
     reason: options.reason,
+    fingerprint: candidate.fingerprint,
+    reviewedAt,
   })
 
   if (result.applied) {

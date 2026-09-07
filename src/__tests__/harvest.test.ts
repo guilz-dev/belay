@@ -4,7 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { harvestListProject, harvestReportFromNdjson } from '../commands/harvest.js'
+import {
+  harvestApplyProject,
+  harvestListProject,
+  harvestReportFromNdjson,
+} from '../commands/harvest.js'
 import { loadConfigFile } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-query.js'
 import { approvalCorrelationId, serializeAuditRecordV3 } from '../core/audit-serialize.js'
@@ -16,6 +20,7 @@ import {
   extractHarvestCandidates,
   filterRecordsForHarvest,
 } from '../core/harvest.js'
+import { writeHarvestReviewLedgerAtomic } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -52,12 +57,15 @@ describe('harvest', () => {
     const config = await loadConfigFile(repoRoot)
     const cohort = await resolveActiveAuditCohort(repoRoot, config)
     expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
 
     const oldCohort = {
-      ...cohort!,
+      ...cohort,
       runtimeArtifactHash: testFingerprint('old-runtime-artifact'),
     }
-    const currentCohort = cohort!
+    const currentCohort = cohort
     const records = [
       ...[1, 2].map((index) => ({
         event: 'beforeShellExecution',
@@ -215,6 +223,144 @@ describe('harvest', () => {
         sources: expect.arrayContaining(['deny_then_approve']),
       }),
     ])
+  })
+
+  it('hides matching-boundary reviews by default and includes them when requested', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const fingerprint = testFingerprint('reviewed-current-candidate')
+    const records = [1, 2].map((index) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint,
+      summary: 'pnpm test',
+      reason: 'unknown_local_effect',
+      ...cohort,
+      timestamp: `2026-09-07T00:00:0${index}.000Z`,
+    }))
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    await writeHarvestReviewLedgerAtomic(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+      {
+        version: 1,
+        reviews: [
+          {
+            fingerprint,
+            kind: 'shell',
+            boundaryProfile: cohort.boundaryProfile,
+            outcome: 'accepted-benign',
+            reviewedAt: '2026-09-07T01:00:00.000Z',
+          },
+        ],
+      },
+    )
+
+    expect((await harvestListProject({ targetDir: repoRoot })).candidates).toEqual([])
+    expect(
+      (await harvestListProject({ targetDir: repoRoot, includeReviewed: true })).candidates,
+    ).toEqual([expect.objectContaining({ fingerprint })])
+  })
+
+  it('does not hide a review from a different boundary profile', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const fingerprint = testFingerprint('other-boundary-candidate')
+    const records = [1, 2].map((index) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint,
+      summary: 'pnpm test',
+      reason: 'unknown_local_effect',
+      ...cohort,
+      timestamp: `2026-09-07T00:00:0${index}.000Z`,
+    }))
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    await writeHarvestReviewLedgerAtomic(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+      {
+        version: 1,
+        reviews: [
+          {
+            fingerprint,
+            kind: 'shell',
+            boundaryProfile: 'l1-attested-boundary',
+            outcome: 'accepted-benign',
+            reviewedAt: '2026-09-07T01:00:00.000Z',
+          },
+        ],
+      },
+    )
+
+    expect((await harvestListProject({ targetDir: repoRoot })).candidates).toEqual([
+      expect.objectContaining({ fingerprint }),
+    ])
+  })
+
+  it('apply does not fall back to a historical command unless all cohorts are explicit', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const historicalCommand = 'historical exact command'
+    const historicalFingerprint = testFingerprint(historicalCommand)
+    const historicalCohort = {
+      ...cohort,
+      runtimeArtifactHash: testFingerprint('historical-runtime'),
+    }
+    const records = [1, 2].map((index) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint: historicalFingerprint,
+      summary: historicalCommand,
+      reason: 'unknown_local_effect',
+      ...historicalCohort,
+      timestamp: `2026-09-07T00:00:0${index}.000Z`,
+    }))
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+    const corpusPath = path.join(repoRoot, 'shell-commands.json')
+    await writeFile(corpusPath, '[]\n')
+
+    const scoped = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command: historicalCommand,
+      outcome: 'reject',
+    })
+    const forensic = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command: historicalCommand,
+      outcome: 'reject',
+      allCohorts: true,
+    })
+
+    expect(scoped.ok).toBe(false)
+    expect(scoped.message).toMatch(/selected harvest report/i)
+    expect(forensic.ok).toBe(true)
   })
 
   it('separates availability-caused asks from benign candidates', () => {
@@ -381,6 +527,8 @@ describe('harvest', () => {
     const accepted = applyHarvestReview(base, {
       command: 'touch notes.txt',
       outcome: 'accepted-benign',
+      fingerprint: testFingerprint('touch notes'),
+      reviewedAt: '2026-09-07T00:00:00.000Z',
     })
     expect(accepted.applied).toBe(true)
     expect(accepted.ok).toBe(true)
@@ -394,6 +542,8 @@ describe('harvest', () => {
       command: 'rg TODO',
       outcome: 'provably-benign',
       reason: 'read_only',
+      fingerprint: testFingerprint('rg todo'),
+      reviewedAt: '2026-09-07T00:01:00.000Z',
     })
     expect(promoted.applied).toBe(true)
     expect(promoted.ok).toBe(true)
@@ -410,6 +560,8 @@ describe('harvest', () => {
     const rejected = applyHarvestReview(promoted.cases, {
       command: 'make deploy',
       outcome: 'reject',
+      fingerprint: testFingerprint('make deploy'),
+      reviewedAt: '2026-09-07T00:02:00.000Z',
     })
     expect(rejected.applied).toBe(false)
     expect(rejected.ok).toBe(true)

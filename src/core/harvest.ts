@@ -1,5 +1,6 @@
 import type { CorpusCase } from '../corpus/types.js'
 import { computeRepeatedFingerprintAsks, isAvailabilityCausedAsk } from './audit-analysis.js'
+import type { AuditCohortIdentity } from './audit-metrics.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
@@ -8,14 +9,16 @@ import {
   isShellGateRecord,
   parseTimestamp,
 } from './audit-query.js'
-import type { AuditCohortIdentity } from './audit-metrics.js'
 import type { AuditRecord } from './audit-types.js'
+import type { HarvestReviewOutcome } from './harvest-review.js'
 
 export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
 export type HarvestCandidateSource = 'deny_then_approve' | 'repeated_ask' | 'read_style_signal'
 
-export type HarvestReviewOutcome = 'provably-benign' | 'accepted-benign' | 'reject'
+export type { HarvestReviewOutcome } from './harvest-review.js'
+
+export const HARVEST_SOURCE_BATCH_ID = 'belay-2026-09-07'
 
 export interface HarvestCandidate {
   kind: 'shell'
@@ -317,6 +320,8 @@ export function applyHarvestReview(
     command: string
     outcome: HarvestReviewOutcome
     reason?: string
+    fingerprint: string
+    reviewedAt: string
   },
 ): { cases: CorpusCase[]; applied: boolean; ok: boolean; message: string } {
   const command = params.command.trim()
@@ -334,7 +339,12 @@ export function applyHarvestReview(
   }
 
   const category = params.outcome
-  const verdict = category === 'provably-benign' ? 'allow' : 'allow_flagged'
+  const verdict =
+    category === 'provably-benign'
+      ? 'allow'
+      : category === 'must-ask'
+        ? 'deny_pending_approval'
+        : 'allow_flagged'
   const reason = params.reason?.trim()
 
   const duplicate = cases.find((entry) => entry.command === command)
@@ -361,10 +371,16 @@ export function applyHarvestReview(
     command,
     verdict,
     ...(reason ? { reason } : {}),
+    provenance: {
+      source: 'harvest',
+      sourceBatchId: HARVEST_SOURCE_BATCH_ID,
+      sourceCaseId: params.fingerprint,
+      reviewedAt: params.reviewedAt,
+    },
   }
 
   const followUp =
-    category === 'provably-benign'
+    category === 'provably-benign' || category === 'must-ask'
       ? 'Next: run `pnpm corpus` and confirm the CI-only hard gates pass. Corpus labels never grant runtime shell authority.'
       : 'Next: run `pnpm corpus` to verify corpus evaluation (accepted-benign is soft-gated).'
 

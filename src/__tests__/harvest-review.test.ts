@@ -1,0 +1,287 @@
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, describe, expect, it } from 'vitest'
+import { harvestApplyProject } from '../commands/harvest.js'
+import { loadConfigFile } from '../config-io.js'
+import { loadClassifierAuthorization } from '../core/capability/grant-loader.js'
+import {
+  buildShellCapabilityRequest,
+  createTypeScriptPolicyEngine,
+} from '../core/capability/policy-engine.js'
+import {
+  type HarvestReviewLedgerV1,
+  latestHarvestReviews,
+  loadHarvestReviewLedger,
+  writeHarvestReviewLedgerAtomic,
+} from '../core/harvest-review.js'
+import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+const tempDirs: string[] = []
+
+function fingerprint(label: string): string {
+  return createHash('sha256').update(label).digest('hex')
+}
+
+async function createFixture(params: { command: string; payloadFixture?: string }): Promise<{
+  repoRoot: string
+  corpusPath: string
+  ledgerPath: string
+  fingerprint: string
+  boundaryProfile: string
+}> {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-review-'))
+  tempDirs.push(repoRoot)
+  await initProject({ targetDir: repoRoot })
+  const config = await loadConfigFile(repoRoot)
+  const cohort = await resolveActiveAuditCohort(repoRoot, config)
+  if (!cohort) {
+    throw new Error('fixture active cohort unavailable')
+  }
+  const commandFingerprint = fingerprint(params.command)
+  const auditPath = path.resolve(repoRoot, config.audit.logPath)
+  const records = [1, 2].map((index) => ({
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'deny_pending_approval',
+    wouldBlock: true,
+    fingerprint: commandFingerprint,
+    summary: params.command,
+    reason: 'unknown_local_effect',
+    payload: params.payloadFixture,
+    ...cohort,
+    timestamp: `2026-09-07T00:00:0${index}.000Z`,
+  }))
+  await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  const corpusPath = path.join(repoRoot, 'shell-commands.json')
+  await writeFile(corpusPath, '[]\n')
+  return {
+    repoRoot,
+    corpusPath,
+    ledgerPath: path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+    fingerprint: commandFingerprint,
+    boundaryProfile: cohort.boundaryProfile,
+  }
+}
+
+describe('harvest review ledger', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('persists reject without storing the command or changing corpus', async () => {
+    const command = 'node -e "console.log(process.env.SECRET_TOKEN)"'
+    const payloadFixture = 'payload-secret-fixture-9a8704'
+    const fixture = await createFixture({ command, payloadFixture })
+    const corpusBefore = await readFile(fixture.corpusPath, 'utf8')
+
+    const result = await harvestApplyProject({
+      targetDir: fixture.repoRoot,
+      corpusPath: fixture.corpusPath,
+      command,
+      outcome: 'reject',
+      reason: 'opaque executable body',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(await readFile(fixture.corpusPath, 'utf8')).toBe(corpusBefore)
+    const serialized = await readFile(fixture.ledgerPath, 'utf8')
+    expect(serialized).not.toContain(command)
+    expect(serialized).not.toContain(payloadFixture)
+    expect(JSON.parse(serialized)).toMatchObject({
+      version: 1,
+      reviews: [
+        {
+          fingerprint: fixture.fingerprint,
+          kind: 'shell',
+          boundaryProfile: fixture.boundaryProfile,
+          outcome: 'reject',
+          reason: 'opaque executable body',
+        },
+      ],
+    })
+  })
+
+  it('persists must-ask and appends a deny_pending_approval corpus case', async () => {
+    const command = 'git push origin main'
+    const fixture = await createFixture({ command })
+
+    const result = await harvestApplyProject({
+      targetDir: fixture.repoRoot,
+      corpusPath: fixture.corpusPath,
+      command,
+      outcome: 'must-ask',
+      reason: 'external mutation',
+    })
+
+    expect(result.ok).toBe(true)
+    const ledger = await loadHarvestReviewLedger(fixture.ledgerPath)
+    expect(ledger.reviews).toEqual([
+      expect.objectContaining({
+        fingerprint: fixture.fingerprint,
+        boundaryProfile: fixture.boundaryProfile,
+        outcome: 'must-ask',
+      }),
+    ])
+    const corpus = JSON.parse(await readFile(fixture.corpusPath, 'utf8'))
+    expect(corpus).toEqual([
+      expect.objectContaining({
+        kind: 'shell',
+        category: 'must-ask',
+        command,
+        verdict: 'deny_pending_approval',
+        provenance: {
+          source: 'harvest',
+          sourceBatchId: 'belay-2026-09-07',
+          sourceCaseId: fixture.fingerprint,
+          reviewedAt: ledger.reviews[0]?.reviewedAt,
+        },
+      }),
+    ])
+    expect(corpus[0].provenance).not.toHaveProperty('reviewedBy')
+  })
+
+  it('uses the latest review for the same fingerprint and boundary profile', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-latest-'))
+    tempDirs.push(dir)
+    const ledgerPath = path.join(dir, 'harvest-reviews.json')
+    const commandFingerprint = fingerprint('latest-review')
+    const ledger: HarvestReviewLedgerV1 = {
+      version: 1,
+      reviews: [
+        {
+          fingerprint: commandFingerprint,
+          kind: 'shell',
+          boundaryProfile: 'l3-l4-only',
+          outcome: 'accepted-benign',
+          reviewedAt: '2026-09-07T00:00:00.000Z',
+        },
+        {
+          fingerprint: commandFingerprint,
+          kind: 'shell',
+          boundaryProfile: 'l3-l4-only',
+          outcome: 'reject',
+          reviewedAt: '2026-09-07T00:01:00.000Z',
+        },
+      ],
+    }
+
+    await writeHarvestReviewLedgerAtomic(ledgerPath, ledger)
+
+    const loaded = await loadHarvestReviewLedger(ledgerPath)
+    expect(loaded.reviews).toHaveLength(1)
+    expect([...latestHarvestReviews(loaded).values()]).toEqual([
+      expect.objectContaining({ outcome: 'reject' }),
+    ])
+  })
+
+  it('rejects malformed timestamps, fingerprints, boundary profiles, and outcomes', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-invalid-'))
+    tempDirs.push(dir)
+    const ledgerPath = path.join(dir, 'harvest-reviews.json')
+    const valid = {
+      fingerprint: fingerprint('valid-review'),
+      kind: 'shell',
+      boundaryProfile: 'l3-l4-only',
+      outcome: 'reject',
+      reviewedAt: '2026-09-07T00:00:00.000Z',
+    }
+    const invalidRecords = [
+      { ...valid, reviewedAt: 'yesterday' },
+      { ...valid, fingerprint: 'not-a-fingerprint' },
+      { ...valid, boundaryProfile: '../authority' },
+      { ...valid, boundaryProfile: 'unknown-profile' },
+      { ...valid, outcome: 'allow' },
+    ]
+
+    for (const review of invalidRecords) {
+      await writeFile(ledgerPath, `${JSON.stringify({ version: 1, reviews: [review] })}\n`)
+      await expect(loadHarvestReviewLedger(ledgerPath)).rejects.toThrow(/harvest review/i)
+    }
+  })
+
+  it('writes atomically and leaves the previous ledger readable on rename failure', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-atomic-'))
+    tempDirs.push(dir)
+    const ledgerPath = path.join(dir, 'harvest-reviews.json')
+    const commandFingerprint = fingerprint('atomic-review')
+    const initialReview = {
+      fingerprint: commandFingerprint,
+      kind: 'shell' as const,
+      boundaryProfile: 'l3-l4-only',
+      outcome: 'reject' as const,
+      reviewedAt: '2026-09-07T00:00:00.000Z',
+    }
+    const initial: HarvestReviewLedgerV1 = {
+      version: 1,
+      reviews: [initialReview],
+    }
+    await writeHarvestReviewLedgerAtomic(ledgerPath, initial)
+
+    await expect(
+      writeHarvestReviewLedgerAtomic(
+        ledgerPath,
+        {
+          version: 1,
+          reviews: [
+            {
+              ...initialReview,
+              outcome: 'must-ask',
+              reviewedAt: '2026-09-07T00:01:00.000Z',
+            },
+          ],
+        },
+        { rename: async () => Promise.reject(new Error('injected rename failure')) },
+      ),
+    ).rejects.toThrow('injected rename failure')
+
+    expect(await loadHarvestReviewLedger(ledgerPath)).toEqual(initial)
+    expect((await stat(ledgerPath)).mode & 0o777).toBe(0o600)
+    await expect((await import('node:fs/promises')).readdir(dir)).resolves.toEqual([
+      'harvest-reviews.json',
+    ])
+  })
+
+  it('does not expose reviews to PolicyEngine or grant loading', async () => {
+    const fixture = await createFixture({ command: 'git push origin main' })
+    await writeHarvestReviewLedgerAtomic(fixture.ledgerPath, {
+      version: 1,
+      reviews: [
+        {
+          fingerprint: fixture.fingerprint,
+          kind: 'shell',
+          boundaryProfile: fixture.boundaryProfile,
+          outcome: 'provably-benign',
+          reviewedAt: '2026-09-07T00:00:00.000Z',
+        },
+      ],
+    })
+    const config = await loadConfigFile(fixture.repoRoot)
+    const authorization = await loadClassifierAuthorization({
+      repoRoot: fixture.repoRoot,
+      config,
+      approvedState: { version: 1, approvals: [] },
+    })
+    const request = buildShellCapabilityRequest({
+      command: 'git push origin main',
+      hookKind: 'shell',
+      segmentHead: 'git',
+      effect: 'remote_mutation',
+      location: 'external',
+      opacity: 'transparent',
+      pathArgs: [],
+      signals: ['external_effect'],
+      cwd: fixture.repoRoot,
+      repoRoot: fixture.repoRoot,
+      inputFingerprint: fixture.fingerprint,
+    })
+
+    expect(authorization.grants).toBeUndefined()
+    expect(
+      createTypeScriptPolicyEngine().evaluate(request, { config, ...authorization }).outcome,
+    ).toBe('require_approval')
+  })
+})

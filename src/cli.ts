@@ -114,9 +114,10 @@ function parseArgs(argv: string[]) {
     credentialAction?: 'mode' | 'set' | 'clear'
     standingAllowSubcommand?: 'revoke'
     harvestSubcommand?: 'list' | 'apply'
-    harvestOutcome?: 'provably-benign' | 'accepted-benign' | 'reject'
+    harvestOutcome?: 'provably-benign' | 'accepted-benign' | 'must-ask' | 'reject'
     harvestCommand?: string
     allCohorts?: boolean
+    includeReviewed?: boolean
     corpusPath?: string
   } = {}
 
@@ -281,6 +282,13 @@ function parseArgs(argv: string[]) {
       options.allCohorts = true
       continue
     }
+    if (token === '--include-reviewed') {
+      if (command !== 'harvest') {
+        throw new Error('--include-reviewed is only valid for harvest list.')
+      }
+      options.includeReviewed = true
+      continue
+    }
     if (token === '--since') {
       options.since = rest[index + 1]
       index += 1
@@ -303,10 +311,10 @@ function parseArgs(argv: string[]) {
     }
     if (token === '--outcome') {
       const next = rest[index + 1]
-      if (!next || !['provably-benign', 'accepted-benign', 'reject'].includes(next)) {
-        throw new Error('--outcome requires provably-benign, accepted-benign, or reject.')
+      if (!next || !['provably-benign', 'accepted-benign', 'must-ask', 'reject'].includes(next)) {
+        throw new Error('--outcome requires provably-benign, accepted-benign, must-ask, or reject.')
       }
-      options.harvestOutcome = next as 'provably-benign' | 'accepted-benign' | 'reject'
+      options.harvestOutcome = next as 'provably-benign' | 'accepted-benign' | 'must-ask' | 'reject'
       index += 1
       continue
     }
@@ -705,8 +713,8 @@ Usage:
   ${c} approval-token <approval-id> [--target <dir>] [--json]
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
-  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--json]
-  ${c} harvest apply --command "<text>" --outcome provably-benign|accepted-benign|reject [--reason <r>] [--corpus <path>] [--target <dir>]
+  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--include-reviewed] [--json]
+  ${c} harvest apply --command "<text>" --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
 `)
 }
 
@@ -1019,6 +1027,7 @@ async function main() {
           until: options.until,
           json: options.json,
           allCohorts: options.allCohorts,
+          includeReviewed: options.includeReviewed,
         })
         if (options.json) {
           process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1040,6 +1049,7 @@ async function main() {
           outcome: options.harvestOutcome,
           reason: options.reason,
           corpusPath: options.corpusPath,
+          allCohorts: options.allCohorts,
         })
         process.stdout.write(`${result.message}\n`)
         process.exitCode = result.ok ? 0 : 1
