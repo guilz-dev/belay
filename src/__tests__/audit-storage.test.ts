@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -24,6 +34,16 @@ async function expectMissing(filePath: string): Promise<void> {
 
 function rotatingLine(fingerprint: string): string {
   return JSON.stringify({ fingerprint, padding: 'x'.repeat(50) })
+}
+
+async function expectRetainedContents(auditPath: string, contents: string[]): Promise<void> {
+  for (const [index, content] of contents.entries()) {
+    const retainedPath = index === 0 ? auditPath : `${auditPath}.${index}`
+    expect(await readFile(retainedPath, 'utf8')).toBe(content)
+  }
+  expect((await readdir(path.dirname(auditPath))).sort()).toEqual(
+    contents.map((_, index) => (index === 0 ? 'audit.ndjson' : `audit.ndjson.${index}`)).sort(),
+  )
 }
 
 describe('appendBoundedAuditLine', () => {
@@ -93,6 +113,127 @@ describe('appendBoundedAuditLine', () => {
     expect(JSON.parse((await readFile(auditPath, 'utf8')).trim())).toMatchObject({
       fingerprint: 'oversized',
     })
+  })
+
+  it('preserves the maxFiles=1 active file when staging open fails', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-open-rollback-')
+    await writeFile(auditPath, 'active-before\n', 'utf8')
+    let failed = false
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: rotatingLine('not-committed'),
+          maxBytes: 1,
+          maxFiles: 1,
+        },
+        {
+          async open(filePath, flags, mode) {
+            if (!failed && !filePath.toString().endsWith('.lock')) {
+              failed = true
+              throw Object.assign(new Error('injected audit storage open failure'), { code: 'EIO' })
+            }
+            return open(filePath, flags, mode)
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected audit storage open failure/)
+
+    await expectRetainedContents(auditPath, ['active-before\n'])
+  })
+
+  it('preserves every generation when staging write fails before rotation', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-write-rollback-')
+    const before = ['active-before\n', 'generation-one\n', 'generation-two\n']
+    await Promise.all(
+      before.map((content, index) =>
+        writeFile(index === 0 ? auditPath : `${auditPath}.${index}`, content, 'utf8'),
+      ),
+    )
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: rotatingLine('not-committed'),
+          maxBytes: 1,
+          maxFiles: 3,
+        },
+        {
+          async write() {
+            throw Object.assign(new Error('injected audit storage write failure'), { code: 'EIO' })
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected audit storage write failure/)
+
+    await expectRetainedContents(auditPath, before)
+  })
+
+  it('restores the maxFiles=1 active file when committing the staged record fails', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-one-file-rollback-')
+    await writeFile(auditPath, 'active-before\n', 'utf8')
+    let failed = false
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: rotatingLine('not-committed'),
+          maxBytes: 1,
+          maxFiles: 1,
+        },
+        {
+          async rename(sourcePath, destinationPath) {
+            if (!failed && destinationPath.toString() === path.resolve(auditPath)) {
+              failed = true
+              throw Object.assign(new Error('injected audit storage rename failure'), {
+                code: 'EIO',
+              })
+            }
+            await rename(sourcePath, destinationPath)
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected audit storage rename failure/)
+
+    await expectRetainedContents(auditPath, ['active-before\n'])
+  })
+
+  it('rolls back a partially shifted multi-generation rotation', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-generation-rollback-')
+    const before = ['active-before\n', 'generation-one\n', 'generation-two\n', 'generation-three\n']
+    await Promise.all(
+      before.map((content, index) =>
+        writeFile(index === 0 ? auditPath : `${auditPath}.${index}`, content, 'utf8'),
+      ),
+    )
+    let renameCalls = 0
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: rotatingLine('not-committed'),
+          maxBytes: 1,
+          maxFiles: 4,
+        },
+        {
+          async rename(sourcePath, destinationPath) {
+            renameCalls += 1
+            if (renameCalls === 2) {
+              throw Object.assign(new Error('injected audit storage rename failure'), {
+                code: 'EIO',
+              })
+            }
+            await rename(sourcePath, destinationPath)
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected audit storage rename failure/)
+
+    await expectRetainedContents(auditPath, before)
   })
 
   it('serializes parallel writers without losing, duplicating, or corrupting records', async () => {
@@ -212,5 +353,27 @@ describe('appendBoundedAuditLine', () => {
     expect(await readFile(generationPath, 'utf8')).toBe('generation-owner\n')
     expect(await readFile(legacyPath, 'utf8')).toBe('legacy-owner\n')
     expect(await readFile(unrelatedPath, 'utf8')).toBe('unrelated-owner\n')
+  })
+
+  it.each([
+    101,
+    100.5,
+    Number.MAX_SAFE_INTEGER,
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.POSITIVE_INFINITY,
+  ])('rejects an out-of-range direct maxFiles value before touching storage: %s', async (maxFiles) => {
+    const auditPath = await createAuditPath('belay-audit-storage-max-files-')
+
+    await expect(
+      appendBoundedAuditLine({
+        auditPath,
+        line: rotatingLine('invalid-bound'),
+        maxBytes: 128,
+        maxFiles,
+      }),
+    ).rejects.toThrow(/audit maxFiles/i)
+
+    await expectMissing(auditPath)
+    await expectMissing(`${auditPath}.lock`)
   })
 })

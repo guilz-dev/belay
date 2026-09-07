@@ -198,11 +198,13 @@ enablement. Older audit records without recovery fields remain readable.
 | `logPath` | string | adapter-specific `belay/audit.ndjson` path | Active NDJSON file |
 | `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
 | `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
-| `maxFiles` | positive integer | `5` | Total retained files, including the active file |
+| `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |
 
 Positive fractional bounds are floored. Missing, non-finite, zero, or negative bounds use the
-defaults. These storage/display settings do not affect `decisionConfigFingerprint` and do not
-change the stored config schema version.
+defaults. A `maxFiles` value above 100, an unsafe value, or a value that floors outside 1 through
+100 also uses the default of 5, keeping rotation work strictly bounded. These storage/display
+settings do not affect `decisionConfigFingerprint` and do not change the stored config schema
+version.
 
 The active file is `audit.ndjson`; numbered generations are `.1` (newest) through the
 `maxFiles - 1` suffix (oldest). Rotation uses an exclusive sibling `.lock` for at most two seconds

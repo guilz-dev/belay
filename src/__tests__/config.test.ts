@@ -34,6 +34,20 @@ describe('config migration', () => {
     }
   })
 
+  it('keeps audit maxFiles within the bounded 1 through 100 range', () => {
+    expect(mergeConfig({ audit: { maxFiles: 99.9 } }).audit.maxFiles).toBe(99)
+    expect(mergeConfig({ audit: { maxFiles: 100 } }).audit.maxFiles).toBe(100)
+
+    for (const invalid of [
+      100.000_001,
+      101,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(mergeConfig({ audit: { maxFiles: invalid } }).audit.maxFiles).toBe(5)
+    }
+  })
+
   it.each([
     { storedVersion: 1, normalizedVersion: 4 },
     { storedVersion: 2, normalizedVersion: 4 },

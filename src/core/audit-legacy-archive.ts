@@ -1,8 +1,9 @@
-import { createReadStream, existsSync } from 'node:fs'
-import { rename } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { lstat, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { withAuditStorageLock } from './audit-storage.js'
 import type { BelayConfigV3 } from './config.js'
 
 const LEGACY_PLACEHOLDER_PATTERNS = [
@@ -68,6 +69,28 @@ async function auditFileHasLegacyScrubPlaceholders(auditPath: string): Promise<b
   return false
 }
 
+function errno(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException).code
+}
+
+async function auditFileIdentityIfPresent(
+  auditPath: string,
+): Promise<{ dev: bigint; ino: bigint } | null> {
+  try {
+    const info = await lstat(auditPath, { bigint: true })
+    if (info.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link for active audit log: ${auditPath}`)
+    }
+    if (!info.isFile()) {
+      throw new Error(`Active audit path is not a regular file: ${auditPath}`)
+    }
+    return { dev: info.dev, ino: info.ino }
+  } catch (error) {
+    if (errno(error) === 'ENOENT') return null
+    throw error
+  }
+}
+
 export async function archiveLegacyAuditLogIfNeeded(
   repoRoot: string,
   config: BelayConfigV3,
@@ -75,16 +98,28 @@ export async function archiveLegacyAuditLogIfNeeded(
   const auditPath = path.isAbsolute(config.audit.logPath)
     ? config.audit.logPath
     : path.join(repoRoot, config.audit.logPath)
-  if (!existsSync(auditPath)) {
-    return { archived: false }
-  }
+  return withAuditStorageLock(auditPath, async (lockedAuditPath) => {
+    const identity = await auditFileIdentityIfPresent(lockedAuditPath)
+    if (!identity) {
+      return { archived: false }
+    }
 
-  if (!(await auditFileHasLegacyScrubPlaceholders(auditPath))) {
-    return { archived: false }
-  }
+    if (!(await auditFileHasLegacyScrubPlaceholders(lockedAuditPath))) {
+      return { archived: false }
+    }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const archivePath = `${auditPath}.legacy-${timestamp}.ndjson`
-  await rename(auditPath, archivePath)
-  return { archived: true, archivedPath: archivePath }
+    const currentIdentity = await auditFileIdentityIfPresent(lockedAuditPath)
+    if (
+      !currentIdentity ||
+      currentIdentity.dev !== identity.dev ||
+      currentIdentity.ino !== identity.ino
+    ) {
+      throw new Error(`Audit log changed during legacy scan: ${lockedAuditPath}`)
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const archivePath = `${lockedAuditPath}.legacy-${timestamp}.ndjson`
+    await rename(lockedAuditPath, archivePath)
+    return { archived: true, archivedPath: archivePath }
+  })
 }

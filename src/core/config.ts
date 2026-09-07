@@ -25,6 +25,7 @@ export type { UnknownLocalEffectPolicy }
 
 export const DEFAULT_AUDIT_MAX_BYTES = 33_554_432
 export const DEFAULT_AUDIT_MAX_FILES = 5
+export const MAX_AUDIT_FILES = 100
 
 export interface BelayAuditConfig {
   logPath: string
@@ -48,6 +49,21 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return floored > 0 ? floored : fallback
 }
 
+function normalizeAuditMaxFiles(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    value > MAX_AUDIT_FILES
+  ) {
+    return DEFAULT_AUDIT_MAX_FILES
+  }
+  const floored = Math.floor(value)
+  return Number.isSafeInteger(floored) && floored >= 1 && floored <= MAX_AUDIT_FILES
+    ? floored
+    : DEFAULT_AUDIT_MAX_FILES
+}
+
 export function normalizeAuditConfig(
   audit: Partial<BelayAuditConfig> | undefined,
 ): NormalizedBelayAuditConfig {
@@ -55,7 +71,7 @@ export function normalizeAuditConfig(
     logPath: audit?.logPath || 'belay/audit.ndjson',
     includeAssessment: audit?.includeAssessment !== false,
     maxBytes: normalizePositiveInteger(audit?.maxBytes, DEFAULT_AUDIT_MAX_BYTES),
-    maxFiles: normalizePositiveInteger(audit?.maxFiles, DEFAULT_AUDIT_MAX_FILES),
+    maxFiles: normalizeAuditMaxFiles(audit?.maxFiles),
   }
 }
 
