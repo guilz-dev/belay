@@ -4,6 +4,18 @@ Notable changes to `@guilz-dev/belay` are listed here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Fixed
+
+- **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
+  file location at runtime instead of baking in the install-time path. This prevents global sentinel
+  fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.
+  Doctor and routing health checks recognize both dynamic and same-root legacy shims until upgrade.
+- **Dogfood hook-routing skew gate** — `belay dogfood --check` now checks the current Cursor
+  repository and initialized linked worktrees for sentinel-blocking owner-routing failures and
+  reports `hook_routing_skew` before release.
+
 ## 0.10.0 — 2026-09-06
 
 ### Added
@@ -46,15 +58,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Shell lowering internals** — `shell-lower` is split into decoder modules with no intended
   behavior change.
-
-## Unreleased
-
-### Fixed
-
-- **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
-  file location at runtime instead of baking in the install-time path. This prevents global sentinel
-  fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.
-  Doctor and routing health checks recognize both dynamic and legacy shims until upgrade.
 
 ## 0.10.1 — 2026-09-07
 

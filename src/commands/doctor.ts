@@ -13,6 +13,7 @@ import {
   hasManagedCursorHookEntries,
 } from '../adapters/cursor/hooks.js'
 import {
+  hasCursorDispatcherShim,
   hasDynamicProjectHookShim,
   hasLegacyProjectHookShim,
 } from '../adapters/cursor/project-hook-shim.js'
@@ -131,7 +132,7 @@ async function cursorOriginIssues(
       )
       continue
     }
-    if (!source.includes("from '../belay/runtime/dispatcher.mjs'")) {
+    if (!hasCursorDispatcherShim(source)) {
       issues.push(
         `Cursor router generation mismatch for intended ${installScope} owner: ${shimPath}. Run belay upgrade --scope ${installScope}.`,
       )

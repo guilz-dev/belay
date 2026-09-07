@@ -1,11 +1,15 @@
 import path from 'node:path'
 
+import { cursorHookRoutingIssues } from '../adapters/cursor/hook-routing-health.js'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { detectAdapterName, loadConfigFile } from '../config-io.js'
 import { isGateRecord, parseTimestamp } from '../core/audit-query.js'
 import { summarizeAuditVisibility } from '../core/audit-summary.js'
 import type { AuditRecord } from '../core/audit-types.js'
-import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js'
+import {
+  detectUndogfoodedLinkedWorktrees,
+  listDogfoodWorkspacePaths,
+} from '../core/dogfood-environment.js'
 import { matchesAuditCohort, resolveActiveAuditCohort } from '../runtime-provenance.js'
 import type { DogfoodCheckOptions, DogfoodCheckResult } from '../types.js'
 import { loadAuditRecords } from './audit.js'
@@ -28,6 +32,7 @@ function baseResult(repoRoot: string, since: string): DogfoodCheckResult {
     shellPreToolUseCount: 0,
     mismatchedCohortCount: 0,
     environmentSkewCount: 0,
+    hookRoutingSkewCount: 0,
     failures: [],
   }
 }
@@ -109,14 +114,25 @@ export async function checkDogfoodProject(
   }
 
   if (dogfoodActive) {
+    const layout = getAdapterLayout(adapter)
     const environmentWarnings = await detectUndogfoodedLinkedWorktrees({
       repoRoot,
       adapterName: adapter,
-      layout: getAdapterLayout(adapter),
+      layout,
     })
     result.environmentSkewCount = environmentWarnings.length
     if (result.environmentSkewCount > 0) {
       result.failures.push('environment_skew')
+    }
+    if (adapter === 'cursor') {
+      const workspaces = await listDogfoodWorkspacePaths(repoRoot)
+      const hookRoutingWarnings = workspaces.flatMap((workspacePath) =>
+        cursorHookRoutingIssues(workspacePath),
+      )
+      result.hookRoutingSkewCount = hookRoutingWarnings.length
+      if (result.hookRoutingSkewCount > 0) {
+        result.failures.push('hook_routing_skew')
+      }
     }
   }
 
@@ -134,6 +150,7 @@ export function formatDogfoodCheckResult(result: DogfoodCheckResult): string {
     `shell preToolUse count: ${result.shellPreToolUseCount}`,
     `mismatched active cohort count: ${result.mismatchedCohortCount}`,
     `environment skew count: ${result.environmentSkewCount}`,
+    `hook routing skew count: ${result.hookRoutingSkewCount}`,
     `status: ${result.ok ? 'ok' : 'fail'}`,
   ]
   if (!result.ok) {

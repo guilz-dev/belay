@@ -10,17 +10,40 @@ import {
   hasLegacyProjectHookShim,
   hasManagedProjectHookShim,
 } from '../adapters/cursor/project-hook-shim.js'
-import { renderShellGateHook } from '../templates.js'
+import {
+  renderAuditHook,
+  renderBeforeSubmitHook,
+  renderShellGateHook,
+  renderToolGateHook,
+} from '../templates.js'
 
 const tempDirs: string[] = []
+const foreignOrigin = { scope: 'project' as const, repoRoot: '/tmp/other-worktree' }
 
 afterEach(async () => {
-  while (tempDirs.length > 0) {
-    await rm(tempDirs.pop()!, { recursive: true, force: true })
-  }
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
 describe('project hook shim helpers', () => {
+  it.each([
+    ['before-submit', () => renderBeforeSubmitHook('cursor', foreignOrigin)],
+    ['shell-gate', () => renderShellGateHook('cursor', foreignOrigin)],
+    ['tool-gate', () => renderToolGateHook('cursor', foreignOrigin)],
+    ['audit', () => renderAuditHook('cursor', foreignOrigin)],
+  ])('renders a path-portable %s project shim', (_name, render) => {
+    const source = render()
+    expect(source).not.toContain(foreignOrigin.repoRoot)
+    expect(source).toContain('fileURLToPath(import.meta.url)')
+    expect(source).toContain("path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')")
+    expect(source).toContain("origin: { scope: 'project', repoRoot }")
+  })
+
+  it('keeps the global shim origin static', () => {
+    const source = renderShellGateHook('cursor', { scope: 'global' })
+    expect(source).toContain('origin: {"scope":"global"}')
+    expect(source).not.toContain('fileURLToPath(import.meta.url)')
+  })
+
   it('recognizes dynamically derived project hook shims', async () => {
     const source = renderShellGateHook('cursor', { scope: 'project', repoRoot: '/ignored' })
     expect(hasDynamicProjectHookShim(source)).toBe(true)
@@ -40,6 +63,24 @@ await dispatchCursorHook({
     expect(hasLegacyProjectHookShim(source, repoRoot)).toBe(true)
     expect(hasDynamicProjectHookShim(source)).toBe(false)
     expect(hasManagedProjectHookShim(source, repoRoot)).toBe(true)
+  })
+
+  it('rejects a shim that derives repoRoot but dispatches a foreign fixed origin', () => {
+    const source = `import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+await dispatchCursorHook({
+  origin: { scope: 'project', repoRoot: '/tmp/other-worktree' },
+  kind: "shell-gate",
+  eventName: "beforeShellExecution",
+})
+`
+
+    expect(hasDynamicProjectHookShim(source)).toBe(false)
+    expect(hasManagedProjectHookShim(source, '/tmp/current-worktree')).toBe(false)
   })
 })
 

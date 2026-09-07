@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadAuditRecords } from '../commands/audit.js'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
-import { checkDogfoodProject } from '../commands/dogfood-check.js'
+import { checkDogfoodProject, formatDogfoodCheckResult } from '../commands/dogfood-check.js'
 import { statusProject } from '../commands/status.js'
 import { loadConfigFile, runtimeCorePath } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
@@ -493,6 +493,68 @@ describe('dogfood release check', () => {
     expect(result.ok).toBe(false)
     expect(result.environmentSkewCount).toBeGreaterThan(0)
     expect(result.failures).toContain('environment_skew')
+  })
+
+  it('fails when a linked worktree has a foreign-root Cursor shim', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-routing-root-'))
+    const linkedParent = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-dogfood-check-routing-linked-'),
+    )
+    const linkedWorktree = path.join(linkedParent, 'linked-worktree')
+    tempDirs.push(repoRoot, linkedParent)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-routing-check'], {
+      cwd: repoRoot,
+    })
+    await initProject({ targetDir: linkedWorktree, dogfood: true })
+    await writeFile(
+      path.join(linkedWorktree, '.cursor', 'hooks', 'belay-shell-gate.mjs'),
+      `import { dispatchCursorHook } from '../belay/runtime/dispatcher.mjs'
+
+await dispatchCursorHook({
+  origin: ${JSON.stringify({ scope: 'project', repoRoot })},
+  kind: "shell-gate",
+  eventName: "beforeShellExecution",
+})
+`,
+    )
+    const provenance = await activeAuditProvenance(repoRoot)
+    await writeAuditLines(
+      repoRoot,
+      auditRecordLine({
+        timestamp: isoMinutesAgo(1),
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        permission: 'allow',
+        reason: 'read_only',
+        mode: 'audit',
+        ...provenance,
+      }),
+    )
+
+    const result = await checkDogfoodProject({ targetDir: repoRoot, since: isoMinutesAgo(5) })
+
+    expect(result.ok).toBe(false)
+    expect(result.hookRoutingSkewCount).toBe(1)
+    expect(result.failures).toContain('hook_routing_skew')
+    expect(formatDogfoodCheckResult(result)).toContain('hook routing skew count: 1')
   })
 
   it('marks a clean active cohort as ok', async () => {

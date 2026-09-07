@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -55,7 +55,7 @@ async function runManagedCommand(
 
 async function managedCommand(
   hooksPath: string,
-  event: 'beforeShellExecution' | 'preToolUse',
+  event: 'beforeSubmitPrompt' | 'beforeShellExecution' | 'preToolUse',
   matcher?: string,
 ): Promise<string> {
   const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
@@ -137,7 +137,7 @@ async function installGlobalAndTwoProjects(): Promise<InstalledSources> {
 
 async function invokeAllSources(
   sources: InstalledSources,
-  event: 'beforeShellExecution' | 'preToolUse',
+  event: 'beforeSubmitPrompt' | 'beforeShellExecution' | 'preToolUse',
   payload: Record<string, unknown>,
   matcher?: string,
 ): Promise<Array<{ exitCode: number; stdout: string; stderr: string }>> {
@@ -203,6 +203,55 @@ describe.sequential('Cursor hook source precedence integration', () => {
     ])
     expect(await markerLoads(sources.markerPath)).toEqual(['project-a'])
     expect(await auditRecords(sources.projectA)).toMatchObject([{ event: 'beforeShellExecution' }])
+  })
+
+  it('runs the recipient worktree shell owner after transplanting another worktree shim', async () => {
+    const sources = await installGlobalAndTwoProjects()
+    await copyFile(
+      path.join(sources.projectACursorRoot, 'hooks', 'belay-shell-gate.mjs'),
+      path.join(sources.projectBCursorRoot, 'hooks', 'belay-shell-gate.mjs'),
+    )
+    await writeFile(
+      path.join(sources.projectB, (await loadConfigFile(sources.projectB)).audit.logPath),
+      '',
+    )
+
+    const results = await invokeAllSources(sources, 'beforeShellExecution', {
+      command: 'git status',
+      cwd: sources.projectB,
+      workspace_roots: [sources.projectA, sources.projectB],
+    })
+
+    expect(results.map((result) => result.exitCode)).toEqual([0, 0, 0])
+    expect(results.map((result) => JSON.parse(result.stdout))).toEqual([
+      { permission: 'allow' },
+      { permission: 'allow' },
+      { permission: 'allow' },
+    ])
+    expect(await markerLoads(sources.markerPath)).toEqual(['project-b'])
+    expect(await auditRecords(sources.projectB)).toMatchObject([{ event: 'beforeShellExecution' }])
+  })
+
+  it('runs the recipient worktree prompt owner after transplanting another worktree shim', async () => {
+    const sources = await installGlobalAndTwoProjects()
+    await copyFile(
+      path.join(sources.projectACursorRoot, 'hooks', 'belay-before-submit.mjs'),
+      path.join(sources.projectBCursorRoot, 'hooks', 'belay-before-submit.mjs'),
+    )
+
+    const results = await invokeAllSources(sources, 'beforeSubmitPrompt', {
+      prompt: 'continue working',
+      cwd: sources.projectB,
+      workspace_roots: [sources.projectA, sources.projectB],
+    })
+
+    expect(results.map((result) => result.exitCode)).toEqual([0, 0, 0])
+    expect(results.map((result) => JSON.parse(result.stdout))).toEqual([
+      { continue: true },
+      { continue: true },
+      { continue: true },
+    ])
+    expect(await markerLoads(sources.markerPath)).toEqual(['project-b'])
   })
 
   it('runs a project-only owner once', async () => {

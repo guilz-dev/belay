@@ -9,9 +9,7 @@ import { initProject } from '../installer.js'
 const tempDirs: string[] = []
 
 afterEach(async () => {
-  while (tempDirs.length > 0) {
-    await rm(tempDirs.pop()!, { recursive: true, force: true })
-  }
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
 describe('cursorHookRoutingIssues', () => {

@@ -4,16 +4,22 @@ import path from 'node:path'
 export const CURSOR_PROJECT_HOOK_REPO_ROOT_RESOLVER =
   "path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')"
 
+const CURSOR_PROJECT_HOOK_DISPATCH_RE =
+  /await\s+dispatchCursorHook\(\{\s*origin:\s*\{\s*scope:\s*'project',\s*repoRoot\s*\},/
+
 export function renderCursorProjectHookRepoRoot(): string {
   return `const repoRoot = ${CURSOR_PROJECT_HOOK_REPO_ROOT_RESOLVER}`
 }
 
+export function hasCursorDispatcherShim(source: string): boolean {
+  return source.includes("from '../belay/runtime/dispatcher.mjs'")
+}
+
 export function hasDynamicProjectHookShim(source: string): boolean {
   return (
-    source.includes("from '../belay/runtime/dispatcher.mjs'") &&
-    source.includes(CURSOR_PROJECT_HOOK_REPO_ROOT_RESOLVER) &&
-    source.includes("scope: 'project'") &&
-    source.includes('repoRoot')
+    hasCursorDispatcherShim(source) &&
+    source.includes(renderCursorProjectHookRepoRoot()) &&
+    CURSOR_PROJECT_HOOK_DISPATCH_RE.test(source)
   )
 }
 
@@ -25,7 +31,7 @@ export function hasLegacyProjectHookShim(source: string, repoRoot: string): bool
     canonicalRepoRoot = path.resolve(repoRoot)
   }
   return (
-    source.includes("from '../belay/runtime/dispatcher.mjs'") &&
+    hasCursorDispatcherShim(source) &&
     source.includes(`origin: ${JSON.stringify({ scope: 'project', repoRoot: canonicalRepoRoot })}`)
   )
 }

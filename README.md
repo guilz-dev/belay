@@ -224,8 +224,12 @@ repository: its matching Project install wins when `installScope` is `project`; 
 when it is `global`. Other sources return a neutral Cursor response without loading the policy core
 or writing audit/control-plane state. In a multi-root workspace, Shell
 `tool_input.working_directory`, then `cwd`, then `workspace_roots` selects the action repository;
-canonical paths prevent symlink aliases from becoming two owners; Project shims persist the
-canonical repository identity at install time. An omitted `installScope` uses its documented
+canonical paths prevent symlink aliases from becoming two owners. Each Project shim derives its
+source root from its own installed file URL at invocation time, so copying a shim between linked
+worktrees binds it to the recipient instead of preserving a foreign install-time path. The
+dispatcher canonicalizes that source root before comparing it with the payload-derived action
+repository; same-root legacy embedded origins remain compatible until upgrade. An omitted
+`installScope` uses its documented
 `project` default. A truly uninitialized repository is neutral to the global source, while a
 present but malformed, unreadable, or invalid config remains selected by the matching Project
 source and reaches Belay's fail-closed config path. A selected but incomplete Project owner fails
@@ -244,6 +248,8 @@ Run `belay upgrade --scope global` for a pre-router global Cursor install, then 
 A Project upgrade also refreshes an exactly recognized managed global install; doctor reports old
 global generations, origin mismatches, incomplete owners, and managed entries that have not gained
 `failClosed: true`, while a healthy global source shadowed by Project precedence is only a note.
+For release dogfood, `belay dogfood --check --since <ISO8601>` also blocks when the current Cursor
+repository or an initialized linked worktree has unhealthy hook routing.
 This mechanism resolves competing sources for the same canonical event; it does not combine
 distinct events such as `beforeShellExecution` and `preToolUse: Shell`, and it does not merge
 repeated deliveries to the effective owner. See

@@ -316,6 +316,7 @@ export interface DogfoodCheckResult {
   shellPreToolUseCount: number
   mismatchedCohortCount: number
   environmentSkewCount: number
+  hookRoutingSkewCount: number
   failures: string[]
 }
 

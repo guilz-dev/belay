@@ -25,6 +25,26 @@ export async function listLinkedWorktreePaths(repoRoot: string): Promise<string[
   }
 }
 
+export async function listDogfoodWorkspacePaths(repoRoot: string): Promise<string[]> {
+  const candidates = [repoRoot, ...(await listLinkedWorktreePaths(repoRoot))]
+  const seen = new Set<string>()
+  const workspaces: string[] = []
+  for (const candidate of candidates) {
+    let identity = path.resolve(candidate)
+    try {
+      identity = realpathSync(candidate)
+    } catch {
+      // Keep the resolved lexical path so stale worktrees remain visible to environment checks.
+    }
+    if (seen.has(identity)) {
+      continue
+    }
+    seen.add(identity)
+    workspaces.push(candidate)
+  }
+  return workspaces
+}
+
 export async function detectUndogfoodedLinkedWorktrees(params: {
   repoRoot: string
   adapterName: AdapterName
