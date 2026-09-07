@@ -49,6 +49,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.10.1 — 2026-09-07
+
+### Fixed
+
+- **Cursor global sentinel unowned cwd** — When repository discovery falls back to a cwd without
+  `.git` or belay config, global hooks route neutral instead of fail-closed. Doctor reports
+  sentinel-blocked workspaces with repair guidance in the block message.
+- **Cursor untrusted global-only routing** — Untrusted global-only installs route through the
+  global owner so Project hooks do not claim unrelated workspaces.
+- **Effect-based tool gate routing** — Removed unmapped-tool hard blocks and
+  `gateEnabledForAction` tool whitelists so Read, Grep, and similar tools honor `gates.*` and
+  `fs.read` policy instead of list membership.
+
 ## 0.9.3 — 2026-09-01
 
 ### Fixed
