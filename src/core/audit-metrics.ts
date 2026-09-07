@@ -108,6 +108,15 @@ export interface AuditMetricsReport {
     readyForEnforce: boolean
     notes: string[]
   }
+  storage?: {
+    activeBytes: number
+    totalBytes: number
+    files: number
+    malformedLines: number
+    maxBytes: number
+    maxFiles: number
+    retentionEnabled: boolean
+  }
   recovery: RecoveryMetrics
   currentCohortRecovery: RecoveryMetricsCohort
 }

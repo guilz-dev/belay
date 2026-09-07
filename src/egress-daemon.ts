@@ -1,14 +1,12 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-
 import {
   belayStateDir,
   loadApprovalState,
   loadConfigFile,
   repoLocalStateDirFor,
 } from './config-io.js'
-import { serializeAuditRecordV3 } from './core/audit-serialize.js'
-import { scrubOptionsFromConfig } from './core/config.js'
+import { resolveRepoAuditPath } from './core/audit-reader.js'
+import { appendAuditLine } from './core/audit-sink.js'
+import { auditRetentionFromConfig, scrubOptionsFromConfig } from './core/config.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
 import { resolveActiveAuditCohort } from './runtime-provenance.js'
 import {
@@ -34,7 +32,7 @@ async function main(): Promise<void> {
 
   const store = createEgressApprovalStore(repoRoot, config)
   const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
-  const auditPath = path.join(repoRoot, config.audit.logPath)
+  const auditPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
 
   const { server, host, port } = await bindEgressProxy({
     config,
@@ -44,7 +42,6 @@ async function main(): Promise<void> {
       return loadApprovalState(repoRoot, 'approved-approvals.json', config)
     },
     async onAudit(event) {
-      await mkdir(path.dirname(auditPath), { recursive: true })
       const cohort = await resolveActiveAuditCohort(repoRoot, config)
       const record = {
         timestamp: new Date().toISOString(),
@@ -61,8 +58,12 @@ async function main(): Promise<void> {
           : {}),
         ...event,
       }
-      const serialized = serializeAuditRecordV3(record, scrubOptionsFromConfig(config))
-      await writeFile(auditPath, `${JSON.stringify(serialized)}\n`, { encoding: 'utf8', flag: 'a' })
+      await appendAuditLine({
+        auditPath,
+        record,
+        scrubOptions: scrubOptionsFromConfig(config),
+        retention: auditRetentionFromConfig(config),
+      })
     },
   })
 

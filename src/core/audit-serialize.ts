@@ -19,6 +19,7 @@ const PRESERVED_HASH_FIELDS = new Set([
   'runtimeArtifactHash',
   'decisionConfigFingerprint',
   'receiptHash',
+  'observedPayloadHash',
 ])
 
 const PRESERVED_LITERAL_FIELDS = new Set([
@@ -181,6 +182,13 @@ function serializeAuditField(key: string, value: unknown, options: ScrubOptions)
 
   if (typeof value === 'string') {
     return scrubString(value, { ...options, maskHighEntropyStrings: true })
+  }
+
+  if (key === 'observedInputBytes' || key === 'observedOutputBytes') {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value)
+    }
+    return undefined
   }
 
   if (value !== null && typeof value === 'object') {

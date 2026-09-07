@@ -1,9 +1,14 @@
-import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
-import { computeAuditMetrics, parseAuditNdjson } from '../core/audit-metrics.js'
+import { computeAuditMetrics } from '../core/audit-metrics.js'
+import {
+  readAuditRecordsFromPath,
+  resolveRepoAuditPath,
+  statAuditStorage,
+} from '../core/audit-reader.js'
+import { auditRetentionFromConfig } from '../core/config.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 export interface MetricsOptions {
@@ -21,21 +26,18 @@ function formatFingerprintPreview(fingerprint: string): string {
 export async function metricsProject(options: MetricsOptions = {}): Promise<AuditMetricsReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const auditLogPath = path.join(repoRoot, config.audit.logPath)
-  let raw = ''
-  try {
-    raw = await readFile(auditLogPath, 'utf8')
-  } catch {
-    raw = ''
-  }
-  const records = parseAuditNdjson(raw)
+  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
+  const retention = auditRetentionFromConfig(config)
+  const { records } = await readAuditRecordsFromPath(auditLogPath, retention)
+  const storage = await statAuditStorage(auditLogPath, retention)
   const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
-  return computeAuditMetrics(records, {
+  const report = computeAuditMetrics(records, {
     auditLogPath: config.audit.logPath,
     mode: config.mode,
     unknownLocalEffect: config.policy.unknownLocalEffect,
     activeCohort,
   })
+  return { ...report, storage }
 }
 
 function formatRecoveryMetricsSection(
@@ -260,6 +262,18 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
       '',
       report.dogfood.readyForEnforce ? 'Ready for enforce: yes' : 'Ready for enforce: not yet',
     )
+  }
+
+  if (report.storage) {
+    lines.push(
+      '',
+      'Audit storage:',
+      `- active: ${report.storage.activeBytes} / ${report.storage.maxBytes} bytes`,
+      `- total across ${report.storage.files} file(s): ${report.storage.totalBytes} bytes`,
+    )
+    if (report.storage.malformedLines > 0) {
+      lines.push(`- malformed lines: ${report.storage.malformedLines}`)
+    }
   }
 
   lines.push(

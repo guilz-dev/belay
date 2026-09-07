@@ -602,6 +602,18 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     warnings.push(...drift.warnings)
     notes.push(...drift.notes)
 
+    if (metrics.storage?.retentionEnabled && metrics.storage.maxBytes > 0) {
+      const usage = metrics.storage.activeBytes / metrics.storage.maxBytes
+      if (usage >= 0.8) {
+        warnings.push(
+          `Audit log active file is ${(usage * 100).toFixed(0)}% of retention maxBytes (${metrics.storage.activeBytes}/${metrics.storage.maxBytes}).`,
+        )
+      }
+      if (metrics.storage.malformedLines > 0) {
+        warnings.push(`Audit log contains ${metrics.storage.malformedLines} malformed line(s).`)
+      }
+    }
+
     const cohort = metrics.currentCohort
     dogfood = {
       active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',

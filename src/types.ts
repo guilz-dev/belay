@@ -215,6 +215,13 @@ export interface StatusReport {
   dogfood: DogfoodStatus
   health: HealthSnapshot
   visibility: AuditVisibilityReport
+  auditStorage?: {
+    activeBytes: number
+    totalBytes: number
+    files: number
+    maxBytes: number
+    retentionEnabled: boolean
+  }
   fileCheckpoint: {
     enabled: boolean
     allowNonGit: boolean
