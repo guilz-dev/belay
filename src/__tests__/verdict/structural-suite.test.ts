@@ -151,6 +151,8 @@ describe('structural suite', () => {
       'git diff HEAD~3..HEAD',
       'git log --oneline origin/main..HEAD',
       'git merge-base origin/main HEAD',
+      'git diff release/1.2',
+      'git diff 2026-release',
     ])('%s is repository inspection', async (command) => {
       const result = await verdict(command, context)
 

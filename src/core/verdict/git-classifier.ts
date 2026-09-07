@@ -385,8 +385,8 @@ function isReadOnlyGitRevisionOperand(subcommand: string, token: string): boolea
     return true
   }
   return (
-    /^[A-Za-z_][A-Za-z0-9._-]*(?:\/[A-Za-z_][A-Za-z0-9._-]*)*$/.test(token) &&
-    !looksLikeDiffPathOperand(token)
+    /^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)*$/.test(token) &&
+    (!looksLikeDiffPathOperand(token) || /(?:^|\/)\d+(?:\.\d+)+(?:\/|$)/.test(token))
   )
 }
 

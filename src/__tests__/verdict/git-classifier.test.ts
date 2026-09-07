@@ -98,6 +98,8 @@ describe('git-classifier', () => {
     ['diff ancestry range', ['git', 'diff', 'HEAD~3..HEAD']],
     ['log range', ['git', 'log', '--oneline', 'origin/main..HEAD']],
     ['merge-base refs', ['git', 'merge-base', 'origin/main', 'HEAD']],
+    ['diff dotted ref', ['git', 'diff', 'release/1.2']],
+    ['diff numeric-leading ref', ['git', 'diff', '2026-release']],
   ])('treats read-only %s operands as revisions instead of paths', (_name, tokens) => {
     const semantics = classifyGitCommand(tokens, cwd)
 
