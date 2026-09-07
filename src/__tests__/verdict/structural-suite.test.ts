@@ -317,6 +317,23 @@ describe('structural suite', () => {
       expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
     })
 
+    it('recognizes a comment after a removed line continuation and retains a following read', async () => {
+      const result = await verdict("echo ok \\\n# <<'EOF'\ngit status", context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.status')
+      expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
+    })
+
+    it('does not let a continuation-prefixed comment heredoc mask a following push', async () => {
+      const result = await verdict("echo ok \\\n# <<'EOF'\ngit push origin main\nEOF", context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('git.push')
+      expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
+    })
+
     it('keeps an unsupported literal here-string fail-closed while retaining later reads', async () => {
       const result = await verdict('cat <<< fixture\ngit status', context)
 

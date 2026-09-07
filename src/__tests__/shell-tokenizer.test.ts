@@ -163,6 +163,22 @@ describe('tokenizeShell', () => {
     ])
   })
 
+  it('recognizes a comment after removing a standalone backslash-newline', () => {
+    const lexed = lexShell("echo ok \\\n# <<'FAKE'\ngit status")
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['echo', 'ok', ';', 'git', 'status'])
+  })
+
+  it('keeps hashes embedded by backslash-newline removal inside their words', () => {
+    const lexed = lexShell('echo foo\\\n#bar "quoted\\\n#hash"')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['echo', 'foo#bar', 'quoted#hash'])
+  })
+
   it('recognizes a here-string without consuming following lines as a heredoc body', () => {
     const lexed = lexShell('cat <<< fixture\ngit status')
 

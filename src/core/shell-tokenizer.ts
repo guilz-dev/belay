@@ -380,6 +380,10 @@ export function lexShell(input: string): ShellLexResult {
         syntaxComplete = false
         continue
       }
+      if (next === '\n') {
+        index += 1
+        continue
+      }
       append(next, index, index + 2, 'unquoted', false)
       index += 1
       continue

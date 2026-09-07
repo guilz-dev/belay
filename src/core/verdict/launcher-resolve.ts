@@ -208,17 +208,35 @@ function hasBackgroundControl(recipe: string): boolean {
   return lexShell(recipe).tokens.some((token) => token.kind === 'operator' && token.value === '&')
 }
 
+const MAKE_GROUPABLE_SHORT_FLAGS_PATTERN = /^[bmBdehikLnpqrRsStvw]*$/
+const MAKE_STDIN_SOURCES = new Set(['-', '/dev/stdin'])
+
+function makefileOperand(token: string, nextToken: string | undefined): string | null {
+  if (token === '--file' || token === '--makefile') {
+    return nextToken ?? null
+  }
+  const longOption = /^--(?:file|makefile)=(.*)$/.exec(token)
+  if (longOption) {
+    return longOption[1] ?? null
+  }
+  if (!token.startsWith('-') || token.startsWith('--')) {
+    return null
+  }
+  const options = token.slice(1)
+  const fileOptionIndex = options.indexOf('f')
+  if (
+    fileOptionIndex === -1 ||
+    !MAKE_GROUPABLE_SHORT_FLAGS_PATTERN.test(options.slice(0, fileOptionIndex))
+  ) {
+    return null
+  }
+  return options.slice(fileOptionIndex + 1) || nextToken || null
+}
+
 function readsMakefileFromStdin(tokens: readonly string[]): boolean {
   for (let index = 1; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? ''
-    if (token === '-f' || token === '--file' || token === '--makefile') {
-      if (tokens[index + 1] === '-') {
-        return true
-      }
-      index += 1
-      continue
-    }
-    if (token === '-f-' || token === '--file=-' || token === '--makefile=-') {
+    const operand = makefileOperand(tokens[index] ?? '', tokens[index + 1])
+    if (operand && MAKE_STDIN_SOURCES.has(operand)) {
       return true
     }
   }

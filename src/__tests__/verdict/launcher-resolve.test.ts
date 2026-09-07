@@ -176,8 +176,17 @@ describe('launcher-resolve', () => {
   it.each([
     'make -f - safe',
     'make -f- safe',
+    'make -sf- safe',
+    'make -ksf- safe',
+    'make -sf - safe',
     'make --file=- safe',
     'make --makefile - safe',
+    'make -f/dev/stdin safe',
+    'make -sf/dev/stdin safe',
+    'make --file=/dev/stdin safe',
+    'make --makefile=/dev/stdin safe',
+    'make --file /dev/stdin safe',
+    'make --makefile /dev/stdin safe',
   ])('keeps a Makefile read from heredoc stdin approval-required: %s', async (invocation) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-stdin-file-'))
     tempDirs.push(dir)
@@ -192,6 +201,26 @@ describe('launcher-resolve', () => {
     expect(result.permission).toBe('ask')
     expect(result.effectPlan?.completeness).toBe('partial')
     expect(result.signals).toContain('launcher.make_stdin_makefile')
+  })
+
+  it.each([
+    'make -sfMakefile safe',
+    'make --file=Makefile safe',
+  ])('continues resolving an explicit disk Makefile: %s', async (invocation) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-disk-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(`${invocation} <<'EOF'\nfixture data\nEOF`, {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+    expect(result.signals).not.toContain('launcher.make_stdin_makefile')
   })
 
   it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {
