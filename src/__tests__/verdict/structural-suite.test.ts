@@ -334,6 +334,39 @@ describe('structural suite', () => {
       expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
     })
 
+    it.each([
+      {
+        name: 'continued delimiter',
+        command: 'cat <<EO\\\nF\ngit push origin main\nEOF',
+      },
+      {
+        name: 'continued operator',
+        command: 'cat <<\\\n< true\ngit push origin main\ntrue',
+      },
+      {
+        name: 'continued split operator',
+        command: 'cat <\\\n<< true\ngit push origin main\ntrue',
+      },
+    ])('fails closed without masking commands after a $name', async ({ command }) => {
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.effectPlan?.completeness).toBe('partial')
+      expect(result.signals).toContain('shell.grammar_incomplete')
+      expect(result.signals).toContain('git.push')
+      expect(result.signals).not.toContain('shell.heredoc_literal_stdin')
+      expect(result.signals).not.toContain('shell.heredoc_expanding_stdin')
+    })
+
+    it('retains a read after a neighboring ordinary heredoc', async () => {
+      const result = await verdict('cat <<EOF\nfixture data\nEOF\ngit status', context)
+
+      expect(result).toMatchObject({ permission: 'allow', reason: 'read_only' })
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.status')
+      expect(result.signals).toContain('shell.heredoc_expanding_stdin')
+    })
+
     it('keeps an unsupported literal here-string fail-closed while retaining later reads', async () => {
       const result = await verdict('cat <<< fixture\ngit status', context)
 

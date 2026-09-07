@@ -173,6 +173,7 @@ export function lexShell(input: string): ShellLexResult {
   let heredocsComplete = true
   let awaitingHeredocOperator: Extract<ShellToken, { kind: 'operator' }> | null = null
   let awaitingPostHeredocCommand = false
+  let heredocHeaderOpaque = false
   let pendingHeredocs: Array<{
     operator: Extract<ShellToken, { kind: 'operator' }>
     delimiter: Extract<ShellToken, { kind: 'word' }>
@@ -244,6 +245,10 @@ export function lexShell(input: string): ShellLexResult {
     }
     tokens.push(operator)
     if (isHeredocOperator(token)) {
+      if (heredocHeaderOpaque) {
+        syntaxComplete = false
+        return
+      }
       if (awaitingHeredocOperator) {
         syntaxComplete = false
       }
@@ -381,6 +386,19 @@ export function lexShell(input: string): ShellLexResult {
         continue
       }
       if (next === '\n') {
+        const previousToken = tokens.at(-1)
+        const splitsHeredocOperator =
+          wordStart === null &&
+          previousToken?.kind === 'operator' &&
+          previousToken.end === index &&
+          /^(?:\d+)?<$/.test(previousToken.value) &&
+          input[index + 2] === '<'
+        if (awaitingHeredocOperator || pendingHeredocs.length > 0 || splitsHeredocOperator) {
+          syntaxComplete = false
+          awaitingHeredocOperator = null
+          pendingHeredocs = []
+          heredocHeaderOpaque = true
+        }
         index += 1
         continue
       }
@@ -426,6 +444,7 @@ export function lexShell(input: string): ShellLexResult {
       if (awaitsPostHeredocCommand) {
         awaitingPostHeredocCommand = true
       }
+      heredocHeaderOpaque = false
       continue
     }
     if (/\s/.test(char)) {

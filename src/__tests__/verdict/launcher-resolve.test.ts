@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -187,7 +187,15 @@ describe('launcher-resolve', () => {
     'make --makefile=/dev/stdin safe',
     'make --file /dev/stdin safe',
     'make --makefile /dev/stdin safe',
-  ])('keeps a Makefile read from heredoc stdin approval-required: %s', async (invocation) => {
+    'make -f/dev/fd/0 safe',
+    'make -sf/dev/fd/0 safe',
+    'make --file=/proc/self/fd/0 safe',
+    'make --makefile /proc/self/fd/0 safe',
+    'make -f/dev/null safe',
+    'make -sfmissing.mk safe',
+    'make --file missing.mk safe',
+    'make --makefile=. safe',
+  ])('keeps a non-disk Makefile source approval-required: %s', async (invocation) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-stdin-file-'))
     tempDirs.push(dir)
     await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
@@ -200,16 +208,58 @@ describe('launcher-resolve', () => {
 
     expect(result.permission).toBe('ask')
     expect(result.effectPlan?.completeness).toBe('partial')
-    expect(result.signals).toContain('launcher.make_stdin_makefile')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
+  })
+
+  it('treats the dash Makefile sentinel as stdin even when a disk file is named dash', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-dash-sentinel-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, '-'), 'safe:\n\tgit status\n')
+
+    const result = await verdict("make -f - safe <<'EOF'\nsafe:\n\tgit push origin main\nEOF", {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
+  })
+
+  it('keeps an unreadable explicit Makefile approval-required without using the default', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-unreadable-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+    const unreadable = path.join(dir, 'Unreadable.mk')
+    await writeFile(unreadable, 'safe:\n\tgit status\n')
+    await chmod(unreadable, 0o000)
+
+    const result = await verdict('make -f Unreadable.mk safe', {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
   })
 
   it.each([
-    'make -sfMakefile safe',
-    'make --file=Makefile safe',
+    'make -f Rules.mk safe',
+    'make -fRules.mk safe',
+    'make -sf Rules.mk safe',
+    'make -sfRules.mk safe',
+    'make --file Rules.mk safe',
+    'make --file=Rules.mk safe',
+    'make --makefile Rules.mk safe',
+    'make --makefile=Rules.mk safe',
   ])('continues resolving an explicit disk Makefile: %s', async (invocation) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-disk-file-'))
     tempDirs.push(dir)
-    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit push origin main\n')
+    await writeFile(path.join(dir, 'Rules.mk'), 'safe:\n\tgit status\n')
 
     const result = await verdict(`${invocation} <<'EOF'\nfixture data\nEOF`, {
       ...ctx,
@@ -220,7 +270,8 @@ describe('launcher-resolve', () => {
     expect(result.permission).toBe('allow')
     expect(result.effectPlan?.completeness).toBe('complete')
     expect(result.signals).toContain('git.status')
-    expect(result.signals).not.toContain('launcher.make_stdin_makefile')
+    expect(result.signals).not.toContain('git.push')
+    expect(result.signals).not.toContain('launcher.makefile_source_opaque')
   })
 
   it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {

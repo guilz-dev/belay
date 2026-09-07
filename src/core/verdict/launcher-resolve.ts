@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 import { lexShell } from '../shell-tokenizer.js'
@@ -209,15 +209,31 @@ function hasBackgroundControl(recipe: string): boolean {
 }
 
 const MAKE_GROUPABLE_SHORT_FLAGS_PATTERN = /^[bmBdehikLnpqrRsStvw]*$/
-const MAKE_STDIN_SOURCES = new Set(['-', '/dev/stdin'])
 
-function makefileOperand(token: string, nextToken: string | undefined): string | null {
+interface MakefileOperand {
+  value: string | null
+  consumesNext: boolean
+}
+
+interface MakefileOptions {
+  explicit: boolean
+  complete: boolean
+  sources: string[]
+  operandIndexes: Set<number>
+}
+
+interface MakefileSnapshot {
+  path: string
+  content: string
+}
+
+function makefileOperand(token: string, nextToken: string | undefined): MakefileOperand | null {
   if (token === '--file' || token === '--makefile') {
-    return nextToken ?? null
+    return { value: nextToken ?? null, consumesNext: true }
   }
   const longOption = /^--(?:file|makefile)=(.*)$/.exec(token)
   if (longOption) {
-    return longOption[1] ?? null
+    return { value: longOption[1] ?? null, consumesNext: false }
   }
   if (!token.startsWith('-') || token.startsWith('--')) {
     return null
@@ -230,17 +246,53 @@ function makefileOperand(token: string, nextToken: string | undefined): string |
   ) {
     return null
   }
-  return options.slice(fileOptionIndex + 1) || nextToken || null
+  const attached = options.slice(fileOptionIndex + 1)
+  return {
+    value: attached || nextToken || null,
+    consumesNext: attached.length === 0,
+  }
 }
 
-function readsMakefileFromStdin(tokens: readonly string[]): boolean {
+function parseMakefileOptions(tokens: readonly string[]): MakefileOptions {
+  const sources: string[] = []
+  const operandIndexes = new Set<number>()
+  let explicit = false
+  let complete = true
   for (let index = 1; index < tokens.length; index += 1) {
-    const operand = makefileOperand(tokens[index] ?? '', tokens[index + 1])
-    if (operand && MAKE_STDIN_SOURCES.has(operand)) {
-      return true
+    if (tokens[index] === '--') {
+      break
     }
+    const operand = makefileOperand(tokens[index] ?? '', tokens[index + 1])
+    if (!operand) {
+      continue
+    }
+    explicit = true
+    if (operand.consumesNext && tokens[index + 1] !== undefined) {
+      operandIndexes.add(index + 1)
+      index += 1
+    }
+    if (!operand.value) {
+      complete = false
+      continue
+    }
+    sources.push(operand.value)
   }
-  return false
+  return { explicit, complete, sources, operandIndexes }
+}
+
+function readExplicitMakefile(source: string, cwd: string): MakefileSnapshot | null {
+  if (source === '-' || /[$`*?[]/.test(source)) {
+    return null
+  }
+  const resolved = path.resolve(cwd, source)
+  try {
+    if (!statSync(resolved).isFile()) {
+      return null
+    }
+    return { path: resolved, content: readFileSync(resolved, 'utf8') }
+  } catch {
+    return null
+  }
 }
 
 function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
@@ -318,12 +370,13 @@ function resolveMakeRecipe(
   repoRoot: string,
   target: string,
   cliVars: Readonly<Record<string, string>> = {},
+  explicitMakefile?: MakefileSnapshot,
 ): LauncherResolution {
   const candidates = ['Makefile', 'makefile', 'GNUmakefile']
-  let makefilePath: string | null = null
+  let makefilePath: string | null = explicitMakefile?.path ?? null
   let searchDir = path.resolve(cwd)
   const stop = path.resolve(repoRoot)
-  while (true) {
+  while (!makefilePath) {
     for (const name of candidates) {
       const candidate = path.join(searchDir, name)
       if (existsSync(candidate)) {
@@ -339,7 +392,12 @@ function resolveMakeRecipe(
   if (!makefilePath) {
     return { recipes: [], opaque: true, reason: 'unknown_local_effect' }
   }
-  const makefileContent = readFileSync(makefilePath, 'utf8')
+  let makefileContent: string
+  try {
+    makefileContent = explicitMakefile?.content ?? readFileSync(makefilePath, 'utf8')
+  } catch {
+    return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+  }
   const makefileVars = parseMakefileVariables(makefileContent)
   const targets = parseMakefileRecipeContent(makefileContent)
   if (!targets.has(target)) {
@@ -442,15 +500,29 @@ export function resolveLauncherRecipe(params: {
     if (params.depth >= MAX_RESOLVE_DEPTH) {
       return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
     }
-    if (readsMakefileFromStdin(tokens)) {
-      return { recipes: [], opaque: true, reason: 'make_stdin_makefile' }
+    const makefileOptions = parseMakefileOptions(tokens)
+    let explicitMakefile: MakefileSnapshot | undefined
+    if (makefileOptions.explicit) {
+      if (!makefileOptions.complete || makefileOptions.sources.length !== 1) {
+        return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+      }
+      const source = makefileOptions.sources[0]
+      const snapshot = source ? readExplicitMakefile(source, params.cwd) : null
+      if (!snapshot) {
+        return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+      }
+      explicitMakefile = snapshot
     }
     if (tokens.includes('-n') || tokens.includes('--dry-run')) {
       return null
     }
     let target: string | null = null
     const cliVars: Record<string, string> = {}
-    for (const token of tokens.slice(1)) {
+    for (let index = 1; index < tokens.length; index += 1) {
+      if (makefileOptions.operandIndexes.has(index)) {
+        continue
+      }
+      const token = tokens[index] ?? ''
       if (token.startsWith('-')) {
         continue
       }
@@ -464,7 +536,7 @@ export function resolveLauncherRecipe(params: {
       }
     }
     if (target) {
-      return resolveMakeRecipe(params.cwd, params.repoRoot, target, cliVars)
+      return resolveMakeRecipe(params.cwd, params.repoRoot, target, cliVars, explicitMakefile)
     }
   }
 

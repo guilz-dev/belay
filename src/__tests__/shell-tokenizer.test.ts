@@ -179,6 +179,41 @@ describe('tokenizeShell', () => {
     expect(lexed.tokens.map((token) => token.value)).toEqual(['echo', 'foo#bar', 'quoted#hash'])
   })
 
+  it.each([
+    'cat <<EO\\\nF\ngit push origin main\nEOF',
+    'cat <<\\\n< true\ngit push origin main\ntrue',
+    'cat <\\\n<< true\ngit push origin main\ntrue',
+  ])('leaves executable lines visible when a heredoc header contains a continuation: %j', (command) => {
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(
+      expect.arrayContaining(['git', 'push', 'origin', 'main']),
+    )
+  })
+
+  it('continues collecting a neighboring ordinary heredoc header', () => {
+    const lexed = lexShell('cat <<EOF\nfixture data\nEOF\ngit status')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toHaveLength(1)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: 'EOF', quoted: false },
+      body: { value: 'fixture data\n' },
+      expands: true,
+      complete: true,
+    })
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<',
+      'EOF',
+      ';',
+      'git',
+      'status',
+    ])
+  })
+
   it('recognizes a here-string without consuming following lines as a heredoc body', () => {
     const lexed = lexShell('cat <<< fixture\ngit status')
 
