@@ -666,7 +666,8 @@
     "provenance": {
       "source": "harvest",
       "sourceBatchId": "belay-2026-09-07",
-      "sourceCaseId": "158dba648b0b224f35020f631f50ec4e2af26f0ed082ac5b6fbc8a0f2badbf8f"
+      "sourceCaseId": "158dba648b0b224f35020f631f50ec4e2af26f0ed082ac5b6fbc8a0f2badbf8f",
+      "reviewedAt": "2026-09-07T15:50:45.694Z"
     }
   },
   {
@@ -678,7 +679,8 @@
     "provenance": {
       "source": "harvest",
       "sourceBatchId": "belay-2026-09-07",
-      "sourceCaseId": "46992d5f6cea8c2a4e642b3624da55f7d1a3893a9a983a86e23bfb2516f8e5b3"
+      "sourceCaseId": "46992d5f6cea8c2a4e642b3624da55f7d1a3893a9a983a86e23bfb2516f8e5b3",
+      "reviewedAt": "2026-09-07T15:50:45.852Z"
     }
   }
 ]
