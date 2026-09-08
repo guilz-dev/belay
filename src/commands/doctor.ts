@@ -46,13 +46,10 @@ import {
   stripForbiddenShellOverrideLists,
 } from '../core/config.js'
 import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js'
-import {
-  isRepoConfigReadError,
-  resolveRepoConfig,
-} from '../core/linked-worktree-config.js'
 import { runtimeIntegrityFiles, verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
+import { isRepoConfigReadError, resolveRepoConfig } from '../core/linked-worktree-config.js'
 import { notificationConfigIssues } from '../core/notify.js'
 import { listRecoveryCheckpoints } from '../core/recovery/checkpoint.js'
 import {

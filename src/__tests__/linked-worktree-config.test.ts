@@ -1,12 +1,14 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
+import { getAdapterLayout } from '../adapters/layouts/index.js'
+import { doctorProject } from '../commands/doctor.js'
+import { dogfoodProject } from '../commands/dogfood.js'
 import { loadLayeredConfig } from '../config-io.js'
 import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js'
 import {
@@ -14,10 +16,7 @@ import {
   isPrimaryGitWorktree,
   resolveRepoConfig,
 } from '../core/linked-worktree-config.js'
-import { doctorProject } from '../commands/doctor.js'
-import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { initProject } from '../installer.js'
-import { dogfoodProject } from '../commands/dogfood.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -32,15 +31,27 @@ async function initGitRepo(repoRoot: string): Promise<void> {
   await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
   await execFileAsync(
     'git',
-    ['-c', 'user.name=belay-test', '-c', 'user.email=belay-test@example.com', 'commit', '-m', 'init'],
+    [
+      '-c',
+      'user.name=belay-test',
+      '-c',
+      'user.email=belay-test@example.com',
+      'commit',
+      '-m',
+      'init',
+    ],
     { cwd: repoRoot },
   )
 }
 
 async function addLinkedWorktree(repoRoot: string, linkedWorktree: string): Promise<void> {
-  await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', path.basename(linkedWorktree)], {
-    cwd: repoRoot,
-  })
+  await execFileAsync(
+    'git',
+    ['worktree', 'add', linkedWorktree, '-b', path.basename(linkedWorktree)],
+    {
+      cwd: repoRoot,
+    },
+  )
 }
 
 describe('linked-worktree-config', () => {
@@ -151,7 +162,9 @@ describe('linked-worktree-config', () => {
 
     expect(report.issues.some((issue) => issue.startsWith('Missing config:'))).toBe(false)
     expect(
-      report.notes.some((note) => note.includes('Repository config inherited from linked worktree')),
+      report.notes.some((note) =>
+        note.includes('Repository config inherited from linked worktree'),
+      ),
     ).toBe(true)
   })
 })

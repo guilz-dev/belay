@@ -76,7 +76,6 @@ import {
 } from '../../core/capability/index.js'
 import { normalizeAuditConfig } from '../../core/config.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
-import { resolveRepoConfig } from '../../core/linked-worktree-config.js'
 import {
   ContainedDockerBoundaryUnavailableError,
   type ExecuteContainedDockerParams,
@@ -132,6 +131,7 @@ import {
   inferProviderIdFromFallbackReason,
   isJudgeInfrastructureFailure,
 } from '../../core/judge-fallback-hints.js'
+import { resolveRepoConfig } from '../../core/linked-worktree-config.js'
 import { notifyDeny } from '../../core/notify.js'
 import { canonicalPath } from '../../core/path-utils.js'
 import {
@@ -382,11 +382,7 @@ export async function resolveGateConfig(
   _deps: GateRuntimeDeps,
 ): Promise<BelayConfigV3> {
   const resolution = await resolveRepoConfig(ctx.repoRoot, ctx.layout.name)
-  await assertRepoConfigTrusted(
-    resolution.configSourceRoot,
-    ctx.layout.name,
-    resolution.repoConfig,
-  )
+  await assertRepoConfigTrusted(resolution.configSourceRoot, ctx.layout.name, resolution.repoConfig)
   let teamConfig: Record<string, unknown> | null = null
   const teamPath = teamConfigPath()
   if (existsSync(teamPath)) {

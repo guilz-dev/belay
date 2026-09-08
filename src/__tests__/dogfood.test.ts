@@ -729,7 +729,9 @@ describe('dogfood release check', () => {
 
   it('fails when a linked worktree overrides inherited config with enforce mode', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-no-inherit-'))
-    const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-no-inherit-linked-'))
+    const linkedParent = await mkdtemp(
+      path.join(os.tmpdir(), 'belay-dogfood-check-no-inherit-linked-'),
+    )
     const linkedWorktree = path.join(linkedParent, 'linked-worktree')
     tempDirs.push(repoRoot, linkedParent)
     await initProject({ targetDir: repoRoot, dogfood: true })

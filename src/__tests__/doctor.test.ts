@@ -801,9 +801,13 @@ describe('doctorProject', () => {
       ],
       { cwd: repoRoot },
     )
-    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-dogfood-missing'], {
-      cwd: repoRoot,
-    })
+    await execFileAsync(
+      'git',
+      ['worktree', 'add', linkedWorktree, '-b', 'linked-dogfood-missing'],
+      {
+        cwd: repoRoot,
+      },
+    )
     const primaryConfig = JSON.parse(
       await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
     )
