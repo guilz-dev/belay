@@ -53,10 +53,14 @@ The fresh read-only `quality --target /Users/kaz/product/guilz/belay --json` eva
 reported the installed 0.10.1 cohort as not ready (exit 1). Its canonical corpus passed all hard
 gates with 93 cases and zero must-ask misses and provably-benign blocks. The active cohort had 537
 gate events, a 22.53% classifier would-block rate, 3 availability asks, 0 reviewed provably-benign
-events, 0 reviewed blocked events, 0 distinct reviewed sessions, 38 harvest candidates, and 3
-availability candidates; `trafficReadyForEnforce` and `readyForEnforce` were both false. The quality
-JSON did not expose cohort hashes, so no new hash was inferred; the frozen identifiers remain above.
-No raw audit row or raw session ID was copied into this document.
+events, 0 reviewed blocked events, and 0 distinct reviewed sessions;
+`trafficReadyForEnforce` and `readyForEnforce` were both false.
+
+Separately, the quality JSON's unscoped retained-history harvest summary reported 38 benign
+candidates and 3 availability-queue items. Those two harvest counts are not active-cohort fields
+and are never promotion evidence. The quality JSON did not expose cohort hashes, so no new hash was
+inferred; the frozen identifiers remain above. No raw audit row or raw session ID was copied into
+this document.
 
 Pending external evidence and actions:
 

@@ -129,11 +129,46 @@ numbered rotation は `audit.ndjson.legacy-*.ndjson` archive を削除しない�
 ## Release-window blocking check
 
 最初に許可された upgrade の直前に一つの release-window cutoff（`since`、ISO8601）を選び、
-上記 entry に対応する **active な各 local repository** で、その対象の upgrade 後に次を一回ずつ
-実行する:
+各対象の upgrade 後に check を実行する。
+
+**Belay product checkout だけ**は、host action の `working_directory` を Belay checkout に設定し、
+helper を absolute path で実行する:
 
 ```bash
-scripts/pre-release-dogfood-check.sh <target-dir> <since-iso>
+/absolute/path/to/belay/scripts/pre-release-dogfood-check.sh /absolute/path/to/belay <literal-cutoff-iso>
+```
+
+この helper は source-build tooling であり、Belay checkout へ `cd` して `pnpm build` を実行し、
+その build で指定 target を check する。non-Belay target の action-working-directory 要件を満たす
+ものではない。
+
+non-Belay の各対象では、host action の `working_directory` を以下の exact path に設定し、対応する
+direct command を別々の action として実行する。次の例は version を固定した released npm package
+を使う。loop にまとめてはならない。
+
+`working_directory: /Users/kaz/product/drivex/scheduling-editor`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/drivex/scheduling-editor --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/zoe/pr-tour`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/zoe/pr-tour --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/modis/freelance.base/repos/freelance.modis.co.jp`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/modis/freelance.base/repos/freelance.modis.co.jp --since <literal-cutoff-iso> --json
+```
+
+`npx` ではなく unpack 済み released artifact を使う場合は、その absolute path を明示する。
+`PATH` で見つかった `belay` に依存しない:
+
+```bash
+node /absolute/path/to/released-belay/dist/cli.js dogfood --check --target /absolute/target/path --since <literal-cutoff-iso> --json
 ```
 
 全 active repository で check が通らなければならない。cutoff と各 command output を release PR

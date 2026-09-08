@@ -140,16 +140,51 @@ never removes `audit.ndjson.legacy-*.ndjson` archives.
 ## Release-window blocking check
 
 Immediately before the first authorized upgrade, pick one release-window cutoff timestamp
-(`since`, ISO8601) and run this command once per **active local repository** corresponding to the
-entries above after that target is upgraded:
+(`since`, ISO8601). Run each check after that target is upgraded.
+
+For the **Belay product checkout only**, set the host action `working_directory` to the Belay
+checkout and invoke the helper by its absolute path:
 
 ```bash
-scripts/pre-release-dogfood-check.sh <target-dir> <since-iso>
+/absolute/path/to/belay/scripts/pre-release-dogfood-check.sh /absolute/path/to/belay <literal-cutoff-iso>
 ```
 
-The check must pass for every active repository. Copy the cutoff timestamp and command output into
-the release PR. Use the same cutoff for the post-upgrade cohort checks above; the cutoff remains
-pending until immediately before the first authorized upgrade.
+This helper is source-build tooling: it changes to the Belay checkout, runs `pnpm build`, and checks
+the supplied target with that build. It does **not** satisfy the action-working-directory
+requirement for a non-Belay target.
+
+For each non-Belay target, set the host action `working_directory` to the exact path shown below and
+run its matching direct command as a separate action. These examples use the pinned released npm
+package; do not combine them in a loop:
+
+`working_directory: /Users/kaz/product/drivex/scheduling-editor`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/drivex/scheduling-editor --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/zoe/pr-tour`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/zoe/pr-tour --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/modis/freelance.base/repos/freelance.modis.co.jp`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/modis/freelance.base/repos/freelance.modis.co.jp --since <literal-cutoff-iso> --json
+```
+
+If the released artifact is already unpacked instead of being invoked through `npx`, use its
+explicit absolute path; do not rely on a `belay` found through `PATH`:
+
+```bash
+node /absolute/path/to/released-belay/dist/cli.js dogfood --check --target /absolute/target/path --since <literal-cutoff-iso> --json
+```
+
+The check must pass for every active repository. Copy the cutoff timestamp and each command output
+into the release PR. Use the same cutoff for the post-upgrade cohort checks above; the cutoff
+remains pending until immediately before the first authorized upgrade.
 
 ## Out of scope
 
