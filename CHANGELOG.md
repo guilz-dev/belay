@@ -6,8 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Reviewed dogfood evidence** — `harvest list` now defaults to the active runtime/config/boundary
+  cohort, and an append-only review ledger records the latest outcome for each exact candidate.
+  Session-correlated reviewed traffic and corpus hard gates are combined before any enforce
+  recommendation: at least 150 reviewed provably-benign events across three sessions, a benign
+  block rate below 2%, zero availability asks, and zero hard-gate mismatches.
+- **Compact, bounded audit retention** — Compact v2 action/replay snapshots and post-tool telemetry
+  omit raw payload and session identifiers while retaining one-way correlations. Locked rotation
+  defaults to 32 MiB and five files including the active file, and audit consumers stream retained
+  generations oldest-to-active with malformed/oversized-line diagnostics.
+- **Packaged canonical corpus** — Published packages include the canonical corpus used by
+  `quality --target` by default; a target-local corpus is used only when explicitly selected with
+  `--corpus`.
+
+### Changed
+
+- **Bounded shell classification** — Complete bounded argv delegates, read-only Git revision
+  ranges, and non-executable heredoc/Make control syntax are classified structurally. Executable
+  heredocs, opaque input syntax, and unresolved Make options continue to fail closed.
+- **Target-scoped dogfood rollout** — Upgrade and readiness collection guidance now requires a
+  separate host action per active target, with matching literal `working_directory` and `--target`,
+  one shared release cutoff, cohort/storage diagnostics, and reviewed-traffic evidence.
+
 ### Fixed
 
+- **Trusted-cwd cause reporting** — Missing host action cwd is distinguished from a dynamic shell
+  transition whose destination cannot be resolved, so availability incidents and classifier
+  uncertainty are counted under their actual causes.
 - **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
   file location at runtime instead of baking in the install-time path. This prevents global sentinel
   fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.
