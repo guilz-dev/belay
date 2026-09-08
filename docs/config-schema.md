@@ -213,6 +213,15 @@ new active record after rotation. A single record larger than `maxBytes` remains
 active file can temporarily exceed the threshold by that unavoidable one-record amount. Numbered
 retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files.
 
+Availability-caused asks are also summarized in a bounded 4 KiB sibling
+`audit.ndjson.readiness.json`. It stores only the runtime artifact hash, decision-config hash,
+hashed boundary profile, count, and timestamps. The writer updates it under the same `.lock` and
+resets it only when that three-part decision cohort changes, so numbered retention cannot make a
+cohort appear ready by forgetting an older availability failure. Readers fix all retained file
+handles and read this watermark under the writer lock before streaming; a missing, malformed, or
+cohort-mismatched watermark fails readiness closed. Older NDJSON remains readable, and the next
+valid current-cohort gate record creates or repairs the watermark.
+
 ## Audit log (NDJSON schema v3)
 
 Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`

@@ -19,6 +19,13 @@ export interface DogfoodStatus {
   benignBlockRate: number
   distinctSessions: number
   availabilityAsks: number
+  availabilityWatermarkStatus:
+    | 'not-evaluated'
+    | 'missing'
+    | 'invalid'
+    | 'cohort-mismatch'
+    | 'current'
+  stickyAvailabilityAsks: number
   excludedGateEvents: number
   runtimeBuildStamp?: string
   configFingerprint?: string
@@ -63,6 +70,8 @@ export async function loadOperationalInsights(
       benignBlockRate: traffic.benignBlockRate,
       distinctSessions: traffic.distinctSessions,
       availabilityAsks: traffic.availabilityAsks,
+      availabilityWatermarkStatus: cohort.availabilityWatermark.status,
+      stickyAvailabilityAsks: cohort.availabilityWatermark.availabilityAsks,
       excludedGateEvents: cohort.excludedGateEvents,
       runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
       configFingerprint: cohort.identity?.configFingerprint,

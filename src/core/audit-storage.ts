@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
 import { type FileHandle, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -9,15 +9,46 @@ import { MAX_AUDIT_FILES } from './config.js'
 
 const AUDIT_LOCK_TIMEOUT_MS = 2_000
 const AUDIT_LOCK_RETRY_DELAY_MS = 25
+const AUDIT_READINESS_STATE_MAX_BYTES = 4_096
 const CARRIAGE_RETURN = Buffer.from('\r')
+const HEX64_PATTERN = /^[a-f0-9]{64}$/
+const ISO8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
 
 export const MAX_AUDIT_RECORD_BYTES = 33_554_432
+export const AUDIT_READINESS_STATE_SCHEMA_VERSION = 1
+
+export interface AuditReadinessUpdate {
+  runtimeArtifactHash: string
+  decisionConfigFingerprint: string
+  boundaryProfile: string
+  availabilityCausedAsk: boolean
+  timestamp: string
+}
+
+export interface AuditReadinessStateV1 {
+  schemaVersion: typeof AUDIT_READINESS_STATE_SCHEMA_VERSION
+  cohort: {
+    runtimeArtifactHash: string
+    decisionConfigFingerprint: string
+    boundaryFingerprint: string
+  }
+  availabilityAskCount: number
+  firstAvailabilityAt?: string
+  lastAvailabilityAt?: string
+  updatedAt: string
+}
+
+export type AuditReadinessStateSnapshot =
+  | { status: 'missing' }
+  | { status: 'invalid' }
+  | { status: 'valid'; state: AuditReadinessStateV1 }
 
 export interface AppendBoundedAuditLineOptions {
   auditPath: string
   line: string
   maxBytes: number
   maxFiles: number
+  readinessUpdate?: AuditReadinessUpdate
 }
 
 export interface AuditReadOptions {
@@ -37,6 +68,7 @@ export interface AuditLoadDiagnostics {
 export interface AuditLoadResult {
   records: AuditRecord[]
   diagnostics: AuditLoadDiagnostics
+  readinessState: AuditReadinessStateSnapshot
 }
 
 export interface AuditReadOperations {
@@ -67,6 +99,16 @@ interface OwnedAuditPath {
 
 interface CompletedMove extends OwnedAuditPath {
   sourcePath: string
+}
+
+interface OpenedRetainedAuditFile {
+  handle: FileHandle
+  path: string
+}
+
+interface RetainedAuditSnapshot {
+  files: OpenedRetainedAuditFile[]
+  readinessState: AuditReadinessStateSnapshot
 }
 
 const DEFAULT_AUDIT_STORAGE_OPERATIONS: AuditStorageOperations = {
@@ -206,6 +248,131 @@ export function auditGenerationPath(auditPath: string, generation: number): stri
   return `${path.resolve(auditPath)}.${generation}`
 }
 
+export function auditReadinessStatePath(auditPath: string): string {
+  return `${path.resolve(auditPath)}.readiness.json`
+}
+
+export function auditBoundaryFingerprint(boundaryProfile: string): string {
+  return createHash('sha256').update(boundaryProfile).digest('hex')
+}
+
+function validAuditReadinessUpdate(update: AuditReadinessUpdate): boolean {
+  return (
+    HEX64_PATTERN.test(update.runtimeArtifactHash) &&
+    HEX64_PATTERN.test(update.decisionConfigFingerprint) &&
+    update.boundaryProfile.length > 0 &&
+    Buffer.byteLength(update.boundaryProfile, 'utf8') <= 1_024 &&
+    typeof update.availabilityCausedAsk === 'boolean' &&
+    ISO8601_PATTERN.test(update.timestamp)
+  )
+}
+
+function parseAuditReadinessState(value: unknown): AuditReadinessStateV1 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  const candidate = value as Record<string, unknown>
+  const cohort = candidate.cohort
+  if (!cohort || typeof cohort !== 'object' || Array.isArray(cohort)) {
+    return null
+  }
+  const cohortRecord = cohort as Record<string, unknown>
+  const runtimeArtifactHash = cohortRecord.runtimeArtifactHash
+  const decisionConfigFingerprint = cohortRecord.decisionConfigFingerprint
+  const boundaryFingerprint = cohortRecord.boundaryFingerprint
+  const availabilityAskCount = candidate.availabilityAskCount
+  const updatedAt = candidate.updatedAt
+  const firstAvailabilityAt = candidate.firstAvailabilityAt
+  const lastAvailabilityAt = candidate.lastAvailabilityAt
+  if (
+    candidate.schemaVersion !== AUDIT_READINESS_STATE_SCHEMA_VERSION ||
+    typeof runtimeArtifactHash !== 'string' ||
+    !HEX64_PATTERN.test(runtimeArtifactHash) ||
+    typeof decisionConfigFingerprint !== 'string' ||
+    !HEX64_PATTERN.test(decisionConfigFingerprint) ||
+    typeof boundaryFingerprint !== 'string' ||
+    !HEX64_PATTERN.test(boundaryFingerprint) ||
+    !Number.isSafeInteger(availabilityAskCount) ||
+    (availabilityAskCount as number) < 0 ||
+    typeof updatedAt !== 'string' ||
+    !ISO8601_PATTERN.test(updatedAt) ||
+    (firstAvailabilityAt !== undefined &&
+      (typeof firstAvailabilityAt !== 'string' || !ISO8601_PATTERN.test(firstAvailabilityAt))) ||
+    (lastAvailabilityAt !== undefined &&
+      (typeof lastAvailabilityAt !== 'string' || !ISO8601_PATTERN.test(lastAvailabilityAt)))
+  ) {
+    return null
+  }
+  if (
+    ((availabilityAskCount as number) === 0 &&
+      (firstAvailabilityAt !== undefined || lastAvailabilityAt !== undefined)) ||
+    ((availabilityAskCount as number) > 0 &&
+      (firstAvailabilityAt === undefined || lastAvailabilityAt === undefined))
+  ) {
+    return null
+  }
+  return {
+    schemaVersion: AUDIT_READINESS_STATE_SCHEMA_VERSION,
+    cohort: {
+      runtimeArtifactHash,
+      decisionConfigFingerprint,
+      boundaryFingerprint,
+    },
+    availabilityAskCount: availabilityAskCount as number,
+    ...(typeof firstAvailabilityAt === 'string' ? { firstAvailabilityAt } : {}),
+    ...(typeof lastAvailabilityAt === 'string' ? { lastAvailabilityAt } : {}),
+    updatedAt,
+  }
+}
+
+async function loadAuditReadinessStateUnlocked(
+  auditPath: string,
+): Promise<AuditReadinessStateSnapshot> {
+  const statePath = auditReadinessStatePath(auditPath)
+  const before = await lstatBigintIfPresent(statePath)
+  if (!before) return { status: 'missing' }
+  if (
+    before.isSymbolicLink() ||
+    !before.isFile() ||
+    before.size > BigInt(AUDIT_READINESS_STATE_MAX_BYTES)
+  ) {
+    return { status: 'invalid' }
+  }
+
+  let handle: FileHandle
+  try {
+    handle = await open(statePath, constants.O_RDONLY | noFollowFlag())
+  } catch (error) {
+    if (errno(error) === 'ENOENT') return { status: 'missing' }
+    if (errno(error) === 'ELOOP') return { status: 'invalid' }
+    throw error
+  }
+  try {
+    const opened = await handle.stat({ bigint: true })
+    const current = await lstatBigintIfPresent(statePath)
+    if (
+      !opened.isFile() ||
+      opened.size > BigInt(AUDIT_READINESS_STATE_MAX_BYTES) ||
+      !current ||
+      current.isSymbolicLink() ||
+      !sameIdentity(fileIdentity(opened), current)
+    ) {
+      return { status: 'invalid' }
+    }
+    const raw = await handle.readFile({ encoding: 'utf8' })
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return { status: 'invalid' }
+    }
+    const state = parseAuditReadinessState(parsed)
+    return state ? { status: 'valid', state } : { status: 'invalid' }
+  } finally {
+    await handle.close()
+  }
+}
+
 function validateAuditReadOptions(options: AuditReadOptions): void {
   if (
     !Number.isSafeInteger(options.maxFiles) ||
@@ -262,53 +429,70 @@ function parseAuditRecordBytes(
   return parsed as AuditRecord
 }
 
-/**
- * Read exact retained generations oldest-to-active without taking the writer lock.
- *
- * The generator return value contains diagnostics for a fully consumed stream. Blank lines affect
- * no line counters; malformed, non-object, and oversized lines never become audit evidence.
- */
-export async function* iterateAuditRecords(
+async function openRetainedAuditSnapshot(
   options: AuditReadOptions,
-  operationOverrides: Partial<AuditReadOperations> = {},
-): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
-  validateAuditReadOptions(options)
-  const operations = resolveReadOperations(operationOverrides)
+): Promise<RetainedAuditSnapshot> {
   const auditPath = path.resolve(options.auditPath)
-  const diagnostics = emptyAuditLoadDiagnostics()
-  let lineBuffer: Buffer | undefined
-  const retainedPaths: string[] = []
-  for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
-    retainedPaths.push(auditGenerationPath(auditPath, generation))
-  }
-  retainedPaths.push(auditPath)
-
-  for (const retainedPath of retainedPaths) {
-    const info = await lstatIfPresent(retainedPath)
-    if (!info) {
-      continue
+  return withAuditStorageLock(auditPath, async (resolvedAuditPath) => {
+    const retainedPaths: string[] = []
+    for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
+      retainedPaths.push(auditGenerationPath(resolvedAuditPath, generation))
     }
-    if (info.isSymbolicLink()) {
-      throw new Error(`Refusing symbolic link for retained audit log: ${retainedPath}`)
-    }
-    if (!info.isFile()) {
-      throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
-    }
-
-    let handle: FileHandle
+    retainedPaths.push(resolvedAuditPath)
+    const files: OpenedRetainedAuditFile[] = []
     try {
-      handle = await open(retainedPath, constants.O_RDONLY | noFollowFlag())
-    } catch (error) {
-      if (errno(error) === 'ENOENT') {
-        continue
+      for (const retainedPath of retainedPaths) {
+        const before = await lstatBigintIfPresent(retainedPath)
+        if (!before) continue
+        if (before.isSymbolicLink()) {
+          throw new Error(`Refusing symbolic link for retained audit log: ${retainedPath}`)
+        }
+        if (!before.isFile()) {
+          throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
+        }
+
+        let handle: FileHandle
+        try {
+          handle = await open(retainedPath, constants.O_RDONLY | noFollowFlag())
+        } catch (error) {
+          if (errno(error) === 'ENOENT') continue
+          throw error
+        }
+        const opened = await handle.stat({ bigint: true })
+        const current = await lstatBigintIfPresent(retainedPath)
+        if (
+          !opened.isFile() ||
+          !current ||
+          current.isSymbolicLink() ||
+          !sameIdentity(fileIdentity(opened), current)
+        ) {
+          await handle.close()
+          throw new Error(`Retained audit path changed while opening snapshot: ${retainedPath}`)
+        }
+        files.push({ handle, path: retainedPath })
       }
+      return {
+        files,
+        readinessState: await loadAuditReadinessStateUnlocked(resolvedAuditPath),
+      }
+    } catch (error) {
+      await Promise.all(files.map(({ handle }) => handle.close().catch(() => undefined)))
       throw error
     }
-    try {
-      const opened = await handle.stat()
-      if (!opened.isFile()) {
-        throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
-      }
+  })
+}
+
+async function* iterateOpenedAuditRecords(
+  snapshot: RetainedAuditSnapshot,
+  options: AuditReadOptions,
+  operations: AuditReadOperations,
+): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
+  const diagnostics = emptyAuditLoadDiagnostics()
+  let lineBuffer: Buffer | undefined
+  const openHandles = new Set(snapshot.files.map(({ handle }) => handle))
+  try {
+    for (const retained of snapshot.files) {
+      const { handle, path: retainedPath } = retained
       diagnostics.filesRead += 1
       const stream = operations.createReadStream(retainedPath, handle)
       let lineLength = 0
@@ -406,13 +590,49 @@ export async function* iterateAuditRecords(
         }
       } finally {
         stream.destroy()
+        openHandles.delete(handle)
+        await handle.close()
       }
-    } finally {
-      await handle.close()
     }
+  } finally {
+    await Promise.all([...openHandles].map((handle) => handle.close().catch(() => undefined)))
   }
 
   return diagnostics
+}
+
+/**
+ * Read exact retained generations oldest-to-active from file handles fixed under the writer lock.
+ *
+ * The generator return value contains diagnostics for a fully consumed stream. Blank lines affect
+ * no line counters; malformed, non-object, and oversized lines never become audit evidence.
+ */
+export async function* iterateAuditRecords(
+  options: AuditReadOptions,
+  operationOverrides: Partial<AuditReadOperations> = {},
+): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
+  validateAuditReadOptions(options)
+  const snapshot = await openRetainedAuditSnapshot(options)
+  const iterator = iterateOpenedAuditRecords(
+    snapshot,
+    options,
+    resolveReadOperations(operationOverrides),
+  )
+  let completed = false
+  try {
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) {
+        completed = true
+        return next.value
+      }
+      yield next.value
+    }
+  } finally {
+    if (!completed) {
+      await iterator.return(emptyAuditLoadDiagnostics())
+    }
+  }
 }
 
 /** Collect the bounded retained-generation iterator for aggregation-oriented consumers. */
@@ -420,12 +640,18 @@ export async function loadRetainedAuditRecords(
   options: AuditReadOptions,
   operationOverrides: Partial<AuditReadOperations> = {},
 ): Promise<AuditLoadResult> {
+  validateAuditReadOptions(options)
   const records: AuditRecord[] = []
-  const iterator = iterateAuditRecords(options, operationOverrides)
+  const snapshot = await openRetainedAuditSnapshot(options)
+  const iterator = iterateOpenedAuditRecords(
+    snapshot,
+    options,
+    resolveReadOperations(operationOverrides),
+  )
   for (;;) {
     const next = await iterator.next()
     if (next.done) {
-      return { records, diagnostics: next.value }
+      return { records, diagnostics: next.value, readinessState: snapshot.readinessState }
     }
     records.push(next.value)
   }
@@ -524,6 +750,82 @@ async function createStagedAuditLine(
     }
     throw error
   }
+}
+
+async function writeAuditReadinessStateAtomic(
+  auditPath: string,
+  state: AuditReadinessStateV1,
+  operations: AuditStorageOperations,
+): Promise<void> {
+  const statePath = auditReadinessStatePath(auditPath)
+  const bytes = Buffer.from(`${JSON.stringify(state)}\n`, 'utf8')
+  if (bytes.length > AUDIT_READINESS_STATE_MAX_BYTES) {
+    throw new Error(`Audit readiness state exceeds ${AUDIT_READINESS_STATE_MAX_BYTES} bytes`)
+  }
+  await assertNotSymlink(statePath, 'audit readiness state')
+  const staged = await createStagedAuditLine(statePath, bytes, randomUUID(), operations)
+  try {
+    await assertNotSymlink(statePath, 'audit readiness state')
+    await operations.rename(staged.path, statePath)
+  } catch (error) {
+    try {
+      await unlinkOwnedPath(staged)
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Audit readiness state write failed and cleanup was incomplete: ${statePath}`,
+      )
+    }
+    throw error
+  }
+}
+
+function sameReadinessCohort(state: AuditReadinessStateV1, update: AuditReadinessUpdate): boolean {
+  return (
+    state.cohort.runtimeArtifactHash === update.runtimeArtifactHash &&
+    state.cohort.decisionConfigFingerprint === update.decisionConfigFingerprint &&
+    state.cohort.boundaryFingerprint === auditBoundaryFingerprint(update.boundaryProfile)
+  )
+}
+
+async function updateAuditReadinessState(
+  auditPath: string,
+  update: AuditReadinessUpdate,
+  operations: AuditStorageOperations,
+): Promise<void> {
+  if (!validAuditReadinessUpdate(update)) {
+    throw new Error('Audit readiness update requires a valid decision cohort and timestamp')
+  }
+  const current = await loadAuditReadinessStateUnlocked(auditPath)
+  const retainedState =
+    current.status === 'valid' && sameReadinessCohort(current.state, update)
+      ? current.state
+      : undefined
+  if (retainedState && !update.availabilityCausedAsk) {
+    return
+  }
+
+  const previousCount = retainedState?.availabilityAskCount ?? 0
+  const availabilityAskCount = update.availabilityCausedAsk
+    ? Math.min(Number.MAX_SAFE_INTEGER, previousCount + 1)
+    : 0
+  const next: AuditReadinessStateV1 = {
+    schemaVersion: AUDIT_READINESS_STATE_SCHEMA_VERSION,
+    cohort: {
+      runtimeArtifactHash: update.runtimeArtifactHash,
+      decisionConfigFingerprint: update.decisionConfigFingerprint,
+      boundaryFingerprint: auditBoundaryFingerprint(update.boundaryProfile),
+    },
+    availabilityAskCount,
+    ...(availabilityAskCount > 0
+      ? {
+          firstAvailabilityAt: retainedState?.firstAvailabilityAt ?? update.timestamp,
+          lastAvailabilityAt: update.timestamp,
+        }
+      : {}),
+    updatedAt: update.timestamp,
+  }
+  await writeAuditReadinessStateAtomic(auditPath, next, operations)
 }
 
 async function moveIfPresent(
@@ -662,6 +964,9 @@ export async function appendBoundedAuditLine(
   await withAuditStorageLock(
     options.auditPath,
     async (auditPath) => {
+      if (options.readinessUpdate) {
+        await updateAuditReadinessState(auditPath, options.readinessUpdate, operations)
+      }
       const active = await activeAuditSize(auditPath)
       if (active.exists && active.size + bytes.length > options.maxBytes) {
         await assertNotSymlink(auditPath, 'active audit log')

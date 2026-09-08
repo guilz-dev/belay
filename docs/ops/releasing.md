@@ -53,15 +53,34 @@ scripts/pre-release-check.sh
 That script runs lint, typecheck, tests, corpus, build, CLI version checks, and
 `npm pack --dry-run`. Do not publish if it fails.
 
-6. Choose one release-window cutoff (`since` ISO8601), then run local dogfood checks for
-   **every active target** listed in [dogfood-install-targets.md](./dogfood-install-targets.md):
+6. Immediately before the first authorized target upgrade, choose one release-window cutoff
+   (`since`, ISO8601) and reuse that same literal cutoff for **every active target** listed in
+   [dogfood-install-targets.md](./dogfood-install-targets.md).
+
+   For the **Belay product checkout only**, set the host Shell action `working_directory` to the
+   Belay checkout and invoke its source-build helper by absolute path:
 
 ```bash
-scripts/pre-release-dogfood-check.sh <target-dir> <since-iso>
+/absolute/path/to/belay/scripts/pre-release-dogfood-check.sh /absolute/path/to/belay <literal-cutoff-iso>
 ```
 
-   Record the cutoff timestamp and each command output in the release PR.
-   This is a local operator gate; do **not** move it into public GitHub CI.
+   The helper changes to the Belay checkout and runs `pnpm build`; it is not a valid check action
+   for another target repository.
+
+   For each non-Belay target, create a separate host Shell action whose `working_directory` is that
+   target's literal absolute path. Use the published package at the release version, and make the
+   same target path explicit in the command:
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /absolute/target/path --since <literal-cutoff-iso> --json
+```
+
+   An explicitly unpacked released artifact may be used instead, but its CLI path must also be
+   absolute; do not rely on a `belay` found through `PATH`. Do not combine target checks in a loop
+   or run a non-Belay check from the Belay checkout. Record the shared cutoff and each command
+   output in the release PR. Selecting the cutoff, publishing or choosing the released artifact,
+   upgrading other repositories, and running their checks remain explicit operator-authorized
+   external actions. This is a local operator gate; do **not** move it into public GitHub CI.
 
 7. Verify Ubuntu and macOS CI are green on the release commit.
 

@@ -24,6 +24,7 @@ import {
   type RecoveryMetricsCohort,
 } from './audit-recovery-metrics.js'
 import { isValidSessionCorrelationId } from './audit-serialize.js'
+import { type AuditReadinessStateSnapshot, auditBoundaryFingerprint } from './audit-storage.js'
 import type {
   AvailabilityAskCounts,
   ReasonApprovalRatio,
@@ -55,11 +56,17 @@ export interface AuditMetricsCohort {
   classifierWouldBlockRate: number
   approvalRecordedCount: number
   availabilityAsks: AvailabilityAskCounts
+  availabilityWatermark: AuditAvailabilityWatermark
   wouldBlockByReason: Record<string, number>
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
   containedExecution: ContainedExecutionMetrics
   reviewEvidencePresent: boolean
   reviewedTraffic: ReviewedTrafficReadiness
+}
+
+export interface AuditAvailabilityWatermark {
+  status: 'not-evaluated' | 'missing' | 'invalid' | 'cohort-mismatch' | 'current'
+  availabilityAsks: number
 }
 
 export interface ReviewedTrafficReadiness {
@@ -160,6 +167,28 @@ function increment(bucket: Record<string, number>, key: string): void {
   bucket[key] = (bucket[key] ?? 0) + 1
 }
 
+function auditAvailabilityWatermark(
+  snapshot: AuditReadinessStateSnapshot | undefined,
+  activeCohort: AuditCohortIdentity | null,
+): AuditAvailabilityWatermark {
+  if (!snapshot) return { status: 'not-evaluated', availabilityAsks: 0 }
+  if (snapshot.status === 'missing') return { status: 'missing', availabilityAsks: 0 }
+  if (snapshot.status === 'invalid') return { status: 'invalid', availabilityAsks: 0 }
+  if (
+    !activeCohort ||
+    snapshot.state.cohort.runtimeArtifactHash !== activeCohort.runtimeArtifactHash ||
+    snapshot.state.cohort.decisionConfigFingerprint !== activeCohort.decisionConfigFingerprint ||
+    snapshot.state.cohort.boundaryFingerprint !==
+      auditBoundaryFingerprint(activeCohort.boundaryProfile)
+  ) {
+    return { status: 'cohort-mismatch', availabilityAsks: 0 }
+  }
+  return {
+    status: 'current',
+    availabilityAsks: snapshot.state.availabilityAskCount,
+  }
+}
+
 export function computeAuditMetrics(
   records: Record<string, unknown>[],
   options: {
@@ -168,6 +197,7 @@ export function computeAuditMetrics(
     unknownLocalEffect?: string
     activeCohort?: AuditCohortIdentity | null
     reviewLedger?: HarvestReviewLedgerV1
+    readinessState?: AuditReadinessStateSnapshot
   } = {},
 ): AuditMetricsReport {
   const auditRecords = records.map(toAuditRecord)
@@ -261,6 +291,11 @@ export function computeAuditMetrics(
   const cohortWouldBlockRate = cohortGateEvents > 0 ? cohortWouldBlockCount / cohortGateEvents : 0
   const cohortApprovalRecordedCount = cohortRecords.filter(isApprovalRecorded).length
   const cohortAvailabilityAsks = computeAvailabilityAskCounts(cohortRecords)
+  const availabilityWatermark = auditAvailabilityWatermark(options.readinessState, activeCohort)
+  const activeCohortAvailabilityAsks = Math.max(
+    cohortAvailabilityAsks.total,
+    availabilityWatermark.availabilityAsks,
+  )
   const cohortClassifierWouldBlockCount = Math.max(
     0,
     cohortWouldBlockCount - cohortAvailabilityAsks.total,
@@ -321,14 +356,16 @@ export function computeAuditMetrics(
     reviewedBenignBlocked,
     benignBlockRate,
     distinctSessions: reviewedSessionIds.size,
-    availabilityAsks: cohortAvailabilityAsks.total,
+    availabilityAsks: activeCohortAvailabilityAsks,
     ready:
       activeCohort !== null &&
       reviewEvidencePresent &&
+      (availabilityWatermark.status === 'not-evaluated' ||
+        availabilityWatermark.status === 'current') &&
       reviewedBenignEvents >= MIN_REVIEWED_BENIGN_EVENTS &&
       reviewedSessionIds.size >= MIN_REVIEWED_SESSIONS &&
       benignBlockRate < MAX_BENIGN_BLOCK_RATE &&
-      cohortAvailabilityAsks.total === 0,
+      activeCohortAvailabilityAsks === 0,
   }
   const currentCohort: AuditMetricsCohort = {
     identity: activeCohort,
@@ -340,6 +377,7 @@ export function computeAuditMetrics(
     classifierWouldBlockRate: cohortClassifierWouldBlockRate,
     approvalRecordedCount: cohortApprovalRecordedCount,
     availabilityAsks: cohortAvailabilityAsks,
+    availabilityWatermark,
     wouldBlockByReason: cohortWouldBlockByReason,
     topWouldBlockSummaries: cohortTopWouldBlockSummaries,
     containedExecution: containedExecutionMetrics(cohortGateRecords),
@@ -402,9 +440,18 @@ export function computeAuditMetrics(
     notes.push('Set policy.unknownLocalEffect to "deny" to dogfood fail-closed defaults.')
   }
 
-  if (cohortAvailabilityAsks.total > 0) {
+  if (
+    availabilityWatermark.status !== 'not-evaluated' &&
+    availabilityWatermark.status !== 'current'
+  ) {
     notes.push(
-      `${cohortAvailabilityAsks.total} active-cohort availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
+      `Persistent availability watermark is ${availabilityWatermark.status} — readiness fails closed until a valid current-cohort gate record repairs it.`,
+    )
+  }
+
+  if (activeCohortAvailabilityAsks > 0) {
+    notes.push(
+      `${activeCohortAvailabilityAsks} active-cohort availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
     )
     notes.push('Ready for enforce withheld while availability-caused asks are present.')
   }

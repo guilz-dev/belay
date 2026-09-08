@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
+import { isAvailabilityCausedAsk } from './audit-availability.js'
 import { minimizeAuditShellAction } from './audit-replay-context.js'
-import { appendBoundedAuditLine } from './audit-storage.js'
+import { type AuditReadinessUpdate, appendBoundedAuditLine } from './audit-storage.js'
+import { type AuditRecord, GATE_EVENTS } from './audit-types.js'
 import {
   DEFAULT_AUDIT_MAX_BYTES,
   DEFAULT_AUDIT_MAX_FILES,
@@ -566,6 +568,37 @@ export function parseAuditNdjsonLine(line: string): Record<string, unknown> | nu
   }
 }
 
+function readinessUpdateForRecord(
+  record: Record<string, unknown>,
+): AuditReadinessUpdate | undefined {
+  const event = record.event
+  const runtimeArtifactHash = record.runtimeArtifactHash
+  const decisionConfigFingerprint = record.decisionConfigFingerprint
+  const boundaryProfile = record.boundaryProfile
+  const timestamp = record.timestamp
+  if (
+    typeof event !== 'string' ||
+    !GATE_EVENTS.has(event) ||
+    typeof runtimeArtifactHash !== 'string' ||
+    !isValidAuditFingerprint(runtimeArtifactHash) ||
+    typeof decisionConfigFingerprint !== 'string' ||
+    !isValidAuditFingerprint(decisionConfigFingerprint) ||
+    typeof boundaryProfile !== 'string' ||
+    boundaryProfile.length === 0 ||
+    typeof timestamp !== 'string' ||
+    !isValidAuditTimestamp(timestamp)
+  ) {
+    return undefined
+  }
+  return {
+    runtimeArtifactHash,
+    decisionConfigFingerprint,
+    boundaryProfile,
+    availabilityCausedAsk: isAvailabilityCausedAsk(record as AuditRecord),
+    timestamp,
+  }
+}
+
 export async function appendAuditRecord(
   auditPath: string,
   record: Record<string, unknown>,
@@ -575,6 +608,12 @@ export async function appendAuditRecord(
     maxFiles: DEFAULT_AUDIT_MAX_FILES,
   },
 ): Promise<void> {
-  const line = JSON.stringify(serializeAuditRecordV3(record, options))
-  await appendBoundedAuditLine({ auditPath, line, ...bounds })
+  const serialized = serializeAuditRecordV3(record, options)
+  const line = JSON.stringify(serialized)
+  await appendBoundedAuditLine({
+    auditPath,
+    line,
+    ...bounds,
+    readinessUpdate: readinessUpdateForRecord(serialized),
+  })
 }

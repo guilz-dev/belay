@@ -12,6 +12,9 @@ import {
   resolveDefaultQualityCorpusDir,
 } from '../commands/quality.js'
 import { loadConfigFile } from '../config-io.js'
+import { appendAuditRecord } from '../core/audit-serialize.js'
+import { appendBoundedAuditLine } from '../core/audit-storage.js'
+import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -46,7 +49,17 @@ async function seedReviewedTraffic(repoRoot: string, count = 150): Promise<void>
     sessionCorrelationId: SESSION_IDS[index % SESSION_IDS.length],
     ...cohort,
   }))
-  await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  const retainedRecords = records.slice(0, -1)
+  await writeFile(
+    auditPath,
+    retainedRecords.length > 0
+      ? `${retainedRecords.map((record) => JSON.stringify(record)).join('\n')}\n`
+      : '',
+  )
+  const finalRecord = records.at(-1)
+  if (finalRecord) {
+    await appendAuditRecord(auditPath, finalRecord, DEFAULT_REDACTION_V3)
+  }
   await writeFile(
     path.join(path.dirname(auditPath), 'harvest-reviews.json'),
     `${JSON.stringify({
@@ -259,6 +272,89 @@ describe('quality loop', () => {
     expect(report.readyForEnforce).toBe(true)
     expect(report.failedGates).toEqual([])
     expect(report.ok).toBe(true)
+  })
+
+  it('keeps an active-cohort availability blocker after its audit generation is rotated out', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-sticky-availability-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+      `${JSON.stringify({
+        version: 1,
+        reviews: [
+          {
+            fingerprint: REVIEWED_FINGERPRINT,
+            kind: 'shell',
+            boundaryProfile: cohort.boundaryProfile,
+            outcome: 'provably-benign',
+            reviewedAt: '2026-09-08T00:00:00.000Z',
+          },
+        ],
+      })}\n`,
+    )
+    const tinyRetention = { maxBytes: 131_072, maxFiles: 1 }
+    await appendAuditRecord(
+      auditPath,
+      {
+        timestamp: '2026-09-08T02:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'missing_trusted_cwd',
+        wouldBlock: true,
+        fingerprint: createHash('sha256').update('rotated-availability').digest('hex'),
+        ...cohort,
+      },
+      DEFAULT_REDACTION_V3,
+      tinyRetention,
+    )
+    await appendBoundedAuditLine({
+      auditPath,
+      line: JSON.stringify({ event: 'diagnostic', padding: 'x'.repeat(130_900) }),
+      ...tinyRetention,
+    })
+    const cleanRecords = Array.from({ length: 150 }, (_, index) => ({
+      timestamp: new Date(1_780_100_000_000 + index).toISOString(),
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'allow',
+      reason: 'read_only',
+      wouldBlock: false,
+      mode: 'audit',
+      fingerprint: REVIEWED_FINGERPRINT,
+      sessionCorrelationId: SESSION_IDS[index % SESSION_IDS.length],
+      ...cohort,
+    }))
+    await appendAuditRecord(auditPath, cleanRecords[0] ?? {}, DEFAULT_REDACTION_V3, tinyRetention)
+    await writeFile(
+      auditPath,
+      `${cleanRecords
+        .slice(1)
+        .map((record) => JSON.stringify(record))
+        .join('\n')}\n`,
+      { flag: 'a' },
+    )
+
+    const report = await qualityCheck({
+      targetDir: repoRoot,
+      corpusDir: await writeCorpus(repoRoot, passingCorpus),
+    })
+
+    expect(report.audit.gateEvents).toBe(150)
+    expect(report.audit.reviewedBenignEvents).toBe(150)
+    expect(report.audit.availabilityAsks).toBe(1)
+    expect(report.audit.availabilityWatermarkStatus).toBe('current')
+    expect(report.trafficReadyForEnforce).toBe(false)
+    expect(report.readyForEnforce).toBe(false)
+    expect(report.failedGates).toContain('Availability-caused asks: 1 (required: 0).')
   })
 
   it('lists every traffic and corpus failure instead of hiding failures after the first', async () => {

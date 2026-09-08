@@ -40,6 +40,8 @@ export interface QualityReport {
     gateEvents: number
     classifierWouldBlockRate: number
     availabilityAsks: number
+    availabilityWatermarkStatus: MetricsReport['currentCohort']['availabilityWatermark']['status']
+    stickyAvailabilityAsks: number
     reviewedBenignEvents: number
     reviewedBenignBlocked: number
     benignBlockRate: number
@@ -138,6 +140,14 @@ export async function evaluateQualitySnapshot(
   if (traffic.availabilityAsks !== 0) {
     failedGates.push(`Availability-caused asks: ${traffic.availabilityAsks} (required: 0).`)
   }
+  if (
+    cohort.availabilityWatermark.status !== 'not-evaluated' &&
+    cohort.availabilityWatermark.status !== 'current'
+  ) {
+    failedGates.push(
+      `Persistent availability watermark: ${cohort.availabilityWatermark.status} (required: current).`,
+    )
+  }
 
   const readyForEnforce = hardGatesOk && trafficReadyForEnforce
 
@@ -190,6 +200,8 @@ export async function evaluateQualitySnapshot(
       gateEvents: cohort.gateEvents,
       classifierWouldBlockRate: cohort.classifierWouldBlockRate,
       availabilityAsks: traffic.availabilityAsks,
+      availabilityWatermarkStatus: cohort.availabilityWatermark.status,
+      stickyAvailabilityAsks: cohort.availabilityWatermark.availabilityAsks,
       reviewedBenignEvents: traffic.reviewedBenignEvents,
       reviewedBenignBlocked: traffic.reviewedBenignBlocked,
       benignBlockRate: traffic.benignBlockRate,
@@ -238,6 +250,7 @@ export function formatQualityReport(report: QualityReport): string {
     `  reviewed benign blocked: ${report.audit.reviewedBenignBlocked} (${(report.audit.benignBlockRate * 100).toFixed(2)}%)`,
     `  distinct valid sessions: ${report.audit.distinctSessions}`,
     `  availability asks: ${report.audit.availabilityAsks}`,
+    `  persistent availability watermark: ${report.audit.availabilityWatermarkStatus} (${report.audit.stickyAvailabilityAsks} ask(s))`,
     `  traffic ready for enforce: ${report.trafficReadyForEnforce ? 'yes' : 'no'}`,
     `  repeated fingerprint patterns: ${report.audit.repeatedFingerprintPatterns}`,
     '',

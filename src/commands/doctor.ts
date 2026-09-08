@@ -626,6 +626,8 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       benignBlockRate: cohort.reviewedTraffic.benignBlockRate,
       distinctSessions: cohort.reviewedTraffic.distinctSessions,
       availabilityAsks: cohort.reviewedTraffic.availabilityAsks,
+      availabilityWatermarkStatus: cohort.availabilityWatermark.status,
+      stickyAvailabilityAsks: cohort.availabilityWatermark.availabilityAsks,
       excludedGateEvents: cohort.excludedGateEvents,
       runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
       configFingerprint: cohort.identity?.configFingerprint,
@@ -641,6 +643,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       )
       notes.push(
         `Dogfood traffic readiness: ${dogfood.trafficReadyForEnforce ? 'ready' : 'not ready'}; combined quality readiness: ${dogfood.readyForEnforce ? 'ready' : 'not ready'}.`,
+      )
+      notes.push(
+        `Persistent availability watermark: ${dogfood.availabilityWatermarkStatus} (${dogfood.stickyAvailabilityAsks} ask(s)).`,
       )
       for (const failure of quality.failedGates) {
         notes.push(`Enforce readiness: ${failure}`)
@@ -960,6 +965,7 @@ export function formatDoctorReport(
     lines.push(
       '',
       `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | traffic ready: ${report.dogfood.trafficReadyForEnforce ? 'yes' : 'no'} | combined quality ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
+      `Persistent availability watermark: ${report.dogfood.availabilityWatermarkStatus} (${report.dogfood.stickyAvailabilityAsks} ask(s))`,
     )
   }
 

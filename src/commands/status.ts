@@ -71,6 +71,7 @@ export function formatStatusReport(report: StatusReport): string {
     `Expired pending (not yet compacted): ${report.expiredPendingCount}`,
     `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} (mode=${report.dogfood.mode}, unknownLocalEffect=${report.dogfood.unknownLocalEffect})`,
     `Current cohort metrics: ${report.dogfood.gateEvents} gate events, ${report.dogfood.wouldBlockCount} would-block (${(report.dogfood.wouldBlockRate * 100).toFixed(1)}%), ${report.dogfood.excludedGateEvents} historical/mismatched excluded`,
+    `Persistent availability watermark: ${report.dogfood.availabilityWatermarkStatus} (${report.dogfood.stickyAvailabilityAsks} ask(s))`,
     `Traffic ready for enforce: ${report.dogfood.trafficReadyForEnforce ? 'yes' : 'no'}`,
     `Combined quality ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
     `File checkpoint: ${report.fileCheckpoint.enabled ? 'enabled' : 'disabled'} (transactional=${report.fileCheckpoint.transactionalEnabled}, durable=${report.fileCheckpoint.durableCheckpointEnabled}, nonGit=${report.fileCheckpoint.allowNonGit})`,

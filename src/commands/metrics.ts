@@ -47,7 +47,7 @@ export async function evaluateMetricsSnapshot(
   const auditLogPath = path.isAbsolute(audit.logPath)
     ? audit.logPath
     : path.join(repoRoot, audit.logPath)
-  const { records, diagnostics } = await loadRetainedAuditRecords({
+  const { records, diagnostics, readinessState } = await loadRetainedAuditRecords({
     auditPath: auditLogPath,
     maxFiles: audit.maxFiles,
     maxLineBytes: MAX_AUDIT_RECORD_BYTES,
@@ -64,6 +64,7 @@ export async function evaluateMetricsSnapshot(
         unknownLocalEffect: config.policy.unknownLocalEffect,
         activeCohort,
         reviewLedger,
+        readinessState,
       }),
       auditStorage: diagnostics,
     },
@@ -178,6 +179,9 @@ export function formatMetricsReport(
     `- contained execution: would mediate ${report.currentCohort.containedExecution.wouldMediate}; complete ${report.currentCohort.containedExecution.complete}; failed ${report.currentCohort.containedExecution.failed}; timed out ${report.currentCohort.containedExecution.timedOut}`,
   )
   lines.push(`- availability-caused asks: ${report.currentCohort.availabilityAsks.total}`)
+  lines.push(
+    `- persistent availability watermark: ${report.currentCohort.availabilityWatermark.status} (${report.currentCohort.availabilityWatermark.availabilityAsks} ask(s))`,
+  )
   lines.push('', 'Reviewed provably-benign traffic:')
   lines.push(
     `- reviewed benign events: ${report.currentCohort.reviewedTraffic.reviewedBenignEvents}`,

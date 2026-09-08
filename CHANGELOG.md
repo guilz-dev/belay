@@ -16,7 +16,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Compact, bounded audit retention** — Compact v2 action/replay snapshots and post-tool telemetry
   omit raw payload and session identifiers while retaining one-way correlations. Locked rotation
   defaults to 32 MiB and five files including the active file, and audit consumers stream retained
-  generations oldest-to-active with malformed/oversized-line diagnostics.
+  generations oldest-to-active with malformed/oversized-line diagnostics. A minimal cohort-scoped
+  availability watermark remains outside numbered retention, and readers use a fixed file-handle
+  snapshot so rotation cannot erase a blocker or skip a generation during readiness evaluation.
 - **Packaged canonical corpus** — Published packages include the canonical corpus used by
   `quality --target` by default; a target-local corpus is used only when explicitly selected with
   `--corpus`.

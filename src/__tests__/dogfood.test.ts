@@ -12,7 +12,8 @@ import { checkDogfoodProject, formatDogfoodCheckResult } from '../commands/dogfo
 import { qualityCheck } from '../commands/quality.js'
 import { statusProject } from '../commands/status.js'
 import { loadConfigFile, runtimeCorePath } from '../config-io.js'
-import { mergeConfig } from '../core/config.js'
+import { appendAuditRecord } from '../core/audit-serialize.js'
+import { DEFAULT_REDACTION_V3, mergeConfig } from '../core/config.js'
 import { canonicalStringify, hashValue } from '../core/fingerprint.js'
 import { initProject } from '../installer.js'
 import { loadOperationalInsights } from '../operational-insights.js'
@@ -134,21 +135,26 @@ async function seedDogfoodEnforceReady(repoRoot: string): Promise<void> {
   if (!cohort) {
     throw new Error('fixture active cohort unavailable')
   }
-  const records = Array.from({ length: 150 }, (_, index) =>
-    auditRecordLine({
-      event: 'beforeShellExecution',
-      kind: 'shell',
-      verdict: 'allow',
-      reason: 'read_only',
-      wouldBlock: false,
-      mode: 'audit',
-      fingerprint: REVIEWED_FINGERPRINT,
-      sessionCorrelationId: REVIEWED_SESSION_IDS[index % REVIEWED_SESSION_IDS.length],
-      ...cohort,
-    }),
-  ).join('')
+  const records = Array.from({ length: 150 }, (_, index) => ({
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    reason: 'read_only',
+    wouldBlock: false,
+    mode: 'audit',
+    fingerprint: REVIEWED_FINGERPRINT,
+    sessionCorrelationId: REVIEWED_SESSION_IDS[index % REVIEWED_SESSION_IDS.length],
+    ...cohort,
+  }))
   const auditPath = path.join(repoRoot, persistedConfig.audit.logPath)
-  await writeFile(auditPath, records)
+  await writeFile(
+    auditPath,
+    `${records
+      .slice(0, -1)
+      .map((record) => JSON.stringify(record))
+      .join('\n')}\n`,
+  )
+  await appendAuditRecord(auditPath, records.at(-1) ?? {}, DEFAULT_REDACTION_V3)
   await writeFile(
     path.join(path.dirname(auditPath), 'harvest-reviews.json'),
     `${JSON.stringify({

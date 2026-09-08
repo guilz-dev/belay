@@ -17,11 +17,13 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { appendAuditRecord } from '../core/audit-serialize.js'
 import {
   appendBoundedAuditLine,
   iterateAuditRecords,
   loadRetainedAuditRecords,
 } from '../core/audit-storage.js'
+import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 
 const tempDirs: string[] = []
 const FIXED_MAX_AUDIT_RECORD_BYTES = 33_554_432
@@ -413,6 +415,85 @@ describe('appendBoundedAuditLine', () => {
 })
 
 describe('retained audit reads', () => {
+  it('keeps a minimal availability watermark until the decision cohort changes', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-readiness-watermark-')
+    const cohortA = {
+      runtimeArtifactHash: 'a'.repeat(64),
+      decisionConfigFingerprint: 'b'.repeat(64),
+      boundaryProfile: 'l3-l4-only',
+    }
+    const cohortB = {
+      runtimeArtifactHash: 'c'.repeat(64),
+      decisionConfigFingerprint: 'd'.repeat(64),
+      boundaryProfile: 'l3-l4-only',
+    }
+
+    await appendAuditRecord(
+      auditPath,
+      {
+        timestamp: '2026-09-08T01:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'missing_trusted_cwd',
+        wouldBlock: true,
+        summary: 'private command and cwd must not enter the watermark',
+        ...cohortA,
+      },
+      DEFAULT_REDACTION_V3,
+      { maxBytes: 512, maxFiles: 1 },
+    )
+
+    const blocked = await loadRetainedAuditRecords({
+      auditPath,
+      maxFiles: 1,
+      maxLineBytes: FIXED_MAX_AUDIT_RECORD_BYTES,
+    })
+    const blockedState = blocked.readinessState
+    expect(blockedState).toMatchObject({
+      status: 'valid',
+      state: {
+        cohort: {
+          runtimeArtifactHash: cohortA.runtimeArtifactHash,
+          decisionConfigFingerprint: cohortA.decisionConfigFingerprint,
+          boundaryFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        availabilityAskCount: 1,
+      },
+    })
+    const serializedState = await readFile(`${auditPath}.readiness.json`, 'utf8')
+    expect(serializedState).not.toContain('private command')
+    expect(serializedState).not.toContain('cwd')
+
+    await appendAuditRecord(
+      auditPath,
+      {
+        timestamp: '2026-09-08T01:01:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'read_only',
+        wouldBlock: false,
+        ...cohortB,
+      },
+      DEFAULT_REDACTION_V3,
+      { maxBytes: 512, maxFiles: 1 },
+    )
+
+    const reset = await loadRetainedAuditRecords({
+      auditPath,
+      maxFiles: 1,
+      maxLineBytes: FIXED_MAX_AUDIT_RECORD_BYTES,
+    })
+    expect(reset.readinessState).toMatchObject({
+      status: 'valid',
+      state: {
+        cohort: { runtimeArtifactHash: cohortB.runtimeArtifactHash },
+        availabilityAskCount: 0,
+      },
+    })
+  })
+
   it('iterates only exact retained generations oldest-to-active across gaps', async () => {
     const auditPath = await createAuditPath('belay-audit-storage-read-order-')
     const recordsByPath = new Map([
@@ -538,6 +619,63 @@ describe('retained audit reads', () => {
       throw new Error('injected stream factory did not receive the opened audit handle')
     }
     await expect(openedHandle.stat()).rejects.toMatchObject({ code: 'EBADF' })
+  })
+
+  it('reads a fixed generation snapshot when rotation starts during streaming', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-rotation-race-')
+    await writeFile(`${auditPath}.1`, `${JSON.stringify({ marker: 'oldest' })}\n`, 'utf8')
+    await writeFile(auditPath, `${JSON.stringify({ marker: 'middle' })}\n`, 'utf8')
+    let rotated = false
+
+    const result = await loadRetainedAuditRecords(
+      { auditPath, maxFiles: 3, maxLineBytes: 256 },
+      {
+        createReadStream(_filePath, handle) {
+          async function* chunks(): AsyncGenerator<Buffer> {
+            const bytes = await handle.readFile()
+            if (!rotated) {
+              rotated = true
+              await appendBoundedAuditLine({
+                auditPath,
+                line: JSON.stringify({ marker: 'new' }),
+                maxBytes: 1,
+                maxFiles: 3,
+              })
+            }
+            yield bytes
+          }
+          return Readable.from(chunks(), { objectMode: false })
+        },
+      },
+    )
+
+    expect(rotated).toBe(true)
+    expect(result.records.map((record) => record.marker)).toEqual(['oldest', 'middle'])
+  })
+
+  it('closes fixed snapshot handles when an iterator consumer stops early', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-read-cancel-')
+    await writeFile(`${auditPath}.1`, `${JSON.stringify({ marker: 'oldest' })}\n`, 'utf8')
+    await writeFile(auditPath, `${JSON.stringify({ marker: 'active' })}\n`, 'utf8')
+    let streamedHandle: FileHandle | undefined
+
+    for await (const _record of iterateAuditRecords(
+      { auditPath, maxFiles: 2, maxLineBytes: 256 },
+      {
+        createReadStream(_filePath, handle) {
+          streamedHandle = handle
+          async function* chunks(): AsyncGenerator<Buffer> {
+            yield await handle.readFile()
+          }
+          return Readable.from(chunks(), { objectMode: false })
+        },
+      },
+    )) {
+      break
+    }
+
+    if (!streamedHandle) throw new Error('stream factory did not receive a retained handle')
+    await expect(streamedHandle.stat()).rejects.toMatchObject({ code: 'EBADF' })
   })
 
   it('refuses a retained-generation symlink without reading its target', async () => {
