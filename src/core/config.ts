@@ -1565,6 +1565,23 @@ export function stripForbiddenShellOverrideLists(config: BelayConfigV4): BelayCo
   }
 }
 
+export function configForPersistence(config: BelayConfigV4): BelayConfigV4 {
+  const stripped = stripForbiddenShellOverrideLists(config)
+  const markedAudit = stripped.audit as BelayAuditConfig & AuditConfigWithLegacyMarker
+  if (!markedAudit[LEGACY_DISABLED_RETENTION] || !markedAudit.retention) {
+    return stripped
+  }
+
+  const audit = { ...markedAudit }
+  if (markedAudit.retention.maxBytes === 0) {
+    delete audit.maxBytes
+  }
+  if (markedAudit.retention.maxFiles === 0) {
+    delete audit.maxFiles
+  }
+  return { ...stripped, audit }
+}
+
 export function mergeConfig(
   existing: unknown,
   defaults: BelayConfigV4 = DEFAULT_CONFIG_V4,

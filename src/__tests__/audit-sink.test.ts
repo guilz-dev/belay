@@ -1,9 +1,10 @@
-import { access, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { configPathFor, loadConfigFile, writeConfigFile } from '../config-io.js'
 import { readAuditRecordsFromPath, resolveAuditLogFiles } from '../core/audit-reader.js'
 import { appendAuditRecord } from '../core/audit-serialize.js'
 import { appendAuditLine, maybeRotateAuditLog } from '../core/audit-sink.js'
@@ -108,6 +109,38 @@ describe('audit-sink', () => {
 
     expect(await readFile(auditPath, 'utf8')).toContain('flat-defaults-remain-enabled')
     expect(await stat(`${auditPath}.1`)).toBeTruthy()
+  })
+
+  it('keeps legacy zero retention disabled after config write and reload', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-config-roundtrip-'))
+    tempDirs.push(repoRoot)
+    const configPath = configPathFor(repoRoot, 'cursor')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        version: 4,
+        audit: { retention: { maxBytes: 0, maxFiles: 0 } },
+      })}\n`,
+      'utf8',
+    )
+
+    const loaded = await loadConfigFile(repoRoot, 'cursor')
+    await writeConfigFile(repoRoot, loaded, 'cursor')
+    const reloaded = await loadConfigFile(repoRoot, 'cursor')
+    const auditPath = path.join(repoRoot, reloaded.audit.logPath)
+    await mkdir(path.dirname(auditPath), { recursive: true })
+    await writeFile(auditPath, Buffer.alloc(DEFAULT_AUDIT_MAX_BYTES, 0x78))
+
+    await appendAuditRecord(
+      auditPath,
+      { event: 'legacy-zero-after-reload' },
+      DEFAULT_REDACTION_V3,
+      normalizeAuditConfig(reloaded.audit),
+    )
+
+    expect((await stat(auditPath)).size).toBeGreaterThan(DEFAULT_AUDIT_MAX_BYTES)
+    await expect(access(`${auditPath}.1`)).rejects.toThrow()
   })
 
   it('rotates before an append would cross maxBytes', async () => {
