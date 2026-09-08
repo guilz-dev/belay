@@ -4,7 +4,7 @@ import { configPathFor, loadConfigFile, writeTrustedConfigFile } from '../config
 import { mergeConfig } from '../core/config.js'
 import { isDogfoodConfig, loadOperationalInsights } from '../operational-insights.js'
 import type { DogfoodOptions, DogfoodResult } from '../types.js'
-import { qualityCheck } from './quality.js'
+import { evaluateQualitySnapshot } from './quality.js'
 
 export async function dogfoodProject(options: DogfoodOptions = {}): Promise<DogfoodResult> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
@@ -45,8 +45,10 @@ async function promoteDogfoodToEnforce(
   force: boolean,
   adapter: DogfoodOptions['adapter'] = 'cursor',
 ): Promise<DogfoodResult> {
-  const existing = await loadConfigFile(repoRoot, adapter)
-  const quality = await qualityCheck({ targetDir: repoRoot, adapter })
+  let existing = await loadConfigFile(repoRoot, adapter)
+  const evaluation = await evaluateQualitySnapshot({ targetDir: repoRoot, adapter })
+  existing = evaluation.config
+  const quality = evaluation.report
 
   if (!force && !quality.readyForEnforce) {
     return {

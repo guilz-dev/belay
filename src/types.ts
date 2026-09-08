@@ -117,15 +117,15 @@ export interface DogfoodStatus {
   mode: string
   unknownLocalEffect: string
   readyForEnforce: boolean
-  trafficReadyForEnforce?: boolean
+  trafficReadyForEnforce: boolean
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
-  reviewedBenignEvents?: number
-  reviewedBenignBlocked?: number
-  benignBlockRate?: number
-  distinctSessions?: number
-  availabilityAsks?: number
+  reviewedBenignEvents: number
+  reviewedBenignBlocked: number
+  benignBlockRate: number
+  distinctSessions: number
+  availabilityAsks: number
   excludedGateEvents: number
   runtimeBuildStamp?: string
   configFingerprint?: string

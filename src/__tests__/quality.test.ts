@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { formatQualityReport, qualityCheck } from '../commands/quality.js'
+import {
+  formatQualityReport,
+  qualityCheck,
+  resolveDefaultQualityCorpusDir,
+} from '../commands/quality.js'
 import { loadConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
@@ -84,6 +89,28 @@ const passingCorpus = [
 ]
 
 describe('quality loop', () => {
+  it('resolves the packaged corpus identically from source and built command locations', () => {
+    const packageRoot = path.resolve(import.meta.dirname, '../..')
+    const sourceModuleUrl = pathToFileURL(
+      path.join(packageRoot, 'src', 'commands', 'quality.ts'),
+    ).href
+    const builtModuleUrl = pathToFileURL(
+      path.join(packageRoot, 'dist', 'commands', 'quality.js'),
+    ).href
+
+    expect(resolveDefaultQualityCorpusDir(sourceModuleUrl)).toBe(path.join(packageRoot, 'corpus'))
+    expect(resolveDefaultQualityCorpusDir(builtModuleUrl)).toBe(path.join(packageRoot, 'corpus'))
+  })
+
+  it('includes the canonical corpus in the published package files', async () => {
+    const packageRoot = path.resolve(import.meta.dirname, '../..')
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    ) as { files?: string[] }
+
+    expect(packageJson.files).toContain('corpus')
+  })
+
   it('does not use inert override lists as harvest evidence', async () => {
     const repoRoot = path.resolve(import.meta.dirname, '../..')
     const sources = await Promise.all(
@@ -150,6 +177,34 @@ describe('quality loop', () => {
     expect(report.readyForEnforce).toBe(false)
     expect(report.ok).toBe(report.readyForEnforce)
   }, 60_000)
+
+  it('uses the canonical packaged corpus when checking a different target repository', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-cross-repo-'))
+    tempDirs.push(repoRoot)
+    await seedReviewedTraffic(repoRoot)
+
+    const report = await qualityCheck({ targetDir: repoRoot })
+
+    expect(report.corpus.totalCases).toBeGreaterThan(0)
+    expect(report.corpus.passesHardGates).toBe(true)
+    expect(report.trafficReadyForEnforce).toBe(true)
+    expect(report.readyForEnforce).toBe(true)
+  }, 60_000)
+
+  it('fails corpus hard gates for an explicitly empty corpus', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-empty-corpus-'))
+    tempDirs.push(repoRoot)
+    await seedReviewedTraffic(repoRoot)
+    const corpusDir = await writeCorpus(repoRoot, [])
+
+    const report = await qualityCheck({ targetDir: repoRoot, corpusDir })
+
+    expect(report.corpus.totalCases).toBe(0)
+    expect(report.corpus.passesHardGates).toBe(false)
+    expect(report.trafficReadyForEnforce).toBe(true)
+    expect(report.readyForEnforce).toBe(false)
+    expect(report.failedGates).toContain('Corpus cases: 0 (required: at least 1).')
+  })
 
   it('withholds combined readiness when reviewed traffic passes but either corpus hard gate fails', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-corpus-gates-'))

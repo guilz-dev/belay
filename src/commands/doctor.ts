@@ -69,9 +69,8 @@ import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
 import { PACKAGE_VERSION } from '../version.js'
-import { loadAuditRecords } from './audit.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
-import { metricsProject } from './metrics.js'
+import { evaluateQualitySnapshot } from './quality.js'
 
 export interface DoctorProjectReport extends DoctorReport {
   auditStorage: AuditLoadDiagnostics | null
@@ -583,8 +582,11 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   let dogfood = null
   if (loadedConfig) {
-    const auditRecords = await loadAuditRecords(repoRoot)
-    const metrics = await metricsProject({ targetDir: repoRoot })
+    const qualityEvaluation = await evaluateQualitySnapshot(
+      { targetDir: repoRoot, adapter: adapterName },
+      loadedConfig,
+    )
+    const { auditRecords, metrics, report: quality } = qualityEvaluation
     auditStorage = metrics.auditStorage
     const cohortIdentity = metrics.currentCohort.identity
     const cohortAuditRecords = cohortIdentity
@@ -614,14 +616,20 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
       mode: loadedConfig.mode,
       unknownLocalEffect: loadedConfig.policy.unknownLocalEffect,
-      readyForEnforce: metrics.dogfood.readyForEnforce,
+      readyForEnforce: quality.readyForEnforce,
+      trafficReadyForEnforce: quality.trafficReadyForEnforce,
       gateEvents: cohort.gateEvents,
       wouldBlockCount: cohort.wouldBlockCount,
       wouldBlockRate: cohort.wouldBlockRate,
+      reviewedBenignEvents: cohort.reviewedTraffic.reviewedBenignEvents,
+      reviewedBenignBlocked: cohort.reviewedTraffic.reviewedBenignBlocked,
+      benignBlockRate: cohort.reviewedTraffic.benignBlockRate,
+      distinctSessions: cohort.reviewedTraffic.distinctSessions,
+      availabilityAsks: cohort.reviewedTraffic.availabilityAsks,
       excludedGateEvents: cohort.excludedGateEvents,
       runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
       configFingerprint: cohort.identity?.configFingerprint,
-      notes: metrics.dogfood.notes,
+      notes: [...new Set([...metrics.dogfood.notes, ...quality.failedGates])],
     }
 
     if (dogfood.active) {
@@ -631,6 +639,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       notes.push(
         `Host denied after Belay allow (cohort): ${auditVisibility.hostDeniedAfterAllowCount}.`,
       )
+      notes.push(
+        `Dogfood traffic readiness: ${dogfood.trafficReadyForEnforce ? 'ready' : 'not ready'}; combined quality readiness: ${dogfood.readyForEnforce ? 'ready' : 'not ready'}.`,
+      )
+      for (const failure of quality.failedGates) {
+        notes.push(`Enforce readiness: ${failure}`)
+      }
       warnings.push(
         ...(await detectUndogfoodedLinkedWorktrees({
           repoRoot,
@@ -639,7 +653,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         })),
       )
       if (dogfood.readyForEnforce) {
-        notes.push('Dogfood metrics suggest enforce mode is ready (belay dogfood --enforce).')
+        notes.push(
+          'Dogfood combined quality suggests enforce mode is ready (belay dogfood --enforce).',
+        )
       }
     } else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
       notes.push('Fail-closed policy is enabled in enforce mode.')
@@ -943,7 +959,7 @@ export function formatDoctorReport(
   if (report.dogfood) {
     lines.push(
       '',
-      `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | enforce ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
+      `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | traffic ready: ${report.dogfood.trafficReadyForEnforce ? 'yes' : 'no'} | combined quality ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
     )
   }
 

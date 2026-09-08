@@ -9,6 +9,8 @@ import {
   loadRetainedAuditRecords,
   MAX_AUDIT_RECORD_BYTES,
 } from '../core/audit-storage.js'
+import type { AuditRecord } from '../core/audit-types.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import { normalizeAuditConfig } from '../core/config.js'
 import { loadHarvestReviewLedger } from '../core/harvest-review.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
@@ -23,6 +25,11 @@ export type MetricsReport = AuditMetricsReport & {
   auditStorage: AuditLoadDiagnostics
 }
 
+export interface MetricsEvaluationSnapshot {
+  report: MetricsReport
+  auditRecords: AuditRecord[]
+}
+
 function formatFingerprintPreview(fingerprint: string): string {
   if (fingerprint.length <= 12) {
     return fingerprint
@@ -30,9 +37,12 @@ function formatFingerprintPreview(fingerprint: string): string {
   return `${fingerprint.slice(0, 12)}…`
 }
 
-export async function metricsProject(options: MetricsOptions = {}): Promise<MetricsReport> {
+export async function evaluateMetricsSnapshot(
+  options: MetricsOptions = {},
+  evaluatedConfig?: BelayConfigV3,
+): Promise<MetricsEvaluationSnapshot> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot, options.adapter)
+  const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
   const audit = normalizeAuditConfig(config.audit)
   const auditLogPath = path.isAbsolute(audit.logPath)
     ? audit.logPath
@@ -47,15 +57,22 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Metr
   )
   const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
   return {
-    ...computeAuditMetrics(records, {
-      auditLogPath: audit.logPath,
-      mode: config.mode,
-      unknownLocalEffect: config.policy.unknownLocalEffect,
-      activeCohort,
-      reviewLedger,
-    }),
-    auditStorage: diagnostics,
+    report: {
+      ...computeAuditMetrics(records, {
+        auditLogPath: audit.logPath,
+        mode: config.mode,
+        unknownLocalEffect: config.policy.unknownLocalEffect,
+        activeCohort,
+        reviewLedger,
+      }),
+      auditStorage: diagnostics,
+    },
+    auditRecords: records,
   }
+}
+
+export async function metricsProject(options: MetricsOptions = {}): Promise<MetricsReport> {
+  return (await evaluateMetricsSnapshot(options)).report
 }
 
 function formatRecoveryMetricsSection(

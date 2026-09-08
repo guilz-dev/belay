@@ -15,7 +15,6 @@ const ISO8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
 const HEX64_PATTERN = /^[a-f0-9]{64}$/
 const SCRUB_PLACEHOLDERS = new Set(['<timestamp>', '<high-entropy>', '<approval-id>', '<uuid>'])
 const SAFE_SESSION_AUDIT_FIELD_KEYS = new Set([
-  'sessioncorrelationid',
   'judgesessionused',
   'judgesessionreused',
   'judgesessionrefhash',
@@ -185,7 +184,11 @@ function isHostSessionField(key: string): boolean {
 }
 
 function isRawHostSessionField(key: string): boolean {
-  return isHostSessionField(key) && !SAFE_SESSION_AUDIT_FIELD_KEYS.has(normalizedAuditFieldKey(key))
+  return (
+    key !== 'sessionCorrelationId' &&
+    isHostSessionField(key) &&
+    !SAFE_SESSION_AUDIT_FIELD_KEYS.has(normalizedAuditFieldKey(key))
+  )
 }
 
 function isNestedRawHostSessionField(key: string): boolean {

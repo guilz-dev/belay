@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import type { AdapterName } from '../adapters/layouts/index.js'
 import { loadConfigFile } from '../config-io.js'
@@ -7,12 +8,13 @@ import {
   MIN_REVIEWED_BENIGN_EVENTS,
   MIN_REVIEWED_SESSIONS,
 } from '../core/audit-metrics.js'
+import type { AuditRecord } from '../core/audit-types.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import { runCorpusEvaluation } from '../corpus/evaluate.js'
 import { passesHardGates } from '../corpus/gates.js'
 import type { CorpusCategory, CorpusProvenanceCounts } from '../corpus/types.js'
-import { loadAuditRecords } from './audit.js'
 import { harvestReportFromRecords } from './harvest.js'
-import { metricsProject } from './metrics.js'
+import { evaluateMetricsSnapshot, type MetricsReport } from './metrics.js'
 
 export const QUALITY_REPORT_SCHEMA_VERSION = 1
 
@@ -60,21 +62,43 @@ export interface QualityOptions {
   json?: boolean
 }
 
-export async function qualityCheck(options: QualityOptions = {}): Promise<QualityReport> {
+export interface QualityEvaluationSnapshot {
+  report: QualityReport
+  config: BelayConfigV3
+  metrics: MetricsReport
+  auditRecords: AuditRecord[]
+}
+
+export function resolveDefaultQualityCorpusDir(moduleUrl: string | URL = import.meta.url): string {
+  return path.resolve(fileURLToPath(new URL('../../corpus/', moduleUrl)))
+}
+
+export async function evaluateQualitySnapshot(
+  options: QualityOptions = {},
+  evaluatedConfig?: BelayConfigV3,
+): Promise<QualityEvaluationSnapshot> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot, options.adapter)
-  const corpusDir = path.resolve(repoRoot, options.corpusDir ?? 'corpus')
+  const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
+  const corpusDir = options.corpusDir
+    ? path.resolve(repoRoot, options.corpusDir)
+    : resolveDefaultQualityCorpusDir()
 
   const corpusMetrics = await runCorpusEvaluation(corpusDir)
-  const hardGatesOk = passesHardGates(corpusMetrics.gates)
-  const auditRecords = await loadAuditRecords(repoRoot, options.adapter)
-  const metrics = await metricsProject({ targetDir: repoRoot, adapter: options.adapter })
+  const hardGatesOk = corpusMetrics.total > 0 && passesHardGates(corpusMetrics.gates)
+  const metricsSnapshot = await evaluateMetricsSnapshot(
+    { targetDir: repoRoot, adapter: options.adapter },
+    config,
+  )
+  const { auditRecords, report: metrics } = metricsSnapshot
   const harvest = harvestReportFromRecords(auditRecords)
   const cohort = metrics.currentCohort
   const traffic = cohort.reviewedTraffic
   const trafficReadyForEnforce = traffic.ready
   const failedGates: string[] = []
 
+  if (corpusMetrics.total === 0) {
+    failedGates.push('Corpus cases: 0 (required: at least 1).')
+  }
   if (corpusMetrics.gates.mustAsk.mismatches !== 0) {
     failedGates.push(
       `Corpus MUST-ASK misses: ${corpusMetrics.gates.mustAsk.mismatches} (required: 0).`,
@@ -144,7 +168,7 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
     notes.push(`First failed gate: ${failedGates[0]}`)
   }
 
-  return {
+  const report: QualityReport = {
     schemaVersion: QUALITY_REPORT_SCHEMA_VERSION,
     ok: readyForEnforce,
     trafficReadyForEnforce,
@@ -180,6 +204,12 @@ export async function qualityCheck(options: QualityOptions = {}): Promise<Qualit
     },
     notes,
   }
+
+  return { report, config, metrics, auditRecords }
+}
+
+export async function qualityCheck(options: QualityOptions = {}): Promise<QualityReport> {
+  return (await evaluateQualitySnapshot(options)).report
 }
 
 export function formatQualityReport(report: QualityReport): string {

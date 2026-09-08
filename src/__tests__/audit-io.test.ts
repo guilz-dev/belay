@@ -99,6 +99,8 @@ describe('serializeAuditRecordV3', () => {
         timestamp: '2026-08-22T05:00:00.000Z',
         event: 'beforeShellExecution',
         sessionCorrelationId: sessionCorrelationId(rawSessionId),
+        session_correlation_id: 'aaaaaaaaaaaaaaaa',
+        sessioncorrelationid: 'bbbbbbbbbbbbbbbb',
         session_id: rawSessionId,
         sessionId: rawSessionId,
         conversation_id: rawConversationId,
@@ -115,6 +117,8 @@ describe('serializeAuditRecordV3', () => {
           host_session_id: aliasedSessionId,
           conversation_context: { id: contextualConversationId },
           sessionCorrelationId: rawSessionId,
+          session_correlation_id: 'cccccccccccccccc',
+          sessioncorrelationid: 'dddddddddddddddd',
         },
       },
       scrubOptions,
@@ -139,8 +143,22 @@ describe('serializeAuditRecordV3', () => {
       expect(serializedText).not.toContain(rawId)
     }
     expect(serialized).not.toHaveProperty('session_id')
+    expect(serialized).not.toHaveProperty('session_correlation_id')
+    expect(serialized).not.toHaveProperty('sessioncorrelationid')
     expect(serialized).not.toHaveProperty('session')
     expect(serialized).not.toHaveProperty('conversation')
+  })
+
+  it('drops an exact session correlation field unless it is strict lowercase 16-hex', () => {
+    const serialized = serializeAuditRecordV3(
+      {
+        event: 'beforeShellExecution',
+        sessionCorrelationId: 'ABCDEFABCDEFABCD',
+      },
+      scrubOptions,
+    )
+
+    expect(serialized).not.toHaveProperty('sessionCorrelationId')
   })
 
   it('hashes equal host session IDs stably and distinguishes different IDs', () => {

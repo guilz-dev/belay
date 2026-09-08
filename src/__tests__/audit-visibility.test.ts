@@ -532,6 +532,8 @@ describe('audit visibility (T-V1)', () => {
       expect(text).toContain('Containment posture: best-effort')
       expect(text).toContain('enforce (blocked): 1')
       expect(text).toContain('audit (would-block only): 0')
+      expect(text).toContain('Traffic ready for enforce: no')
+      expect(text).toContain('Combined quality ready for enforce: no')
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

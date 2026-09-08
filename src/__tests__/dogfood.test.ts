@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadAuditRecords } from '../commands/audit.js'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
@@ -264,6 +264,42 @@ describe('dogfood command', () => {
     expect(unchanged.mode).toBe('audit')
   })
 
+  it('writes the exact config snapshot evaluated by quality when config changes between loads', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-config-snapshot-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    const evaluatedConfig = await loadConfigFile(repoRoot)
+    const staleConfig = mergeConfig({
+      ...evaluatedConfig,
+      audit: { ...evaluatedConfig.audit, includeAssessment: false },
+    })
+    expect(evaluatedConfig.audit.includeAssessment).toBe(true)
+    expect(staleConfig.audit.includeAssessment).toBe(false)
+
+    vi.resetModules()
+    vi.doMock('../config-io.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../config-io.js')>()
+      const loadConfigSnapshot = vi
+        .fn(async () => evaluatedConfig)
+        .mockResolvedValueOnce(staleConfig)
+      return { ...actual, loadConfigFile: loadConfigSnapshot }
+    })
+
+    try {
+      const { dogfoodProject: dogfoodWithChangingConfig } = await import('../commands/dogfood.js')
+      const result = await dogfoodWithChangingConfig({ targetDir: repoRoot, enforce: true })
+      const persisted = await loadConfigFile(repoRoot)
+
+      expect(result.ok, result.message).toBe(true)
+      expect(persisted.mode).toBe('enforce')
+      expect(persisted.audit.includeAssessment).toBe(true)
+    } finally {
+      vi.doUnmock('../config-io.js')
+      vi.resetModules()
+    }
+  })
+
   it('does not promote from clean events recorded by an older runtime', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-old-runtime-'))
     tempDirs.push(repoRoot)
@@ -365,11 +401,87 @@ describe('dogfood command', () => {
     expect(status.dogfood.distinctSessions).toBe(3)
     expect(status.dogfood.availabilityAsks).toBe(0)
     expect(status.dogfood.trafficReadyForEnforce).toBe(true)
+    expect(status.dogfood.readyForEnforce).toBe(true)
     expect(status.dogfood.excludedGateEvents).toBe(21)
     expect(doctor.dogfood?.gateEvents).toBe(150)
+    expect(doctor.dogfood?.reviewedBenignEvents).toBe(150)
+    expect(doctor.dogfood?.reviewedBenignBlocked).toBe(0)
+    expect(doctor.dogfood?.benignBlockRate).toBe(0)
+    expect(doctor.dogfood?.distinctSessions).toBe(3)
+    expect(doctor.dogfood?.availabilityAsks).toBe(0)
+    expect(doctor.dogfood?.trafficReadyForEnforce).toBe(true)
+    expect(doctor.dogfood?.readyForEnforce).toBe(true)
     expect(doctor.dogfood?.excludedGateEvents).toBe(21)
     expect(doctor.warnings.some((warning) => warning.includes('Silent-pass rate'))).toBe(false)
   })
+
+  it('keeps traffic readiness separate and withholds status/doctor promotion on corpus failure', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-corpus-status-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+
+    vi.resetModules()
+    vi.doMock('../corpus/evaluate.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../corpus/evaluate.js')>()
+      return {
+        ...actual,
+        runCorpusEvaluation: vi.fn(async (corpusDir?: string) => {
+          const metrics = await actual.runCorpusEvaluation(corpusDir)
+          return {
+            ...metrics,
+            gates: {
+              ...metrics.gates,
+              mustAsk: { ...metrics.gates.mustAsk, mismatches: 1 },
+            },
+          }
+        }),
+      }
+    })
+
+    try {
+      const { formatStatusReport, statusProject: statusWithFailingCorpus } = await import(
+        '../commands/status.js'
+      )
+      const { doctorProject: doctorWithFailingCorpus, formatDoctorReport } = await import(
+        '../commands/doctor.js'
+      )
+      const status = await statusWithFailingCorpus({ targetDir: repoRoot })
+      const doctor = await doctorWithFailingCorpus({ targetDir: repoRoot })
+      const statusText = formatStatusReport(status)
+      const doctorText = formatDoctorReport(doctor)
+
+      expect(status.dogfood.trafficReadyForEnforce).toBe(true)
+      expect(status.dogfood.readyForEnforce).toBe(false)
+      expect(status.dogfood.notes).toContain('Corpus MUST-ASK misses: 1 (required: 0).')
+      expect(statusText).toContain('Traffic ready for enforce: yes')
+      expect(statusText).toContain('Combined quality ready for enforce: no')
+      expect(doctor.dogfood?.trafficReadyForEnforce).toBe(true)
+      expect(doctor.dogfood?.readyForEnforce).toBe(false)
+      expect(doctor.notes).toContain('Enforce readiness: Corpus MUST-ASK misses: 1 (required: 0).')
+      expect(doctor.notes.some((note) => note.includes('suggest enforce mode is ready'))).toBe(
+        false,
+      )
+      expect(doctorText).toContain('traffic ready: yes | combined quality ready: no')
+    } finally {
+      vi.doUnmock('../corpus/evaluate.js')
+      vi.resetModules()
+    }
+  }, 60_000)
+
+  it('uses the explicitly selected adapter for doctor readiness evidence', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-readiness-adapter-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'cursor', dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'claude', dogfood: true })
+
+    const report = await doctorProject({ targetDir: repoRoot, adapter: 'cursor' })
+
+    expect(report.dogfood?.gateEvents).toBe(150)
+    expect(report.dogfood?.trafficReadyForEnforce).toBe(true)
+    expect(report.dogfood?.readyForEnforce).toBe(true)
+  }, 60_000)
 })
 
 describe('dogfood release check', () => {
