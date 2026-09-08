@@ -90,6 +90,159 @@ describe('tokenizeShell', () => {
     expect(tokenizeShell('echo hi 12<&-')).toEqual(['echo', 'hi', '12<&-'])
     expect(tokenizeShell('cat < /tmp/in.txt')).toEqual(['cat', '<', '/tmp/in.txt'])
   })
+
+  it('records quoted heredoc delimiter and body boundaries without tokenizing body data', () => {
+    const command = "cat <<'EOF'\ngit push origin main\nEOF"
+    const lexed = lexShell(command)
+    const heredoc = lexed.heredocs[0]
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['cat', '<<', 'EOF', ';'])
+    expect(heredoc).toMatchObject({
+      operator: { value: '<<', start: 4, end: 6 },
+      delimiter: { value: 'EOF', raw: "'EOF'", quoted: true, start: 6, end: 11 },
+      body: { value: 'git push origin main\n', start: 12, end: 33 },
+      terminator: { start: 33, end: 36 },
+      expands: false,
+      complete: true,
+    })
+    expect(command.slice(heredoc?.body.start, heredoc?.body.end)).toBe('git push origin main\n')
+  })
+
+  it('records unquoted heredoc bodies as expansion-capable stdin data', () => {
+    const command = 'cat <<EOF\n$(git status)\nEOF'
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: 'EOF', raw: 'EOF', quoted: false },
+      body: { value: '$(git status)\n' },
+      expands: true,
+      complete: true,
+    })
+  })
+
+  it('collects the body before resuming a trailing pipeline after the terminator', () => {
+    const command = "cat <<'EOF' |\nfixture\nEOF\nwc -c"
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<',
+      'EOF',
+      '|',
+      ';',
+      'wc',
+      '-c',
+    ])
+    expect(lexed.heredocs[0]?.body.value).toBe('fixture\n')
+  })
+
+  it('marks a trailing pipeline without a post-terminator command incomplete', () => {
+    const command = "cat <<'EOF' |\nsh\ngit push origin main\nEOF"
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['cat', '<<', 'EOF', '|', ';'])
+    expect(lexed.heredocs[0]?.body.value).toBe('sh\ngit push origin main\n')
+  })
+
+  it('keeps quoted and embedded hashes while ignoring heredoc syntax in a shell comment', () => {
+    const lexed = lexShell("echo '# <<EOF' foo#bar # <<'FAKE'\ngit status")
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'echo',
+      '# <<EOF',
+      'foo#bar',
+      ';',
+      'git',
+      'status',
+    ])
+  })
+
+  it('recognizes a comment after removing a standalone backslash-newline', () => {
+    const lexed = lexShell("echo ok \\\n# <<'FAKE'\ngit status")
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['echo', 'ok', ';', 'git', 'status'])
+  })
+
+  it('keeps hashes embedded by backslash-newline removal inside their words', () => {
+    const lexed = lexShell('echo foo\\\n#bar "quoted\\\n#hash"')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(['echo', 'foo#bar', 'quoted#hash'])
+  })
+
+  it.each([
+    'cat <<EO\\\nF\ngit push origin main\nEOF',
+    'cat <<\\\n< true\ngit push origin main\ntrue',
+    'cat <\\\n<< true\ngit push origin main\ntrue',
+  ])('leaves executable lines visible when a heredoc header contains a continuation: %j', (command) => {
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual(
+      expect.arrayContaining(['git', 'push', 'origin', 'main']),
+    )
+  })
+
+  it('continues collecting a neighboring ordinary heredoc header', () => {
+    const lexed = lexShell('cat <<EOF\nfixture data\nEOF\ngit status')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toHaveLength(1)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: 'EOF', quoted: false },
+      body: { value: 'fixture data\n' },
+      expands: true,
+      complete: true,
+    })
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<',
+      'EOF',
+      ';',
+      'git',
+      'status',
+    ])
+  })
+
+  it('recognizes a here-string without consuming following lines as a heredoc body', () => {
+    const lexed = lexShell('cat <<< fixture\ngit status')
+
+    expect(lexed.complete).toBe(true)
+    expect(lexed.heredocs).toEqual([])
+    expect(lexed.tokens.map((token) => token.value)).toEqual([
+      'cat',
+      '<<<',
+      'fixture',
+      ';',
+      'git',
+      'status',
+    ])
+    expect(extractRedirectTargets(lexed.tokens.map((token) => token.value))).toEqual([])
+  })
+
+  it.each([
+    "cat <<''",
+    "cat <<''\n",
+  ])('marks an empty quoted delimiter without a following body line incomplete: %j', (command) => {
+    const lexed = lexShell(command)
+
+    expect(lexed.complete).toBe(false)
+    expect(lexed.heredocs[0]).toMatchObject({
+      delimiter: { value: '', raw: "''", quoted: true },
+      body: { value: '' },
+      complete: false,
+    })
+  })
 })
 
 describe('extractRedirectTargets', () => {
@@ -114,6 +267,14 @@ describe('extractRedirectTargets', () => {
     expect(extractRedirectTargets(tokenizeShell('echo hi 12<&1'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('echo hi 12<&-'))).toEqual([])
     expect(extractRedirectTargets(tokenizeShell('cat < /tmp/in.txt'))).toEqual(['/tmp/in.txt'])
+  })
+
+  it('never treats a heredoc marker or delimiter as a filesystem target', () => {
+    const tokens = tokenizeShell("cat <<'EOF'\nfixture\nEOF")
+
+    expect(tokens).toContain('<<')
+    expect(tokens).not.toContain('<')
+    expect(extractRedirectTargets(tokens)).toEqual([])
   })
 })
 

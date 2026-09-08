@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { compactApprovals, createApprovalRecordWithEnvelope } from '../../core/approval.js'
 import {
@@ -19,12 +20,17 @@ import {
   recordApproval,
 } from '../../core/approval-service.js'
 import {
+  type AuditActionSnapshotV2,
   buildAuditActionSnapshot,
   buildAuditReplayContext,
 } from '../../core/audit-replay-context.js'
-import { approvalCorrelationId, toolInvocationCorrelationId } from '../../core/audit-serialize.js'
-import { appendAuditLine } from '../../core/audit-sink.js'
-import { projectObservedAudit } from '../../core/audit-telemetry-projection.js'
+import {
+  appendAuditRecord,
+  approvalCorrelationId,
+  sessionCorrelationId,
+  toolInvocationCorrelationId,
+} from '../../core/audit-serialize.js'
+import type { CompactHostTelemetryV1 } from '../../core/audit-types.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
@@ -68,6 +74,7 @@ import {
   trustedWorkspaceRootsPath,
   validateTrustedWorkspaceRootCandidate,
 } from '../../core/capability/index.js'
+import { normalizeAuditConfig } from '../../core/config.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
 import {
   ContainedDockerBoundaryUnavailableError,
@@ -105,7 +112,6 @@ import {
 import {
   approvalCommandMatch,
   approvedApprovalsFile,
-  auditRetentionFromConfig,
   type BelayConfigV3,
   belayStateDir,
   type ClassifyResult,
@@ -158,6 +164,13 @@ const EMPTY_APPROVALS: ApprovalStateFile = {
 }
 
 const RUNTIME_PROVENANCE_KEY = Symbol.for('agent-belay.runtime-provenance')
+const HOST_SESSION_ID_FIELDS = [
+  'session_id',
+  'sessionId',
+  'conversation_id',
+  'conversationId',
+] as const
+const MAX_HOST_SESSION_ID_BYTES = 1_024
 
 interface RuntimeBuildProvenance {
   runtimeVersion?: unknown
@@ -193,6 +206,36 @@ function extractShellCommandFromPayload(payload: Record<string, unknown>): strin
   }
   const input = toolInput as Record<string, unknown>
   return typeof input.command === 'string' ? input.command : ''
+}
+
+function validHostSessionId(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.trim() !== value ||
+    Buffer.byteLength(value, 'utf8') > MAX_HOST_SESSION_ID_BYTES
+  ) {
+    return false
+  }
+  return ![...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+}
+
+function hostSessionCorrelationId(
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!payload) {
+    return undefined
+  }
+  for (const field of HOST_SESSION_ID_FIELDS) {
+    const value = payload[field]
+    if (validHostSessionId(value)) {
+      return sessionCorrelationId(value)
+    }
+  }
+  return undefined
 }
 
 export interface ApprovalPromptResult {
@@ -289,12 +332,12 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       if (!ctx.config.audit.includeAssessment) {
         delete record.assessment
       }
-      await appendAuditLine({
+      await appendAuditRecord(
         auditPath,
         record,
-        scrubOptions: scrubOptionsFromConfig(ctx.config),
-        retention: auditRetentionFromConfig(ctx.config),
-      })
+        scrubOptionsFromConfig(ctx.config),
+        normalizeAuditConfig(ctx.config.audit),
+      )
     },
     async loadApprovals(ctx, fileName) {
       const repoLocalStateDir = ctx.layout.repoLocalStateDir(ctx.repoRoot)
@@ -688,6 +731,7 @@ function containedAuditBase(
   mode: 'enforce' | 'audit',
   result: ClassifyResult,
   sourceEvent?: string,
+  sessionCorrelation?: string,
 ): Record<string, unknown> {
   const planFields = effectPlanAuditFields(result.effectPlan)
   const rawSourceEvent = sourceEvent ?? gateAuditEventName(kind)
@@ -696,6 +740,7 @@ function containedAuditBase(
     event: auditEvent,
     sourceEvent: rawSourceEvent,
     kind,
+    ...(sessionCorrelation ? { sessionCorrelationId: sessionCorrelation } : {}),
     fingerprint: result.fingerprint,
     mode,
     schemaVersion: result.axes ? 2 : 1,
@@ -716,12 +761,20 @@ async function mediateContainedUnknownExecution(params: {
   command: string
   result: ClassifyResult
   sourceEvent?: string
+  sessionCorrelationId?: string
 }): Promise<GateVerdict | null> {
-  const { ctx, deps, action, command, sourceEvent } = params
+  const {
+    ctx,
+    deps,
+    action,
+    command,
+    sourceEvent,
+    sessionCorrelationId: sessionCorrelation,
+  } = params
   const result = { ...params.result, wouldMediate: true }
   if (ctx.config.mode === 'audit') {
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, result, sourceEvent),
+      ...containedAuditBase(action.kind, ctx.config.mode, result, sourceEvent, sessionCorrelation),
       verdict: result.verdict,
       reason: result.reason,
       wouldBlock: true,
@@ -800,7 +853,13 @@ async function mediateContainedUnknownExecution(params: {
       reason,
     }
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, failedResult, sourceEvent),
+      ...containedAuditBase(
+        action.kind,
+        ctx.config.mode,
+        failedResult,
+        sourceEvent,
+        sessionCorrelation,
+      ),
       verdict: failedResult.verdict,
       reason,
       wouldBlock: true,
@@ -845,7 +904,13 @@ async function mediateContainedUnknownExecution(params: {
     mediatedExecution,
   }
   await deps.appendAudit(ctx, {
-    ...containedAuditBase(action.kind, ctx.config.mode, mediatedResult, sourceEvent),
+    ...containedAuditBase(
+      action.kind,
+      ctx.config.mode,
+      mediatedResult,
+      sourceEvent,
+      sessionCorrelation,
+    ),
     verdict: mediatedResult.verdict,
     reason,
     wouldBlock: false,
@@ -898,6 +963,7 @@ export async function evaluateGatedAction(
     sourceEvent?: string
   },
 ): Promise<GateVerdict> {
+  const sessionCorrelation = hostSessionCorrelationId(params.payload)
   let action: GatedAction
   try {
     action = normalizeGatedAction({
@@ -944,6 +1010,7 @@ export async function evaluateGatedAction(
       event: resolveGateAuditEvent(sourceEvent, params.kind),
       sourceEvent,
       kind: params.kind,
+      ...(sessionCorrelation ? { sessionCorrelationId: sessionCorrelation } : {}),
       ...(typeof params.payload?.tool_use_id === 'string'
         ? { toolInvocationCorrelationId: toolInvocationCorrelationId(params.payload.tool_use_id) }
         : {}),
@@ -1019,6 +1086,7 @@ export async function evaluateGatedAction(
       command: action.command,
       result: predicted,
       sourceEvent: params.sourceEvent,
+      sessionCorrelationId: sessionCorrelation,
     })
     if (mediated) {
       return mediated
@@ -1126,6 +1194,7 @@ export async function evaluateGatedAction(
 
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     sourceEvent: params.sourceEvent,
+    sessionCorrelationId: sessionCorrelation,
     toolInvocationCorrelationId:
       typeof params.payload?.tool_use_id === 'string'
         ? toolInvocationCorrelationId(params.payload.tool_use_id)
@@ -1198,6 +1267,22 @@ async function consumeCapabilityGrantIfUsed(
   return consumed === true
 }
 
+function compactGateAuditSummary(
+  snapshot: AuditActionSnapshotV2 | undefined,
+  fallbackKind: GatedActionKind,
+): string {
+  if (!snapshot) {
+    return fallbackKind
+  }
+  if (snapshot.kind === 'shell') {
+    return snapshot.normalizedAction
+  }
+  if (snapshot.kind === 'tool') {
+    return [snapshot.toolName, snapshot.operation, snapshot.path].filter(Boolean).join(' ')
+  }
+  return `${snapshot.toolName ?? 'subagent'} ${snapshot.summaryHash.slice(0, 12)}`
+}
+
 async function gateDecisionToVerdict(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
@@ -1218,6 +1303,7 @@ async function gateDecisionToVerdict(
     classifierOptions?: ClassifierOptions
     scopeHintPayload?: Record<string, unknown>
     sourceEvent?: string
+    sessionCorrelationId?: string
     toolInvocationCorrelationId?: string
   } = {},
 ): Promise<GateVerdict> {
@@ -1254,11 +1340,14 @@ async function gateDecisionToVerdict(
     sourceEvent,
     kind,
     repoLabel: path.basename(ctx.repoRoot),
+    ...(auditExtras.sessionCorrelationId
+      ? { sessionCorrelationId: auditExtras.sessionCorrelationId }
+      : {}),
     ...(auditExtras.toolInvocationCorrelationId
       ? { toolInvocationCorrelationId: auditExtras.toolInvocationCorrelationId }
       : {}),
     fingerprint: result.fingerprint,
-    summary: result.normalizedCommand ?? result.summary ?? '',
+    summary: compactGateAuditSummary(actionSnapshot, kind),
     assessment: result.assessment,
     predictedAssessment: auditExtras.predictedAssessment,
     observedAssessment: auditExtras.observedAssessment,
@@ -1835,41 +1924,204 @@ export function gateVerdictToCodexUserPromptResponse(
   }
 }
 
+function firstDefinedPayloadValue(
+  payload: Record<string, unknown>,
+  keys: readonly string[],
+): unknown {
+  for (const key of keys) {
+    if (payload[key] !== undefined) {
+      return payload[key]
+    }
+  }
+  return undefined
+}
+
+function auditPayloadByteLength(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value === 'string') {
+    return Buffer.byteLength(value, 'utf8')
+  }
+  try {
+    const serialized = JSON.stringify(value)
+    return serialized === undefined ? undefined : Buffer.byteLength(serialized, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+function normalizedFailureType(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+  return normalized || undefined
+}
+
+const POSIX_USER_HOME_PATTERN =
+  /(?<![A-Za-z0-9:])(?:\/(?:var\/home|Users|home)\/[^/\\\s"'`,;:!?()]+|\/root)(?:\/[^/\\\s"'`,;:!?()]+)*(?:\/)?(?=$|[\s"'`,;:!?()])/g
+const WINDOWS_USER_HOME_PATTERN =
+  /[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`,;:!?()]+(?:[\\/][^\s"'`,;:!?()]+)*/gi
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function configuredHomeRoots(): string[] {
+  const driveHome =
+    process.env.HOMEDRIVE && process.env.HOMEPATH
+      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
+      : undefined
+  const candidates = [process.env.HOME, process.env.USERPROFILE, driveHome, homedir()]
+  return [
+    ...new Set(
+      candidates
+        .filter((candidate): candidate is string => Boolean(candidate?.trim()))
+        .map((candidate) => candidate.trim().replace(/[\\/]+$/, ''))
+        .filter((candidate) => path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)),
+    ),
+  ].sort((left, right) => right.length - left.length)
+}
+
+function scrubAbsoluteHomePaths(value: string): string {
+  let scrubbed = value
+  for (const homeRoot of configuredHomeRoots()) {
+    const pattern = new RegExp(
+      `${escapeRegExp(homeRoot)}(?:[\\\\/][^\\\\/\\s"'\`,;:!?()]+)*(?=$|[\\s"'\`,;:!?()])`,
+      'gi',
+    )
+    scrubbed = scrubbed.replace(pattern, '<home-path>')
+  }
+  return scrubbed
+    .replace(POSIX_USER_HOME_PATTERN, '<home-path>')
+    .replace(WINDOWS_USER_HOME_PATTERN, '<home-path>')
+}
+
+function normalizedFailureMessage(
+  value: unknown,
+  rawToolUseId: string | undefined,
+  ctx: GateRuntimeContext,
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const withoutCorrelationId = rawToolUseId
+    ? value.replaceAll(rawToolUseId, '<tool-use-id>')
+    : value
+  const withoutHomePaths = scrubAbsoluteHomePaths(withoutCorrelationId)
+  const normalized = scrubString(
+    withoutHomePaths.replace(/\s+/g, ' ').trim(),
+    scrubOptionsFromConfig(ctx.config),
+  ).slice(0, 512)
+  return normalized || undefined
+}
+
+function telemetryCwdRelative(
+  repoRoot: string,
+  payload: Record<string, unknown>,
+  actionCwd?: string,
+): string | undefined {
+  const payloadCwd = typeof payload.cwd === 'string' && payload.cwd.trim() ? payload.cwd : undefined
+  const candidate = actionCwd ?? payloadCwd ?? repoRoot
+  const resolved = path.isAbsolute(candidate)
+    ? path.resolve(candidate)
+    : path.resolve(repoRoot, candidate)
+  const relative = path.relative(path.resolve(repoRoot), resolved)
+  if (relative === '') {
+    return '.'
+  }
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return undefined
+  }
+  return relative.split(path.sep).join('/')
+}
+
+function compactHostTelemetry(
+  ctx: GateRuntimeContext,
+  eventName: string,
+  payload: Record<string, unknown>,
+  actionCwd?: string,
+): CompactHostTelemetryV1 {
+  const rawToolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
+  const rawDuration = firstDefinedPayloadValue(payload, ['duration', 'duration_ms', 'durationMs'])
+  const durationMs =
+    typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration >= 0
+      ? Math.round(rawDuration)
+      : undefined
+  const explicitSuccess = firstDefinedPayloadValue(payload, ['success', 'ok'])
+  const isError = firstDefinedPayloadValue(payload, ['is_error', 'isError'])
+  const success =
+    typeof explicitSuccess === 'boolean'
+      ? explicitSuccess
+      : typeof isError === 'boolean'
+        ? !isError
+        : !/(?:failure|error)$/i.test(eventName)
+  const input = firstDefinedPayloadValue(payload, ['tool_input', 'toolInput', 'input', 'arguments'])
+  let output = firstDefinedPayloadValue(payload, [
+    'tool_output',
+    'toolOutput',
+    'tool_response',
+    'toolResponse',
+    'tool_result',
+    'output',
+    'result',
+  ])
+  if (output === undefined && (payload.stdout !== undefined || payload.stderr !== undefined)) {
+    output = { stdout: payload.stdout, stderr: payload.stderr }
+  }
+  const failureType = normalizedFailureType(
+    success === false
+      ? firstDefinedPayloadValue(payload, [
+          'failure_type',
+          'failureType',
+          'error_type',
+          'errorType',
+        ])
+      : undefined,
+  )
+  const errorValue =
+    success === false
+      ? firstDefinedPayloadValue(payload, ['error_message', 'errorMessage', 'message', 'error'])
+      : undefined
+  const toolName = firstDefinedPayloadValue(payload, ['tool_name', 'toolName'])
+  const cwdRelative = telemetryCwdRelative(ctx.repoRoot, payload, actionCwd)
+  const inputBytes = auditPayloadByteLength(input)
+  const outputBytes = auditPayloadByteLength(output)
+  const errorMessage = normalizedFailureMessage(errorValue, rawToolUseId, ctx)
+
+  return {
+    schemaVersion: 1,
+    event: eventName,
+    ...(typeof toolName === 'string' && toolName.trim()
+      ? { toolName: toolName.trim().slice(0, 128) }
+      : {}),
+    success,
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(cwdRelative !== undefined ? { cwdRelative } : {}),
+    ...(inputBytes !== undefined ? { inputBytes } : {}),
+    ...(outputBytes !== undefined ? { outputBytes } : {}),
+    ...(failureType ? { failureType } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+    ...(rawToolUseId
+      ? { toolInvocationCorrelationId: toolInvocationCorrelationId(rawToolUseId) }
+      : {}),
+  }
+}
+
 export async function appendObservedAudit(
   ctx: GateRuntimeContext,
   deps: GateRuntimeDeps,
   eventName: string,
   payload: Record<string, unknown>,
+  actionCwd?: string,
 ): Promise<void> {
-  const rawToolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
-  const scrubOptions = scrubOptionsFromConfig(ctx.config)
-  const projection = projectObservedAudit(payload, eventName, ctx.repoRoot, scrubOptions)
-  await deps.appendAudit(ctx, {
-    event: eventName,
-    kind: 'audit',
-    verdict: 'allow',
-    reason: 'observed',
-    ...(rawToolUseId
-      ? { toolInvocationCorrelationId: toolInvocationCorrelationId(rawToolUseId) }
-      : {}),
-    ...(typeof payload.tool_name === 'string' ? { toolName: payload.tool_name } : {}),
-    ...(typeof payload.failure_type === 'string' ? { failureType: payload.failure_type } : {}),
-    ...(typeof payload.error_message === 'string'
-      ? {
-          errorMessage:
-            rawToolUseId !== undefined
-              ? payload.error_message.replaceAll(rawToolUseId, '<tool-use-id>')
-              : payload.error_message,
-        }
-      : {}),
-    ...(typeof payload.duration === 'number' ? { durationMs: payload.duration } : {}),
-    ...(typeof payload.is_interrupt === 'boolean' ? { isInterrupt: payload.is_interrupt } : {}),
-    observedInputBytes: projection.observedInputBytes,
-    observedOutputBytes: projection.observedOutputBytes,
-    observedPayloadHash: projection.observedPayloadHash,
-    ...(projection.observedCwd ? { observedCwd: projection.observedCwd } : {}),
-    summary: projection.summary,
-  })
+  await deps.appendAudit(ctx, { ...compactHostTelemetry(ctx, eventName, payload, actionCwd) })
 }
 
 export { GateNormalizationError }

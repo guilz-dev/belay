@@ -42,6 +42,7 @@
   },
   "files": [
     "dist",
+    "corpus",
     "skills",
     "README.md",
     "LICENSE",

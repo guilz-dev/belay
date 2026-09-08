@@ -10,7 +10,11 @@ export function innerRecipeFromArgvDelegate(peel: ArgvDelegatePeelResult): strin
   if (peel.opaque || peel.innerTokens.length === 0) {
     return null
   }
-  return peel.innerTokens.join(' ')
+  return peel.innerTokens.map(quoteArgvToken).join(' ')
+}
+
+function quoteArgvToken(token: string): string {
+  return `'${token.replaceAll("'", `'"'"'`)}'`
 }
 
 export function peelArgvDelegateArgv(tokens: string[]): ArgvDelegatePeelResult | null {

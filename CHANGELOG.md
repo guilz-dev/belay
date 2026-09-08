@@ -8,21 +8,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **Bounded audit storage (Phase C)** — Observed post-tool telemetry is stored as compact
-  projections (`observedInputBytes`, `observedPayloadHash`, human-readable summaries) instead of
-  full host payloads. Gate tool/subagent summaries omit large `tool_input` bodies. Audit logs rotate
-  at `audit.retention.maxBytes` (default 32 MiB) with `audit.retention.maxFiles` (default 5).
-  `belay metrics`, `audit`, and `doctor` read rotated files via streaming.
+- **Reviewed dogfood evidence** — `harvest list` now defaults to the active runtime/config/boundary
+  cohort, and an append-only review ledger records the latest outcome for each exact candidate.
+  Session-correlated reviewed traffic and corpus hard gates are combined before any enforce
+  recommendation: at least 150 reviewed provably-benign events across three sessions, a benign
+  block rate below 2%, zero availability asks, and zero hard-gate mismatches.
+- **Compact, bounded audit retention** — Compact v2 action/replay snapshots and post-tool telemetry
+  omit raw payload and session identifiers while retaining one-way correlations. Locked rotation
+  defaults to 32 MiB and five files including the active file, and audit consumers stream retained
+  generations oldest-to-active with malformed/oversized-line diagnostics. A minimal cohort-scoped
+  availability watermark remains outside numbered retention, and readers use a fixed file-handle
+  snapshot so rotation cannot erase a blocker or skip a generation during readiness evaluation.
+- **Packaged canonical corpus** — Published packages include the canonical corpus used by
+  `quality --target` by default; a target-local corpus is used only when explicitly selected with
+  `--corpus`.
 
 ### Changed
 
-- **Cohort-correct harvest** — `belay harvest list` now reviews only the active runtime/config
-  cohort by default; explicit historical review remains available through `--all-cohorts`.
-- **Dogfood multi-target upgrades** — Operator guidance now requires one host shell invocation per
-  repository or linked worktree, with that target supplied as the host working directory.
+- **Bounded shell classification** — Complete bounded argv delegates, read-only Git revision
+  ranges, and non-executable heredoc/Make control syntax are classified structurally. Executable
+  heredocs, opaque input syntax, and unresolved Make options continue to fail closed.
+- **Target-scoped dogfood rollout** — Upgrade and readiness collection guidance now requires a
+  separate host action per active target, with matching literal `working_directory` and `--target`,
+  one shared release cutoff, cohort/storage diagnostics, and reviewed-traffic evidence.
 
 ### Fixed
 
+- **Trusted-cwd cause reporting** — Missing host action cwd is distinguished from a dynamic shell
+  transition whose destination cannot be resolved, so availability incidents and classifier
+  uncertainty are counted under their actual causes.
 - **Audit rotation edge cases** — Rotation now checks the incoming serialized record, safely
   serializes concurrent writers without reclaiming a live lock, prunes excess generations when
   `maxFiles` is reduced, and keeps existing generations readable when rotation is disabled.

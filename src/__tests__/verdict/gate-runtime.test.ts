@@ -287,7 +287,7 @@ describe('gate-runtime integration', () => {
     expect(verdict.axes?.would).toBe('ask')
     expect(auditEvents[0]?.effect).toBeDefined()
     const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
-    expect(snapshot?.schemaVersion).toBe(1)
+    expect(snapshot?.schemaVersion).toBe(2)
     expect(snapshot?.kind).toBe('shell')
     expect(snapshot?.cwd).toBe(repoRoot)
     expect(snapshot?.normalizedAction).toBeTruthy()

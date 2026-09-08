@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { configPathFor, loadConfigFile } from '../config-io.js'
 import {
-  DEFAULT_AUDIT_RETENTION,
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
   isFreshConfigInput,
@@ -13,45 +17,156 @@ import {
   normalizeConfig,
   resolveControlPlaneDir,
 } from '../core/config.js'
+import { hashDecisionConfig } from '../core/decision-config-fingerprint.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
 describe('config migration', () => {
-  it('defaults and normalizes bounded audit retention', () => {
-    expect(DEFAULT_CONFIG_V3.audit.retention).toEqual(DEFAULT_AUDIT_RETENTION)
+  it('preserves legacy nested audit retention values while loading a config file', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-config-legacy-audit-'))
+    tempDirs.push(repoRoot)
+    const configPath = configPathFor(repoRoot, 'cursor')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        version: 4,
+        audit: { retention: { maxBytes: 4_096, maxFiles: 2 } },
+      })}\n`,
+      'utf8',
+    )
 
-    const normalized = mergeConfig({
-      audit: {
-        retention: {
-          maxBytes: 1024.9,
-          maxFiles: 3.9,
-        },
-      },
-    })
-    expect(normalized.audit.retention).toEqual({ maxBytes: 1024, maxFiles: 3 })
+    const loaded = await loadConfigFile(repoRoot, 'cursor')
 
-    const invalid = normalizeConfig({
-      ...DEFAULT_CONFIG_V3,
-      audit: {
-        ...DEFAULT_CONFIG_V3.audit,
-        retention: {
-          maxBytes: Number.NaN,
-          maxFiles: -1,
-        },
-      },
-    })
-    expect(invalid.audit.retention).toEqual(DEFAULT_AUDIT_RETENTION)
+    expect(loaded.audit.maxBytes).toBe(4_096)
+    expect(loaded.audit.maxFiles).toBe(2)
   })
 
-  it('preserves audit retention while migrating v2 config', () => {
-    const migrated = migrateConfig({
-      version: 2,
+  it('keeps canonical flat audit bounds authoritative over conflicting legacy values', () => {
+    const normalized = mergeConfig({
       audit: {
-        logPath: 'custom.ndjson',
-        includeAssessment: false,
-        retention: { maxBytes: 4096, maxFiles: 2 },
+        maxBytes: 8_192,
+        maxFiles: 4,
+        retention: { maxBytes: 4_096, maxFiles: 2 },
       },
     })
 
-    expect(migrated.audit.retention).toEqual({ maxBytes: 4096, maxFiles: 2 })
+    expect(normalized.audit.maxBytes).toBe(8_192)
+    expect(normalized.audit.maxFiles).toBe(4)
+    expect(normalized.audit.retention).toBeUndefined()
+  })
+
+  it.each([
+    {
+      name: 'flat maxBytes with nested maxFiles',
+      audit: { maxBytes: 8_192, retention: { maxBytes: 4_096, maxFiles: 2 } },
+      expected: { maxBytes: 8_192, maxFiles: 2, retention: undefined },
+    },
+    {
+      name: 'nested maxBytes with flat maxFiles',
+      audit: { maxFiles: 4, retention: { maxBytes: 4_096, maxFiles: 2 } },
+      expected: { maxBytes: 4_096, maxFiles: 4, retention: undefined },
+    },
+    {
+      name: 'flat maxBytes with a selected nested zero maxFiles',
+      audit: { maxBytes: 8_192, retention: { maxBytes: 0, maxFiles: 0 } },
+      expected: {
+        maxBytes: 8_192,
+        maxFiles: 5,
+        retention: { maxBytes: 8_192, maxFiles: 0 },
+      },
+    },
+    {
+      name: 'selected nested zero maxBytes with flat maxFiles',
+      audit: { maxFiles: 4, retention: { maxBytes: 0, maxFiles: 0 } },
+      expected: {
+        maxBytes: 33_554_432,
+        maxFiles: 4,
+        retention: { maxBytes: 0, maxFiles: 4 },
+      },
+    },
+  ])('selects each audit bound field-wise for $name', ({ audit, expected }) => {
+    const normalized = mergeConfig({ audit })
+
+    expect(normalized.audit).toMatchObject({
+      maxBytes: expected.maxBytes,
+      maxFiles: expected.maxFiles,
+    })
+    expect(normalized.audit.retention).toEqual(expected.retention)
+  })
+
+  it('normalizes missing audit bounds to 32 MiB and five retained files', () => {
+    const normalized = mergeConfig({})
+
+    expect(normalized.audit.maxBytes).toBe(33_554_432)
+    expect(normalized.audit.maxFiles).toBe(5)
+  })
+
+  it('floors positive audit bounds and defaults non-finite or non-positive values', () => {
+    const fractional = mergeConfig({ audit: { maxBytes: 4_096.9, maxFiles: 3.8 } })
+    expect(fractional.audit.maxBytes).toBe(4_096)
+    expect(fractional.audit.maxFiles).toBe(3)
+
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const normalized = mergeConfig({ audit: { maxBytes: invalid, maxFiles: invalid } })
+      expect(normalized.audit.maxBytes).toBe(33_554_432)
+      expect(normalized.audit.maxFiles).toBe(5)
+    }
+  })
+
+  it('keeps audit maxFiles within the bounded 1 through 100 range', () => {
+    expect(mergeConfig({ audit: { maxFiles: 99.9 } }).audit.maxFiles).toBe(99)
+    expect(mergeConfig({ audit: { maxFiles: 100 } }).audit.maxFiles).toBe(100)
+
+    for (const invalid of [
+      100.000_001,
+      101,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(mergeConfig({ audit: { maxFiles: invalid } }).audit.maxFiles).toBe(5)
+    }
+  })
+
+  it.each([
+    { storedVersion: 1, normalizedVersion: 4 },
+    { storedVersion: 2, normalizedVersion: 4 },
+    { storedVersion: 3, normalizedVersion: 4 },
+    { storedVersion: 4, normalizedVersion: 4 },
+    { storedVersion: 5, normalizedVersion: 5 },
+  ])('adds audit bounds to stored v$storedVersion without changing its version contract', ({
+    storedVersion,
+    normalizedVersion,
+  }) => {
+    const stored = {
+      version: storedVersion,
+      audit: { logPath: '.cursor/belay/audit.ndjson', includeAssessment: false },
+    }
+    const before = structuredClone(stored)
+
+    const migrated = migrateConfig(stored)
+
+    expect(migrated.version).toBe(normalizedVersion)
+    expect(migrated.audit).toMatchObject({
+      logPath: '.cursor/belay/audit.ndjson',
+      maxBytes: 33_554_432,
+      maxFiles: 5,
+    })
+    expect(stored).toEqual(before)
+  })
+
+  it('keeps decisionConfigFingerprint stable when only audit bounds change', () => {
+    const baseline = mergeConfig({ audit: { maxBytes: 1_024, maxFiles: 2 } })
+    const resized = mergeConfig({
+      ...baseline,
+      audit: { ...baseline.audit, maxBytes: 2_048, maxFiles: 9 },
+    })
+
+    expect(hashDecisionConfig(resized)).toBe(hashDecisionConfig(baseline))
   })
 
   it('migrates v1 config to v3 with new gate and section defaults', () => {

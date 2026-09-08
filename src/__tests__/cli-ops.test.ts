@@ -3,7 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { formatCliHelp, parseArgs } from '../cli.js'
 import { explainCommand } from '../commands/explain.js'
+import { formatHarvestReport } from '../commands/harvest.js'
 import { revokeApproval } from '../commands/revoke.js'
 import { statusProject } from '../commands/status.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
@@ -155,5 +157,51 @@ describe('v0.2 operational commands', () => {
 
     const after = await statusProject({ targetDir: repoRoot })
     expect(after.pending).toHaveLength(0)
+  })
+
+  it('warns that all-cohorts harvest output is forensic evidence only', () => {
+    const output = formatHarvestReport({
+      schemaVersion: 2,
+      scope: 'shell',
+      cohort: null,
+      matchingGateEvents: 0,
+      excludedGateEvents: 0,
+      candidates: [],
+      availabilityQueue: [],
+      notes: ['Mixed-history forensic mode: do not bulk-promote candidates.'],
+    })
+
+    expect(output).toMatch(/mixed-history.*do not bulk-promote/i)
+    expect(output).toContain('--include-reviewed')
+    expect(output).toContain('must-ask')
+  })
+
+  it('parses, documents, and validates the harvest apply fingerprint discriminator', () => {
+    const fingerprint = 'a'.repeat(64)
+    const parsed = parseArgs([
+      'harvest',
+      'apply',
+      '--command',
+      'git diff --stat',
+      '--outcome',
+      'reject',
+      '--fingerprint',
+      fingerprint,
+    ])
+
+    expect(parsed.options.fingerprint).toBe(fingerprint)
+    expect(formatCliHelp()).toContain('harvest apply --command "<text>" [--fingerprint <64-hex>]')
+    expect(() =>
+      parseArgs([
+        'harvest',
+        'apply',
+        '--command',
+        'git diff --stat',
+        '--outcome',
+        'reject',
+        '--fingerprint',
+        'not-a-fingerprint',
+      ]),
+    ).toThrow(/--fingerprint.*64-hex/i)
   })
 })

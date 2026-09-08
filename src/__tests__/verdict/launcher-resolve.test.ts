@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -105,6 +105,222 @@ describe('launcher-resolve', () => {
       depth: 0,
     })
     expect(resolution?.recipes).toEqual(['tsc -p tsconfig.json', 'curl https://evil.example'])
+  })
+
+  it('normalizes deterministic Make prefixes, continuations, and control builtins', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-controls-'))
+    tempDirs.push(dir)
+    await writeFile(
+      path.join(dir, 'Makefile'),
+      [
+        'safe:',
+        '\t@printf "%s" first \\',
+        '\t  second',
+        '\t-set -e',
+        '\t+exit 0',
+        '\twait',
+        '',
+      ].join('\n'),
+    )
+
+    const resolution = resolveLauncherRecipe({
+      tokens: ['make', 'safe'],
+      cwd: dir,
+      repoRoot: dir,
+      depth: 0,
+    })
+
+    expect(resolution).toEqual({
+      recipes: ['printf "%s" first second', 'set -e', 'exit 0', 'wait'],
+      opaque: false,
+      reason: 'make_recipe_resolved',
+    })
+
+    const result = await verdict('make safe', { ...ctx, cwd: dir, repoRoot: dir })
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+  })
+
+  it.each([
+    { target: 'background', recipe: '(git status) &' },
+    { target: 'dynamic-wait', recipe: 'wait $!' },
+    { target: 'dynamic-pid', recipe: 'wait $$CHILD_PID' },
+    { target: 'dynamic-exit', recipe: 'exit $$status' },
+  ])('keeps $target Make control flow approval-required', async ({ target, recipe }) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), `belay-make-${target}-`))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), `${target}:\n\t${recipe}\n`)
+
+    const result = await verdict(`make ${target}`, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+  })
+
+  it('keeps literal stdin inert when Make resolves a target from the default disk Makefile', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-default-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict("make safe <<'EOF'\nfixture data\nEOF", {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+  })
+
+  it.each([
+    'make -f - safe',
+    'make -f- safe',
+    'make -sf- safe',
+    'make -ksf- safe',
+    'make -sf - safe',
+    'make --file=- safe',
+    'make --makefile - safe',
+    'make -f/dev/stdin safe',
+    'make -sf/dev/stdin safe',
+    'make --file=/dev/stdin safe',
+    'make --makefile=/dev/stdin safe',
+    'make --file /dev/stdin safe',
+    'make --makefile /dev/stdin safe',
+    'make -f/dev/fd/0 safe',
+    'make -sf/dev/fd/0 safe',
+    'make --file=/proc/self/fd/0 safe',
+    'make --makefile /proc/self/fd/0 safe',
+    'make -f/dev/null safe',
+    'make -sfmissing.mk safe',
+    'make --file missing.mk safe',
+    'make --makefile=. safe',
+  ])('keeps a non-disk Makefile source approval-required: %s', async (invocation) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-stdin-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(`${invocation} <<'EOF'\nsafe:\n\tgit push origin main\nEOF`, {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
+  })
+
+  it('treats the dash Makefile sentinel as stdin even when a disk file is named dash', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-dash-sentinel-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, '-'), 'safe:\n\tgit status\n')
+
+    const result = await verdict("make -f - safe <<'EOF'\nsafe:\n\tgit push origin main\nEOF", {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
+  })
+
+  it('keeps an unreadable explicit Makefile approval-required without using the default', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-unreadable-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+    const unreadable = path.join(dir, 'Unreadable.mk')
+    await writeFile(unreadable, 'safe:\n\tgit status\n')
+    await chmod(unreadable, 0o000)
+
+    const result = await verdict('make -f Unreadable.mk safe', {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.makefile_source_opaque')
+  })
+
+  it.each([
+    "make --fil=/dev/fd/0 safe <<'EOF'\nsafe:\n\tgit push origin main\nEOF",
+    'make --fil=Rules.mk safe',
+    'make --makef=Rules.mk safe',
+  ])('keeps an abbreviated Makefile option approval-required: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-abbreviated-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+    await writeFile(path.join(dir, 'Rules.mk'), 'safe:\n\tgit push origin main\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
+    'make --future-option safe',
+    'make -Z safe',
+  ])('keeps an unknown Make option approval-required: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-unknown-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('ask')
+    expect(result.effectPlan?.completeness).toBe('partial')
+    expect(result.signals).toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
+    'make --silent safe',
+    'make -s safe',
+  ])('continues resolving a proven safe Make option: %s', async (command) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-safe-option-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(command, { ...ctx, cwd: dir, repoRoot: dir })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+    expect(result.signals).not.toContain('launcher.make_option_opaque')
+  })
+
+  it.each([
+    'make -f Rules.mk safe',
+    'make -fRules.mk safe',
+    'make -sf Rules.mk safe',
+    'make -sfRules.mk safe',
+    'make --file Rules.mk safe',
+    'make --file=Rules.mk safe',
+    'make --makefile Rules.mk safe',
+    'make --makefile=Rules.mk safe',
+    'make --silent --file=Rules.mk safe',
+  ])('continues resolving an explicit disk Makefile: %s', async (invocation) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-make-disk-file-'))
+    tempDirs.push(dir)
+    await writeFile(path.join(dir, 'Makefile'), 'safe:\n\tgit push origin main\n')
+    await writeFile(path.join(dir, 'Rules.mk'), 'safe:\n\tgit status\n')
+
+    const result = await verdict(`${invocation} <<'EOF'\nfixture data\nEOF`, {
+      ...ctx,
+      cwd: dir,
+      repoRoot: dir,
+    })
+
+    expect(result.permission).toBe('allow')
+    expect(result.effectPlan?.completeness).toBe('complete')
+    expect(result.signals).toContain('git.status')
+    expect(result.signals).not.toContain('git.push')
+    expect(result.signals).not.toContain('launcher.makefile_source_opaque')
   })
 
   it('includes .PHONY underscore prerequisite recipes before the requested target', async () => {

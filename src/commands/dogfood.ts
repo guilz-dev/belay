@@ -4,7 +4,7 @@ import { configPathFor, loadConfigFile, writeTrustedConfigFile } from '../config
 import { mergeConfig } from '../core/config.js'
 import { isDogfoodConfig, loadOperationalInsights } from '../operational-insights.js'
 import type { DogfoodOptions, DogfoodResult } from '../types.js'
-import { metricsProject } from './metrics.js'
+import { evaluateQualitySnapshot } from './quality.js'
 
 export async function dogfoodProject(options: DogfoodOptions = {}): Promise<DogfoodResult> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
@@ -45,10 +45,12 @@ async function promoteDogfoodToEnforce(
   force: boolean,
   adapter: DogfoodOptions['adapter'] = 'cursor',
 ): Promise<DogfoodResult> {
-  const existing = await loadConfigFile(repoRoot, adapter)
-  const metrics = await metricsProject({ targetDir: repoRoot })
+  let existing = await loadConfigFile(repoRoot, adapter)
+  const evaluation = await evaluateQualitySnapshot({ targetDir: repoRoot, adapter })
+  existing = evaluation.config
+  const quality = evaluation.report
 
-  if (!force && !metrics.dogfood.readyForEnforce) {
+  if (!force && !quality.readyForEnforce) {
     return {
       ok: false,
       repoRoot,
@@ -56,9 +58,9 @@ async function promoteDogfoodToEnforce(
       mode: existing.mode,
       unknownLocalEffect: existing.policy.unknownLocalEffect,
       message: [
-        'Dogfood metrics do not recommend enforce yet.',
-        ...metrics.dogfood.notes,
-        'Re-run belay metrics, correct EffectPlan semantics or resource scope, or pass --force to override.',
+        'Dogfood combined quality readiness failed.',
+        ...quality.failedGates,
+        'Re-run belay quality, correct EffectPlan semantics or resource scope, or pass --force to override.',
       ].join(' '),
     }
   }
@@ -76,8 +78,14 @@ async function promoteDogfoodToEnforce(
     mode: updated.mode,
     unknownLocalEffect: updated.policy.unknownLocalEffect,
     message: force
-      ? 'Switched to enforce mode (forced). Fail-closed shell policy remains active via policy.unknownLocalEffect deny.'
-      : 'Switched to enforce mode. Fail-closed shell policy remains active via policy.unknownLocalEffect deny.',
+      ? [
+          'Explicit --force override used.',
+          ...(quality.readyForEnforce
+            ? []
+            : ['Dogfood combined quality readiness failed.', ...quality.failedGates]),
+          'Switched to enforce mode. Fail-closed shell policy remains active via policy.unknownLocalEffect deny.',
+        ].join(' ')
+      : 'Switched to enforce mode after combined quality readiness passed. Fail-closed shell policy remains active via policy.unknownLocalEffect deny.',
   }
 }
 

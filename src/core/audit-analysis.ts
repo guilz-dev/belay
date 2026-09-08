@@ -2,12 +2,13 @@ import { auditFingerprint, inferWouldBlock, isGateRecord, parseTimestamp } from 
 import type {
   ApprovalRoundTrip,
   AuditRecord,
-  AvailabilityAskCounts,
   BypassAttempt,
   NoisyRuleCandidate,
   ReasonApprovalRatio,
   RepeatedFingerprintAsk,
 } from './audit-types.js'
+
+export { computeAvailabilityAskCounts, isAvailabilityCausedAsk } from './audit-availability.js'
 
 const WRAPPER_TERMS = ['bash -c', 'sh -c', 'eval ', 'source ', 'node -e', '| bash', '| sh']
 
@@ -234,59 +235,6 @@ export function computeApprovalRatioByReason(
       }
     })
     .sort((left, right) => right.wouldBlockCount - left.wouldBlockCount)
-}
-
-function judgeFallbackReason(record: AuditRecord): string {
-  return typeof record.judgeFallbackReason === 'string' ? record.judgeFallbackReason : ''
-}
-
-function isJudgeTimeoutFallback(fallback: string): boolean {
-  return fallback.includes('timeout')
-}
-
-export function isAvailabilityCausedAsk(record: AuditRecord): boolean {
-  if (!isGateRecord(record) || !inferWouldBlock(record)) {
-    return false
-  }
-  if (record.reason === 'missing_trusted_cwd') {
-    return true
-  }
-  return judgeFallbackReason(record).length > 0
-}
-
-export function computeAvailabilityAskCounts(records: AuditRecord[]): AvailabilityAskCounts {
-  const counts: AvailabilityAskCounts = {
-    total: 0,
-    missingTrustedCwd: 0,
-    judgeTimeout: 0,
-    judgeFallback: 0,
-  }
-
-  for (const record of records) {
-    if (!isGateRecord(record) || !inferWouldBlock(record)) {
-      continue
-    }
-
-    if (record.reason === 'missing_trusted_cwd') {
-      counts.missingTrustedCwd += 1
-      counts.total += 1
-      continue
-    }
-
-    const fallback = judgeFallbackReason(record)
-    if (!fallback) {
-      continue
-    }
-
-    if (isJudgeTimeoutFallback(fallback)) {
-      counts.judgeTimeout += 1
-    } else {
-      counts.judgeFallback += 1
-    }
-    counts.total += 1
-  }
-
-  return counts
 }
 
 export function computeRepeatedFingerprintAsks(

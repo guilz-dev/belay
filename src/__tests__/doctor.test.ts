@@ -6,7 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { doctorProject } from '../commands/doctor.js'
+import { doctorProject, formatDoctorReport } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
 import { pendingApprovalsPath, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
@@ -693,6 +693,51 @@ describe('doctorProject', () => {
     expect(
       report.notes.some((note) => note.includes('Host denied after Belay allow (cohort):')),
     ).toBe(true)
+  })
+
+  it('exposes retained audit diagnostics without echoing invalid line contents', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-audit-storage-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    const rotationMaxBytes = 256
+    await writeTrustedConfigFile(repoRoot, {
+      ...config,
+      audit: { ...config.audit, maxBytes: rotationMaxBytes, maxFiles: 2 },
+    })
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const generation = `${JSON.stringify({ event: 'beforeShellExecution', verdict: 'allow' })}\n`
+    const malformed = '{"private-doctor-malformed":'
+    const aboveRotationThreshold = JSON.stringify({
+      event: 'beforeShellExecution',
+      verdict: 'deny_pending_approval',
+      summary: 'private-doctor-valid-record',
+      padding: 'x'.repeat(300),
+    })
+    expect(Buffer.byteLength(`${aboveRotationThreshold}\n`, 'utf8')).toBeGreaterThan(
+      rotationMaxBytes,
+    )
+    const active = `${malformed}\n${aboveRotationThreshold}\n`
+    await writeFile(`${auditPath}.1`, generation, 'utf8')
+    await writeFile(auditPath, active, 'utf8')
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    const formatted = formatDoctorReport(report)
+
+    expect(report.auditStorage).toEqual({
+      filesRead: 2,
+      bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
+      parsedRecords: 2,
+      malformedLines: 1,
+      oversizedLines: 0,
+    })
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- files read: 2')
+    expect(formatted).toContain('- malformed lines skipped: 1')
+    expect(formatted).toContain('- oversized lines skipped: 0')
+    expect(formatted).not.toContain('private-doctor-malformed')
+    expect(formatted).not.toContain('private-doctor-valid-record')
   })
 
   it('warns when linked worktrees are not dogfooded while dogfood is active here', async () => {

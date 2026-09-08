@@ -357,7 +357,7 @@ export async function handleAuditHook(eventName: string, payload: Record<string,
 
     const ctx = await loadRuntimeContext(resolution.cwd)
     const deps = createDefaultGateRuntimeDeps()
-    await appendObservedAudit(ctx, deps, eventName, payload)
+    await appendObservedAudit(ctx, deps, eventName, payload, resolution.cwd)
     return {}
   } catch (error) {
     console.error(

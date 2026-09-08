@@ -11,12 +11,15 @@ import {
   parseTimestamp,
 } from './audit-query.js'
 import type { AuditRecord } from './audit-types.js'
+import type { HarvestReviewOutcome } from './harvest-review.js'
 
-export const HARVEST_REPORT_SCHEMA_VERSION = 1
+export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
 export type HarvestCandidateSource = 'deny_then_approve' | 'repeated_ask' | 'read_style_signal'
 
-export type HarvestReviewOutcome = 'provably-benign' | 'accepted-benign' | 'reject'
+export type { HarvestReviewOutcome } from './harvest-review.js'
+
+export const HARVEST_SOURCE_BATCH_ID = 'belay-2026-09-07'
 
 export interface HarvestCandidate {
   kind: 'shell'
@@ -28,7 +31,11 @@ export interface HarvestCandidate {
   approvedAfterDeny: boolean
 }
 
-export type AvailabilitySignal = 'missing_trusted_cwd' | 'judge_timeout' | 'judge_fallback'
+export type AvailabilitySignal =
+  | 'missing_trusted_cwd'
+  | 'dynamic_cwd_transition'
+  | 'judge_timeout'
+  | 'judge_fallback'
 
 export interface AvailabilityQueueItem {
   kind: 'shell'
@@ -44,15 +51,17 @@ export interface HarvestReport {
   schemaVersion: typeof HARVEST_REPORT_SCHEMA_VERSION
   /** Initial harvest scope — shell audit traces only. */
   scope: 'shell'
-  cohortScope: 'active' | 'all'
-  excludedRecords: number
+  cohort: AuditCohortIdentity | null
+  matchingGateEvents: number
+  excludedGateEvents: number
   candidates: HarvestCandidate[]
   availabilityQueue: AvailabilityQueueItem[]
+  notes: string[]
 }
 
 export interface HarvestCohortSelection {
   records: AuditRecord[]
-  cohortScope: HarvestReport['cohortScope']
+  cohortScope: 'active' | 'all'
   excludedRecords: number
 }
 
@@ -87,6 +96,9 @@ function availabilitySignal(record: AuditRecord): AvailabilitySignal | null {
   }
   if (record.reason === 'missing_trusted_cwd') {
     return 'missing_trusted_cwd'
+  }
+  if (record.reason === 'dynamic_cwd_transition') {
+    return 'dynamic_cwd_transition'
   }
   const fallback = typeof record.judgeFallbackReason === 'string' ? record.judgeFallbackReason : ''
   if (fallback.includes('timeout')) {
@@ -314,19 +326,16 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
   })
 }
 
-export function buildHarvestReport(
-  records: AuditRecord[],
-  metadata: Pick<HarvestReport, 'cohortScope' | 'excludedRecords'> = {
-    cohortScope: 'all',
-    excludedRecords: 0,
-  },
-): HarvestReport {
+export function buildHarvestReport(records: AuditRecord[]): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
     scope: 'shell',
-    ...metadata,
+    cohort: null,
+    matchingGateEvents: shellRecords(records).length,
+    excludedGateEvents: 0,
     candidates: extractHarvestCandidates(records),
     availabilityQueue: extractAvailabilityQueue(records),
+    notes: [],
   }
 }
 
@@ -336,6 +345,8 @@ export function applyHarvestReview(
     command: string
     outcome: HarvestReviewOutcome
     reason?: string
+    fingerprint: string
+    reviewedAt: string
   },
 ): { cases: CorpusCase[]; applied: boolean; ok: boolean; message: string } {
   const command = params.command.trim()
@@ -353,7 +364,12 @@ export function applyHarvestReview(
   }
 
   const category = params.outcome
-  const verdict = category === 'provably-benign' ? 'allow' : 'allow_flagged'
+  const verdict =
+    category === 'provably-benign'
+      ? 'allow'
+      : category === 'must-ask'
+        ? 'deny_pending_approval'
+        : 'allow_flagged'
   const reason = params.reason?.trim()
 
   const duplicate = cases.find((entry) => entry.command === command)
@@ -380,10 +396,16 @@ export function applyHarvestReview(
     command,
     verdict,
     ...(reason ? { reason } : {}),
+    provenance: {
+      source: 'harvest',
+      sourceBatchId: HARVEST_SOURCE_BATCH_ID,
+      sourceCaseId: params.fingerprint,
+      reviewedAt: params.reviewedAt,
+    },
   }
 
   const followUp =
-    category === 'provably-benign'
+    category === 'provably-benign' || category === 'must-ask'
       ? 'Next: run `pnpm corpus` and confirm the CI-only hard gates pass. Corpus labels never grant runtime shell authority.'
       : 'Next: run `pnpm corpus` to verify corpus evaluation (accepted-benign is soft-gated).'
 

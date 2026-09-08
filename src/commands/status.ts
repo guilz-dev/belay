@@ -23,7 +23,10 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
   const pendingRaw = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
   const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config)
   const expiredPendingCount = countExpiredPending(pendingRaw)
-  const operational = await loadOperationalInsights({ targetDir: repoRoot })
+  const operational = await loadOperationalInsights({
+    targetDir: repoRoot,
+    adapter: config.adapter,
+  })
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
   const visibility = await reportProject({ targetDir: repoRoot })
   const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
@@ -80,7 +83,9 @@ export function formatStatusReport(report: StatusReport): string {
     `Expired pending (not yet compacted): ${report.expiredPendingCount}`,
     `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} (mode=${report.dogfood.mode}, unknownLocalEffect=${report.dogfood.unknownLocalEffect})`,
     `Current cohort metrics: ${report.dogfood.gateEvents} gate events, ${report.dogfood.wouldBlockCount} would-block (${(report.dogfood.wouldBlockRate * 100).toFixed(1)}%), ${report.dogfood.excludedGateEvents} historical/mismatched excluded`,
-    `Ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'not yet'}`,
+    `Persistent availability watermark: ${report.dogfood.availabilityWatermarkStatus} (${report.dogfood.stickyAvailabilityAsks} ask(s))`,
+    `Traffic ready for enforce: ${report.dogfood.trafficReadyForEnforce ? 'yes' : 'no'}`,
+    `Combined quality ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
     `File checkpoint: ${report.fileCheckpoint.enabled ? 'enabled' : 'disabled'} (transactional=${report.fileCheckpoint.transactionalEnabled}, durable=${report.fileCheckpoint.durableCheckpointEnabled}, nonGit=${report.fileCheckpoint.allowNonGit})`,
     `File checkpoint limits: files=${report.fileCheckpoint.maxFiles}, sourceBytes=${report.fileCheckpoint.maxSourceBytes}, workspaceBytes=${report.fileCheckpoint.maxWorkspaceBytes}, prepareTimeoutMs=${report.fileCheckpoint.prepareTimeoutMs}, copyConcurrency=${report.fileCheckpoint.copyConcurrency}`,
     '',

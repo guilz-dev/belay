@@ -10,9 +10,9 @@ import {
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
-import { readAuditRecordsFromPath, resolveRepoAuditPath } from '../core/audit-reader.js'
+import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from '../core/audit-storage.js'
 import type { AuditFilter, AuditRecord } from '../core/audit-types.js'
-import { auditRetentionFromConfig, type BelayConfigV3, mergeConfig } from '../core/config.js'
+import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
 import { diffReclassification } from '../core/reclassify.js'
 import type { AdapterName } from '../types.js'
 
@@ -42,9 +42,15 @@ export async function loadAuditRecords(
   adapter?: AdapterName,
 ): Promise<AuditRecord[]> {
   const config = await loadConfigFile(repoRoot, adapter)
-  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
-  const retention = auditRetentionFromConfig(config)
-  const { records } = await readAuditRecordsFromPath(auditLogPath, retention)
+  const audit = normalizeAuditConfig(config.audit)
+  const auditLogPath = path.isAbsolute(audit.logPath)
+    ? audit.logPath
+    : path.join(repoRoot, audit.logPath)
+  const { records } = await loadRetainedAuditRecords({
+    auditPath: auditLogPath,
+    maxFiles: audit.maxFiles,
+    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
+  })
   return records.map(toAuditRecord)
 }
 

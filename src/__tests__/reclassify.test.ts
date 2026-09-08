@@ -8,6 +8,74 @@ describe('reclassify replay fidelity', () => {
   const repoRoot = '/workspace/project'
   const config = mergeConfig({ mode: 'audit' })
 
+  it('keeps the privacy-safe v1 executable-heredoc replay on its stable must-ask input', async () => {
+    const command = "python3 - <<'PY'\nprint('fixture')\nPY"
+    const result = await reclassifyAuditRecord(
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint: '6d7c6101'.padEnd(64, '0'),
+        summary: 'python3 heredoc (source omitted)',
+        actionSnapshot: {
+          schemaVersion: 1,
+          kind: 'shell',
+          cwd: repoRoot,
+          normalizedAction: command,
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(result).toMatchObject({
+      verdict: 'deny_pending_approval',
+      reason: 'unknown_local_effect',
+      normalizedCommand: command,
+    })
+  })
+
+  it('does not recover an incomplete v2 tool projection from a legacy full payload', async () => {
+    const payloadMarker = 'task ten forbidden replay payload'
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction')
+
+    const result = await reclassifyAuditRecord(
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        summary: 'Write',
+        actionSnapshot: {
+          schemaVersion: 2,
+          kind: 'tool',
+          cwd: repoRoot,
+          toolName: 'Write',
+          payloadHash: 'a'.repeat(64),
+        },
+        replayContext: {
+          cwd: repoRoot,
+          kind: 'tool',
+          toolName: 'Write',
+          payload: { path: 'src/index.ts', contents: payloadMarker },
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(result).toEqual({
+      replayable: false,
+      reason: 'tool_projection_incomplete',
+      sourceSchemaVersion: 2,
+      kind: 'tool',
+      cwd: repoRoot,
+    })
+    expect(classifySpy).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain(payloadMarker)
+  })
+
   it('uses preserved replayContext cwd for shell commands', async () => {
     const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
       verdict: 'allow',
@@ -64,23 +132,18 @@ describe('reclassify replay fidelity', () => {
       },
     })
 
+    const payload = { path: 'src/index.ts' }
     const record: AuditRecord = {
       event: 'preToolUse',
       kind: 'tool',
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
-      summary: 'Read src/index.ts',
-      actionSnapshot: {
-        schemaVersion: 1,
-        kind: 'tool',
-        cwd: `${repoRoot}/src`,
-        normalizedAction: 'Read src/index.ts',
-        toolName: 'Read',
-      },
+      summary: 'Read',
       replayContext: {
         cwd: `${repoRoot}/src`,
         kind: 'tool',
         toolName: 'Read',
+        payload,
       },
     }
 
@@ -93,7 +156,7 @@ describe('reclassify replay fidelity', () => {
         toolName: 'Read',
         payload: {
           tool_name: 'Read',
-          tool_input: { command: 'Read src/index.ts' },
+          tool_input: payload,
         },
       }),
       config,

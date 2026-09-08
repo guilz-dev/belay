@@ -1,19 +1,33 @@
 import path from 'node:path'
 
+import type { AdapterName } from '../adapters/layouts/index.js'
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
 import {
-  readAuditRecordsFromPath,
-  resolveRepoAuditPath,
-  statAuditStorage,
-} from '../core/audit-reader.js'
-import { auditRetentionFromConfig } from '../core/config.js'
+  type AuditLoadDiagnostics,
+  loadRetainedAuditRecords,
+  MAX_AUDIT_RECORD_BYTES,
+} from '../core/audit-storage.js'
+import type { AuditRecord } from '../core/audit-types.js'
+import type { BelayConfigV3 } from '../core/config.js'
+import { normalizeAuditConfig } from '../core/config.js'
+import { loadHarvestReviewLedger } from '../core/harvest-review.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 export interface MetricsOptions {
   targetDir?: string
+  adapter?: AdapterName
   json?: boolean
+}
+
+export type MetricsReport = AuditMetricsReport & {
+  auditStorage: AuditLoadDiagnostics
+}
+
+export interface MetricsEvaluationSnapshot {
+  report: MetricsReport
+  auditRecords: AuditRecord[]
 }
 
 function formatFingerprintPreview(fingerprint: string): string {
@@ -23,21 +37,43 @@ function formatFingerprintPreview(fingerprint: string): string {
   return `${fingerprint.slice(0, 12)}…`
 }
 
-export async function metricsProject(options: MetricsOptions = {}): Promise<AuditMetricsReport> {
+export async function evaluateMetricsSnapshot(
+  options: MetricsOptions = {},
+  evaluatedConfig?: BelayConfigV3,
+): Promise<MetricsEvaluationSnapshot> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
-  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
-  const retention = auditRetentionFromConfig(config)
-  const { records } = await readAuditRecordsFromPath(auditLogPath, retention)
-  const storage = await statAuditStorage(auditLogPath, retention)
-  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
-  const report = computeAuditMetrics(records, {
-    auditLogPath: config.audit.logPath,
-    mode: config.mode,
-    unknownLocalEffect: config.policy.unknownLocalEffect,
-    activeCohort,
+  const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
+  const audit = normalizeAuditConfig(config.audit)
+  const auditLogPath = path.isAbsolute(audit.logPath)
+    ? audit.logPath
+    : path.join(repoRoot, audit.logPath)
+  const { records, diagnostics, readinessState } = await loadRetainedAuditRecords({
+    auditPath: auditLogPath,
+    maxFiles: audit.maxFiles,
+    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
   })
-  return { ...report, storage }
+  const reviewLedger = await loadHarvestReviewLedger(
+    path.join(path.dirname(auditLogPath), 'harvest-reviews.json'),
+  )
+  const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
+  return {
+    report: {
+      ...computeAuditMetrics(records, {
+        auditLogPath: audit.logPath,
+        mode: config.mode,
+        unknownLocalEffect: config.policy.unknownLocalEffect,
+        activeCohort,
+        reviewLedger,
+        readinessState,
+      }),
+      auditStorage: diagnostics,
+    },
+    auditRecords: records,
+  }
+}
+
+export async function metricsProject(options: MetricsOptions = {}): Promise<MetricsReport> {
+  return (await evaluateMetricsSnapshot(options)).report
 }
 
 function formatRecoveryMetricsSection(
@@ -94,7 +130,9 @@ function formatRecoveryMetricsSection(
   return lines
 }
 
-export function formatMetricsReport(report: AuditMetricsReport): string {
+export function formatMetricsReport(
+  report: AuditMetricsReport & { auditStorage?: AuditLoadDiagnostics },
+): string {
   const lines = [
     `belay metrics for ${report.auditLogPath}`,
     `Schema: v${report.schemaVersion}`,
@@ -104,6 +142,18 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `All-time approvals recorded during audit: ${report.approvalRecordedCount}`,
     `Contained execution: would mediate ${report.containedExecution.wouldMediate}; complete ${report.containedExecution.complete}; failed ${report.containedExecution.failed}; timed out ${report.containedExecution.timedOut}`,
   ]
+
+  if (report.auditStorage) {
+    lines.push(
+      '',
+      'Retained audit storage:',
+      `- files read: ${report.auditStorage.filesRead}`,
+      `- bytes read: ${report.auditStorage.bytesRead}`,
+      `- parsed records: ${report.auditStorage.parsedRecords}`,
+      `- malformed lines skipped: ${report.auditStorage.malformedLines}`,
+      `- oversized lines skipped: ${report.auditStorage.oversizedLines}`,
+    )
+  }
 
   lines.push('', 'Current readiness cohort:')
   if (report.currentCohort.identity) {
@@ -129,6 +179,23 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
     `- contained execution: would mediate ${report.currentCohort.containedExecution.wouldMediate}; complete ${report.currentCohort.containedExecution.complete}; failed ${report.currentCohort.containedExecution.failed}; timed out ${report.currentCohort.containedExecution.timedOut}`,
   )
   lines.push(`- availability-caused asks: ${report.currentCohort.availabilityAsks.total}`)
+  lines.push(
+    `- persistent availability watermark: ${report.currentCohort.availabilityWatermark.status} (${report.currentCohort.availabilityWatermark.availabilityAsks} ask(s))`,
+  )
+  lines.push('', 'Reviewed provably-benign traffic:')
+  lines.push(
+    `- reviewed benign events: ${report.currentCohort.reviewedTraffic.reviewedBenignEvents}`,
+  )
+  lines.push(
+    `- reviewed benign blocked: ${report.currentCohort.reviewedTraffic.reviewedBenignBlocked} (${(report.currentCohort.reviewedTraffic.benignBlockRate * 100).toFixed(2)}%)`,
+  )
+  lines.push(`- distinct valid sessions: ${report.currentCohort.reviewedTraffic.distinctSessions}`)
+  lines.push(
+    `- active-cohort availability asks: ${report.currentCohort.reviewedTraffic.availabilityAsks}`,
+  )
+  lines.push(
+    `- traffic ready for enforce: ${report.currentCohort.reviewedTraffic.ready ? 'yes' : 'no'}`,
+  )
   if (Object.keys(report.currentCohort.wouldBlockByReason).length > 0) {
     lines.push('', 'Current-cohort would-block by reason:')
     for (const [reason, count] of Object.entries(report.currentCohort.wouldBlockByReason).sort(
@@ -165,7 +232,8 @@ export function formatMetricsReport(report: AuditMetricsReport): string {
 
   if (report.availabilityAsks.total > 0) {
     lines.push('', 'Availability-caused asks (infrastructure, not classifier ground truth):')
-    lines.push(`- missing trusted cwd: ${report.availabilityAsks.missingTrustedCwd}`)
+    lines.push(`- missing action/trusted cwd: ${report.availabilityAsks.missingTrustedCwd}`)
+    lines.push(`- dynamic cwd transition: ${report.availabilityAsks.dynamicCwdTransition}`)
     lines.push(`- judge timeout: ${report.availabilityAsks.judgeTimeout}`)
     lines.push(`- other judge fallback: ${report.availabilityAsks.judgeFallback}`)
     lines.push(`- total: ${report.availabilityAsks.total}`)

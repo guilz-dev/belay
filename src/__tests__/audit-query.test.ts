@@ -4,12 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { auditProject, loadAuditRecords } from '../commands/audit.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
+import { appendBoundedAuditLine } from '../core/audit-storage.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -286,6 +288,104 @@ describe('audit query', () => {
     expect(report.subcommand).toBe('summarize')
     expect(report.roundTrips).toHaveLength(1)
     expect(report.roundTrips?.[0]?.summary).toBe('curl https://example.com')
+  })
+
+  it('joins one correlated ask-approval-replay chain across retained generations', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-generation-trip-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const fingerprint = testFingerprint('retained-generation-round-trip')
+    const approvalCorrelationId = '1234567890abcdef'
+    await writeFile(
+      `${auditPath}.2`,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:00:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint,
+        summary: 'make build',
+        wouldBlock: true,
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:01:00.000Z',
+        event: 'approval',
+        reason: 'approval_recorded',
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        timestamp: '2026-06-01T10:02:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'approved_once',
+        permission: 'allow',
+        fingerprint,
+        summary: 'make build',
+        approvalCorrelationId,
+      })}\n`,
+      'utf8',
+    )
+
+    const report = await auditProject({ targetDir: repoRoot, subcommand: 'summarize' })
+
+    expect(report.roundTrips).toEqual([
+      expect.objectContaining({
+        approvalCorrelationId,
+        approvalTimestamp: '2026-06-01T10:01:00.000Z',
+        executeTimestamp: '2026-06-01T10:02:00.000Z',
+      }),
+    ])
+  })
+
+  it('keeps one appended record above maxBytes readable as audit evidence', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-low-rotation-bound-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const initialConfig = await loadConfigFile(repoRoot)
+    const rotationMaxBytes = 64
+    const retainedFiles = 2
+    await writeTrustedConfigFile(repoRoot, {
+      ...initialConfig,
+      audit: { ...initialConfig.audit, maxBytes: rotationMaxBytes, maxFiles: retainedFiles },
+    })
+    const config = await loadConfigFile(repoRoot)
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const record = {
+      timestamp: '2026-09-08T00:00:00.000Z',
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'allow',
+      reason: 'read_only',
+      fingerprint: testFingerprint('above-rotation-threshold'),
+      summary: 'retained evidence above a low rotation threshold',
+      padding: 'x'.repeat(256),
+    }
+    const line = JSON.stringify(record)
+    expect(Buffer.byteLength(`${line}\n`, 'utf8')).toBeGreaterThan(rotationMaxBytes)
+    expect(Buffer.byteLength(`${line}\n`, 'utf8')).toBeLessThan(33_554_432)
+
+    await appendBoundedAuditLine({
+      auditPath,
+      line,
+      maxBytes: rotationMaxBytes,
+      maxFiles: retainedFiles,
+    })
+
+    const loaded = await loadAuditRecords(repoRoot)
+    expect(loaded).toEqual([expect.objectContaining({ fingerprint: record.fingerprint })])
   })
 
   it('loads retained audit generations in chronological order', async () => {

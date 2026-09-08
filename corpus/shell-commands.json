@@ -16,40 +16,7 @@
   {
     "kind": "shell",
     "category": "provably-benign",
-    "command": "rtk git status --short",
-    "verdict": "allow",
-    "reason": "read_only",
-    "provenance": {
-      "source": "harvest",
-      "sourceBatchId": "dogfood-2026-09-07"
-    }
-  },
-  {
-    "kind": "shell",
-    "category": "provably-benign",
-    "command": "rtk git status --short --branch",
-    "verdict": "allow",
-    "reason": "read_only",
-    "provenance": {
-      "source": "harvest",
-      "sourceBatchId": "dogfood-2026-09-07"
-    }
-  },
-  {
-    "kind": "shell",
-    "category": "provably-benign",
     "command": "rtk git diff -- src/adapters/cursor/runtime-entry.ts src/__tests__/hooks-runtime.test.ts",
-    "verdict": "allow",
-    "reason": "read_only",
-    "provenance": {
-      "source": "harvest",
-      "sourceBatchId": "dogfood-2026-09-07"
-    }
-  },
-  {
-    "kind": "shell",
-    "category": "provably-benign",
-    "command": "rtk ls",
     "verdict": "allow",
     "reason": "read_only",
     "provenance": {
@@ -160,6 +127,13 @@
     "kind": "shell",
     "category": "provably-benign",
     "command": "gh pr list",
+    "verdict": "allow",
+    "reason": "read_only"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "cat <<'EOF'\nfixture data\nEOF",
     "verdict": "allow",
     "reason": "read_only"
   },
@@ -597,5 +571,169 @@
     "category": "must-ask",
     "command": "rm -rf .git",
     "verdict": "deny_pending_approval"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk git status --short",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "858ea56e9e9a38cb6dd8f484dce751516f244d847763f1b911a1cd1b074cab26",
+      "reviewedAt": "2026-09-07T15:50:41.996Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk git status --short --branch",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "794b46c3d7c05b73031176ebf28e3b32ee7965ec0cf7677b73942e2a20b8a4ed",
+      "reviewedAt": "2026-09-07T15:50:42.176Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk git diff -- src/example.ts tests/example.test.ts",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "d39b7d57bfa1dccfc7a4f0f0dcbe7e2ad7d8b6f41c3c92a81796a3496c963341",
+      "reviewedAt": "2026-09-07T15:50:45.504Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "rtk vitest src/example.test.ts tests/another.test.ts",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "379e832bdd360f98735799a99641d64c760b1b3baa94e7367868cbfa047d19e3",
+      "reviewedAt": "2026-09-07T15:50:42.347Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "rtk vitest src/example.test.ts -t \"fixture name\"",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "de8428cc2916ab97a12f260783b9c1811536295772575e9a54326f010fddb798",
+      "reviewedAt": "2026-09-07T15:50:42.516Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "npm publish",
+    "verdict": "deny_pending_approval",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "c9c201684c5e8cf268beed126c6e52ec34da713389ca7071444a2fbdf6c9ba5a",
+      "reviewedAt": "2026-09-07T15:50:43.331Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "gh pr create --base main --title \"test: fixture\" --body \"fixture\"",
+    "verdict": "deny_pending_approval",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "ad7ffc0ca2664f59884310eb9a190447fce5c18e20ef541d7d056f4b5eda2e91",
+      "reviewedAt": "2026-09-07T15:50:42.677Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "python3 - <<'PY'\nprint('fixture')\nPY",
+    "verdict": "deny_pending_approval",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "6d7c6101411b80c0bf5a9ddb609ee39d629dcd8a3fead7ca4225aeb9244bd087",
+      "reviewedAt": "2026-09-07T15:50:45.331Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "node -e \"console.log('fixture')\"",
+    "verdict": "deny_pending_approval",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "509dcf750bbfba45c9d236a5e8c39f67f5fda34c2c1b5913b5a06afbed1abde7",
+      "reviewedAt": "2026-09-07T15:50:47.366Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "must-ask",
+    "command": "git push -u origin HEAD",
+    "verdict": "deny_pending_approval",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "b15f532b4f2043087dc24df247f70ea0f7d700e67b64678411c389308f572046",
+      "reviewedAt": "2026-09-07T15:50:42.999Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "rtk ls",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "158dba648b0b224f35020f631f50ec4e2af26f0ed082ac5b6fbc8a0f2badbf8f",
+      "reviewedAt": "2026-09-07T15:50:45.694Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "cat hooks.json | rtk rg -n \"beforeShellExecution|preToolUse\"",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "46992d5f6cea8c2a4e642b3624da55f7d1a3893a9a983a86e23bfb2516f8e5b3",
+      "reviewedAt": "2026-09-07T15:50:45.852Z"
+    }
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "git log --oneline origin/main..HEAD && git merge-base origin/main HEAD && git diff --stat origin/main...HEAD && git diff origin/main...HEAD",
+    "verdict": "allow",
+    "reason": "read_only",
+    "provenance": {
+      "source": "harvest",
+      "sourceBatchId": "belay-2026-09-07",
+      "sourceCaseId": "4845906a8f3fdca1e7ecd66815c426c78919be7bda40f1e18cc10bc9b6e84dfb",
+      "reviewedAt": "2026-09-07T15:50:46.200Z"
+    }
   }
 ]

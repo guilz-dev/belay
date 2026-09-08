@@ -1,3 +1,4 @@
+export type { AuditCohortIdentity } from './core/audit-metrics.js'
 export type {
   BelayConfig,
   BelayConfigV1,
@@ -116,9 +117,22 @@ export interface DogfoodStatus {
   mode: string
   unknownLocalEffect: string
   readyForEnforce: boolean
+  trafficReadyForEnforce: boolean
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
+  reviewedBenignEvents: number
+  reviewedBenignBlocked: number
+  benignBlockRate: number
+  distinctSessions: number
+  availabilityAsks: number
+  availabilityWatermarkStatus:
+    | 'not-evaluated'
+    | 'missing'
+    | 'invalid'
+    | 'cohort-mismatch'
+    | 'current'
+  stickyAvailabilityAsks: number
   excludedGateEvents: number
   runtimeBuildStamp?: string
   configFingerprint?: string

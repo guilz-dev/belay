@@ -9,10 +9,10 @@ import {
   approvedApprovalsFile,
   type BelayConfigV3,
   belayStateDir,
+  configForPersistence,
   configuredControlPlaneDir,
   mergeConfig,
   pendingApprovalsFile,
-  stripForbiddenShellOverrideLists,
 } from './core/config.js'
 import {
   type LayeredConfigResult,
@@ -277,7 +277,7 @@ export async function writeConfigFile(
     directory,
     `.${path.basename(configPath)}.${process.pid}.${randomUUID()}.tmp`,
   )
-  const content = `${JSON.stringify(stripForbiddenShellOverrideLists(config), null, 2)}\n`
+  const content = `${JSON.stringify(configForPersistence(config), null, 2)}\n`
   await mkdir(directory, { recursive: true })
   try {
     await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' })

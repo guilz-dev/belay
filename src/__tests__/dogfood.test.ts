@@ -1,23 +1,28 @@
 import { execFile } from 'node:child_process'
-import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadAuditRecords } from '../commands/audit.js'
 import { doctorProject } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
 import { checkDogfoodProject, formatDogfoodCheckResult } from '../commands/dogfood-check.js'
+import { qualityCheck } from '../commands/quality.js'
 import { statusProject } from '../commands/status.js'
 import { loadConfigFile, runtimeCorePath } from '../config-io.js'
-import { mergeConfig } from '../core/config.js'
+import { appendAuditRecord } from '../core/audit-serialize.js'
+import { DEFAULT_REDACTION_V3, mergeConfig } from '../core/config.js'
 import { canonicalStringify, hashValue } from '../core/fingerprint.js'
 import { initProject } from '../installer.js'
 import { loadOperationalInsights } from '../operational-insights.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 const tempDirs: string[] = []
 const execFileAsync = promisify(execFile)
+const REVIEWED_FINGERPRINT = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+const REVIEWED_SESSION_IDS = ['1111111111111111', '2222222222222222', '3333333333333333']
 
 function auditAllowLine(provenance: {
   runtimeBuildStamp: string
@@ -77,6 +82,30 @@ async function writeAuditLines(repoRoot: string, lines: string): Promise<void> {
   await writeFile(path.join(repoRoot, config.audit.logPath), lines)
 }
 
+async function seedPassingCorpus(repoRoot: string): Promise<void> {
+  const corpusDir = path.join(repoRoot, 'corpus')
+  await mkdir(corpusDir, { recursive: true })
+  await writeFile(
+    path.join(corpusDir, 'shell-commands.json'),
+    `${JSON.stringify([
+      {
+        kind: 'shell',
+        category: 'provably-benign',
+        command: 'git status',
+        verdict: 'allow',
+        reason: 'read_only',
+      },
+      {
+        kind: 'shell',
+        category: 'must-ask',
+        command: 'git push origin main',
+        verdict: 'deny_pending_approval',
+        reason: 'external_effect',
+      },
+    ])}\n`,
+  )
+}
+
 async function seedDogfoodEnforceReady(repoRoot: string): Promise<void> {
   const installedConfig = JSON.parse(
     await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
@@ -100,8 +129,48 @@ async function seedDogfoodEnforceReady(repoRoot: string): Promise<void> {
     path.join(repoRoot, '.cursor', 'belay.config.json'),
     `${JSON.stringify(config, null, 2)}\n`,
   )
-  const provenance = await activeAuditProvenance(repoRoot)
-  await writeFile(path.join(repoRoot, config.audit.logPath), auditAllowLine(provenance).repeat(20))
+  const persistedConfig = await loadConfigFile(repoRoot)
+  const cohort = await resolveActiveAuditCohort(repoRoot, persistedConfig)
+  expect(cohort).not.toBeNull()
+  if (!cohort) {
+    throw new Error('fixture active cohort unavailable')
+  }
+  const records = Array.from({ length: 150 }, (_, index) => ({
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    reason: 'read_only',
+    wouldBlock: false,
+    mode: 'audit',
+    fingerprint: REVIEWED_FINGERPRINT,
+    sessionCorrelationId: REVIEWED_SESSION_IDS[index % REVIEWED_SESSION_IDS.length],
+    ...cohort,
+  }))
+  const auditPath = path.join(repoRoot, persistedConfig.audit.logPath)
+  await writeFile(
+    auditPath,
+    `${records
+      .slice(0, -1)
+      .map((record) => JSON.stringify(record))
+      .join('\n')}\n`,
+  )
+  await appendAuditRecord(auditPath, records.at(-1) ?? {}, DEFAULT_REDACTION_V3)
+  await writeFile(
+    path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+    `${JSON.stringify({
+      version: 1,
+      reviews: [
+        {
+          fingerprint: REVIEWED_FINGERPRINT,
+          kind: 'shell',
+          boundaryProfile: cohort.boundaryProfile,
+          outcome: 'provably-benign',
+          reviewedAt: '2026-09-08T00:00:00.000Z',
+        },
+      ],
+    })}\n`,
+  )
+  await seedPassingCorpus(repoRoot)
 }
 
 afterEach(async () => {
@@ -159,6 +228,84 @@ describe('dogfood command', () => {
     expect(config.mode).toBe('enforce')
   })
 
+  it('checks the explicitly selected adapter immediately before enforce promotion', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-enforce-adapter-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'cursor', dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'claude', dogfood: true })
+
+    const result = await dogfoodProject({
+      targetDir: repoRoot,
+      adapter: 'cursor',
+      enforce: true,
+    })
+    const cursorConfig = await loadConfigFile(repoRoot, 'cursor')
+    const claudeConfig = await loadConfigFile(repoRoot, 'claude')
+
+    expect(result.ok, result.message).toBe(true)
+    expect(cursorConfig.mode).toBe('enforce')
+    expect(claudeConfig.mode).toBe('audit')
+  })
+
+  it('recomputes combined quality immediately before enforce mutation', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-quality-recheck-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    expect((await qualityCheck({ targetDir: repoRoot })).readyForEnforce).toBe(true)
+
+    const config = await loadConfigFile(repoRoot)
+    await writeFile(
+      path.join(path.dirname(path.join(repoRoot, config.audit.logPath)), 'harvest-reviews.json'),
+      '{"version":1,"reviews":[]}\n',
+    )
+
+    const result = await dogfoodProject({ targetDir: repoRoot, enforce: true })
+    const unchanged = await loadConfigFile(repoRoot)
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('combined quality readiness failed')
+    expect(result.message).toContain('Review evidence is missing')
+    expect(unchanged.mode).toBe('audit')
+  })
+
+  it('writes the exact config snapshot evaluated by quality when config changes between loads', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-config-snapshot-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    const evaluatedConfig = await loadConfigFile(repoRoot)
+    const staleConfig = mergeConfig({
+      ...evaluatedConfig,
+      audit: { ...evaluatedConfig.audit, includeAssessment: false },
+    })
+    expect(evaluatedConfig.audit.includeAssessment).toBe(true)
+    expect(staleConfig.audit.includeAssessment).toBe(false)
+
+    vi.resetModules()
+    vi.doMock('../config-io.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../config-io.js')>()
+      const loadConfigSnapshot = vi
+        .fn(async () => evaluatedConfig)
+        .mockResolvedValueOnce(staleConfig)
+      return { ...actual, loadConfigFile: loadConfigSnapshot }
+    })
+
+    try {
+      const { dogfoodProject: dogfoodWithChangingConfig } = await import('../commands/dogfood.js')
+      const result = await dogfoodWithChangingConfig({ targetDir: repoRoot, enforce: true })
+      const persisted = await loadConfigFile(repoRoot)
+
+      expect(result.ok, result.message).toBe(true)
+      expect(persisted.mode).toBe('enforce')
+      expect(persisted.audit.includeAssessment).toBe(true)
+    } finally {
+      vi.doUnmock('../config-io.js')
+      vi.resetModules()
+    }
+  })
+
   it('does not promote from clean events recorded by an older runtime', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-old-runtime-'))
     tempDirs.push(repoRoot)
@@ -182,6 +329,7 @@ describe('dogfood command', () => {
         configFingerprint: hashValue(canonicalStringify(config)),
       }).repeat(20),
     )
+    await seedPassingCorpus(repoRoot)
 
     const result = await dogfoodProject({ targetDir: repoRoot, enforce: true })
 
@@ -193,16 +341,19 @@ describe('dogfood command', () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-force-'))
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedPassingCorpus(repoRoot)
 
     const blocked = await dogfoodProject({ targetDir: repoRoot, enforce: true })
     expect(blocked.ok).toBe(false)
-    expect(blocked.message).toContain('EffectPlan semantics')
-    expect(blocked.message).toContain('resource scope')
+    expect(blocked.message).toContain('combined quality readiness failed')
+    expect(blocked.message).toContain('Reviewed provably-benign events')
     expect(blocked.message).not.toContain('overrides.allow')
 
     const forced = await dogfoodProject({ targetDir: repoRoot, enforce: true, force: true })
     expect(forced.ok).toBe(true)
     expect(forced.mode).toBe('enforce')
+    expect(forced.message).toContain('Explicit --force override')
+    expect(forced.message).toContain('combined quality readiness failed')
   })
 
   it('surfaces dogfood status without OQ3 spike fields', async () => {
@@ -248,13 +399,95 @@ describe('dogfood command', () => {
     const status = await statusProject({ targetDir: repoRoot })
     const doctor = await doctorProject({ targetDir: repoRoot })
 
-    expect(status.dogfood.gateEvents).toBe(20)
+    expect(status.dogfood.gateEvents).toBe(150)
     expect(status.dogfood.wouldBlockCount).toBe(0)
+    expect(status.dogfood.reviewedBenignEvents).toBe(150)
+    expect(status.dogfood.reviewedBenignBlocked).toBe(0)
+    expect(status.dogfood.benignBlockRate).toBe(0)
+    expect(status.dogfood.distinctSessions).toBe(3)
+    expect(status.dogfood.availabilityAsks).toBe(0)
+    expect(status.dogfood.trafficReadyForEnforce).toBe(true)
+    expect(status.dogfood.readyForEnforce).toBe(true)
     expect(status.dogfood.excludedGateEvents).toBe(21)
-    expect(doctor.dogfood?.gateEvents).toBe(20)
+    expect(doctor.dogfood?.gateEvents).toBe(150)
+    expect(doctor.dogfood?.reviewedBenignEvents).toBe(150)
+    expect(doctor.dogfood?.reviewedBenignBlocked).toBe(0)
+    expect(doctor.dogfood?.benignBlockRate).toBe(0)
+    expect(doctor.dogfood?.distinctSessions).toBe(3)
+    expect(doctor.dogfood?.availabilityAsks).toBe(0)
+    expect(doctor.dogfood?.trafficReadyForEnforce).toBe(true)
+    expect(doctor.dogfood?.readyForEnforce).toBe(true)
     expect(doctor.dogfood?.excludedGateEvents).toBe(21)
     expect(doctor.warnings.some((warning) => warning.includes('Silent-pass rate'))).toBe(false)
   })
+
+  it('keeps traffic readiness separate and withholds status/doctor promotion on corpus failure', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-corpus-status-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+
+    vi.resetModules()
+    vi.doMock('../corpus/evaluate.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../corpus/evaluate.js')>()
+      return {
+        ...actual,
+        runCorpusEvaluation: vi.fn(async (corpusDir?: string) => {
+          const metrics = await actual.runCorpusEvaluation(corpusDir)
+          return {
+            ...metrics,
+            gates: {
+              ...metrics.gates,
+              mustAsk: { ...metrics.gates.mustAsk, mismatches: 1 },
+            },
+          }
+        }),
+      }
+    })
+
+    try {
+      const { formatStatusReport, statusProject: statusWithFailingCorpus } = await import(
+        '../commands/status.js'
+      )
+      const { doctorProject: doctorWithFailingCorpus, formatDoctorReport } = await import(
+        '../commands/doctor.js'
+      )
+      const status = await statusWithFailingCorpus({ targetDir: repoRoot })
+      const doctor = await doctorWithFailingCorpus({ targetDir: repoRoot })
+      const statusText = formatStatusReport(status)
+      const doctorText = formatDoctorReport(doctor)
+
+      expect(status.dogfood.trafficReadyForEnforce).toBe(true)
+      expect(status.dogfood.readyForEnforce).toBe(false)
+      expect(status.dogfood.notes).toContain('Corpus MUST-ASK misses: 1 (required: 0).')
+      expect(statusText).toContain('Traffic ready for enforce: yes')
+      expect(statusText).toContain('Combined quality ready for enforce: no')
+      expect(doctor.dogfood?.trafficReadyForEnforce).toBe(true)
+      expect(doctor.dogfood?.readyForEnforce).toBe(false)
+      expect(doctor.notes).toContain('Enforce readiness: Corpus MUST-ASK misses: 1 (required: 0).')
+      expect(doctor.notes.some((note) => note.includes('suggest enforce mode is ready'))).toBe(
+        false,
+      )
+      expect(doctorText).toContain('traffic ready: yes | combined quality ready: no')
+    } finally {
+      vi.doUnmock('../corpus/evaluate.js')
+      vi.resetModules()
+    }
+  }, 60_000)
+
+  it('uses the explicitly selected adapter for doctor readiness evidence', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-readiness-adapter-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'cursor', dogfood: true })
+    await seedDogfoodEnforceReady(repoRoot)
+    await initProject({ targetDir: repoRoot, adapter: 'claude', dogfood: true })
+
+    const report = await doctorProject({ targetDir: repoRoot, adapter: 'cursor' })
+
+    expect(report.dogfood?.gateEvents).toBe(150)
+    expect(report.dogfood?.trafficReadyForEnforce).toBe(true)
+    expect(report.dogfood?.readyForEnforce).toBe(true)
+  }, 60_000)
 })
 
 describe('dogfood release check', () => {

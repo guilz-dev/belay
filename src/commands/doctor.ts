@@ -32,6 +32,7 @@ import {
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
+import type { AuditLoadDiagnostics } from '../core/audit-storage.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
@@ -68,9 +69,12 @@ import { egressStatus } from '../services/egress-service.js'
 import { sandboxStatus } from '../services/sandbox-service.js'
 import type { AdapterName, DoctorOptions, DoctorReport } from '../types.js'
 import { PACKAGE_VERSION } from '../version.js'
-import { loadAuditRecords } from './audit.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
-import { metricsProject } from './metrics.js'
+import { evaluateQualitySnapshot } from './quality.js'
+
+export interface DoctorProjectReport extends DoctorReport {
+  auditStorage: AuditLoadDiagnostics | null
+}
 
 function resolveDoctorAdapter(options: DoctorOptions, configAdapter?: AdapterName): AdapterName {
   if (options.adapter) {
@@ -163,11 +167,12 @@ async function cursorOriginIssues(
   return issues
 }
 
-export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorReport> {
+export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorProjectReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const issues: string[] = []
   const notes: string[] = []
   const warnings: string[] = []
+  let auditStorage: AuditLoadDiagnostics | null = null
 
   let loadedConfig = null
   let configProvenance: DoctorReport['configProvenance'] = []
@@ -577,8 +582,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   let dogfood = null
   if (loadedConfig) {
-    const auditRecords = await loadAuditRecords(repoRoot)
-    const metrics = await metricsProject({ targetDir: repoRoot })
+    const qualityEvaluation = await evaluateQualitySnapshot(
+      { targetDir: repoRoot, adapter: adapterName },
+      loadedConfig,
+    )
+    const { auditRecords, metrics, report: quality } = qualityEvaluation
+    auditStorage = metrics.auditStorage
     const cohortIdentity = metrics.currentCohort.identity
     const cohortAuditRecords = cohortIdentity
       ? auditRecords.filter((record) => matchesAuditCohort(record, cohortIdentity))
@@ -619,14 +628,22 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       active: loadedConfig.mode === 'audit' && loadedConfig.policy.unknownLocalEffect === 'deny',
       mode: loadedConfig.mode,
       unknownLocalEffect: loadedConfig.policy.unknownLocalEffect,
-      readyForEnforce: metrics.dogfood.readyForEnforce,
+      readyForEnforce: quality.readyForEnforce,
+      trafficReadyForEnforce: quality.trafficReadyForEnforce,
       gateEvents: cohort.gateEvents,
       wouldBlockCount: cohort.wouldBlockCount,
       wouldBlockRate: cohort.wouldBlockRate,
+      reviewedBenignEvents: cohort.reviewedTraffic.reviewedBenignEvents,
+      reviewedBenignBlocked: cohort.reviewedTraffic.reviewedBenignBlocked,
+      benignBlockRate: cohort.reviewedTraffic.benignBlockRate,
+      distinctSessions: cohort.reviewedTraffic.distinctSessions,
+      availabilityAsks: cohort.reviewedTraffic.availabilityAsks,
+      availabilityWatermarkStatus: cohort.availabilityWatermark.status,
+      stickyAvailabilityAsks: cohort.availabilityWatermark.availabilityAsks,
       excludedGateEvents: cohort.excludedGateEvents,
       runtimeBuildStamp: cohort.identity?.runtimeBuildStamp,
       configFingerprint: cohort.identity?.configFingerprint,
-      notes: metrics.dogfood.notes,
+      notes: [...new Set([...metrics.dogfood.notes, ...quality.failedGates])],
     }
 
     if (dogfood.active) {
@@ -636,6 +653,15 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       notes.push(
         `Host denied after Belay allow (cohort): ${auditVisibility.hostDeniedAfterAllowCount}.`,
       )
+      notes.push(
+        `Dogfood traffic readiness: ${dogfood.trafficReadyForEnforce ? 'ready' : 'not ready'}; combined quality readiness: ${dogfood.readyForEnforce ? 'ready' : 'not ready'}.`,
+      )
+      notes.push(
+        `Persistent availability watermark: ${dogfood.availabilityWatermarkStatus} (${dogfood.stickyAvailabilityAsks} ask(s)).`,
+      )
+      for (const failure of quality.failedGates) {
+        notes.push(`Enforce readiness: ${failure}`)
+      }
       warnings.push(
         ...(await detectUndogfoodedLinkedWorktrees({
           repoRoot,
@@ -644,7 +670,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
         })),
       )
       if (dogfood.readyForEnforce) {
-        notes.push('Dogfood metrics suggest enforce mode is ready (belay dogfood --enforce).')
+        notes.push(
+          'Dogfood combined quality suggests enforce mode is ready (belay dogfood --enforce).',
+        )
       }
     } else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
       notes.push('Fail-closed policy is enabled in enforce mode.')
@@ -893,7 +921,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     )
   }
 
-  const report: DoctorReport = {
+  const report: DoctorProjectReport = {
     ok: issues.length === 0 && hooksOk,
     repoRoot,
     configPath,
@@ -904,17 +932,32 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     warnings,
     configProvenance,
     dogfood,
+    auditStorage,
   }
   return report
 }
 
-export function formatDoctorReport(report: DoctorReport): string {
+export function formatDoctorReport(
+  report: DoctorReport & { auditStorage?: AuditLoadDiagnostics | null },
+): string {
   const lines = [
     `belay doctor for ${report.repoRoot}`,
     `Config: ${report.configPath}`,
     `Hooks: ${report.hooksPath}`,
     `Node: ${report.nodeResolution.ok ? report.nodeResolution.path : 'unresolved'}`,
   ]
+
+  if (report.auditStorage) {
+    lines.push(
+      '',
+      'Retained audit storage:',
+      `- files read: ${report.auditStorage.filesRead}`,
+      `- bytes read: ${report.auditStorage.bytesRead}`,
+      `- parsed records: ${report.auditStorage.parsedRecords}`,
+      `- malformed lines skipped: ${report.auditStorage.malformedLines}`,
+      `- oversized lines skipped: ${report.auditStorage.oversizedLines}`,
+    )
+  }
 
   if (report.notes.length > 0) {
     lines.push('', 'Notes:')
@@ -933,7 +976,8 @@ export function formatDoctorReport(report: DoctorReport): string {
   if (report.dogfood) {
     lines.push(
       '',
-      `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | enforce ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
+      `Dogfood: ${report.dogfood.active ? 'active' : 'inactive'} | traffic ready: ${report.dogfood.trafficReadyForEnforce ? 'yes' : 'no'} | combined quality ready: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
+      `Persistent availability watermark: ${report.dogfood.availabilityWatermarkStatus} (${report.dogfood.stickyAvailabilityAsks} ask(s))`,
     )
   }
 
