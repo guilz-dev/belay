@@ -59,6 +59,26 @@ describe('audit-sink', () => {
     expect(raw).toContain('postToolUse')
   })
 
+  it('keeps legacy zero retention disabled across multiple appends', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-disabled-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    const defaultMaxBytes = 33_554_432
+    await writeFile(auditPath, Buffer.alloc(defaultMaxBytes, 0x78))
+
+    for (const event of ['first-disabled', 'second-disabled']) {
+      await appendAuditLine({
+        auditPath,
+        record: { event },
+        scrubOptions: DEFAULT_REDACTION_V3,
+        retention: { maxBytes: 0, maxFiles: 0 },
+      })
+    }
+
+    expect((await stat(auditPath)).size).toBeGreaterThan(defaultMaxBytes)
+    await expect(access(`${auditPath}.1`)).rejects.toThrow()
+  })
+
   it('rotates before an append would cross maxBytes', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-pre-append-'))
     tempDirs.push(dir)

@@ -199,19 +199,24 @@ enablement. Older audit records without recovery fields remain readable.
 | `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
 | `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
 | `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |
+| `retention` | object | none | Legacy read compatibility for nested `maxBytes` / `maxFiles`; use the flat fields in new config |
 
 Positive fractional bounds are floored. Missing, non-finite, zero, or negative bounds use the
 defaults. A `maxFiles` value above 100, an unsafe value, or a value that floors outside 1 through
 100 also uses the default of 5, keeping rotation work strictly bounded. These storage/display
 settings do not affect `decisionConfigFingerprint` and do not change the stored config schema
-version.
+version. The positive-bound rule applies to the canonical flat fields. Existing configs that use
+the legacy nested `audit.retention` spelling keep their non-negative values; setting either nested
+value to `0` disables rotation. Legacy positive `maxFiles` values remain capped at 100.
 
 The active file is `audit.ndjson`; numbered generations are `.1` (newest) through the
 `maxFiles - 1` suffix (oldest). Rotation uses an exclusive sibling `.lock` for at most two seconds
 and occurs before appending the complete newline-terminated record. `maxFiles: 1` keeps only the
 new active record after rotation. A single record larger than `maxBytes` remains intact, so the
 active file can temporarily exceed the threshold by that unavoidable one-record amount. Numbered
-retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files.
+retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files. Every bounded
+append also removes exact numeric generations outside the current `maxFiles` window, so reducing
+the configured count takes effect without waiting for the next rotation.
 
 Availability-caused asks are also summarized in a bounded 4 KiB sibling
 `audit.ndjson.readiness.json`. It stores only the runtime artifact hash, decision-config hash,
@@ -227,12 +232,13 @@ valid current-cohort gate record creates or repairs the watermark.
 Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`
 (`src/core/audit-serialize.ts`). Schema version is implicit v3 (no per-line version field).
 
-Audit storage is bounded by `audit.retention`. `maxBytes` defaults to 33,554,432 bytes (32 MiB)
-and `maxFiles` defaults to 5 files total, including the active log. Before an append would cross
-`maxBytes`, Belay rotates the active file to `.1`, shifts older generations upward, and removes
-the oldest excess generation. Readers stream retained generations from oldest to newest. Set
-either value to `0` to disable rotation; an individual record larger than `maxBytes` is retained
-whole in the active file rather than split.
+Audit storage is bounded by the canonical flat `audit.maxBytes` and `audit.maxFiles` fields.
+`maxBytes` defaults to 33,554,432 bytes (32 MiB) and `maxFiles` defaults to 5 files total,
+including the active log. Before an append would cross `maxBytes`, Belay rotates the active file
+to `.1`, shifts older generations upward, and removes the oldest excess generation. Readers
+stream retained generations from oldest to newest. For legacy nested `audit.retention` configs,
+setting either value to `0` disables rotation. An individual record larger than a positive
+`maxBytes` threshold is retained whole in the active file rather than split.
 
 ### Preserved correlation fields
 

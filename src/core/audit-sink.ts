@@ -1,8 +1,8 @@
 import { appendAuditRecord } from './audit-serialize.js'
 import { maybeRotateBoundedAuditLog } from './audit-storage.js'
 import {
-  DEFAULT_AUDIT_RETENTION,
   type AuditRetentionConfig,
+  DEFAULT_AUDIT_RETENTION,
   normalizeAuditRetention,
 } from './config.js'
 import type { ScrubOptions } from './types.js'
@@ -37,11 +37,11 @@ export async function maybeRotateAuditLog(
 
 /** Compatibility adapter. Serialization and append both delegate to the canonical path. */
 export async function appendAuditLine(options: AuditSinkAppendOptions): Promise<void> {
-  const bounds = isRetentionEnabled(options.retention)
+  const bounds = options.retention
     ? normalizeAuditRetention(options.retention)
     : DEFAULT_AUDIT_RETENTION
   await appendAuditRecord(options.auditPath, options.record, options.scrubOptions, {
     ...bounds,
-    pruneExcessGenerations: true,
+    ...(options.retention ? { retention: bounds } : {}),
   })
 }

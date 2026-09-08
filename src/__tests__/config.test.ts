@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { configPathFor, loadConfigFile } from '../config-io.js'
 import {
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
@@ -14,7 +19,47 @@ import {
 } from '../core/config.js'
 import { hashDecisionConfig } from '../core/decision-config-fingerprint.js'
 
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
+
 describe('config migration', () => {
+  it('preserves legacy nested audit retention values while loading a config file', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-config-legacy-audit-'))
+    tempDirs.push(repoRoot)
+    const configPath = configPathFor(repoRoot, 'cursor')
+    await mkdir(path.dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        version: 4,
+        audit: { retention: { maxBytes: 4_096, maxFiles: 2 } },
+      })}\n`,
+      'utf8',
+    )
+
+    const loaded = await loadConfigFile(repoRoot, 'cursor')
+
+    expect(loaded.audit.maxBytes).toBe(4_096)
+    expect(loaded.audit.maxFiles).toBe(2)
+  })
+
+  it('keeps canonical flat audit bounds authoritative over conflicting legacy values', () => {
+    const normalized = mergeConfig({
+      audit: {
+        maxBytes: 8_192,
+        maxFiles: 4,
+        retention: { maxBytes: 4_096, maxFiles: 2 },
+      },
+    })
+
+    expect(normalized.audit.maxBytes).toBe(8_192)
+    expect(normalized.audit.maxFiles).toBe(4)
+    expect(normalized.audit.retention).toBeUndefined()
+  })
+
   it('normalizes missing audit bounds to 32 MiB and five retained files', () => {
     const normalized = mergeConfig({})
 

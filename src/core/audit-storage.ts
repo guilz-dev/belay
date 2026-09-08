@@ -49,8 +49,8 @@ export interface AppendBoundedAuditLineOptions {
   maxBytes: number
   maxFiles: number
   readinessUpdate?: AuditReadinessUpdate
-  /** Current-main compatibility only; canonical callers preserve unrelated higher generations. */
-  pruneExcessGenerations?: boolean
+  /** Legacy nested 0/0 retention disables rotation while retaining the canonical writer/lock. */
+  rotationEnabled?: boolean
 }
 
 export interface AuditReadOptions {
@@ -1047,11 +1047,15 @@ export async function appendBoundedAuditLine(
       if (options.readinessUpdate) {
         await updateAuditReadinessState(auditPath, options.readinessUpdate, operations)
       }
-      if (options.pruneExcessGenerations) {
+      if (options.rotationEnabled !== false) {
         await pruneExcessAuditGenerations(auditPath, options.maxFiles)
       }
       const active = await activeAuditSize(auditPath)
-      if (active.exists && active.size + bytes.length > options.maxBytes) {
+      if (
+        options.rotationEnabled !== false &&
+        active.exists &&
+        active.size + bytes.length > options.maxBytes
+      ) {
         await assertNotSymlink(auditPath, 'active audit log')
         await rotateAndCommitStagedLine(auditPath, bytes, options.maxFiles, operations)
         return

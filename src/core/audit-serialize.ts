@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isAvailabilityCausedAsk } from './audit-availability.js'
 import { minimizeAuditShellAction } from './audit-replay-context.js'
-import {
-  type AppendBoundedAuditLineOptions,
-  type AuditReadinessUpdate,
-  appendBoundedAuditLine,
-} from './audit-storage.js'
+import { type AuditReadinessUpdate, appendBoundedAuditLine } from './audit-storage.js'
 import { type AuditRecord, GATE_EVENTS } from './audit-types.js'
 import {
   DEFAULT_AUDIT_MAX_BYTES,
@@ -615,18 +611,22 @@ export async function appendAuditRecord(
   auditPath: string,
   record: Record<string, unknown>,
   options: ScrubOptions,
-  bounds: Pick<NormalizedBelayAuditConfig, 'maxBytes' | 'maxFiles'> &
-    Pick<AppendBoundedAuditLineOptions, 'pruneExcessGenerations'> = {
+  bounds: Pick<NormalizedBelayAuditConfig, 'maxBytes' | 'maxFiles' | 'retention'> = {
     maxBytes: DEFAULT_AUDIT_MAX_BYTES,
     maxFiles: DEFAULT_AUDIT_MAX_FILES,
   },
 ): Promise<void> {
   const serialized = serializeAuditRecordV3(record, options)
   const line = JSON.stringify(serialized)
+  const legacyRotationDisabled =
+    bounds.retention !== undefined &&
+    (bounds.retention.maxBytes === 0 || bounds.retention.maxFiles === 0)
   await appendBoundedAuditLine({
     auditPath,
     line,
-    ...bounds,
+    maxBytes: legacyRotationDisabled ? DEFAULT_AUDIT_MAX_BYTES : bounds.maxBytes,
+    maxFiles: legacyRotationDisabled ? DEFAULT_AUDIT_MAX_FILES : bounds.maxFiles,
+    rotationEnabled: !legacyRotationDisabled,
     readinessUpdate: readinessUpdateForRecord(serialized),
   })
 }

@@ -73,7 +73,7 @@ describe('appendBoundedAuditLine', () => {
     await expectMissing(`${auditPath}.lock`)
   })
 
-  it('rotates before append with .1 newest and removes only the configured oldest path', async () => {
+  it('rotates before append with .1 newest and removes excess numeric generations', async () => {
     const auditPath = await createAuditPath('belay-audit-storage-rotate-')
     const legacyPath = `${auditPath}.legacy-20260908T000000Z.ndjson`
     const outsideRetentionPath = `${auditPath}.3`
@@ -92,7 +92,31 @@ describe('appendBoundedAuditLine', () => {
     expect(await readFile(auditPath, 'utf8')).toBe(`${lines[4]}\n`)
     expect(await readFile(`${auditPath}.1`, 'utf8')).toBe(`${lines[3]}\n`)
     expect(await readFile(`${auditPath}.2`, 'utf8')).toBe(`${lines[2]}\n`)
-    expect(await readFile(outsideRetentionPath, 'utf8')).toBe('outside-retention\n')
+    await expectMissing(outsideRetentionPath)
+    expect(await readFile(legacyPath, 'utf8')).toBe('legacy\n')
+    expect(await readFile(unrelatedPath, 'utf8')).toBe('unrelated\n')
+  })
+
+  it('prunes excess numeric generations on a normal appendAuditRecord path', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-shrink-')
+    const legacyPath = `${auditPath}.legacy-20260908T000000Z.ndjson`
+    const unrelatedPath = path.join(path.dirname(auditPath), 'notes.txt')
+    await writeFile(auditPath, '{"event":"active"}\n', 'utf8')
+    for (let generation = 1; generation <= 4; generation += 1) {
+      await writeFile(`${auditPath}.${generation}`, `{"event":"old-${generation}"}\n`, 'utf8')
+    }
+    await writeFile(legacyPath, 'legacy\n', 'utf8')
+    await writeFile(unrelatedPath, 'unrelated\n', 'utf8')
+
+    await appendAuditRecord(auditPath, { event: 'next' }, DEFAULT_REDACTION_V3, {
+      maxBytes: 1_048_576,
+      maxFiles: 3,
+    })
+
+    await expectMissing(`${auditPath}.3`)
+    await expectMissing(`${auditPath}.4`)
+    expect(await readFile(`${auditPath}.1`, 'utf8')).toContain('old-1')
+    expect(await readFile(`${auditPath}.2`, 'utf8')).toContain('old-2')
     expect(await readFile(legacyPath, 'utf8')).toBe('legacy\n')
     expect(await readFile(unrelatedPath, 'utf8')).toBe('unrelated\n')
   })
