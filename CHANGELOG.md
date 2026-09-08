@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.11.1 — 2026-09-09
+
+### Fixed
+
+- **Linked worktree config inheritance** — Linked checkouts without a local
+  `belay.config.json` now inherit repository policy from the primary linked
+  checkout instead of falling back to builtin enforce defaults. Unreadable local
+  config files fail closed and do not inherit sibling policy. Trust checks follow
+  the config source checkout ([ADR-011](docs/adr/ADR-011-linked-worktree-config-inheritance.md)).
+
 ## 0.11.0 — 2026-09-08
 
 ### Added
