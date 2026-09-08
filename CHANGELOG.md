@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.11.0 — 2026-09-08
+
 ### Added
 
 - **Reviewed dogfood evidence** — `harvest list` now defaults to the active runtime/config/boundary
