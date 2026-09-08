@@ -2,16 +2,9 @@ import { existsSync, readdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
-import {
-  loadRetainedAuditRecords,
-  MAX_AUDIT_RECORD_BYTES,
-} from './audit-storage.js'
 import { rotatedAuditPath } from './audit-sink.js'
-import {
-  MAX_AUDIT_FILES,
-  type AuditRetentionConfig,
-  normalizeAuditRetention,
-} from './config.js'
+import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from './audit-storage.js'
+import { type AuditRetentionConfig, MAX_AUDIT_FILES, normalizeAuditRetention } from './config.js'
 
 export interface AuditStorageStats {
   activeBytes: number
