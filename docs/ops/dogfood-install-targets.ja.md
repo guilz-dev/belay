@@ -55,7 +55,7 @@ npx -y @guilz-dev/belay@<version> doctor --target /absolute/target/path
 npx -y @guilz-dev/belay@<version> status --target /absolute/target/path
 ```
 
-monorepo や linked Git worktree では、Cursor が hook を実行しうる各 worktree にこの action セットを作成する。`belay.config.json` がない sibling worktree は default（`mode: enforce`）のままであり、main worktree が dogfood（`mode: audit`、`unknownLocalEffect: deny`）でも host action を block しうる。
+monorepo や linked Git worktree では、Cursor が hook を実行しうる各 worktree にこの action セットを作成する。ローカル `belay.config.json` がない sibling worktree は、primary checkout から repository policy を継承する（[ADR-011](../adr/ADR-011-linked-worktree-config-inheritance.md)）。hook/runtime の install と routing health は checkout ごとに必要。
 
 `npx -y`、パッケージ公開、push、control-plane mutation は、引き続き正確な approval を要求することがある。これらは classifier による effect の判断であり、action の working directory を利用できない失敗ではない。
 

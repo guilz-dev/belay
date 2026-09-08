@@ -939,7 +939,7 @@ pnpm exec vitest run \
 
 | Item | Reason |
 |---|---|
-| Automatic recursive config propagation | Policy files must not be copied to sibling worktrees without an explicit target and dry-run review. Add only if post-release metrics show repeated skew after Task 7. |
+| Automatic recursive config propagation | Policy files must not be copied to sibling worktrees without an explicit target and dry-run review. **Read-time inheritance** (ADR-011) replaces silent enforce defaults without file copy. |
 | Changing the default mode from `enforce` | Product semantics and first-run UX require a separate decision. The current incident is handled by explicit environment diagnosis and release checks. |
 | Making every `doctor` warning exit non-zero | Existing advisory warnings include intentionally accepted best-effort states. Blocking semantics belong to `dogfood --check`. |
 | Release cadence throttling | Merge serialization and required integration checks address the causal mechanism without imposing a time-based proxy. |

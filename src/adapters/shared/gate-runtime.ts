@@ -76,6 +76,7 @@ import {
 } from '../../core/capability/index.js'
 import { normalizeAuditConfig } from '../../core/config.js'
 import { resolveLayeredConfig, teamConfigPath } from '../../core/config-layers.js'
+import { resolveRepoConfig } from '../../core/linked-worktree-config.js'
 import {
   ContainedDockerBoundaryUnavailableError,
   type ExecuteContainedDockerParams,
@@ -378,21 +379,25 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
 
 export async function resolveGateConfig(
   ctx: Pick<GateRuntimeContext, 'layout' | 'repoRoot' | 'configPath'>,
-  deps: GateRuntimeDeps,
+  _deps: GateRuntimeDeps,
 ): Promise<BelayConfigV3> {
-  const loaded = await deps.readConfig(ctx.configPath)
-  await assertRepoConfigTrusted(ctx.repoRoot, ctx.layout.name, loaded)
+  const resolution = await resolveRepoConfig(ctx.repoRoot, ctx.layout.name)
+  await assertRepoConfigTrusted(
+    resolution.configSourceRoot,
+    ctx.layout.name,
+    resolution.repoConfig,
+  )
   let teamConfig: Record<string, unknown> | null = null
   const teamPath = teamConfigPath()
   if (existsSync(teamPath)) {
     teamConfig = JSON.parse(await readFile(teamPath, 'utf8')) as Record<string, unknown>
   }
   return resolveLayeredConfig({
-    repoConfig: loaded,
+    repoConfig: resolution.repoConfig,
     adapterDefaults: ctx.layout.defaultConfig(ctx.repoRoot) as BelayConfigV3,
     teamConfig,
     teamConfigPath: teamPath,
-    repoConfigPath: ctx.configPath,
+    repoConfigPath: resolution.repoConfigPath,
   }).config
 }
 

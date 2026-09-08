@@ -682,7 +682,7 @@ describe('dogfood release check', () => {
     expect(result.failures).toContain('mismatched_active_cohort')
   })
 
-  it('fails when linked worktrees are missing dogfood config', async () => {
+  it('does not count inherited linked worktrees as environment skew', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-worktree-'))
     const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-linked-'))
     const linkedWorktree = path.join(linkedParent, 'linked-worktree')
@@ -723,7 +723,45 @@ describe('dogfood release check', () => {
     )
 
     const result = await checkDogfoodProject({ targetDir: repoRoot, since: isoMinutesAgo(5) })
-    expect(result.ok).toBe(false)
+    expect(result.environmentSkewCount).toBe(0)
+    expect(result.failures).not.toContain('environment_skew')
+  })
+
+  it('fails when a linked worktree overrides inherited config with enforce mode', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-no-inherit-'))
+    const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-check-no-inherit-linked-'))
+    const linkedWorktree = path.join(linkedParent, 'linked-worktree')
+    tempDirs.push(repoRoot, linkedParent)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-no-inherit'], {
+      cwd: repoRoot,
+    })
+    const primaryConfig = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
+    )
+    await mkdir(path.join(linkedWorktree, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(linkedWorktree, '.cursor', 'belay.config.json'),
+      `${JSON.stringify({ ...primaryConfig, mode: 'enforce' })}\n`,
+    )
+
+    const result = await checkDogfoodProject({ targetDir: repoRoot, since: isoMinutesAgo(5) })
     expect(result.environmentSkewCount).toBeGreaterThan(0)
     expect(result.failures).toContain('environment_skew')
   })
