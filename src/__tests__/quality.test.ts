@@ -1,9 +1,87 @@
-import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { qualityCheck } from '../commands/quality.js'
+import { formatQualityReport, qualityCheck } from '../commands/quality.js'
+import { loadConfigFile } from '../config-io.js'
+import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
+
+const REVIEWED_FINGERPRINT = createHash('sha256').update('quality-reviewed-command').digest('hex')
+const SESSION_IDS = ['1111111111111111', '2222222222222222', '3333333333333333']
+
+async function seedReviewedTraffic(repoRoot: string, count = 150): Promise<void> {
+  await initProject({ targetDir: repoRoot, dogfood: true })
+  const config = await loadConfigFile(repoRoot)
+  const cohort = await resolveActiveAuditCohort(repoRoot, config)
+  expect(cohort).not.toBeNull()
+  if (!cohort) {
+    throw new Error('fixture active cohort unavailable')
+  }
+  const auditPath = path.join(repoRoot, config.audit.logPath)
+  await mkdir(path.dirname(auditPath), { recursive: true })
+  const records = Array.from({ length: count }, (_, index) => ({
+    timestamp: new Date(1_780_000_000_000 + index).toISOString(),
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    reason: 'read_only',
+    wouldBlock: false,
+    mode: 'audit',
+    fingerprint: REVIEWED_FINGERPRINT,
+    sessionCorrelationId: SESSION_IDS[index % SESSION_IDS.length],
+    ...cohort,
+  }))
+  await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  await writeFile(
+    path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+    `${JSON.stringify({
+      version: 1,
+      reviews: [
+        {
+          fingerprint: REVIEWED_FINGERPRINT,
+          kind: 'shell',
+          boundaryProfile: cohort.boundaryProfile,
+          outcome: 'provably-benign',
+          reviewedAt: '2026-09-08T00:00:00.000Z',
+        },
+      ],
+    })}\n`,
+  )
+}
+
+async function writeCorpus(repoRoot: string, cases: Record<string, unknown>[]): Promise<string> {
+  const corpusDir = path.join(repoRoot, 'test-corpus')
+  await mkdir(corpusDir, { recursive: true })
+  await writeFile(path.join(corpusDir, 'shell-commands.json'), `${JSON.stringify(cases)}\n`)
+  return corpusDir
+}
+
+const passingCorpus = [
+  {
+    kind: 'shell',
+    category: 'provably-benign',
+    command: 'git status',
+    verdict: 'allow',
+    reason: 'read_only',
+  },
+  {
+    kind: 'shell',
+    category: 'must-ask',
+    command: 'git push origin main',
+    verdict: 'deny_pending_approval',
+    reason: 'external_effect',
+  },
+]
 
 describe('quality loop', () => {
   it('does not use inert override lists as harvest evidence', async () => {
@@ -68,6 +146,114 @@ describe('quality loop', () => {
     expect(report.corpus.provablyBenignBlocks).toBe(0)
     expect(report.harvest.scope).toBe('shell')
     expect(report.notes.some((note) => note.includes('hard gates'))).toBe(true)
-    expect(report.ok).toBe(true)
+    expect(report.trafficReadyForEnforce).toBe(false)
+    expect(report.readyForEnforce).toBe(false)
+    expect(report.ok).toBe(report.readyForEnforce)
   }, 60_000)
+
+  it('withholds combined readiness when reviewed traffic passes but either corpus hard gate fails', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-corpus-gates-'))
+    tempDirs.push(repoRoot)
+    await seedReviewedTraffic(repoRoot)
+    const corpusDir = await writeCorpus(repoRoot, [
+      {
+        kind: 'shell',
+        category: 'must-ask',
+        command: 'git status',
+        verdict: 'deny_pending_approval',
+      },
+      {
+        kind: 'shell',
+        category: 'provably-benign',
+        command: 'git push origin main',
+        verdict: 'allow',
+      },
+    ])
+
+    const report = await qualityCheck({ targetDir: repoRoot, corpusDir })
+    const formatted = formatQualityReport(report)
+
+    expect(report.trafficReadyForEnforce).toBe(true)
+    expect(report.corpus.mustAskMisses).toBe(1)
+    expect(report.corpus.provablyBenignBlocks).toBe(1)
+    expect(report.readyForEnforce).toBe(false)
+    expect(report.ok).toBe(false)
+    expect(report.failedGates).toEqual([
+      'Corpus MUST-ASK misses: 1 (required: 0).',
+      'Corpus provably-benign blocks: 1 (required: 0).',
+    ])
+    expect(formatted.indexOf(report.failedGates[0])).toBeLessThan(
+      formatted.indexOf(report.failedGates[1]),
+    )
+  })
+
+  it('reports combined readiness only when reviewed traffic and both corpus hard gates pass', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-combined-ready-'))
+    tempDirs.push(repoRoot)
+    await seedReviewedTraffic(repoRoot)
+    const corpusDir = await writeCorpus(repoRoot, passingCorpus)
+
+    const report = await qualityCheck({ targetDir: repoRoot, corpusDir })
+
+    expect(report.audit.reviewedBenignEvents).toBe(150)
+    expect(report.audit.reviewedBenignBlocked).toBe(0)
+    expect(report.audit.benignBlockRate).toBe(0)
+    expect(report.audit.distinctSessions).toBe(3)
+    expect(report.audit.availabilityAsks).toBe(0)
+    expect(report.trafficReadyForEnforce).toBe(true)
+    expect(report.readyForEnforce).toBe(true)
+    expect(report.failedGates).toEqual([])
+    expect(report.ok).toBe(true)
+  })
+
+  it('lists every traffic and corpus failure instead of hiding failures after the first', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-all-failures-'))
+    tempDirs.push(repoRoot)
+    await seedReviewedTraffic(repoRoot, 149)
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(
+      auditPath,
+      `${await readFile(auditPath, 'utf8')}${JSON.stringify({
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'missing_trusted_cwd',
+        wouldBlock: true,
+        ...cohort,
+      })}\n`,
+    )
+    const corpusDir = await writeCorpus(repoRoot, [
+      {
+        kind: 'shell',
+        category: 'must-ask',
+        command: 'git status',
+        verdict: 'deny_pending_approval',
+      },
+      {
+        kind: 'shell',
+        category: 'provably-benign',
+        command: 'git push origin main',
+        verdict: 'allow',
+      },
+    ])
+
+    const report = await qualityCheck({ targetDir: repoRoot, corpusDir })
+    const formatted = formatQualityReport(report)
+
+    expect(report.failedGates).toEqual([
+      'Corpus MUST-ASK misses: 1 (required: 0).',
+      'Corpus provably-benign blocks: 1 (required: 0).',
+      'Reviewed provably-benign events: 149 (required: at least 150).',
+      'Availability-caused asks: 1 (required: 0).',
+    ])
+    for (const failure of report.failedGates) {
+      expect(formatted).toContain(failure)
+    }
+  })
 })

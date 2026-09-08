@@ -14,7 +14,13 @@ export const AUDIT_SCHEMA_VERSION = 3
 const ISO8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
 const HEX64_PATTERN = /^[a-f0-9]{64}$/
 const SCRUB_PLACEHOLDERS = new Set(['<timestamp>', '<high-entropy>', '<approval-id>', '<uuid>'])
-
+const SAFE_SESSION_AUDIT_FIELD_KEYS = new Set([
+  'sessioncorrelationid',
+  'judgesessionused',
+  'judgesessionreused',
+  'judgesessionrefhash',
+  'judgesessionresetreason',
+])
 const PRESERVED_HASH_FIELDS = new Set([
   'fingerprint',
   'commandFingerprint',
@@ -31,6 +37,7 @@ const PRESERVED_LITERAL_FIELDS = new Set([
   'timestamp',
   'approvalCorrelationId',
   'toolInvocationCorrelationId',
+  'sessionCorrelationId',
   'runtimeVersion',
   'runtimeBuildStamp',
   'boundaryProfile',
@@ -110,6 +117,10 @@ export function approvalCorrelationId(approvalId: string): string {
   return createHash('sha256').update(approvalId).digest('hex').slice(0, 16)
 }
 
+export function sessionCorrelationId(rawId: string): string {
+  return createHash('sha256').update(rawId).digest('hex').slice(0, 16)
+}
+
 const TOOL_USE_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -139,6 +150,10 @@ export function isValidApprovalCorrelationId(value: string): boolean {
   return /^[a-f0-9]{16}$/.test(value)
 }
 
+export function isValidSessionCorrelationId(value: string): boolean {
+  return /^[a-f0-9]{16}$/.test(value)
+}
+
 export function isValidAuditTimestamp(value: string): boolean {
   if (SCRUB_PLACEHOLDERS.has(value) || !ISO8601_PATTERN.test(value)) {
     return false
@@ -160,6 +175,23 @@ function isValidPreservedHashField(field: string, value: string): boolean {
   return isValidAuditFingerprint(value)
 }
 
+function normalizedAuditFieldKey(key: string): string {
+  return key.replace(/[_-]/g, '').toLowerCase()
+}
+
+function isHostSessionField(key: string): boolean {
+  const normalized = normalizedAuditFieldKey(key)
+  return normalized.includes('session') || normalized.includes('conversation')
+}
+
+function isRawHostSessionField(key: string): boolean {
+  return isHostSessionField(key) && !SAFE_SESSION_AUDIT_FIELD_KEYS.has(normalizedAuditFieldKey(key))
+}
+
+function isNestedRawHostSessionField(key: string): boolean {
+  return isRawHostSessionField(key) || normalizedAuditFieldKey(key) === 'sessioncorrelationid'
+}
+
 function scrubAuditContainer(
   value: unknown,
   options: ScrubOptions,
@@ -179,7 +211,10 @@ function scrubAuditContainer(
       return Object.fromEntries(
         Object.entries(input)
           .filter(
-            ([key]) => key !== 'tool_use_id' && (!minimizeBodies || !RAW_BODY_FIELDS.has(key)),
+            ([key]) =>
+              key !== 'tool_use_id' &&
+              !isNestedRawHostSessionField(key) &&
+              (!minimizeBodies || !RAW_BODY_FIELDS.has(key)),
           )
           .map(([key, child]) => [key, withoutRawBodies(child, key)]),
       )
@@ -367,6 +402,13 @@ function serializeAuditField(
       return value
     }
     if (
+      key === 'sessionCorrelationId' &&
+      typeof value === 'string' &&
+      isValidSessionCorrelationId(value)
+    ) {
+      return value
+    }
+    if (
       (key === 'runtimeVersion' || key === 'runtimeBuildStamp' || key === 'boundaryProfile') &&
       typeof value === 'string' &&
       value.length > 0
@@ -482,6 +524,7 @@ export function serializeAuditRecordV3(
       key === 'ts' ||
       key === 'approvalId' ||
       key === 'tool_use_id' ||
+      isRawHostSessionField(key) ||
       key === 'schemaVersion'
     ) {
       continue

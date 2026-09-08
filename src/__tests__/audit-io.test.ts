@@ -4,6 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { cursorLayout } from '../adapters/layouts/cursor.js'
+import {
+  createDefaultGateRuntimeDeps,
+  evaluateGatedAction,
+} from '../adapters/shared/gate-runtime.js'
 import { bucketGateEventsByDay, computeRepeatedFingerprintAsks } from '../core/audit-analysis.js'
 import {
   appendAuditRecord,
@@ -15,7 +20,8 @@ import {
   toolInvocationCorrelationId,
 } from '../core/audit-io.js'
 import { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord } from '../core/audit-query.js'
-import { DEFAULT_REDACTION_V3 } from '../core/config.js'
+import { sessionCorrelationId } from '../core/audit-serialize.js'
+import { DEFAULT_REDACTION_V3, mergeConfig } from '../core/config.js'
 
 const tempDirs: string[] = []
 
@@ -80,6 +86,117 @@ describe('serializeAuditRecordV3', () => {
 
     expect(serialized.toolInvocationCorrelationId).toBe('6ca13d52ca70c883')
     expect(JSON.stringify(serialized)).not.toContain(rawToolUseId)
+  })
+
+  it('stores only a stable one-way session correlation and drops raw session containers', () => {
+    const rawSessionId = 'host-session-canary'
+    const rawConversationId = 'host-conversation-canary'
+    const nestedSessionId = 'nested-session-canary'
+    const aliasedSessionId = 'aliased-host-session-canary'
+    const contextualConversationId = 'contextual-conversation-canary'
+    const serialized = serializeAuditRecordV3(
+      {
+        timestamp: '2026-08-22T05:00:00.000Z',
+        event: 'beforeShellExecution',
+        sessionCorrelationId: sessionCorrelationId(rawSessionId),
+        session_id: rawSessionId,
+        sessionId: rawSessionId,
+        conversation_id: rawConversationId,
+        conversationId: rawConversationId,
+        judgeSessionUsed: true,
+        judgeSessionReused: false,
+        judgeSessionRefHash: 'abcdefabcdefabcd',
+        judgeSessionResetReason: 'parse_failure',
+        session: { id: nestedSessionId },
+        conversation: { id: rawConversationId },
+        session_metadata: { id: nestedSessionId },
+        metadata: {
+          session_id: nestedSessionId,
+          host_session_id: aliasedSessionId,
+          conversation_context: { id: contextualConversationId },
+          sessionCorrelationId: rawSessionId,
+        },
+      },
+      scrubOptions,
+    )
+    const serializedText = JSON.stringify(serialized)
+
+    expect(serialized.sessionCorrelationId).toBe('f1785633769ea73a')
+    expect(serialized.sessionCorrelationId).toMatch(/^[a-f0-9]{16}$/)
+    expect(serialized).toMatchObject({
+      judgeSessionUsed: true,
+      judgeSessionReused: false,
+      judgeSessionRefHash: 'abcdefabcdefabcd',
+      judgeSessionResetReason: 'parse_failure',
+    })
+    for (const rawId of [
+      rawSessionId,
+      rawConversationId,
+      nestedSessionId,
+      aliasedSessionId,
+      contextualConversationId,
+    ]) {
+      expect(serializedText).not.toContain(rawId)
+    }
+    expect(serialized).not.toHaveProperty('session_id')
+    expect(serialized).not.toHaveProperty('session')
+    expect(serialized).not.toHaveProperty('conversation')
+  })
+
+  it('hashes equal host session IDs stably and distinguishes different IDs', () => {
+    expect(sessionCorrelationId('same-host-session')).toBe('b2d59908bf47f01e')
+    expect(sessionCorrelationId('same-host-session')).toBe(
+      sessionCorrelationId('same-host-session'),
+    )
+    expect(sessionCorrelationId('same-host-session')).not.toBe(
+      sessionCorrelationId('different-host-session'),
+    )
+  })
+
+  it('correlates the first validated host session field at the gate without treating tool use as a session', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-session-correlation-gate-'))
+    tempDirs.push(repoRoot)
+    const config = mergeConfig({ mode: 'audit' })
+    const ctx = {
+      layout: cursorLayout,
+      repoRoot,
+      config,
+      configPath: path.join(repoRoot, '.cursor', 'belay.config.json'),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+
+    await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'git status',
+      payload: {
+        session_id: '\u0000invalid-session',
+        sessionId: 'first-valid-host-session',
+        conversation_id: 'later-valid-conversation',
+        tool_use_id: 'tool-use-is-not-a-session',
+      },
+      sourceEvent: 'beforeShellExecution',
+    })
+    await evaluateGatedAction(ctx, deps, {
+      kind: 'shell',
+      cwd: repoRoot,
+      command: 'git status',
+      payload: { tool_use_id: 'tool-use-only' },
+      sourceEvent: 'beforeShellExecution',
+    })
+
+    const records = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(records[0]?.sessionCorrelationId).toBe(sessionCorrelationId('first-valid-host-session'))
+    expect(records[0]?.sessionCorrelationId).not.toBe(
+      toolInvocationCorrelationId('tool-use-is-not-a-session'),
+    )
+    expect(records[1]?.sessionCorrelationId).toBeUndefined()
+    expect(JSON.stringify(records)).not.toContain('first-valid-host-session')
+    expect(JSON.stringify(records)).not.toContain('later-valid-conversation')
+    expect(JSON.stringify(records)).not.toContain('tool-use-is-not-a-session')
   })
 
   it('normalizes Cursor tool_use_id prefixes before correlation hashing', () => {

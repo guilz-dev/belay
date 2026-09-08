@@ -1,3 +1,4 @@
+export type { AuditCohortIdentity } from './core/audit-metrics.js'
 export type {
   BelayConfig,
   BelayConfigV1,
@@ -20,7 +21,6 @@ export type {
   ClassifyResult,
   HookVerdict,
 } from './core/types.js'
-export type { AuditCohortIdentity } from './core/audit-metrics.js'
 
 import type { InstallScope } from './adapters/layouts/scope.js'
 import type { RecentAskEntry, RecentHostDenialEntry } from './core/audit-summary.js'
@@ -117,9 +117,15 @@ export interface DogfoodStatus {
   mode: string
   unknownLocalEffect: string
   readyForEnforce: boolean
+  trafficReadyForEnforce?: boolean
   gateEvents: number
   wouldBlockCount: number
   wouldBlockRate: number
+  reviewedBenignEvents?: number
+  reviewedBenignBlocked?: number
+  benignBlockRate?: number
+  distinctSessions?: number
+  availabilityAsks?: number
   excludedGateEvents: number
   runtimeBuildStamp?: string
   configFingerprint?: string

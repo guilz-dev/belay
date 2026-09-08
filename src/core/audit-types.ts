@@ -39,6 +39,7 @@ export interface AuditRecord {
   summary?: string
   approvalId?: string
   toolInvocationCorrelationId?: string
+  sessionCorrelationId?: string
   toolName?: string
   success?: boolean
   durationMs?: number

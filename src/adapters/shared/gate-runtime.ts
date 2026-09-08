@@ -27,6 +27,7 @@ import {
 import {
   appendAuditRecord,
   approvalCorrelationId,
+  sessionCorrelationId,
   toolInvocationCorrelationId,
 } from '../../core/audit-serialize.js'
 import type { CompactHostTelemetryV1 } from '../../core/audit-types.js'
@@ -163,6 +164,13 @@ const EMPTY_APPROVALS: ApprovalStateFile = {
 }
 
 const RUNTIME_PROVENANCE_KEY = Symbol.for('agent-belay.runtime-provenance')
+const HOST_SESSION_ID_FIELDS = [
+  'session_id',
+  'sessionId',
+  'conversation_id',
+  'conversationId',
+] as const
+const MAX_HOST_SESSION_ID_BYTES = 1_024
 
 interface RuntimeBuildProvenance {
   runtimeVersion?: unknown
@@ -198,6 +206,36 @@ function extractShellCommandFromPayload(payload: Record<string, unknown>): strin
   }
   const input = toolInput as Record<string, unknown>
   return typeof input.command === 'string' ? input.command : ''
+}
+
+function validHostSessionId(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.trim() !== value ||
+    Buffer.byteLength(value, 'utf8') > MAX_HOST_SESSION_ID_BYTES
+  ) {
+    return false
+  }
+  return ![...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+}
+
+function hostSessionCorrelationId(
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!payload) {
+    return undefined
+  }
+  for (const field of HOST_SESSION_ID_FIELDS) {
+    const value = payload[field]
+    if (validHostSessionId(value)) {
+      return sessionCorrelationId(value)
+    }
+  }
+  return undefined
 }
 
 export interface ApprovalPromptResult {
@@ -691,6 +729,7 @@ function containedAuditBase(
   mode: 'enforce' | 'audit',
   result: ClassifyResult,
   sourceEvent?: string,
+  sessionCorrelation?: string,
 ): Record<string, unknown> {
   const planFields = effectPlanAuditFields(result.effectPlan)
   const rawSourceEvent = sourceEvent ?? gateAuditEventName(kind)
@@ -699,6 +738,7 @@ function containedAuditBase(
     event: auditEvent,
     sourceEvent: rawSourceEvent,
     kind,
+    ...(sessionCorrelation ? { sessionCorrelationId: sessionCorrelation } : {}),
     fingerprint: result.fingerprint,
     mode,
     schemaVersion: result.axes ? 2 : 1,
@@ -719,12 +759,20 @@ async function mediateContainedUnknownExecution(params: {
   command: string
   result: ClassifyResult
   sourceEvent?: string
+  sessionCorrelationId?: string
 }): Promise<GateVerdict | null> {
-  const { ctx, deps, action, command, sourceEvent } = params
+  const {
+    ctx,
+    deps,
+    action,
+    command,
+    sourceEvent,
+    sessionCorrelationId: sessionCorrelation,
+  } = params
   const result = { ...params.result, wouldMediate: true }
   if (ctx.config.mode === 'audit') {
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, result, sourceEvent),
+      ...containedAuditBase(action.kind, ctx.config.mode, result, sourceEvent, sessionCorrelation),
       verdict: result.verdict,
       reason: result.reason,
       wouldBlock: true,
@@ -803,7 +851,13 @@ async function mediateContainedUnknownExecution(params: {
       reason,
     }
     await deps.appendAudit(ctx, {
-      ...containedAuditBase(action.kind, ctx.config.mode, failedResult, sourceEvent),
+      ...containedAuditBase(
+        action.kind,
+        ctx.config.mode,
+        failedResult,
+        sourceEvent,
+        sessionCorrelation,
+      ),
       verdict: failedResult.verdict,
       reason,
       wouldBlock: true,
@@ -848,7 +902,13 @@ async function mediateContainedUnknownExecution(params: {
     mediatedExecution,
   }
   await deps.appendAudit(ctx, {
-    ...containedAuditBase(action.kind, ctx.config.mode, mediatedResult, sourceEvent),
+    ...containedAuditBase(
+      action.kind,
+      ctx.config.mode,
+      mediatedResult,
+      sourceEvent,
+      sessionCorrelation,
+    ),
     verdict: mediatedResult.verdict,
     reason,
     wouldBlock: false,
@@ -901,6 +961,7 @@ export async function evaluateGatedAction(
     sourceEvent?: string
   },
 ): Promise<GateVerdict> {
+  const sessionCorrelation = hostSessionCorrelationId(params.payload)
   let action: GatedAction
   try {
     action = normalizeGatedAction({
@@ -947,6 +1008,7 @@ export async function evaluateGatedAction(
       event: resolveGateAuditEvent(sourceEvent, params.kind),
       sourceEvent,
       kind: params.kind,
+      ...(sessionCorrelation ? { sessionCorrelationId: sessionCorrelation } : {}),
       ...(typeof params.payload?.tool_use_id === 'string'
         ? { toolInvocationCorrelationId: toolInvocationCorrelationId(params.payload.tool_use_id) }
         : {}),
@@ -1022,6 +1084,7 @@ export async function evaluateGatedAction(
       command: action.command,
       result: predicted,
       sourceEvent: params.sourceEvent,
+      sessionCorrelationId: sessionCorrelation,
     })
     if (mediated) {
       return mediated
@@ -1129,6 +1192,7 @@ export async function evaluateGatedAction(
 
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     sourceEvent: params.sourceEvent,
+    sessionCorrelationId: sessionCorrelation,
     toolInvocationCorrelationId:
       typeof params.payload?.tool_use_id === 'string'
         ? toolInvocationCorrelationId(params.payload.tool_use_id)
@@ -1237,6 +1301,7 @@ async function gateDecisionToVerdict(
     classifierOptions?: ClassifierOptions
     scopeHintPayload?: Record<string, unknown>
     sourceEvent?: string
+    sessionCorrelationId?: string
     toolInvocationCorrelationId?: string
   } = {},
 ): Promise<GateVerdict> {
@@ -1273,6 +1338,9 @@ async function gateDecisionToVerdict(
     sourceEvent,
     kind,
     repoLabel: path.basename(ctx.repoRoot),
+    ...(auditExtras.sessionCorrelationId
+      ? { sessionCorrelationId: auditExtras.sessionCorrelationId }
+      : {}),
     ...(auditExtras.toolInvocationCorrelationId
       ? { toolInvocationCorrelationId: auditExtras.toolInvocationCorrelationId }
       : {}),

@@ -11,6 +11,7 @@ import {
   detectNoisyRules,
 } from './audit-analysis.js'
 import {
+  auditFingerprint,
   buildApprovalRoundTrips,
   filterAuditRecords,
   inferWouldBlock,
@@ -22,15 +23,18 @@ import {
   type RecoveryMetrics,
   type RecoveryMetricsCohort,
 } from './audit-recovery-metrics.js'
+import { isValidSessionCorrelationId } from './audit-serialize.js'
 import type {
   AvailabilityAskCounts,
   ReasonApprovalRatio,
   RepeatedFingerprintAsk,
 } from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
+import { type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-review.js'
 
-/** Minimum gate events before recommending enforce with zero would-block rate. */
-export const MIN_GATE_EVENTS_FOR_ENFORCE = 20
+export const MIN_REVIEWED_BENIGN_EVENTS = 150
+export const MIN_REVIEWED_SESSIONS = 3
+export const MAX_BENIGN_BLOCK_RATE = 0.02
 
 export interface AuditCohortIdentity {
   runtimeArtifactHash: string
@@ -54,6 +58,17 @@ export interface AuditMetricsCohort {
   wouldBlockByReason: Record<string, number>
   topWouldBlockSummaries: Array<{ summary: string; reason: string; count: number }>
   containedExecution: ContainedExecutionMetrics
+  reviewEvidencePresent: boolean
+  reviewedTraffic: ReviewedTrafficReadiness
+}
+
+export interface ReviewedTrafficReadiness {
+  reviewedBenignEvents: number
+  reviewedBenignBlocked: number
+  benignBlockRate: number
+  distinctSessions: number
+  availabilityAsks: number
+  ready: boolean
 }
 
 export interface ContainedExecutionMetrics {
@@ -152,6 +167,7 @@ export function computeAuditMetrics(
     mode?: string
     unknownLocalEffect?: string
     activeCohort?: AuditCohortIdentity | null
+    reviewLedger?: HarvestReviewLedgerV1
   } = {},
 ): AuditMetricsReport {
   const auditRecords = records.map(toAuditRecord)
@@ -273,6 +289,47 @@ export function computeAuditMetrics(
   const cohortTopWouldBlockSummaries = [...cohortSummaryCounts.values()]
     .sort((left, right) => right.count - left.count)
     .slice(0, 10)
+
+  const latestReviews = options.reviewLedger
+    ? latestHarvestReviews(options.reviewLedger)
+    : new Map()
+  const reviewEvidencePresent = latestReviews.size > 0
+  const reviewedBenignRecords = cohortGateRecords.filter((record) => {
+    const fingerprint = auditFingerprint(record)
+    const kind = typeof record.kind === 'string' ? record.kind : undefined
+    const boundaryProfile =
+      typeof record.boundaryProfile === 'string' ? record.boundaryProfile : undefined
+    if (!fingerprint || !kind || !boundaryProfile) {
+      return false
+    }
+    const review = latestReviews.get(`${fingerprint}\u0000${kind}\u0000${boundaryProfile}`)
+    return review?.outcome === 'provably-benign'
+  })
+  const reviewedBenignEvents = reviewedBenignRecords.length
+  const reviewedBenignBlocked = reviewedBenignRecords.filter(inferWouldBlock).length
+  const benignBlockRate =
+    reviewedBenignEvents > 0 ? reviewedBenignBlocked / reviewedBenignEvents : 0
+  const reviewedSessionIds = new Set<string>()
+  for (const record of reviewedBenignRecords) {
+    const sessionId = record.sessionCorrelationId
+    if (typeof sessionId === 'string' && isValidSessionCorrelationId(sessionId)) {
+      reviewedSessionIds.add(sessionId)
+    }
+  }
+  const reviewedTraffic: ReviewedTrafficReadiness = {
+    reviewedBenignEvents,
+    reviewedBenignBlocked,
+    benignBlockRate,
+    distinctSessions: reviewedSessionIds.size,
+    availabilityAsks: cohortAvailabilityAsks.total,
+    ready:
+      activeCohort !== null &&
+      reviewEvidencePresent &&
+      reviewedBenignEvents >= MIN_REVIEWED_BENIGN_EVENTS &&
+      reviewedSessionIds.size >= MIN_REVIEWED_SESSIONS &&
+      benignBlockRate < MAX_BENIGN_BLOCK_RATE &&
+      cohortAvailabilityAsks.total === 0,
+  }
   const currentCohort: AuditMetricsCohort = {
     identity: activeCohort,
     gateEvents: cohortGateEvents,
@@ -286,12 +343,14 @@ export function computeAuditMetrics(
     wouldBlockByReason: cohortWouldBlockByReason,
     topWouldBlockSummaries: cohortTopWouldBlockSummaries,
     containedExecution: containedExecutionMetrics(cohortGateRecords),
+    reviewEvidencePresent,
+    reviewedTraffic,
   }
 
   const mode = options.mode ?? null
   const unknownLocalEffect = options.unknownLocalEffect ?? null
   const notes: string[] = []
-  let readyForEnforce = false
+  const readyForEnforce = reviewedTraffic.ready
 
   if (mode === 'audit' && unknownLocalEffect === 'deny') {
     notes.push('Dogfood config detected: audit mode with fail-closed shell policy.')
@@ -299,20 +358,13 @@ export function computeAuditMetrics(
       notes.push(
         'Active runtime provenance is unavailable — readiness cannot use historical audit evidence.',
       )
-    } else if (cohortGateEvents === 0) {
+    }
+    if (activeCohort && cohortGateEvents === 0) {
       notes.push(
         'No gate events for the active runtime/config cohort — run normal agent work, then re-check metrics.',
       )
-    } else if (cohortWouldBlockRate === 0) {
-      if (cohortGateEvents >= MIN_GATE_EVENTS_FOR_ENFORCE) {
-        readyForEnforce = true
-        notes.push('No would-block events recorded — safe to try mode: "enforce".')
-      } else {
-        notes.push(
-          `Only ${cohortGateEvents} active-cohort gate event(s) recorded — collect at least ${MIN_GATE_EVENTS_FOR_ENFORCE} before enforce.`,
-        )
-      }
-    } else {
+    }
+    if (activeCohort && cohortWouldBlockCount > 0) {
       notes.push(
         `${cohortWouldBlockCount} active-cohort would-block event(s) (${(cohortWouldBlockRate * 100).toFixed(1)}% of gate traffic; classifier-quality ${(cohortClassifierWouldBlockRate * 100).toFixed(1)}%). Review top summaries and correct EffectPlan semantics or resource scope; use exact approval only when the modeled effects are correct.`,
       )
@@ -325,16 +377,24 @@ export function computeAuditMetrics(
           'Review top would-block summaries and correct EffectPlan semantics or resource scope before switching to enforce.',
         )
       }
-      if (
-        cohortClassifierWouldBlockRate < 0.05 &&
-        cohortGateEvents >= 20 &&
-        cohortAvailabilityAsks.total === 0
-      ) {
-        readyForEnforce = true
-        notes.push(
-          'Classifier-quality would-block rate is below 5% with sufficient sample size — consider enforce mode.',
-        )
-      }
+    }
+    if (!reviewEvidencePresent) {
+      notes.push('Review evidence is missing — reviewed traffic readiness is unavailable.')
+    }
+    if (reviewedBenignEvents < MIN_REVIEWED_BENIGN_EVENTS) {
+      notes.push(
+        `Reviewed provably-benign events: ${reviewedBenignEvents} (required: at least ${MIN_REVIEWED_BENIGN_EVENTS}).`,
+      )
+    }
+    if (reviewedSessionIds.size < MIN_REVIEWED_SESSIONS) {
+      notes.push(
+        `Distinct valid reviewed sessions: ${reviewedSessionIds.size} (required: at least ${MIN_REVIEWED_SESSIONS}).`,
+      )
+    }
+    if (reviewedBenignEvents > 0 && benignBlockRate >= MAX_BENIGN_BLOCK_RATE) {
+      notes.push(
+        `Reviewed benign block rate: ${(benignBlockRate * 100).toFixed(2)}% (required: below ${(MAX_BENIGN_BLOCK_RATE * 100).toFixed(2)}%).`,
+      )
     }
   } else if (mode !== 'audit') {
     notes.push('Config is not in audit mode — metrics show enforce-time behavior.')
@@ -343,7 +403,6 @@ export function computeAuditMetrics(
   }
 
   if (cohortAvailabilityAsks.total > 0) {
-    readyForEnforce = false
     notes.push(
       `${cohortAvailabilityAsks.total} active-cohort availability-caused ask(s) — tune infrastructure before changing Effect semantics.`,
     )

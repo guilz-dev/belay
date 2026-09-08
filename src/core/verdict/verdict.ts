@@ -32,7 +32,7 @@ export async function verdict(command: string, context: VerdictContext): Promise
       ? 'tier0_external'
       : policySignals.includes('rsync_destructive') && policy.projection.permission === 'ask'
         ? 'rsync_destructive'
-          : policy.authorizationDecision.matchedRule === 'grant.exact' &&
+        : policy.authorizationDecision.matchedRule === 'grant.exact' &&
             (presentation.location === 'repo_outside' || presentation.location === 'mixed') &&
             presentation.effect === 'local_mutation'
           ? 'repo_outside_local_mutation'
@@ -41,9 +41,10 @@ export async function verdict(command: string, context: VerdictContext): Promise
             ? 'dynamic_cwd_transition'
             : policySignals.includes('shell.cwd_unknown') && policy.projection.permission === 'ask'
               ? 'missing_trusted_cwd'
-            : policy.projection.reason
+              : policy.projection.reason
   const location =
-    policySignals.includes('shell.cwd_dynamic_transition') || policySignals.includes('shell.cwd_unknown')
+    policySignals.includes('shell.cwd_dynamic_transition') ||
+    policySignals.includes('shell.cwd_unknown')
       ? 'unknown'
       : presentation.location
 

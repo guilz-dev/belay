@@ -1,5 +1,6 @@
 import path from 'node:path'
 
+import type { AdapterName } from '../adapters/layouts/index.js'
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
@@ -9,10 +10,12 @@ import {
   MAX_AUDIT_RECORD_BYTES,
 } from '../core/audit-storage.js'
 import { normalizeAuditConfig } from '../core/config.js'
+import { loadHarvestReviewLedger } from '../core/harvest-review.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
 export interface MetricsOptions {
   targetDir?: string
+  adapter?: AdapterName
   json?: boolean
 }
 
@@ -29,7 +32,7 @@ function formatFingerprintPreview(fingerprint: string): string {
 
 export async function metricsProject(options: MetricsOptions = {}): Promise<MetricsReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
+  const config = await loadConfigFile(repoRoot, options.adapter)
   const audit = normalizeAuditConfig(config.audit)
   const auditLogPath = path.isAbsolute(audit.logPath)
     ? audit.logPath
@@ -39,6 +42,9 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Metr
     maxFiles: audit.maxFiles,
     maxLineBytes: MAX_AUDIT_RECORD_BYTES,
   })
+  const reviewLedger = await loadHarvestReviewLedger(
+    path.join(path.dirname(auditLogPath), 'harvest-reviews.json'),
+  )
   const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
   return {
     ...computeAuditMetrics(records, {
@@ -46,6 +52,7 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Metr
       mode: config.mode,
       unknownLocalEffect: config.policy.unknownLocalEffect,
       activeCohort,
+      reviewLedger,
     }),
     auditStorage: diagnostics,
   }
@@ -154,6 +161,20 @@ export function formatMetricsReport(
     `- contained execution: would mediate ${report.currentCohort.containedExecution.wouldMediate}; complete ${report.currentCohort.containedExecution.complete}; failed ${report.currentCohort.containedExecution.failed}; timed out ${report.currentCohort.containedExecution.timedOut}`,
   )
   lines.push(`- availability-caused asks: ${report.currentCohort.availabilityAsks.total}`)
+  lines.push('', 'Reviewed provably-benign traffic:')
+  lines.push(
+    `- reviewed benign events: ${report.currentCohort.reviewedTraffic.reviewedBenignEvents}`,
+  )
+  lines.push(
+    `- reviewed benign blocked: ${report.currentCohort.reviewedTraffic.reviewedBenignBlocked} (${(report.currentCohort.reviewedTraffic.benignBlockRate * 100).toFixed(2)}%)`,
+  )
+  lines.push(`- distinct valid sessions: ${report.currentCohort.reviewedTraffic.distinctSessions}`)
+  lines.push(
+    `- active-cohort availability asks: ${report.currentCohort.reviewedTraffic.availabilityAsks}`,
+  )
+  lines.push(
+    `- traffic ready for enforce: ${report.currentCohort.reviewedTraffic.ready ? 'yes' : 'no'}`,
+  )
   if (Object.keys(report.currentCohort.wouldBlockByReason).length > 0) {
     lines.push('', 'Current-cohort would-block by reason:')
     for (const [reason, count] of Object.entries(report.currentCohort.wouldBlockByReason).sort(
