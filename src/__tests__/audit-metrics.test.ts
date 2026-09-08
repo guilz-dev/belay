@@ -106,9 +106,10 @@ describe('audit-metrics', () => {
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
     const initialConfig = await loadConfigFile(repoRoot)
+    const rotationMaxBytes = 1_024
     await writeTrustedConfigFile(repoRoot, {
       ...initialConfig,
-      audit: { ...initialConfig.audit, maxBytes: 1_024, maxFiles: 3 },
+      audit: { ...initialConfig.audit, maxBytes: rotationMaxBytes, maxFiles: 3 },
     })
     const config = await loadConfigFile(repoRoot)
     const cohort = await resolveActiveAuditCohort(repoRoot, config)
@@ -126,18 +127,21 @@ describe('audit-metrics', () => {
     )
     const malformed = '{"private-malformed-marker":'
     const nonObject = '"private-non-object-marker"'
-    const oversized = JSON.stringify(
+    const aboveRotationThreshold = JSON.stringify(
       cohortGate({
         timestamp: '2026-09-08T00:00:02.000Z',
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
-        summary: 'private-oversized-marker',
+        summary: 'valid record above the rotation threshold',
         padding: 'x'.repeat(1_500),
         ...cohort,
       }),
     )
-    const active = `${activeRecord}\n${malformed}\n${nonObject}\n${oversized}\n`
+    expect(Buffer.byteLength(`${aboveRotationThreshold}\n`, 'utf8')).toBeGreaterThan(
+      rotationMaxBytes,
+    )
+    const active = `${activeRecord}\n${malformed}\n${nonObject}\n${aboveRotationThreshold}\n`
     await writeFile(`${auditPath}.1`, generation, 'utf8')
     await writeFile(auditPath, active, 'utf8')
 
@@ -147,19 +151,18 @@ describe('audit-metrics', () => {
     expect(report.auditStorage).toEqual({
       filesRead: 2,
       bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
-      parsedRecords: 2,
+      parsedRecords: 3,
       malformedLines: 2,
-      oversizedLines: 1,
+      oversizedLines: 0,
     })
-    expect(report.currentCohort.gateEvents).toBe(2)
-    expect(report.currentCohort.wouldBlockCount).toBe(0)
+    expect(report.currentCohort.gateEvents).toBe(3)
+    expect(report.currentCohort.wouldBlockCount).toBe(1)
     expect(formatted).toContain('Retained audit storage:')
     expect(formatted).toContain('- files read: 2')
     expect(formatted).toContain('- malformed lines skipped: 2')
-    expect(formatted).toContain('- oversized lines skipped: 1')
+    expect(formatted).toContain('- oversized lines skipped: 0')
     expect(formatted).not.toContain('private-malformed-marker')
     expect(formatted).not.toContain('private-non-object-marker')
-    expect(formatted).not.toContain('private-oversized-marker')
   })
 
   it('computes would-block metrics for dogfood config', () => {

@@ -10,7 +10,7 @@ import {
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
-import { loadRetainedAuditRecords } from '../core/audit-storage.js'
+import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from '../core/audit-storage.js'
 import type { AuditFilter, AuditRecord } from '../core/audit-types.js'
 import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
 import { diffReclassification } from '../core/reclassify.js'
@@ -49,7 +49,7 @@ export async function loadAuditRecords(
   const { records } = await loadRetainedAuditRecords({
     auditPath: auditLogPath,
     maxFiles: audit.maxFiles,
-    maxLineBytes: audit.maxBytes,
+    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
   })
   return records.map(toAuditRecord)
 }

@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { simulateProject } from '../commands/simulate.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -58,6 +59,11 @@ describe('simulate', () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-sim-generations-'))
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
+    const initialConfig = await loadConfigFile(repoRoot)
+    await writeTrustedConfigFile(repoRoot, {
+      ...initialConfig,
+      audit: { ...initialConfig.audit, maxBytes: 64, maxFiles: 2 },
+    })
 
     const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
     const baseRecord = {

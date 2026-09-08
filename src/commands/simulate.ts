@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-metrics.js'
-import { loadRetainedAuditRecords } from '../core/audit-storage.js'
+import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from '../core/audit-storage.js'
 import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
 import { countMissingActionSnapshots, diffReclassification } from '../core/reclassify.js'
 
@@ -32,7 +32,7 @@ export async function simulateProject(options: SimulateOptions) {
   const { records: retainedRecords } = await loadRetainedAuditRecords({
     auditPath: auditLogPath,
     maxFiles: audit.maxFiles,
-    maxLineBytes: audit.maxBytes,
+    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
   })
   const records = retainedRecords.map(toAuditRecord)
   const missingSnapshotCount = countMissingActionSnapshots(records)

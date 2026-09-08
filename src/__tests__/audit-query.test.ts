@@ -3,13 +3,15 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { auditProject } from '../commands/audit.js'
+import { auditProject, loadAuditRecords } from '../commands/audit.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
+import { appendBoundedAuditLine } from '../core/audit-storage.js'
 import { initProject } from '../installer.js'
 
 const tempDirs: string[] = []
@@ -346,5 +348,43 @@ describe('audit query', () => {
         executeTimestamp: '2026-06-01T10:02:00.000Z',
       }),
     ])
+  })
+
+  it('keeps one appended record above maxBytes readable as audit evidence', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-low-rotation-bound-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const initialConfig = await loadConfigFile(repoRoot)
+    const rotationMaxBytes = 64
+    const retainedFiles = 2
+    await writeTrustedConfigFile(repoRoot, {
+      ...initialConfig,
+      audit: { ...initialConfig.audit, maxBytes: rotationMaxBytes, maxFiles: retainedFiles },
+    })
+    const config = await loadConfigFile(repoRoot)
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const record = {
+      timestamp: '2026-09-08T00:00:00.000Z',
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'allow',
+      reason: 'read_only',
+      fingerprint: testFingerprint('above-rotation-threshold'),
+      summary: 'retained evidence above a low rotation threshold',
+      padding: 'x'.repeat(256),
+    }
+    const line = JSON.stringify(record)
+    expect(Buffer.byteLength(`${line}\n`, 'utf8')).toBeGreaterThan(rotationMaxBytes)
+    expect(Buffer.byteLength(`${line}\n`, 'utf8')).toBeLessThan(33_554_432)
+
+    await appendBoundedAuditLine({
+      auditPath,
+      line,
+      maxBytes: rotationMaxBytes,
+      maxFiles: retainedFiles,
+    })
+
+    const loaded = await loadAuditRecords(repoRoot)
+    expect(loaded).toEqual([expect.objectContaining({ fingerprint: record.fingerprint })])
   })
 })

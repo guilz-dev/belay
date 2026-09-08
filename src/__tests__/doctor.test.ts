@@ -701,20 +701,24 @@ describe('doctorProject', () => {
     await initProject({ targetDir: repoRoot })
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
     const config = JSON.parse(await readFile(configPath, 'utf8'))
+    const rotationMaxBytes = 256
     await writeTrustedConfigFile(repoRoot, {
       ...config,
-      audit: { ...config.audit, maxBytes: 256, maxFiles: 2 },
+      audit: { ...config.audit, maxBytes: rotationMaxBytes, maxFiles: 2 },
     })
     const auditPath = path.join(repoRoot, config.audit.logPath)
     const generation = `${JSON.stringify({ event: 'beforeShellExecution', verdict: 'allow' })}\n`
     const malformed = '{"private-doctor-malformed":'
-    const oversized = JSON.stringify({
+    const aboveRotationThreshold = JSON.stringify({
       event: 'beforeShellExecution',
       verdict: 'deny_pending_approval',
-      summary: 'private-doctor-oversized',
+      summary: 'private-doctor-valid-record',
       padding: 'x'.repeat(300),
     })
-    const active = `${malformed}\n${oversized}\n`
+    expect(Buffer.byteLength(`${aboveRotationThreshold}\n`, 'utf8')).toBeGreaterThan(
+      rotationMaxBytes,
+    )
+    const active = `${malformed}\n${aboveRotationThreshold}\n`
     await writeFile(`${auditPath}.1`, generation, 'utf8')
     await writeFile(auditPath, active, 'utf8')
 
@@ -724,16 +728,16 @@ describe('doctorProject', () => {
     expect(report.auditStorage).toEqual({
       filesRead: 2,
       bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
-      parsedRecords: 1,
+      parsedRecords: 2,
       malformedLines: 1,
-      oversizedLines: 1,
+      oversizedLines: 0,
     })
     expect(formatted).toContain('Retained audit storage:')
     expect(formatted).toContain('- files read: 2')
     expect(formatted).toContain('- malformed lines skipped: 1')
-    expect(formatted).toContain('- oversized lines skipped: 1')
+    expect(formatted).toContain('- oversized lines skipped: 0')
     expect(formatted).not.toContain('private-doctor-malformed')
-    expect(formatted).not.toContain('private-doctor-oversized')
+    expect(formatted).not.toContain('private-doctor-valid-record')
   })
 
   it('warns when linked worktrees are not dogfooded while dogfood is active here', async () => {

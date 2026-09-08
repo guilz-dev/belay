@@ -3,12 +3,15 @@ import { constants, createReadStream } from 'node:fs'
 import { type FileHandle, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import type { AuditRecord } from './audit-types.js'
 import { MAX_AUDIT_FILES } from './config.js'
 
 const AUDIT_LOCK_TIMEOUT_MS = 2_000
 const AUDIT_LOCK_RETRY_DELAY_MS = 25
+const CARRIAGE_RETURN = Buffer.from('\r')
+
+export const MAX_AUDIT_RECORD_BYTES = 33_554_432
 
 export interface AppendBoundedAuditLineOptions {
   auditPath: string
@@ -34,6 +37,10 @@ export interface AuditLoadDiagnostics {
 export interface AuditLoadResult {
   records: AuditRecord[]
   diagnostics: AuditLoadDiagnostics
+}
+
+export interface AuditReadOperations {
+  createReadStream(filePath: string, handle: FileHandle): Readable
 }
 
 export interface AuditStorageOperations {
@@ -71,8 +78,18 @@ const DEFAULT_AUDIT_STORAGE_OPERATIONS: AuditStorageOperations = {
   },
 }
 
+const DEFAULT_AUDIT_READ_OPERATIONS: AuditReadOperations = {
+  createReadStream(filePath, handle) {
+    return createReadStream(filePath, { fd: handle, autoClose: false })
+  },
+}
+
 function resolveOperations(overrides: Partial<AuditStorageOperations>): AuditStorageOperations {
   return { ...DEFAULT_AUDIT_STORAGE_OPERATIONS, ...overrides }
+}
+
+function resolveReadOperations(overrides: Partial<AuditReadOperations>): AuditReadOperations {
+  return { ...DEFAULT_AUDIT_READ_OPERATIONS, ...overrides }
 }
 
 function errno(error: unknown): string | undefined {
@@ -197,8 +214,14 @@ function validateAuditReadOptions(options: AuditReadOptions): void {
   ) {
     throw new Error(`Audit maxFiles must be an integer from 1 through 100: ${options.maxFiles}`)
   }
-  if (!Number.isSafeInteger(options.maxLineBytes) || options.maxLineBytes < 1) {
-    throw new Error(`Audit maxLineBytes must be a positive integer: ${options.maxLineBytes}`)
+  if (
+    !Number.isSafeInteger(options.maxLineBytes) ||
+    options.maxLineBytes < 1 ||
+    options.maxLineBytes > MAX_AUDIT_RECORD_BYTES
+  ) {
+    throw new Error(
+      `Audit maxLineBytes must be a positive integer no greater than ${MAX_AUDIT_RECORD_BYTES}: ${options.maxLineBytes}`,
+    )
   }
 }
 
@@ -212,6 +235,33 @@ function emptyAuditLoadDiagnostics(): AuditLoadDiagnostics {
   }
 }
 
+function parseAuditRecordBytes(
+  buffer: Buffer | undefined,
+  length: number,
+  diagnostics: AuditLoadDiagnostics,
+): AuditRecord | null {
+  if (!buffer || length === 0) {
+    return null
+  }
+  const trimmed = buffer.subarray(0, length).toString('utf8').trim()
+  if (!trimmed) {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    diagnostics.malformedLines += 1
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    diagnostics.malformedLines += 1
+    return null
+  }
+  diagnostics.parsedRecords += 1
+  return parsed as AuditRecord
+}
+
 /**
  * Read exact retained generations oldest-to-active without taking the writer lock.
  *
@@ -220,10 +270,13 @@ function emptyAuditLoadDiagnostics(): AuditLoadDiagnostics {
  */
 export async function* iterateAuditRecords(
   options: AuditReadOptions,
+  operationOverrides: Partial<AuditReadOperations> = {},
 ): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
   validateAuditReadOptions(options)
+  const operations = resolveReadOperations(operationOverrides)
   const auditPath = path.resolve(options.auditPath)
   const diagnostics = emptyAuditLoadDiagnostics()
+  let lineBuffer: Buffer | undefined
   const retainedPaths: string[] = []
   for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
     retainedPaths.push(auditGenerationPath(auditPath, generation))
@@ -257,35 +310,101 @@ export async function* iterateAuditRecords(
         throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
       }
       diagnostics.filesRead += 1
-      const stream = createReadStream(retainedPath, { fd: handle, autoClose: false })
-      const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY })
+      const stream = operations.createReadStream(retainedPath, handle)
+      let lineLength = 0
+      let pendingCarriageReturn = false
+      let discardingOversizedLine = false
+
+      const discardOversizedLine = (): void => {
+        if (!discardingOversizedLine) {
+          diagnostics.oversizedLines += 1
+        }
+        discardingOversizedLine = true
+        lineLength = 0
+        pendingCarriageReturn = false
+      }
+
+      const appendLineBytes = (source: Buffer, start = 0, end = source.length): void => {
+        const byteLength = end - start
+        if (byteLength === 0) {
+          return
+        }
+        if (lineLength + byteLength > options.maxLineBytes) {
+          discardOversizedLine()
+          return
+        }
+        lineBuffer ??= Buffer.allocUnsafe(options.maxLineBytes)
+        source.copy(lineBuffer, lineLength, start, end)
+        lineLength += byteLength
+      }
+
       try {
-        for await (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed) {
-            continue
+        for await (const rawChunk of stream) {
+          const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk as Uint8Array)
+          diagnostics.bytesRead += chunk.length
+          let offset = 0
+
+          while (offset < chunk.length) {
+            const newlineIndex = chunk.indexOf(0x0a, offset)
+            const hasNewline = newlineIndex !== -1
+            const segmentEnd = hasNewline ? newlineIndex : chunk.length
+
+            if (discardingOversizedLine) {
+              if (!hasNewline) {
+                break
+              }
+              discardingOversizedLine = false
+              offset = newlineIndex + 1
+              continue
+            }
+
+            if (pendingCarriageReturn) {
+              pendingCarriageReturn = false
+              if (!(hasNewline && segmentEnd === offset)) {
+                appendLineBytes(CARRIAGE_RETURN)
+              }
+            }
+
+            if (!discardingOversizedLine) {
+              let contentEnd = segmentEnd
+              if (contentEnd > offset && chunk[contentEnd - 1] === 0x0d) {
+                contentEnd -= 1
+                if (!hasNewline) {
+                  pendingCarriageReturn = true
+                }
+              }
+              appendLineBytes(chunk, offset, contentEnd)
+            }
+
+            if (!hasNewline) {
+              break
+            }
+
+            if (!discardingOversizedLine) {
+              const record = parseAuditRecordBytes(lineBuffer, lineLength, diagnostics)
+              if (record) {
+                yield record
+              }
+            }
+            lineLength = 0
+            pendingCarriageReturn = false
+            discardingOversizedLine = false
+            offset = newlineIndex + 1
           }
-          if (Buffer.byteLength(line, 'utf8') > options.maxLineBytes) {
-            diagnostics.oversizedLines += 1
-            continue
+        }
+
+        if (!discardingOversizedLine) {
+          if (pendingCarriageReturn) {
+            appendLineBytes(CARRIAGE_RETURN)
           }
-          let parsed: unknown
-          try {
-            parsed = JSON.parse(trimmed)
-          } catch {
-            diagnostics.malformedLines += 1
-            continue
+          if (!discardingOversizedLine) {
+            const record = parseAuditRecordBytes(lineBuffer, lineLength, diagnostics)
+            if (record) {
+              yield record
+            }
           }
-          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-            diagnostics.malformedLines += 1
-            continue
-          }
-          diagnostics.parsedRecords += 1
-          yield parsed as AuditRecord
         }
       } finally {
-        diagnostics.bytesRead += stream.bytesRead
-        lines.close()
         stream.destroy()
       }
     } finally {
@@ -299,9 +418,10 @@ export async function* iterateAuditRecords(
 /** Collect the bounded retained-generation iterator for aggregation-oriented consumers. */
 export async function loadRetainedAuditRecords(
   options: AuditReadOptions,
+  operationOverrides: Partial<AuditReadOperations> = {},
 ): Promise<AuditLoadResult> {
   const records: AuditRecord[] = []
-  const iterator = iterateAuditRecords(options)
+  const iterator = iterateAuditRecords(options, operationOverrides)
   for (;;) {
     const next = await iterator.next()
     if (next.done) {
@@ -510,8 +630,9 @@ async function rotateAndCommitStagedLine(
 /**
  * Append one already serialized NDJSON record under a sibling lock.
  *
- * A single record may exceed maxBytes. It remains whole and becomes the active file after any
- * applicable rotation; maxBytes is a rotation threshold, not a record truncation limit.
+ * A single record may exceed maxBytes up to MAX_AUDIT_RECORD_BYTES. It remains whole and becomes
+ * the active file after any applicable rotation; maxBytes is a rotation threshold, not a record
+ * truncation limit.
  */
 export async function appendBoundedAuditLine(
   options: AppendBoundedAuditLineOptions,
@@ -529,6 +650,12 @@ export async function appendBoundedAuditLine(
   }
 
   const record = options.line.replace(/[\r\n]+$/u, '')
+  const completeLineBytes = Buffer.byteLength(record, 'utf8') + 1
+  if (completeLineBytes > MAX_AUDIT_RECORD_BYTES) {
+    throw new Error(
+      `Audit record exceeds the fixed ${MAX_AUDIT_RECORD_BYTES}-byte complete line limit: ${completeLineBytes}`,
+    )
+  }
   const bytes = Buffer.from(`${record}\n`, 'utf8')
   const operations = resolveOperations(operationOverrides)
 

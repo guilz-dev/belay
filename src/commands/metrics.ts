@@ -3,7 +3,11 @@ import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
-import { type AuditLoadDiagnostics, loadRetainedAuditRecords } from '../core/audit-storage.js'
+import {
+  type AuditLoadDiagnostics,
+  loadRetainedAuditRecords,
+  MAX_AUDIT_RECORD_BYTES,
+} from '../core/audit-storage.js'
 import { normalizeAuditConfig } from '../core/config.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -33,7 +37,7 @@ export async function metricsProject(options: MetricsOptions = {}): Promise<Metr
   const { records, diagnostics } = await loadRetainedAuditRecords({
     auditPath: auditLogPath,
     maxFiles: audit.maxFiles,
-    maxLineBytes: audit.maxBytes,
+    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
   })
   const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
   return {
