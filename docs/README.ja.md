@@ -43,6 +43,8 @@ npx @guilz-dev/belay init                     # Cursor（既定）
 
 承認・判定は `.cursor/belay/audit.ndjson`、`.claude/belay/audit.ndjson`、
 `.codex/belay/audit.ndjson` のいずれかに記録されます（アダプター依存）。v3 以降は ISO
+8601 timestamp を持つ NDJSON です。監査ログは既定で 32 MiB ごとにローテーションし、
+現行ログを含め最大 5 ファイルを保持します。各監査コマンドは保持世代を古い順に読みます。
 `timestamp` と fingerprint が保持され、dogfood readiness は active cohort（runtime bundle +
 判定設定 + boundary profile）だけを数えます。旧ログに scrub プレースホルダー
 （`<timestamp>` 等）が残る場合は `belay upgrade` で legacy ファイルへ切り離してから新 cohort

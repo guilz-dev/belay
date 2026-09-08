@@ -33,7 +33,9 @@ async function main(): Promise<void> {
 
   const store = createEgressApprovalStore(repoRoot, config)
   const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
-  const auditPath = path.join(repoRoot, config.audit.logPath)
+  const auditPath = path.isAbsolute(config.audit.logPath)
+    ? config.audit.logPath
+    : path.join(repoRoot, config.audit.logPath)
 
   const { server, host, port } = await bindEgressProxy({
     config,

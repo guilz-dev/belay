@@ -1,3 +1,4 @@
+import { compactSubagentGateSummary } from './audit-telemetry-projection.js'
 import { BOUNDARY_PROFILE_L3_L4_ONLY } from './capability/boundary-profile.js'
 import { policyReasonToLegacyReason } from './capability/policy-bridge.js'
 import { evaluateSubagentPolicy, policyDecisionRequiresAsk } from './capability/policy-engine.js'
@@ -43,8 +44,9 @@ export function classifySubagent(
   const kind =
     payload.tool_name === 'Task' ? 'Task' : String(payload.subagent_type ?? 'generalPurpose')
   const scrubbed = fingerprintSource(payload, options)
-  const summary = extractSubagentText(payload, options)
-  const lowered = summary.toLowerCase()
+  const summaryText = extractSubagentText(payload, options)
+  const summary = compactSubagentGateSummary(payload)
+  const lowered = summaryText.toLowerCase()
   const fingerprint = subagentFingerprint(kind, scrubbed, repoRoot)
   const hasExternalTerm = EXTERNAL_TERMS.some((term) => {
     const pattern = new RegExp(`\\b${term}\\b`, 'i')
@@ -55,7 +57,7 @@ export function classifySubagent(
   const { request, decision } = evaluateSubagentPolicy(
     {
       subagentType: kind,
-      summary,
+      summary: summaryText,
       repoRoot,
       cwd: repoRoot,
       inputFingerprint: fingerprint,

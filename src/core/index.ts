@@ -42,6 +42,7 @@ export { classifyToolUse } from './classify-tool.js'
 export {
   type ApprovalFlow,
   approvedApprovalsFile,
+  auditRetentionFromConfig,
   type BelayApprovalAutoReplayScopes,
   type BelayApprovalConfig,
   type BelayConfig,

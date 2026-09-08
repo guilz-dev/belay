@@ -487,8 +487,8 @@ Phase A 完了までは all-time would-block rate、repeat fingerprint、approva
 | control-plane write `effect.control_plane_write` | B | **完了** | EffectPlan policy test |
 | heredoc / Make lowering | B | **未着手** | §4.1–4.2 |
 | shell MUST-ALLOW/MUST-ASK corpus | B | **部分** | EffectPlan path 単体テストのみ |
-| bounded storage / rotation | C | **未着手** | §P0-5 |
-| compact post-tool telemetry | C | **未着手** | |
+| bounded storage / rotation | C | **完了** | `audit-sink.ts` / `audit-reader.ts` / `audit.retention` |
+| compact post-tool telemetry | C | **完了** | `audit-telemetry-projection.ts`、gate summary compact 化 |
 | readiness 改定（150 sample、`benignBlockRate`） | D | **未着手** | §6、`MIN_GATE_EVENTS_FOR_ENFORCE` は現行 20 のまま |
 | egress audit cohort フィールド | A | **完了** | `resolveActiveAuditCohort` を onAudit に注入 |
 | cohort 部分 v3 legacy 誤マッチ | A | **完了** | `matchesAuditCohort` fail-closed |

@@ -321,7 +321,11 @@ load.
   },
   "audit": {
     "logPath": ".cursor/belay/audit.ndjson",
-    "includeAssessment": true
+    "includeAssessment": true,
+    "retention": {
+      "maxBytes": 33554432,
+      "maxFiles": 5
+    }
   }
 }
 ```

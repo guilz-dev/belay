@@ -332,6 +332,18 @@ export function formatMetricsReport(
     )
   }
 
+  if (report.storage) {
+    lines.push(
+      '',
+      'Audit storage:',
+      `- active: ${report.storage.activeBytes} / ${report.storage.maxBytes} bytes`,
+      `- total across ${report.storage.files} file(s): ${report.storage.totalBytes} bytes`,
+    )
+    if (report.storage.malformedLines > 0) {
+      lines.push(`- malformed lines: ${report.storage.malformedLines}`)
+    }
+  }
+
   lines.push(
     ...formatRecoveryMetricsSection('All-time recovery metrics:', report.recovery),
     ...formatRecoveryMetricsSection(

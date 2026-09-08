@@ -674,6 +674,10 @@ export function parseArgs(argv: string[]) {
     throw new Error(`Unknown argument: ${token}`)
   }
 
+  if (options.allCohorts && options.harvestSubcommand !== 'list') {
+    throw new Error('--all-cohorts is only valid for harvest list.')
+  }
+
   return { command: command ?? 'help', options }
 }
 

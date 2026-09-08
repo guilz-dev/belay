@@ -319,7 +319,9 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       }
     },
     async appendAudit(ctx, event) {
-      const auditPath = path.join(ctx.repoRoot, ctx.config.audit.logPath)
+      const auditPath = path.isAbsolute(ctx.config.audit.logPath)
+        ? ctx.config.audit.logPath
+        : path.join(ctx.repoRoot, ctx.config.audit.logPath)
       const provenance = auditProvenance(ctx.config)
       const record: Record<string, unknown> = {
         timestamp: new Date().toISOString(),

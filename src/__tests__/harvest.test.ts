@@ -19,6 +19,7 @@ import {
   extractAvailabilityQueue,
   extractHarvestCandidates,
   filterRecordsForHarvest,
+  selectHarvestCohort,
 } from '../core/harvest.js'
 import { loadHarvestReviewLedger, writeHarvestReviewLedgerAtomic } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
@@ -505,6 +506,60 @@ describe('harvest', () => {
       await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
     ).toMatchObject({
       reviews: [{ fingerprint: secondFingerprint, outcome: 'reject' }],
+    })
+  })
+
+  it('selects only active-cohort records unless historical review is explicit', () => {
+    const activeCohort = {
+      runtimeBuildStamp: '1.0.0@active',
+      runtimeArtifactHash: testFingerprint('active-runtime'),
+      decisionConfigFingerprint: testFingerprint('active-config'),
+      configFingerprint: testFingerprint('active-display-config'),
+      boundaryProfile: 'l3-l4-only',
+    }
+    const active = shellDeny({
+      fingerprint: testFingerprint('active-candidate'),
+      summary: 'git status',
+      reason: 'unknown_local_effect',
+      runtimeArtifactHash: activeCohort.runtimeArtifactHash,
+      decisionConfigFingerprint: activeCohort.decisionConfigFingerprint,
+      boundaryProfile: activeCohort.boundaryProfile,
+    })
+    const historical = shellDeny({
+      fingerprint: testFingerprint('historical-candidate'),
+      summary: 'git diff',
+      reason: 'unknown_local_effect',
+      runtimeArtifactHash: testFingerprint('historical-runtime'),
+      decisionConfigFingerprint: activeCohort.decisionConfigFingerprint,
+      boundaryProfile: activeCohort.boundaryProfile,
+    })
+
+    const selected = selectHarvestCohort([active, historical], activeCohort, false)
+    expect(selected).toEqual({
+      records: [active],
+      cohortScope: 'active',
+      excludedRecords: 1,
+    })
+
+    const all = selectHarvestCohort([active, historical], activeCohort, true)
+    expect(all).toEqual({
+      records: [active, historical],
+      cohortScope: 'all',
+      excludedRecords: 0,
+    })
+  })
+
+  it('does not treat history as active evidence when runtime provenance is unavailable', () => {
+    const historical = shellDeny({
+      fingerprint: testFingerprint('historical-only'),
+      summary: 'git status',
+      reason: 'unknown_local_effect',
+    })
+
+    expect(selectHarvestCohort([historical], null, false)).toEqual({
+      records: [],
+      cohortScope: 'active',
+      excludedRecords: 1,
     })
   })
 

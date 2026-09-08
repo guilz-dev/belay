@@ -1,4 +1,5 @@
 import type { CorpusCase } from '../corpus/types.js'
+import { matchesAuditCohort } from '../runtime-provenance.js'
 import { computeRepeatedFingerprintAsks, isAvailabilityCausedAsk } from './audit-analysis.js'
 import type { AuditCohortIdentity } from './audit-metrics.js'
 import {
@@ -56,6 +57,30 @@ export interface HarvestReport {
   candidates: HarvestCandidate[]
   availabilityQueue: AvailabilityQueueItem[]
   notes: string[]
+}
+
+export interface HarvestCohortSelection {
+  records: AuditRecord[]
+  cohortScope: 'active' | 'all'
+  excludedRecords: number
+}
+
+export function selectHarvestCohort(
+  records: AuditRecord[],
+  activeCohort: AuditCohortIdentity | null,
+  allCohorts: boolean,
+): HarvestCohortSelection {
+  if (allCohorts) {
+    return { records, cohortScope: 'all', excludedRecords: 0 }
+  }
+  const selected = activeCohort
+    ? records.filter((record) => matchesAuditCohort(record, activeCohort))
+    : []
+  return {
+    records: selected,
+    cohortScope: 'active',
+    excludedRecords: records.length - selected.length,
+  }
 }
 
 const READ_STYLE_COMMAND_PATTERN =

@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { compactToolGateSummary } from './audit-telemetry-projection.js'
 import { BOUNDARY_PROFILE_L3_L4_ONLY } from './capability/boundary-profile.js'
 import { policyReasonToLegacyReason } from './capability/policy-bridge.js'
 import {
@@ -8,6 +9,7 @@ import {
   policyDecisionRequiresAsk,
 } from './capability/policy-engine.js'
 import type { BelayConfigV3 } from './config.js'
+import { DEFAULT_REDACTION_V3 } from './config.js'
 import { canonicalStringify, toolFingerprint } from './fingerprint.js'
 import { matchesSensitivePath } from './glob.js'
 import { pathWithinRoot, resolveWorkspaceRootMatch } from './path-utils.js'
@@ -620,13 +622,26 @@ function classifyFilePathRead(params: {
   })
 }
 
+function toolAuditSummary(
+  toolName: string,
+  payload: Record<string, unknown>,
+  options: ClassifierOptions,
+): string {
+  return compactToolGateSummary(
+    toolName,
+    payload.tool_input ?? {},
+    canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+    options.scrubOptions ?? DEFAULT_REDACTION_V3,
+  )
+}
+
 function indeterminateToolResult(
   toolName: string,
   payload: Record<string, unknown>,
   repoRoot: string,
   options: ClassifierOptions,
 ): ClassifyResult {
-  const summary = canonicalStringify(scrubPayload(payload.tool_input ?? {}, options))
+  const summary = toolAuditSummary(toolName, payload, options)
   const fingerprint = toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot)
   if (options.unknownLocalEffect === 'deny') {
     return {
@@ -681,7 +696,7 @@ export async function classifyToolUse(
         return {
           verdict: 'deny_pending_approval',
           reason: 'tool_shell_missing_command',
-          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          summary: toolAuditSummary(toolName, payload, options),
           fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
@@ -695,7 +710,7 @@ export async function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'tool_shell_missing_command',
-        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        summary: toolAuditSummary(toolName, payload, options),
         fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
@@ -722,7 +737,7 @@ export async function classifyToolUse(
         return {
           verdict: 'deny_pending_approval',
           reason: 'file_mutation_missing_path',
-          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          summary: toolAuditSummary(toolName, payload, options),
           fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
@@ -736,7 +751,7 @@ export async function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'file_mutation_missing_path',
-        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        summary: toolAuditSummary(toolName, payload, options),
         fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
@@ -769,7 +784,7 @@ export async function classifyToolUse(
         return {
           verdict: 'deny_pending_approval',
           reason: 'apply_patch_missing_path',
-          summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+          summary: toolAuditSummary(toolName, payload, options),
           fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
           assessment: {
             reversibility: 'irreversible',
@@ -783,7 +798,7 @@ export async function classifyToolUse(
       return {
         verdict: 'allow_flagged',
         reason: 'apply_patch_missing_path',
-        summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+        summary: toolAuditSummary(toolName, payload, options),
         fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
         assessment: {
           reversibility: 'recoverable_with_cost',
@@ -850,7 +865,7 @@ export async function classifyToolUse(
     return {
       verdict: 'allow',
       reason: 'effect.search_read',
-      summary: canonicalStringify(scrubPayload(payload.tool_input ?? {}, options)),
+      summary: toolAuditSummary(toolName, payload, options),
       fingerprint: toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot),
       assessment: {
         reversibility: 'reversible',

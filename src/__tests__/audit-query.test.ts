@@ -387,4 +387,27 @@ describe('audit query', () => {
     const loaded = await loadAuditRecords(repoRoot)
     expect(loaded).toEqual([expect.objectContaining({ fingerprint: record.fingerprint })])
   })
+
+  it('loads retained audit generations in chronological order', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-generations-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify({ timestamp: '2026-06-01T10:00:00.000Z', summary: 'older' })}\n`,
+      'utf8',
+    )
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({ timestamp: '2026-06-01T10:01:00.000Z', summary: 'newer' })}\n`,
+      'utf8',
+    )
+
+    expect((await loadAuditRecords(repoRoot)).map((record) => record.summary)).toEqual([
+      'older',
+      'newer',
+    ])
+  })
 })

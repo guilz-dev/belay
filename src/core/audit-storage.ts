@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { type FileHandle, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
+import { type FileHandle, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import type { Readable } from 'node:stream'
@@ -49,6 +49,8 @@ export interface AppendBoundedAuditLineOptions {
   maxBytes: number
   maxFiles: number
   readinessUpdate?: AuditReadinessUpdate
+  /** Current-main compatibility only; canonical callers preserve unrelated higher generations. */
+  pruneExcessGenerations?: boolean
 }
 
 export interface AuditReadOptions {
@@ -712,6 +714,40 @@ async function unlinkOwnedPath(owned: OwnedAuditPath): Promise<void> {
   await unlink(owned.path)
 }
 
+async function pruneExcessAuditGenerations(auditPath: string, maxFiles: number): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await readdir(path.dirname(auditPath))
+  } catch (error) {
+    if (errno(error) === 'ENOENT') return
+    throw error
+  }
+  const escapedName = path.basename(auditPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const generationPattern = new RegExp(`^${escapedName}\\.(\\d+)$`)
+  const excess = entries
+    .map((entry) => {
+      const match = entry.match(generationPattern)
+      return match ? { entry, generation: Number(match[1]) } : null
+    })
+    .filter(
+      (candidate): candidate is { entry: string; generation: number } =>
+        candidate !== null &&
+        Number.isSafeInteger(candidate.generation) &&
+        candidate.generation >= maxFiles,
+    )
+    .sort((left, right) => right.generation - left.generation)
+
+  for (const candidate of excess) {
+    const generationPath = path.join(path.dirname(auditPath), candidate.entry)
+    const info = await lstatBigintIfPresent(generationPath)
+    if (!info) continue
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(`Refusing non-regular excess audit generation: ${generationPath}`)
+    }
+    await unlinkOwnedPath({ identity: fileIdentity(info), path: generationPath })
+  }
+}
+
 async function createStagedAuditLine(
   auditPath: string,
   bytes: Buffer,
@@ -930,6 +966,50 @@ async function rotateAndCommitStagedLine(
 }
 
 /**
+ * Compatibility hook for the pre-append rotation API introduced on main.
+ *
+ * Rotation still runs through this module's symlink-safe lock and transactional generation
+ * mover; callers do not gain a second writer implementation.
+ */
+export async function maybeRotateBoundedAuditLog(
+  options: Pick<AppendBoundedAuditLineOptions, 'auditPath' | 'maxBytes' | 'maxFiles'> & {
+    incomingBytes?: number
+  },
+  operationOverrides: Partial<AuditStorageOperations> = {},
+): Promise<boolean> {
+  if (!Number.isInteger(options.maxBytes) || options.maxBytes < 1) {
+    throw new Error(`Audit maxBytes must be a positive integer: ${options.maxBytes}`)
+  }
+  if (
+    !Number.isSafeInteger(options.maxFiles) ||
+    options.maxFiles < 1 ||
+    options.maxFiles > MAX_AUDIT_FILES
+  ) {
+    throw new Error(`Audit maxFiles must be an integer from 1 through 100: ${options.maxFiles}`)
+  }
+  const incomingBytes = options.incomingBytes ?? 0
+  if (!Number.isSafeInteger(incomingBytes) || incomingBytes < 0) {
+    throw new Error(`Audit incomingBytes must be a non-negative safe integer: ${incomingBytes}`)
+  }
+
+  const operations = resolveOperations(operationOverrides)
+  return withAuditStorageLock(
+    options.auditPath,
+    async (auditPath) => {
+      await pruneExcessAuditGenerations(auditPath, options.maxFiles)
+      const active = await activeAuditSize(auditPath)
+      if (!active.exists || active.size === 0 || active.size + incomingBytes <= options.maxBytes) {
+        return false
+      }
+      await assertNotSymlink(auditPath, 'active audit log')
+      await rotateAndCommitStagedLine(auditPath, Buffer.alloc(0), options.maxFiles, operations)
+      return true
+    },
+    operations,
+  )
+}
+
+/**
  * Append one already serialized NDJSON record under a sibling lock.
  *
  * A single record may exceed maxBytes up to MAX_AUDIT_RECORD_BYTES. It remains whole and becomes
@@ -966,6 +1046,9 @@ export async function appendBoundedAuditLine(
     async (auditPath) => {
       if (options.readinessUpdate) {
         await updateAuditReadinessState(auditPath, options.readinessUpdate, operations)
+      }
+      if (options.pruneExcessGenerations) {
+        await pruneExcessAuditGenerations(auditPath, options.maxFiles)
       }
       const active = await activeAuditSize(auditPath)
       if (active.exists && active.size + bytes.length > options.maxBytes) {

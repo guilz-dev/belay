@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { isAvailabilityCausedAsk } from './audit-availability.js'
 import { minimizeAuditShellAction } from './audit-replay-context.js'
-import { type AuditReadinessUpdate, appendBoundedAuditLine } from './audit-storage.js'
+import {
+  type AppendBoundedAuditLineOptions,
+  type AuditReadinessUpdate,
+  appendBoundedAuditLine,
+} from './audit-storage.js'
 import { type AuditRecord, GATE_EVENTS } from './audit-types.js'
 import {
   DEFAULT_AUDIT_MAX_BYTES,
@@ -32,6 +36,7 @@ const PRESERVED_HASH_FIELDS = new Set([
   'decisionConfigFingerprint',
   'receiptHash',
   'summaryHash',
+  'observedPayloadHash',
 ])
 
 const PRESERVED_LITERAL_FIELDS = new Set([
@@ -461,6 +466,13 @@ function serializeAuditField(
     return scrubbedAuditString(value, options)
   }
 
+  if (key === 'observedInputBytes' || key === 'observedOutputBytes') {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value)
+    }
+    return undefined
+  }
+
   if (value !== null && typeof value === 'object') {
     return scrubAuditContainer(value, options, minimizeBodies)
   }
@@ -603,7 +615,8 @@ export async function appendAuditRecord(
   auditPath: string,
   record: Record<string, unknown>,
   options: ScrubOptions,
-  bounds: Pick<NormalizedBelayAuditConfig, 'maxBytes' | 'maxFiles'> = {
+  bounds: Pick<NormalizedBelayAuditConfig, 'maxBytes' | 'maxFiles'> &
+    Pick<AppendBoundedAuditLineOptions, 'pruneExcessGenerations'> = {
     maxBytes: DEFAULT_AUDIT_MAX_BYTES,
     maxFiles: DEFAULT_AUDIT_MAX_FILES,
   },

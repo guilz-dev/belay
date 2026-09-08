@@ -37,6 +37,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Trusted-cwd cause reporting** — Missing host action cwd is distinguished from a dynamic shell
   transition whose destination cannot be resolved, so availability incidents and classifier
   uncertainty are counted under their actual causes.
+- **Audit rotation edge cases** — Rotation now checks the incoming serialized record, safely
+  serializes concurrent writers without reclaiming a live lock, prunes excess generations when
+  `maxFiles` is reduced, and keeps existing generations readable when rotation is disabled.
+- **Single-command argv delegates** — Safe one-token delegated commands such as `rtk ls` now use
+  normal nested EffectPlan lowering, while opaque options and mutating commands retain their
+  existing ask or mutation semantics.
 - **Cursor project hook shim origin** — Project hook shims now derive `repoRoot` from the shim
   file location at runtime instead of baking in the install-time path. This prevents global sentinel
   fail-closed blocks when a git worktree or main checkout is opened with stale hardcoded origins.

@@ -9,7 +9,9 @@ import {
   repoLocalStateDirFor,
 } from '../config-io.js'
 import { compactApprovals } from '../core/approval.js'
+import { resolveRepoAuditPath, statAuditStorage } from '../core/audit-reader.js'
 import { formatAskBreakdown } from '../core/audit-summary.js'
+import { auditRetentionFromConfig } from '../core/config.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
 import { collectHealthSnapshot } from './health-snapshot.js'
@@ -27,6 +29,9 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
   })
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
   const visibility = await reportProject({ targetDir: repoRoot })
+  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
+  const retention = auditRetentionFromConfig(config)
+  const storageStats = await statAuditStorage(auditLogPath, retention)
 
   return {
     repoRoot,
@@ -37,6 +42,13 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
     dogfood: operational.dogfood,
     health,
     visibility,
+    auditStorage: {
+      activeBytes: storageStats.activeBytes,
+      totalBytes: storageStats.totalBytes,
+      files: storageStats.files,
+      maxBytes: storageStats.maxBytes,
+      retentionEnabled: storageStats.retentionEnabled,
+    },
     fileCheckpoint: {
       ...config.policy.transactional.fileCheckpoint,
       transactionalEnabled: config.policy.transactional.enabled,
@@ -78,6 +90,11 @@ export function formatStatusReport(report: StatusReport): string {
     `File checkpoint limits: files=${report.fileCheckpoint.maxFiles}, sourceBytes=${report.fileCheckpoint.maxSourceBytes}, workspaceBytes=${report.fileCheckpoint.maxWorkspaceBytes}, prepareTimeoutMs=${report.fileCheckpoint.prepareTimeoutMs}, copyConcurrency=${report.fileCheckpoint.copyConcurrency}`,
     '',
     'Audit visibility:',
+    ...(report.auditStorage?.retentionEnabled
+      ? [
+          `  Storage: ${report.auditStorage.activeBytes}/${report.auditStorage.maxBytes} bytes active (${report.auditStorage.files} file(s), ${report.auditStorage.totalBytes} bytes total)`,
+        ]
+      : []),
     `  Gate events: ${report.visibility.gateEvents}`,
     ...formatAskBreakdown(report.visibility, '  '),
     `  Flag (allow_flagged): ${report.visibility.flagCount}`,
