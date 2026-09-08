@@ -49,6 +49,7 @@ import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js
 import { runtimeIntegrityFiles, verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
+import { isRepoConfigReadError, resolveRepoConfig } from '../core/linked-worktree-config.js'
 import { notificationConfigIssues } from '../core/notify.js'
 import { listRecoveryCheckpoints } from '../core/recovery/checkpoint.js'
 import {
@@ -182,31 +183,60 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
   let hooksPath = activeLayout.hooksSettingsPath(repoRoot)
   let corePath = path.join(activeLayout.runtimeDir(repoRoot), 'core.mjs')
 
-  if (!existsSync(configPath)) {
+  let configResolution: Awaited<ReturnType<typeof resolveRepoConfig>> | null = null
+  try {
+    configResolution = await resolveRepoConfig(repoRoot, adapterName)
+  } catch (error) {
+    if (isRepoConfigReadError(error)) {
+      issues.push(error.message)
+    } else {
+      issues.push(error instanceof Error ? error.message : 'Failed to read belay.config.json')
+    }
+  }
+
+  const localConfigPath = activeLayout.configPath(repoRoot)
+  const hasEffectiveConfig =
+    configResolution !== null &&
+    (configResolution.inherited ||
+      existsSync(localConfigPath) ||
+      (typeof configResolution.repoConfig === 'object' &&
+        configResolution.repoConfig !== null &&
+        Object.keys(configResolution.repoConfig as Record<string, unknown>).length > 0))
+
+  if (!hasEffectiveConfig) {
     issues.push(`Missing config: ${configPath}`)
     notes.push(
       'No belay config found. Run `belay config` for interactive setup, or `belay init` for non-interactive install.',
     )
-  } else {
+  } else if (configResolution) {
     try {
-      const rawConfig = JSON.parse(await readFile(configPath, 'utf8')) as {
+      const rawConfig = configResolution.repoConfig as {
         version?: number
         adapter?: AdapterName
         [key: string]: unknown
+      }
+      if (configResolution.inherited) {
+        notes.push(
+          `Repository config inherited from linked worktree ${configResolution.configSourceRoot}. Policy follows the source config; hooks and audit state remain local to this checkout.`,
+        )
       }
       adapterName = resolveDoctorAdapter(options, rawConfig.adapter)
       activeLayout = getAdapterLayout(adapterName)
       configPath = activeLayout.configPath(repoRoot)
       hooksPath = activeLayout.hooksSettingsPath(repoRoot)
       corePath = path.join(activeLayout.runtimeDir(repoRoot), 'core.mjs')
-      const trust = await inspectRepoConfigTrust(repoRoot, adapterName, rawConfig)
+      const trust = await inspectRepoConfigTrust(
+        configResolution.configSourceRoot,
+        adapterName,
+        rawConfig,
+      )
       if (!trust.trusted) {
         issues.push(
           `Repository config is not trusted (${trust.reason}) at ${trust.recordPath}. Review it, then run belay config trust.`,
         )
       }
 
-      if (rawConfig.version === undefined) {
+      if (rawConfig.version === undefined && !configResolution.inherited) {
         warnings.push(
           'Config is missing "version". Set "version": 3 explicitly to avoid ambiguous migration.',
         )

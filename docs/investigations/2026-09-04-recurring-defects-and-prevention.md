@@ -221,7 +221,7 @@ for n in $(seq 82 97); do gh pr view $n --json number,title,state,mergedAt; done
 |--------|------|--------|-------|----------|-----------|
 | P0 | repo config trust 境界（fail-closed） | **是正PR作成中** | Belay runtime | `ADR-010`, `repo-config-trust.ts`, `repo-config-trust.test.ts`, `doctor.test.ts` | 未trust/改ざん config は routing / policy 評価前に gate deny + `belay config trust` 要求 |
 | P0 | dogfood skew のブロッキングチェック分離 | **是正PR作成中** | Release operator | `checkDogfoodProject`, `belay dogfood --check --since`, `pre-release-dogfood-check.sh` | 指定 adapter の release window 内 skew を exit 1 で停止できる |
-| P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `dogfood-environment.ts`, `doctor.ts` 警告, `doctor.test.ts` | dogfood active 時に未適用 worktree が可視化される |
+| P1 | linked worktree 環境差分の継続監視 | **実施済み** | Belay runtime | `linked-worktree-config.ts`, `dogfood-environment.ts`, `doctor.ts`, `linked-worktree-config.test.ts`, ADR-011 | dogfood active 時に未適用 worktree が可視化される。policy は primary から read-time 継承 |
 | P1 | global sentinel ブロックの doctor 事前検知 | **実施済み** | Belay runtime | `hook-routing-health.ts`, `doctor.ts`, `cursor-hook-routing-health.test.ts` | `belay doctor` が global sentinel の fail-closed 状態を upgrade/trust 手順付きで報告する |
 | P0 | linked worktree hook routing の blocking check | **是正PR #114** | Release operator | `dogfood-environment.ts`, `dogfood-check.ts`, `dogfood.test.ts` | current root と initialized linked worktree の routing issue が `hook_routing_skew` で release を停止する |
 

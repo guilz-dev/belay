@@ -58,9 +58,9 @@ npx -y @guilz-dev/belay@<version> status --target /absolute/target/path
 ```
 
 In a monorepo or linked Git worktree, create this set of actions for every worktree where Cursor
-may execute hooks. A sibling worktree without `belay.config.json` stays on defaults (`mode:
-enforce`) and can still block host actions even when the main worktree is in dogfood (`mode:
-audit`, `unknownLocalEffect: deny`).
+may execute hooks. A sibling worktree without a local `belay.config.json` inherits repository
+policy from the primary linked checkout when available ([ADR-011](../adr/ADR-011-linked-worktree-config-inheritance.md));
+hook/runtime install and routing health remain per checkout.
 
 `npx -y`, package publishing, push, and control-plane mutation can still require an exact
 approval. Those are classifier decisions about the requested effect, not failures to establish the

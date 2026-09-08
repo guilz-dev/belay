@@ -141,7 +141,7 @@ export interface DogfoodStatus {
 
 export interface ConfigProvenanceNote {
   path: string
-  source: 'builtin' | 'team' | 'repo' | 'protected'
+  source: 'builtin' | 'team' | 'repo' | 'inherited' | 'protected'
 }
 
 export interface DoctorReport {

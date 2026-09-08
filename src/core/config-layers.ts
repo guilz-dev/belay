@@ -3,7 +3,7 @@ import { applyConfigPreset, type ConfigPresetName } from '../presets.js'
 import type { BelayConfigV3 } from './config.js'
 import { DEFAULT_CONFIG_V3, mergeConfig, rejectTeamLayerJudgeSecrets } from './config.js'
 
-export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'protected'
+export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'inherited' | 'protected'
 
 export interface ConfigProvenanceEntry {
   path: string

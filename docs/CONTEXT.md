@@ -8,7 +8,8 @@ authorization model. It complements
 [ADR-006](./adr/ADR-006-contained-unknown-execution.md), and
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md),
 [ADR-009](./adr/ADR-009-single-cursor-shell-gate.md), and
-[ADR-010](./adr/ADR-010-repository-config-trust.md).
+[ADR-010](./adr/ADR-010-repository-config-trust.md),
+[ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md).
 
 ## Core objects
 
@@ -121,6 +122,12 @@ authorization model. It complements
     `belay config trust`. Agent-shell invocations of trust and approval-authority commands are
     control-plane writes that require separate human approval
     ([ADR-010](./adr/ADR-010-repository-config-trust.md)).
+17. **Linked worktree config inheritance**: when a linked checkout has no local repository config
+    file, Belay inherits readable policy config from the primary linked checkout (then other
+    siblings) instead of falling back to builtin enforce defaults. A present but unreadable local
+    config file fails closed and does not inherit sibling policy. Local config overrides
+    inheritance; hooks, runtime bundles, and audit storage remain per checkout
+    ([ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md)).
 
 ## Policy precedence
 

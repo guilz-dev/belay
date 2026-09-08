@@ -19,6 +19,7 @@ import {
   resolveLayeredConfig,
   teamConfigPath,
 } from './core/config-layers.js'
+import { resolveRepoConfig } from './core/linked-worktree-config.js'
 import { trustRepoConfig } from './core/repo-config-trust.js'
 import type { ApprovalStateFile } from './core/types.js'
 
@@ -237,11 +238,7 @@ export async function loadLayeredConfig(
   adapter: AdapterName = detectAdapterName(repoRoot),
 ): Promise<LayeredConfigResult> {
   const layout = getAdapterLayout(adapter)
-  const configPath = configPathFor(repoRoot, adapter)
-  let repoConfig: unknown = {}
-  if (existsSync(configPath)) {
-    repoConfig = JSON.parse(await readFile(configPath, 'utf8'))
-  }
+  const resolution = await resolveRepoConfig(repoRoot, adapter)
 
   let teamConfig: Record<string, unknown> | null = null
   const teamPath = teamConfigPath()
@@ -249,13 +246,20 @@ export async function loadLayeredConfig(
     teamConfig = JSON.parse(await readFile(teamPath, 'utf8')) as Record<string, unknown>
   }
 
-  return resolveLayeredConfig({
-    repoConfig,
+  const layered = resolveLayeredConfig({
+    repoConfig: resolution.repoConfig,
     adapterDefaults: layout.defaultConfig(repoRoot) as BelayConfigV3,
     teamConfig,
     teamConfigPath: teamPath,
-    repoConfigPath: existsSync(configPath) ? configPath : undefined,
+    repoConfigPath: resolution.inherited ? undefined : resolution.repoConfigPath,
   })
+  if (resolution.inherited && resolution.repoConfigPath) {
+    layered.provenance.push({
+      path: resolution.repoConfigPath,
+      source: 'inherited',
+    })
+  }
+  return layered
 }
 
 export async function loadConfigFile(
