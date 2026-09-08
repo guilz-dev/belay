@@ -5,8 +5,15 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { readAuditRecordsFromPath, resolveAuditLogFiles } from '../core/audit-reader.js'
+import { appendAuditRecord } from '../core/audit-serialize.js'
 import { appendAuditLine, maybeRotateAuditLog } from '../core/audit-sink.js'
-import { DEFAULT_REDACTION_V3 } from '../core/config.js'
+import {
+  DEFAULT_AUDIT_MAX_BYTES,
+  DEFAULT_AUDIT_MAX_FILES,
+  DEFAULT_REDACTION_V3,
+  mergeConfig,
+  normalizeAuditConfig,
+} from '../core/config.js'
 
 const tempDirs: string[] = []
 
@@ -77,6 +84,30 @@ describe('audit-sink', () => {
 
     expect((await stat(auditPath)).size).toBeGreaterThan(defaultMaxBytes)
     await expect(access(`${auditPath}.1`)).rejects.toThrow()
+  })
+
+  it('keeps rotation enabled when explicit flat defaults accompany nested zero values', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-flat-defaults-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    await writeFile(auditPath, Buffer.alloc(DEFAULT_AUDIT_MAX_BYTES, 0x78))
+    const config = mergeConfig({
+      audit: {
+        maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+        maxFiles: DEFAULT_AUDIT_MAX_FILES,
+        retention: { maxBytes: 0, maxFiles: 0 },
+      },
+    })
+
+    await appendAuditRecord(
+      auditPath,
+      { event: 'flat-defaults-remain-enabled' },
+      DEFAULT_REDACTION_V3,
+      normalizeAuditConfig(config.audit),
+    )
+
+    expect(await readFile(auditPath, 'utf8')).toContain('flat-defaults-remain-enabled')
+    expect(await stat(`${auditPath}.1`)).toBeTruthy()
   })
 
   it('rotates before an append would cross maxBytes', async () => {

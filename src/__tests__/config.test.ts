@@ -60,6 +60,45 @@ describe('config migration', () => {
     expect(normalized.audit.retention).toBeUndefined()
   })
 
+  it.each([
+    {
+      name: 'flat maxBytes with nested maxFiles',
+      audit: { maxBytes: 8_192, retention: { maxBytes: 4_096, maxFiles: 2 } },
+      expected: { maxBytes: 8_192, maxFiles: 2, retention: undefined },
+    },
+    {
+      name: 'nested maxBytes with flat maxFiles',
+      audit: { maxFiles: 4, retention: { maxBytes: 4_096, maxFiles: 2 } },
+      expected: { maxBytes: 4_096, maxFiles: 4, retention: undefined },
+    },
+    {
+      name: 'flat maxBytes with a selected nested zero maxFiles',
+      audit: { maxBytes: 8_192, retention: { maxBytes: 0, maxFiles: 0 } },
+      expected: {
+        maxBytes: 8_192,
+        maxFiles: 5,
+        retention: { maxBytes: 8_192, maxFiles: 0 },
+      },
+    },
+    {
+      name: 'selected nested zero maxBytes with flat maxFiles',
+      audit: { maxFiles: 4, retention: { maxBytes: 0, maxFiles: 0 } },
+      expected: {
+        maxBytes: 33_554_432,
+        maxFiles: 4,
+        retention: { maxBytes: 0, maxFiles: 4 },
+      },
+    },
+  ])('selects each audit bound field-wise for $name', ({ audit, expected }) => {
+    const normalized = mergeConfig({ audit })
+
+    expect(normalized.audit).toMatchObject({
+      maxBytes: expected.maxBytes,
+      maxFiles: expected.maxFiles,
+    })
+    expect(normalized.audit.retention).toEqual(expected.retention)
+  })
+
   it('normalizes missing audit bounds to 32 MiB and five retained files', () => {
     const normalized = mergeConfig({})
 
