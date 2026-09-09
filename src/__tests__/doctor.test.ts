@@ -801,9 +801,13 @@ describe('doctorProject', () => {
       ],
       { cwd: repoRoot },
     )
-    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-prunable-inherit'], {
-      cwd: repoRoot,
-    })
+    await execFileAsync(
+      'git',
+      ['worktree', 'add', linkedWorktree, '-b', 'linked-prunable-inherit'],
+      {
+        cwd: repoRoot,
+      },
+    )
     await rm(linkedWorktree, { recursive: true, force: true })
 
     const report = await doctorProject({ targetDir: repoRoot })

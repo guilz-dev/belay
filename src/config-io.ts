@@ -19,10 +19,7 @@ import {
   resolveLayeredConfig,
   teamConfigPath,
 } from './core/config-layers.js'
-import {
-  type LinkedWorktreeGitOptions,
-  resolveRepoConfig,
-} from './core/linked-worktree-config.js'
+import { type LinkedWorktreeGitOptions, resolveRepoConfig } from './core/linked-worktree-config.js'
 import { trustRepoConfig } from './core/repo-config-trust.js'
 import type { ApprovalStateFile } from './core/types.js'
 
