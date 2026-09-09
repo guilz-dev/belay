@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { type FileHandle, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
+import {
+  type FileHandle,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  unlink,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import type { Readable } from 'node:stream'
@@ -34,7 +43,9 @@ export {
 
 const AUDIT_LOCK_TIMEOUT_MS = 2_000
 const AUDIT_LOCK_RETRY_DELAY_MS = 25
+const AUDIT_LOCK_OWNER_MAX_BYTES = 1_024
 const CARRIAGE_RETURN = Buffer.from('\r')
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 export const MAX_AUDIT_RECORD_BYTES = 33_554_432
 
@@ -74,6 +85,7 @@ export interface AuditReadOperations {
 
 export interface AuditStorageOperations {
   open(filePath: string, flags: number, mode: number): Promise<FileHandle>
+  processLiveness(pid: number): 'alive' | 'absent' | 'unknown'
   rename(sourcePath: string, destinationPath: string): Promise<void>
   write(handle: FileHandle, bytes: Buffer): Promise<number>
 }
@@ -87,6 +99,20 @@ interface AcquiredAuditLock {
   handle: FileHandle
   identity: FileIdentity
   lockPath: string
+  ownerToken: string
+}
+
+interface AuditLockOwnerV1 {
+  schemaVersion: 1
+  pid: number
+  ownerToken: string
+  acquiredAt: string
+}
+
+interface OpenedAuditLockOwner {
+  handle: FileHandle
+  identity: FileIdentity
+  owner: AuditLockOwnerV1
 }
 
 interface OwnedAuditPath {
@@ -111,6 +137,16 @@ interface RetainedAuditSnapshot {
 
 const DEFAULT_AUDIT_STORAGE_OPERATIONS: AuditStorageOperations = {
   open,
+  processLiveness(pid) {
+    try {
+      process.kill(pid, 0)
+      return 'alive'
+    } catch (error) {
+      if (errno(error) === 'ESRCH') return 'absent'
+      if (errno(error) === 'EPERM') return 'alive'
+      return 'unknown'
+    }
+  },
   rename,
   async write(handle, bytes) {
     const { bytesWritten } = await handle.write(bytes, 0, bytes.length, null)
@@ -176,25 +212,225 @@ function sameIdentity(
   return left.dev === BigInt(right.dev) && left.ino === BigInt(right.ino)
 }
 
+function validAuditLockOwner(value: unknown): value is AuditLockOwnerV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 4 ||
+    record.schemaVersion !== 1 ||
+    !Number.isSafeInteger(record.pid) ||
+    (record.pid as number) <= 0 ||
+    typeof record.ownerToken !== 'string' ||
+    !UUID_PATTERN.test(record.ownerToken) ||
+    typeof record.acquiredAt !== 'string'
+  ) {
+    return false
+  }
+  const timestamp = Date.parse(record.acquiredAt)
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === record.acquiredAt
+}
+
+async function readAuditLockOwner(handle: FileHandle): Promise<AuditLockOwnerV1 | null> {
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile() || before.size < 1n || before.size > BigInt(AUDIT_LOCK_OWNER_MAX_BYTES)) {
+      return null
+    }
+    const bytes = Buffer.alloc(AUDIT_LOCK_OWNER_MAX_BYTES + 1)
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
+    const after = await handle.stat({ bigint: true })
+    if (
+      !sameIdentity(fileIdentity(before), after) ||
+      after.size !== before.size ||
+      bytesRead !== Number(before.size) ||
+      bytesRead > AUDIT_LOCK_OWNER_MAX_BYTES
+    ) {
+      return null
+    }
+    const raw = bytes.subarray(0, bytesRead).toString('utf8')
+    if (!raw.endsWith('\n') || raw.slice(0, -1).includes('\n')) return null
+    const parsed: unknown = JSON.parse(raw.slice(0, -1))
+    return validAuditLockOwner(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function openAuditLockOwner(
+  lockPath: string,
+  operations: AuditStorageOperations,
+): Promise<OpenedAuditLockOwner | null> {
+  let handle: FileHandle | undefined
+  try {
+    const before = await lstat(lockPath, { bigint: true })
+    if (before.isSymbolicLink() || !before.isFile()) return null
+    const flags = constants.O_RDONLY | constants.O_NONBLOCK | noFollowFlag()
+    handle = await operations.open(lockPath, flags, 0o600)
+    const opened = await handle.stat({ bigint: true })
+    const current = await lstat(lockPath, { bigint: true })
+    const identity = fileIdentity(opened)
+    if (
+      !opened.isFile() ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameIdentity(fileIdentity(before), opened) ||
+      !sameIdentity(identity, current)
+    ) {
+      return null
+    }
+    const owner = await readAuditLockOwner(handle)
+    if (!owner) return null
+    const result = { handle, identity, owner }
+    handle = undefined
+    return result
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+async function removePathIfIdentityMatches(
+  filePath: string,
+  identity: FileIdentity,
+): Promise<void> {
+  try {
+    const current = await lstat(filePath, { bigint: true })
+    if (sameIdentity(identity, current)) await unlink(filePath)
+  } catch (error) {
+    if (errno(error) !== 'ENOENT') throw error
+  }
+}
+
+async function createAuditLock(
+  lockPath: string,
+  flags: number,
+  operations: AuditStorageOperations,
+): Promise<AcquiredAuditLock> {
+  const handle = await operations.open(lockPath, flags, 0o600)
+  let identity: FileIdentity | undefined
+  try {
+    const created = await handle.stat({ bigint: true })
+    if (!created.isFile()) throw new Error(`Audit lock path is not a regular file: ${lockPath}`)
+    identity = fileIdentity(created)
+    const owner: AuditLockOwnerV1 = {
+      schemaVersion: 1,
+      pid: process.pid,
+      ownerToken: randomUUID(),
+      acquiredAt: new Date().toISOString(),
+    }
+    const bytes = Buffer.from(`${JSON.stringify(owner)}\n`, 'utf8')
+    if (bytes.length > AUDIT_LOCK_OWNER_MAX_BYTES) {
+      throw new Error(`Audit lock owner exceeds ${AUDIT_LOCK_OWNER_MAX_BYTES} bytes`)
+    }
+    const bytesWritten = await operations.write(handle, bytes)
+    if (bytesWritten !== bytes.length) {
+      throw new Error(`Incomplete audit lock owner: wrote ${bytesWritten} of ${bytes.length} bytes`)
+    }
+    await handle.sync()
+    const current = await lstat(lockPath, { bigint: true })
+    if (current.isSymbolicLink() || !sameIdentity(identity, current)) {
+      throw new Error(`Refusing replaced or symbolic link for audit lock: ${lockPath}`)
+    }
+    return { handle, identity, lockPath, ownerToken: owner.ownerToken }
+  } catch (error) {
+    await handle.close().catch(() => undefined)
+    if (identity) await removePathIfIdentityMatches(lockPath, identity)
+    throw error
+  }
+}
+
+async function cleanForeignAuditReclaimClaim(
+  lockPath: string,
+  claimPath: string,
+): Promise<boolean> {
+  try {
+    const claim = await lstat(claimPath, { bigint: true })
+    const currentLock = await lstatBigintIfPresent(lockPath)
+    if (currentLock && sameIdentity(fileIdentity(claim), currentLock)) return false
+    await removePathIfIdentityMatches(claimPath, fileIdentity(claim))
+    return true
+  } catch (error) {
+    if (errno(error) === 'ENOENT') return true
+    return false
+  }
+}
+
+async function recoverAbsentAuditLockOwner(
+  lockPath: string,
+  claimPath: string,
+  operations: AuditStorageOperations,
+): Promise<boolean> {
+  const observed = await openAuditLockOwner(lockPath, operations)
+  if (!observed) return false
+  try {
+    if (operations.processLiveness(observed.owner.pid) !== 'absent') return false
+    try {
+      await link(lockPath, claimPath)
+    } catch (error) {
+      if (errno(error) !== 'EEXIST') return false
+      return cleanForeignAuditReclaimClaim(lockPath, claimPath)
+    }
+
+    let claim: OpenedAuditLockOwner | null = null
+    let createdClaimIdentity: FileIdentity | undefined
+    try {
+      const createdClaim = await lstatBigintIfPresent(claimPath)
+      if (!createdClaim) return false
+      createdClaimIdentity = fileIdentity(createdClaim)
+      claim = await openAuditLockOwner(claimPath, operations)
+      if (!claim || !sameIdentity(observed.identity, claim.identity)) return false
+      const currentLock = await lstatBigintIfPresent(lockPath)
+      const currentClaim = await lstatBigintIfPresent(claimPath)
+      if (
+        !currentLock ||
+        !currentClaim ||
+        !sameIdentity(observed.identity, currentLock) ||
+        !sameIdentity(observed.identity, currentClaim)
+      ) {
+        return false
+      }
+      const currentOwner = await readAuditLockOwner(observed.handle)
+      if (
+        !currentOwner ||
+        currentOwner.ownerToken !== observed.owner.ownerToken ||
+        claim.owner.ownerToken !== observed.owner.ownerToken ||
+        claim.owner.pid !== observed.owner.pid
+      ) {
+        return false
+      }
+      if (operations.processLiveness(observed.owner.pid) !== 'absent') return false
+      const finalLock = await lstatBigintIfPresent(lockPath)
+      if (!finalLock || !sameIdentity(observed.identity, finalLock)) return false
+      await unlink(lockPath)
+      return true
+    } finally {
+      await claim?.handle.close().catch(() => undefined)
+      if (createdClaimIdentity) {
+        await removePathIfIdentityMatches(claimPath, createdClaimIdentity).catch(() => undefined)
+      }
+    }
+  } finally {
+    await observed.handle.close().catch(() => undefined)
+  }
+}
+
 async function acquireAuditLock(
   lockPath: string,
   operations: AuditStorageOperations,
 ): Promise<AcquiredAuditLock> {
   const deadline = performance.now() + AUDIT_LOCK_TIMEOUT_MS
   const flags = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollowFlag()
+  const claimPath = `${lockPath}.reclaim`
 
   for (;;) {
     try {
-      const handle = await operations.open(lockPath, flags, 0o600)
-      return {
-        handle,
-        identity: fileIdentity(await handle.stat({ bigint: true })),
-        lockPath,
-      }
+      return await createAuditLock(lockPath, flags, operations)
     } catch (error) {
       const code = errno(error)
       if (code !== 'EEXIST' && code !== 'ELOOP') throw error
       await assertNotSymlink(lockPath, 'audit lock')
+      if (await recoverAbsentAuditLockOwner(lockPath, claimPath, operations)) continue
       const remainingMs = deadline - performance.now()
       if (remainingMs <= 0) {
         throw new Error(
@@ -208,15 +444,23 @@ async function acquireAuditLock(
   }
 }
 
-async function releaseAuditLock(lock: AcquiredAuditLock): Promise<void> {
-  await lock.handle.close().catch(() => undefined)
+async function releaseAuditLock(
+  lock: AcquiredAuditLock,
+  operations: AuditStorageOperations,
+): Promise<void> {
+  let current: OpenedAuditLockOwner | null = null
   try {
-    const current = await lstat(lock.lockPath, { bigint: true })
-    if (sameIdentity(lock.identity, current)) {
+    current = await openAuditLockOwner(lock.lockPath, operations)
+    if (
+      current &&
+      sameIdentity(lock.identity, current.identity) &&
+      current.owner.ownerToken === lock.ownerToken
+    ) {
       await unlink(lock.lockPath)
     }
-  } catch (error) {
-    if (errno(error) !== 'ENOENT') throw error
+  } finally {
+    await current?.handle.close().catch(() => undefined)
+    await lock.handle.close().catch(() => undefined)
   }
 }
 
@@ -235,7 +479,7 @@ export async function withAuditStorageLock<T>(
   try {
     return await operation(auditPath)
   } finally {
-    await releaseAuditLock(lock)
+    await releaseAuditLock(lock, operations)
   }
 }
 

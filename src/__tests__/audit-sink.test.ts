@@ -1,4 +1,6 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { access, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -23,6 +25,38 @@ afterEach(async () => {
 })
 
 describe('audit-sink', () => {
+  it('recovers a crashed writer lock through the canonical sink append path', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-crashed-lock-'))
+    tempDirs.push(dir)
+    const auditPath = path.join(dir, 'audit.ndjson')
+    const lockPath = `${auditPath}.lock`
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
+    const deadPid = child.pid
+    if (deadPid === undefined) throw new Error('child process did not receive a pid')
+    await once(child, 'exit')
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        pid: deadPid,
+        ownerToken: '123e4567-e89b-42d3-a456-426614174000',
+        acquiredAt: '2026-09-09T00:00:00.000Z',
+      })}\n`,
+      'utf8',
+    )
+
+    await appendAuditLine({
+      auditPath,
+      record: { event: 'after-crash' },
+      scrubOptions: DEFAULT_REDACTION_V3,
+      retention: { maxBytes: 1024, maxFiles: 2 },
+    })
+
+    expect(await readFile(auditPath, 'utf8')).toContain('after-crash')
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('rotates when active file exceeds maxBytes', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'audit-sink-'))
     tempDirs.push(dir)

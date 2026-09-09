@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   type FileHandle,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,6 +11,7 @@ import {
   rename,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
@@ -22,11 +24,14 @@ import {
   appendBoundedAuditLine,
   iterateAuditRecords,
   loadRetainedAuditRecords,
+  withAuditStorageLock,
 } from '../core/audit-storage.js'
 import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 
 const tempDirs: string[] = []
 const FIXED_MAX_AUDIT_RECORD_BYTES = 33_554_432
+const LOCK_OWNER_TOKEN = '123e4567-e89b-42d3-a456-426614174000'
+const REPLACEMENT_OWNER_TOKEN = '123e4567-e89b-42d3-a456-426614174001'
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -46,6 +51,14 @@ function rotatingLine(fingerprint: string): string {
   return JSON.stringify({ fingerprint, padding: 'x'.repeat(50) })
 }
 
+function lockOwnerRecord(
+  pid: number,
+  ownerToken = LOCK_OWNER_TOKEN,
+  acquiredAt = '2026-09-09T00:00:00.000Z',
+): string {
+  return `${JSON.stringify({ schemaVersion: 1, pid, ownerToken, acquiredAt })}\n`
+}
+
 async function expectRetainedContents(auditPath: string, contents: string[]): Promise<void> {
   for (const [index, content] of contents.entries()) {
     const retainedPath = index === 0 ? auditPath : `${auditPath}.${index}`
@@ -57,6 +70,28 @@ async function expectRetainedContents(auditPath: string, contents: string[]): Pr
 }
 
 describe('appendBoundedAuditLine', () => {
+  it('writes one bounded JSON owner record before entering the storage lock', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-lock-owner-')
+    let owner: Record<string, unknown> | undefined
+
+    await withAuditStorageLock(auditPath, async () => {
+      const raw = await readFile(`${auditPath}.lock`, 'utf8')
+      expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(1024)
+      expect(raw.endsWith('\n')).toBe(true)
+      owner = JSON.parse(raw) as Record<string, unknown>
+    })
+
+    expect(owner).toEqual({
+      schemaVersion: 1,
+      pid: process.pid,
+      ownerToken: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+      acquiredAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+    })
+    await expectMissing(`${auditPath}.lock`)
+  })
+
   it('appends below the byte limit and normalizes multiple trailing newlines to one', async () => {
     const auditPath = await createAuditPath('belay-audit-storage-append-')
     const line = JSON.stringify({ fingerprint: 'single' })
@@ -413,6 +448,217 @@ describe('appendBoundedAuditLine', () => {
     expect(await readFile(generationPath, 'utf8')).toBe('generation-owner\n')
     expect(await readFile(legacyPath, 'utf8')).toBe('legacy-owner\n')
     expect(await readFile(unrelatedPath, 'utf8')).toBe('unrelated-owner\n')
+  })
+
+  it('reclaims a valid lock only when its owner process is reported absent', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-dead-lock-')
+    const lockPath = `${auditPath}.lock`
+    const claimPath = `${lockPath}.reclaim`
+    await writeFile(auditPath, 'existing\n', 'utf8')
+    await writeFile(lockPath, lockOwnerRecord(424_242), 'utf8')
+
+    await appendBoundedAuditLine(
+      {
+        auditPath,
+        line: JSON.stringify({ fingerprint: 'recovered' }),
+        maxBytes: 1024,
+        maxFiles: 2,
+      },
+      { processLiveness: (pid) => (pid === 424_242 ? 'absent' : 'alive') },
+    )
+
+    expect(await readFile(auditPath, 'utf8')).toBe(
+      `existing\n${JSON.stringify({ fingerprint: 'recovered' })}\n`,
+    )
+    await expectMissing(lockPath)
+    await expectMissing(claimPath)
+  })
+
+  it('times out on a live owner without changing the lock or audit file', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-live-lock-')
+    const lockPath = `${auditPath}.lock`
+    const claimPath = `${lockPath}.reclaim`
+    const owner = lockOwnerRecord(process.pid)
+    await writeFile(auditPath, 'existing\n', 'utf8')
+    await writeFile(lockPath, owner, 'utf8')
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: JSON.stringify({ fingerprint: 'blocked-live' }),
+          maxBytes: 1024,
+          maxFiles: 2,
+        },
+        { processLiveness: () => 'alive' },
+      ),
+    ).rejects.toThrow(/audit lock.*timed out/i)
+
+    expect(await readFile(lockPath, 'utf8')).toBe(owner)
+    expect(await readFile(auditPath, 'utf8')).toBe('existing\n')
+    await expectMissing(claimPath)
+  })
+
+  it('fails closed on empty, malformed, oversized, and invalid-token owner records', async () => {
+    const cases = [
+      { name: 'empty', contents: '' },
+      { name: 'malformed', contents: '{broken\n' },
+      { name: 'oversized', contents: `${'x'.repeat(1025)}\n` },
+      { name: 'invalid-token', contents: lockOwnerRecord(424_242, 'not-a-uuid') },
+    ]
+
+    await Promise.all(
+      cases.map(async ({ name, contents }) => {
+        const auditPath = await createAuditPath(`belay-audit-storage-${name}-lock-`)
+        const lockPath = `${auditPath}.lock`
+        await writeFile(auditPath, 'existing\n', 'utf8')
+        await writeFile(lockPath, contents, 'utf8')
+
+        await expect(
+          appendBoundedAuditLine(
+            {
+              auditPath,
+              line: JSON.stringify({ fingerprint: `blocked-${name}` }),
+              maxBytes: 1024,
+              maxFiles: 2,
+            },
+            { processLiveness: () => 'absent' },
+          ),
+        ).rejects.toThrow(/audit lock.*timed out/i)
+
+        expect(await readFile(lockPath, 'utf8')).toBe(contents)
+        expect(await readFile(auditPath, 'utf8')).toBe('existing\n')
+        await expectMissing(`${lockPath}.reclaim`)
+      }),
+    )
+  })
+
+  it('serializes two contenders that reclaim the same dead-owner lock', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-concurrent-reclaim-')
+    const lockPath = `${auditPath}.lock`
+    await writeFile(lockPath, lockOwnerRecord(424_242), 'utf8')
+
+    await Promise.all(
+      ['first', 'second'].map((fingerprint) =>
+        appendBoundedAuditLine(
+          {
+            auditPath,
+            line: JSON.stringify({ fingerprint }),
+            maxBytes: 1024,
+            maxFiles: 2,
+          },
+          { processLiveness: (pid) => (pid === 424_242 ? 'absent' : 'alive') },
+        ),
+      ),
+    )
+
+    const lines = (await readFile(auditPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { fingerprint: string })
+    expect(lines.map(({ fingerprint }) => fingerprint).sort()).toEqual(['first', 'second'])
+    await expectMissing(lockPath)
+    await expectMissing(`${lockPath}.reclaim`)
+  })
+
+  it('cleans a stale foreign-inode claim without deleting the current lock', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-stale-claim-')
+    const lockPath = `${auditPath}.lock`
+    const claimPath = `${lockPath}.reclaim`
+    const staleOwnerPath = path.join(path.dirname(auditPath), 'stale-owner.lock')
+    const currentOwner = lockOwnerRecord(424_242)
+    const staleOwner = lockOwnerRecord(515_151, REPLACEMENT_OWNER_TOKEN)
+    let checks = 0
+    await writeFile(lockPath, currentOwner, 'utf8')
+    await writeFile(staleOwnerPath, staleOwner, 'utf8')
+    await link(staleOwnerPath, claimPath)
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: JSON.stringify({ fingerprint: 'blocked-after-stale-claim' }),
+          maxBytes: 1024,
+          maxFiles: 2,
+        },
+        {
+          processLiveness() {
+            checks += 1
+            return checks === 1 ? 'absent' : 'alive'
+          },
+        },
+      ),
+    ).rejects.toThrow(/audit lock.*timed out/i)
+
+    expect(await readFile(lockPath, 'utf8')).toBe(currentOwner)
+    expect(await readFile(staleOwnerPath, 'utf8')).toBe(staleOwner)
+    await expectMissing(auditPath)
+    await expectMissing(claimPath)
+  })
+
+  it('does not reclaim when the final liveness check no longer proves the owner absent', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-liveness-race-')
+    const lockPath = `${auditPath}.lock`
+    const owner = lockOwnerRecord(424_242)
+    let checks = 0
+    await writeFile(auditPath, 'existing\n', 'utf8')
+    await writeFile(lockPath, owner, 'utf8')
+
+    await expect(
+      appendBoundedAuditLine(
+        {
+          auditPath,
+          line: JSON.stringify({ fingerprint: 'blocked-reused-pid' }),
+          maxBytes: 1024,
+          maxFiles: 2,
+        },
+        {
+          processLiveness() {
+            checks += 1
+            return checks === 1 ? 'absent' : 'alive'
+          },
+        },
+      ),
+    ).rejects.toThrow(/audit lock.*timed out/i)
+
+    expect(await readFile(lockPath, 'utf8')).toBe(owner)
+    expect(await readFile(auditPath, 'utf8')).toBe('existing\n')
+    await expectMissing(`${lockPath}.reclaim`)
+  })
+
+  it.each([
+    'inode',
+    'token',
+  ])('does not release a lock path replaced by a different %s', async (replacement) => {
+    const auditPath = await createAuditPath(`belay-audit-storage-release-${replacement}-`)
+    const lockPath = `${auditPath}.lock`
+    let replacementOwner = ''
+
+    await withAuditStorageLock(auditPath, async () => {
+      const owner = JSON.parse(await readFile(lockPath, 'utf8')) as {
+        pid: number
+        ownerToken: string
+        acquiredAt: string
+      }
+      replacementOwner = lockOwnerRecord(
+        owner.pid,
+        replacement === 'inode' ? owner.ownerToken : REPLACEMENT_OWNER_TOKEN,
+        owner.acquiredAt,
+      )
+      if (replacement === 'inode') {
+        await unlink(lockPath)
+        await writeFile(lockPath, replacementOwner, 'utf8')
+      } else {
+        const handle = await open(lockPath, 'w')
+        try {
+          await handle.writeFile(replacementOwner, 'utf8')
+        } finally {
+          await handle.close()
+        }
+      }
+    })
+
+    expect(await readFile(lockPath, 'utf8')).toBe(replacementOwner)
   })
 
   it.each([
