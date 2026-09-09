@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
-import { approvalCommandMatch, compactApprovals, mergeApprovalStates } from '../core/approval.js'
+import {
+  approvalCommandMatch,
+  compactApprovals,
+  compactApprovalsAt,
+  mergeApprovalStates,
+} from '../core/approval.js'
+import type { ApprovalRecord, ApprovalStateFile } from '../core/types.js'
+
+function approvalRecord(overrides: Partial<ApprovalRecord> = {}): ApprovalRecord {
+  return {
+    approvalId: 'belay_default',
+    kind: 'shell',
+    fingerprint: 'fp',
+    repoRoot: '/repo',
+    reason: 'unknown_local_effect',
+    summary: 'git push',
+    createdAt: '2026-09-08T00:00:00.000Z',
+    expiresAt: '2026-09-11T00:00:00.000Z',
+    ...overrides,
+  }
+}
 
 describe('mergeApprovalStates', () => {
   it('keeps target approvals and adds non-duplicate source approvals', () => {
@@ -76,6 +96,28 @@ describe('approvalCommandMatch', () => {
 })
 
 describe('compactApprovals', () => {
+  it('compacts expiry and execution leases at an explicit instant', () => {
+    const state: ApprovalStateFile = {
+      version: 3,
+      revision: 7,
+      approvals: [
+        approvalRecord({ approvalId: 'expired', expiresAt: '2026-09-09T00:00:00.000Z' }),
+        approvalRecord({
+          approvalId: 'lease-expired',
+          expiresAt: '2026-09-11T00:00:00.000Z',
+          executionLeaseExpiresAt: '2026-09-09T12:00:00.000Z',
+        }),
+        approvalRecord({ approvalId: 'active', expiresAt: '2026-09-11T00:00:00.000Z' }),
+      ],
+    }
+
+    expect(compactApprovalsAt(state, Date.parse('2026-09-10T00:00:00.000Z'))).toEqual({
+      version: 3,
+      revision: 7,
+      approvals: [approvalRecord({ approvalId: 'active', expiresAt: '2026-09-11T00:00:00.000Z' })],
+    })
+  })
+
   it('drops approved entries after their execution lease expires', () => {
     const compacted = compactApprovals({
       version: 2,

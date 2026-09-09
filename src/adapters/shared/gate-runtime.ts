@@ -15,7 +15,10 @@ import {
   validateReplayEnvelope,
 } from '../../core/approval-replay.js'
 import {
+  claimApprovedForGate,
   claimApprovedForReplay,
+  discardApprovedOneShotApproval,
+  ensurePendingOneShotApproval,
   gateApprovalStoreFromDeps,
   recordApproval,
 } from '../../core/approval-service.js'
@@ -33,7 +36,6 @@ import {
 import type { CompactHostTelemetryV1 } from '../../core/audit-types.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
-import { APPROVAL_STATE_VERSION_V3 } from '../../core/capability/approval-v3.js'
 import { readSignedAttestationFile } from '../../core/capability/boundary-attestation-sign.js'
 import { isEgressProxyActive } from '../../core/capability/boundary-egress.js'
 import {
@@ -52,14 +54,8 @@ import {
 } from '../../core/capability/gate-shadow-audit.js'
 import { canConsumeCapabilityGrantLease } from '../../core/capability/grant-consumption.js'
 import {
-  approvalGrantBundleExhausted,
-  consumeApprovedRecordGrantBundle,
   consumeGrantLeasesForRequests,
-  decrementApprovalLegacyGrant,
   type GrantBundleValidationFailureReason,
-  grantsFromApproval,
-  validateAndConsumeGrantBundle,
-  validateGrantBundleForLeaseReuse,
 } from '../../core/capability/grant-lease.js'
 import { loadClassifierAuthorization } from '../../core/capability/grant-loader.js'
 import {
@@ -484,32 +480,13 @@ async function ensurePendingApproval(
     capabilityRequests: result.capabilityRequests,
     effectPlanHash: result.effectPlan ? hashEffectPlan(result.effectPlan) : undefined,
   })
-  const outcome = await mutateApprovalStateWithRetry<{
-    approval: typeof candidate
-    created: boolean
-  }>({
-    load: () => deps.loadApprovals(ctx, 'pending-approvals.json'),
-    write: (filePath, state) => deps.writeApprovals(filePath, state),
-    mutate: (state) => {
-      const compacted = compactApprovals(state)
-      const existing = compacted.approvals.find(
-        (approval) =>
-          approval.kind === kind &&
-          approval.fingerprint === result.fingerprint &&
-          approval.repoRoot === ctx.repoRoot,
-      )
-      if (existing) {
-        return { state: compacted, result: { approval: existing, created: false } }
-      }
-      compacted.version = APPROVAL_STATE_VERSION_V3
-      compacted.approvals.push(candidate)
-      return { state: compacted, result: { approval: candidate, created: true } }
-    },
+  return ensurePendingOneShotApproval({
+    candidate,
+    store: gateApprovalStoreFromDeps({
+      loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
+      writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
+    }),
   })
-  if (!outcome) {
-    throw new Error('Failed to persist pending approval')
-  }
-  return outcome
 }
 
 function deriveWorkspaceRootScopeHint(params: {
@@ -582,129 +559,6 @@ function deriveWorkspaceRootScopeHint(params: {
     return undefined
   }
   return { scope: 'workspace-root', path: validation.normalizedPath }
-}
-
-type ApprovalConsumeMutationResult =
-  | { status: 'consumed'; approval: ApprovalRecord; firstExecution: boolean }
-  | {
-      status: 'invalid_bundle'
-      approval: ApprovalRecord
-      reason: GrantBundleValidationFailureReason
-    }
-  | null
-
-async function consumeApprovedApproval(
-  ctx: GateRuntimeContext,
-  deps: GateRuntimeDeps,
-  kind: GatedActionKind,
-  fingerprint: string,
-  requests: NonNullable<ClassifyResult['capabilityRequests']>,
-): Promise<
-  | { status: 'consumed'; approval: ApprovalRecord; firstExecution: boolean }
-  | {
-      status: 'invalid_bundle'
-      approval: ApprovalRecord
-      reason: GrantBundleValidationFailureReason
-    }
-  | null
-> {
-  const consumed = await mutateApprovalStateWithRetry<ApprovalConsumeMutationResult>({
-    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
-    write: (filePath, state) => deps.writeApprovals(filePath, state),
-    mutate: (state) => {
-      const compacted = compactApprovals(state)
-      const matchIndex = compacted.approvals.findIndex(
-        (approval) =>
-          approval.kind === kind &&
-          approval.fingerprint === fingerprint &&
-          approval.repoRoot === ctx.repoRoot,
-      )
-      if (matchIndex === -1) {
-        return { state: compacted, result: null }
-      }
-
-      const approval = compacted.approvals[matchIndex]
-      if (approval.executionLeaseExpiresAt) {
-        if (approval.grantBundleVersion === 1) {
-          const validated = validateGrantBundleForLeaseReuse(approval, requests)
-          if (!validated.ok) {
-            compacted.approvals.splice(matchIndex, 1)
-            return {
-              state: compacted,
-              result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
-            }
-          }
-        }
-        return {
-          state: compacted,
-          result: { status: 'consumed' as const, approval, firstExecution: false },
-        }
-      }
-      if (approvalGrantBundleExhausted(approval) && !approval.executionLeaseExpiresAt) {
-        compacted.approvals.splice(matchIndex, 1)
-        return { state: compacted, result: null }
-      }
-
-      let updatedApproval = approval
-      const bundle = grantsFromApproval(approval)
-      if (approval.grantBundleVersion === 1) {
-        const validated = validateAndConsumeGrantBundle(approval, requests)
-        if (!validated.ok) {
-          compacted.approvals.splice(matchIndex, 1)
-          return {
-            state: compacted,
-            result: { status: 'invalid_bundle' as const, approval, reason: validated.reason },
-          }
-        }
-        updatedApproval = validated.approval
-      } else if (bundle.length > 0) {
-        const consumed = consumeApprovedRecordGrantBundle(approval)
-        if (!consumed.consumed) {
-          return { state: compacted, result: null }
-        }
-        updatedApproval = consumed.approval
-      } else if (approval.grant) {
-        updatedApproval = decrementApprovalLegacyGrant(approval)
-      }
-
-      compacted.approvals[matchIndex] = {
-        ...updatedApproval,
-        executionLeaseExpiresAt: new Date(
-          Date.now() + getExecutionLeaseMs(ctx.config),
-        ).toISOString(),
-      }
-      return {
-        state: compacted,
-        result: { status: 'consumed' as const, approval: updatedApproval, firstExecution: true },
-      }
-    },
-  })
-  if (!consumed) {
-    return null
-  }
-  return consumed
-}
-
-async function discardApprovedApproval(
-  ctx: GateRuntimeContext,
-  deps: GateRuntimeDeps,
-  approvalId: string,
-): Promise<void> {
-  const discarded = await mutateApprovalStateWithRetry({
-    load: () => deps.loadApprovals(ctx, 'approved-approvals.json'),
-    write: (filePath, state) => deps.writeApprovals(filePath, state),
-    mutate: (state) => {
-      const compacted = compactApprovals(state)
-      const index = compacted.approvals.findIndex((approval) => approval.approvalId === approvalId)
-      if (index !== -1) {
-        compacted.approvals.splice(index, 1)
-      }
-      return { state: compacted, result: true }
-    },
-  })
-  if (discarded !== true) {
-    throw new Error(`Failed to discard rejected approval ${approvalId}`)
-  }
 }
 
 function scrubMediatedOutput(value: string): { value: string; truncated: boolean } {
@@ -1438,7 +1292,13 @@ async function gateDecisionToVerdict(
     mismatchKind: 'capability_requests' | 'effect_plan' | 'replay_envelope',
     messages: { user: string; agent: string },
   ): Promise<GateVerdict> => {
-    await discardApprovedApproval(ctx, deps, approval.approvalId)
+    await discardApprovedOneShotApproval({
+      approvalId: approval.approvalId,
+      store: gateApprovalStoreFromDeps({
+        loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
+        writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
+      }),
+    })
     return denyWithPendingApproval({
       reason: 'approval_replay_mismatch',
       auditFields: (replacement) => ({
@@ -1475,7 +1335,7 @@ async function gateDecisionToVerdict(
   }
 
   const brokerActive = isCapabilityBrokerDemotionActive(ctx.config)
-  let approved: Awaited<ReturnType<typeof consumeApprovedApproval>> = null
+  let approved: Awaited<ReturnType<typeof claimApprovedForGate>> = null
   if (
     !TRANSACTIONAL_APPROVAL_BYPASS_REASONS.has(result.reason) &&
     !shouldSkipBrokerApprovedOnce(brokerActive, result.reason)
@@ -1519,13 +1379,17 @@ async function gateDecisionToVerdict(
           agent: 'Belay denied this action because cwd, tool, or payload changed after approval.',
         })
       }
-      approved = await consumeApprovedApproval(
-        ctx,
-        deps,
+      approved = await claimApprovedForGate({
         kind,
-        result.fingerprint,
-        result.capabilityRequests ?? [],
-      )
+        fingerprint: result.fingerprint,
+        repoRoot: ctx.repoRoot,
+        requests: result.capabilityRequests ?? [],
+        executionLeaseMs: getExecutionLeaseMs(ctx.config),
+        store: gateApprovalStoreFromDeps({
+          loadApprovals: (fileName) => deps.loadApprovals(ctx, fileName),
+          writeApprovals: (filePath, state) => deps.writeApprovals(filePath, state),
+        }),
+      })
     }
   }
   if (approved?.status === 'invalid_bundle') {
