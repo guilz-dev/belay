@@ -118,6 +118,7 @@ describe('one-shot approval lifecycle', () => {
       pending,
       approved,
       approvalId: 'belay_pending',
+      expected: pendingRecord,
       approvedAt: APPROVED_AT,
       nowMs: NOW,
     })
@@ -139,6 +140,7 @@ describe('one-shot approval lifecycle', () => {
       pending: { version: 3, approvals: [first, duplicate] },
       approved: { version: 3, approvals: [] },
       approvalId: 'belay_duplicate',
+      expected: first,
       approvedAt: APPROVED_AT,
       nowMs: NOW,
     })
@@ -157,6 +159,7 @@ describe('one-shot approval lifecycle', () => {
       pending: { version: 3, approvals: [] },
       approved: { version: 3, approvals: [existing] },
       approvalId: 'belay_existing',
+      expected: existing,
       approvedAt: '2026-09-09T00:00:02.000Z',
       nowMs: NOW,
     })
@@ -178,6 +181,23 @@ describe('one-shot approval lifecycle', () => {
         pending: { version: 3, approvals: [pending] },
         approved: { version: 3, approvals: [approved] },
         approvalId: 'belay_conflict',
+        expected: pending,
+        approvedAt: APPROVED_AT,
+        nowMs: NOW,
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects a pending record whose identity changed after the approval request was loaded', () => {
+    const loaded = approvalRecord({ approvalId: 'belay_raced', fingerprint: 'loaded-fp' })
+    const replaced = approvalRecord({ approvalId: 'belay_raced', fingerprint: 'replaced-fp' })
+
+    expect(
+      recordApprovalTransition({
+        pending: { version: 3, approvals: [replaced] },
+        approved: { version: 3, approvals: [] },
+        approvalId: loaded.approvalId,
+        expected: loaded,
         approvedAt: APPROVED_AT,
         nowMs: NOW,
       }),
@@ -195,6 +215,7 @@ describe('one-shot approval lifecycle', () => {
         pending: { version: 3, approvals: [expired] },
         approved: { version: 3, approvals: [] },
         approvalId: 'belay_expired',
+        expected: expired,
         approvedAt: APPROVED_AT,
         nowMs: NOW,
       }),
@@ -222,6 +243,7 @@ describe('one-shot approval lifecycle', () => {
       pending: { version: 3, approvals: [] },
       approved: { version: 3, approvals: [existing] },
       approvalId: 'belay_bundle',
+      expected: existing,
       approvedAt: '2026-09-09T00:00:02.000Z',
       nowMs: NOW,
     })

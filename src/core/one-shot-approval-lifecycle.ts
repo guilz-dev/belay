@@ -54,25 +54,29 @@ export function recordApprovalTransition(params: {
   pending: ApprovalStateFile
   approved: ApprovalStateFile
   approvalId: string
+  expected: Pick<ApprovalRecord, 'fingerprint' | 'repoRoot'>
   approvedAt: string
   nowMs: number
 }): RecordedApprovalTransition | null {
   const pending = compactApprovalsAt(params.pending, params.nowMs)
   const approved = compactApprovalsAt(params.approved, params.nowMs)
   const pendingApproval = pending.approvals.find(
-    (approval) => approval.approvalId === params.approvalId,
+    (approval) =>
+      approval.approvalId === params.approvalId &&
+      approval.fingerprint === params.expected.fingerprint &&
+      approval.repoRoot === params.expected.repoRoot,
   )
   const existing = approved.approvals.find((approval) => approval.approvalId === params.approvalId)
 
-  if (!pendingApproval) {
-    return existing ? { pending, approved, approval: existing } : null
-  }
   if (
     existing &&
-    (existing.fingerprint !== pendingApproval.fingerprint ||
-      existing.repoRoot !== pendingApproval.repoRoot)
+    (existing.fingerprint !== params.expected.fingerprint ||
+      existing.repoRoot !== params.expected.repoRoot)
   ) {
     return null
+  }
+  if (!pendingApproval) {
+    return existing ? { pending, approved, approval: existing } : null
   }
 
   const pendingApprovals = [...pending.approvals]

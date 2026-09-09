@@ -90,6 +90,7 @@ export async function recordApproval(params: {
         pending: pendingState,
         approved: approvedState,
         approvalId,
+        expected: approval,
         approvedAt: new Date(nowMs).toISOString(),
         nowMs,
       })

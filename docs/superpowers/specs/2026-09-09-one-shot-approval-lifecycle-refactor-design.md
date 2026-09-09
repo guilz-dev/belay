@@ -200,18 +200,20 @@ The following invariants are mandatory:
 
 1. Pending creation is idempotent for the existing match key.
 2. Pending-to-approved recording is atomic across both state files.
-3. A replay claim spends the one-shot approval before execution begins.
-4. Replay failure, timeout, or unconfirmed cleanup never re-arms the approval.
-5. A first gate claim consumes the exact embedded grant bundle and establishes an execution lease.
-6. A retry within the execution lease reports `firstExecution: false` and does not consume again.
-7. An invalid exact bundle removes the rejected approved record before a replacement is requested.
-8. Replay-envelope, capability-request, and EffectPlan mismatches preserve the current discard and
+3. Recording revalidates the loaded action identity after acquiring persistence locks, so an
+   `approvalId` collision or replacement cannot authorize a different fingerprint or repository.
+4. A replay claim spends the one-shot approval before execution begins.
+5. Replay failure, timeout, or unconfirmed cleanup never re-arms the approval.
+6. A first gate claim consumes the exact embedded grant bundle and establishes an execution lease.
+7. A retry within the execution lease reports `firstExecution: false` and does not consume again.
+8. An invalid exact bundle removes the rejected approved record before a replacement is requested.
+9. Replay-envelope, capability-request, and EffectPlan mismatches preserve the current discard and
    replacement behavior.
-9. Broker-active outside-repository rules continue to bypass `approved_once` where currently
+10. Broker-active outside-repository rules continue to bypass `approved_once` where currently
    required.
-10. Audit mode does not create pending approvals.
-11. `approved_once` remains ahead of standalone `capability_grant` consumption.
-12. Persistence ambiguity or failure remains fail-closed.
+11. Audit mode does not create pending approvals.
+12. `approved_once` remains ahead of standalone `capability_grant` consumption.
+13. Persistence ambiguity or failure remains fail-closed.
 
 ## SOLID alignment
 
