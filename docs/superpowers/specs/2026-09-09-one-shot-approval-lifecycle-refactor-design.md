@@ -271,7 +271,7 @@ The full test baseline at design time is 194 passing test files and 2,876 passin
 skipped tests. Any changed snapshot, approval message, audit reason, or corpus decision is a
 regression unless separately authorized.
 
-The implementation verification baseline is 196 passing test files and 2,901 passing tests with
+The implementation verification baseline is 196 passing test files and 2,902 passing tests with
 the same two skipped tests. The corpus remains 96/96 with zero must-ask misses and zero
 provably-benign over-stops.
 
