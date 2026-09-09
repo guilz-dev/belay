@@ -97,9 +97,7 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
       : [],
     since: options.since,
     until: options.until,
-    ...(options.allCohorts || !cohort
-      ? {}
-      : { legacyBoundaryProfile: cohort.boundaryProfile }),
+    ...(options.allCohorts || !cohort ? {} : { legacyBoundaryProfile: cohort.boundaryProfile }),
   })
   if (options.includeReviewed) {
     return report
@@ -112,8 +110,7 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
     ...report,
     candidates: report.candidates.filter(
       (candidate) =>
-        candidate.boundaryProfile === null ||
-        !reviewedKeys.has(harvestReviewKey(candidate)),
+        candidate.boundaryProfile === null || !reviewedKeys.has(harvestReviewKey(candidate)),
     ),
   }
 }
@@ -178,9 +175,7 @@ export function harvestReportFromRecords(
   })
   return buildHarvestReport(
     filtered,
-    options.legacyBoundaryProfile
-      ? { legacyBoundaryProfile: options.legacyBoundaryProfile }
-      : {},
+    options.legacyBoundaryProfile ? { legacyBoundaryProfile: options.legacyBoundaryProfile } : {},
   )
 }
 

@@ -11,7 +11,7 @@ import {
   parseTimestamp,
 } from './audit-query.js'
 import type { AuditRecord } from './audit-types.js'
-import { harvestReviewKey, type HarvestReviewOutcome } from './harvest-review.js'
+import { type HarvestReviewOutcome, harvestReviewKey } from './harvest-review.js'
 
 export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
