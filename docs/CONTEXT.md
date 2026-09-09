@@ -21,6 +21,12 @@ authorization model. It complements
 - **CapabilityGrantV1** — A scoped approval artifact bound to principal, action, resource,
   optional input fingerprint, expiry, and remaining uses. Broad grants (`network.connect` with
   `unknown` resource, etc.) are rejected.
+- **One-shot approval** — Exact human authorization for one previously denied action. It is
+  bound to the action fingerprint and repository identity and is distinct from a standing
+  allowlist or a broader resource-scoped capability grant.
+- **Execution lease** — A short-lived marker attached when a one-shot approval is claimed for
+  host execution. It prevents a retry of the same approved action from spending the approval
+  twice while preserving fail-closed behavior for mismatched or expired authorization.
 - **BoundaryAttestation** — Evidence that a real runtime boundary (not config strings alone)
   probed successfully and can materialize grants.
 - **Contained execution capability** — A separate, fresh signed Docker proof used only to run one
