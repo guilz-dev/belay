@@ -439,6 +439,140 @@ describe('appendBoundedAuditLine', () => {
 })
 
 describe('retained audit reads', () => {
+  it.each([
+    { name: 'missing', sidecar: undefined },
+    { name: 'malformed', sidecar: '{malformed\n' },
+    {
+      name: 'other-cohort',
+      sidecar: `${JSON.stringify({
+        schemaVersion: 1,
+        cohort: {
+          runtimeArtifactHash: 'c'.repeat(64),
+          decisionConfigFingerprint: 'd'.repeat(64),
+          boundaryFingerprint: 'e'.repeat(64),
+        },
+        availabilityAskCount: 0,
+        updatedAt: '2026-09-07T00:00:00.000Z',
+      })}\n`,
+    },
+  ])('reconstructs a $name sidecar from retained same-cohort evidence before rotation', async ({
+    sidecar,
+  }) => {
+    const auditPath = await createAuditPath('belay-audit-storage-readiness-repair-')
+    const cohort = {
+      runtimeArtifactHash: 'a'.repeat(64),
+      decisionConfigFingerprint: 'b'.repeat(64),
+      boundaryProfile: 'l3-l4-only',
+    }
+    const retainedAsk = {
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      reason: 'missing_trusted_cwd',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      ...cohort,
+    }
+    const otherCohortAsk = {
+      ...retainedAsk,
+      timestamp: '2026-09-07T00:00:00.000Z',
+      runtimeArtifactHash: 'f'.repeat(64),
+    }
+    const activeBefore = `${JSON.stringify({ event: 'diagnostic', padding: 'x'.repeat(200) })}\n`
+    await writeFile(
+      `${auditPath}.1`,
+      `${JSON.stringify(otherCohortAsk)}\n${JSON.stringify(retainedAsk)}\n`,
+      'utf8',
+    )
+    await writeFile(auditPath, activeBefore, 'utf8')
+    if (sidecar !== undefined) {
+      await writeFile(`${auditPath}.readiness.json`, sidecar, 'utf8')
+    }
+
+    const incoming = {
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'allow',
+      wouldBlock: false,
+      reason: 'read_only',
+      timestamp: '2026-09-08T01:00:00.000Z',
+      ...cohort,
+    }
+    await appendBoundedAuditLine({
+      auditPath,
+      line: JSON.stringify(incoming),
+      maxBytes: 128,
+      maxFiles: 2,
+      readinessUpdate: {
+        cohort,
+        availabilityCausedAsk: false,
+        timestamp: incoming.timestamp,
+      },
+    })
+
+    const loaded = await loadRetainedAuditRecords({
+      auditPath,
+      maxFiles: 2,
+      maxLineBytes: FIXED_MAX_AUDIT_RECORD_BYTES,
+    })
+    expect(loaded.records).not.toContainEqual(retainedAsk)
+    expect(loaded.readinessState).toEqual({
+      status: 'valid',
+      state: {
+        schemaVersion: 1,
+        cohort: {
+          runtimeArtifactHash: cohort.runtimeArtifactHash,
+          decisionConfigFingerprint: cohort.decisionConfigFingerprint,
+          boundaryFingerprint: createHash('sha256').update(cohort.boundaryProfile).digest('hex'),
+        },
+        availabilityAskCount: 1,
+        firstAvailabilityAt: retainedAsk.timestamp,
+        lastAvailabilityAt: retainedAsk.timestamp,
+        updatedAt: incoming.timestamp,
+      },
+    })
+  })
+
+  it('rejects malformed retained evidence without rotating or appending', async () => {
+    const auditPath = await createAuditPath('belay-audit-storage-readiness-malformed-')
+    const cohort = {
+      runtimeArtifactHash: 'a'.repeat(64),
+      decisionConfigFingerprint: 'b'.repeat(64),
+      boundaryProfile: 'l3-l4-only',
+    }
+    const retainedBefore = `${JSON.stringify({ marker: 'oldest' })}\n`
+    const activeBefore = '{malformed\n'
+    await writeFile(`${auditPath}.1`, retainedBefore, 'utf8')
+    await writeFile(auditPath, activeBefore, 'utf8')
+    const incoming = {
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'allow',
+      wouldBlock: false,
+      reason: 'read_only',
+      timestamp: '2026-09-08T01:00:00.000Z',
+      ...cohort,
+    }
+
+    await expect(
+      appendBoundedAuditLine({
+        auditPath,
+        line: JSON.stringify(incoming),
+        maxBytes: 1,
+        maxFiles: 2,
+        readinessUpdate: {
+          cohort,
+          availabilityCausedAsk: false,
+          timestamp: incoming.timestamp,
+        },
+      }),
+    ).rejects.toThrow(/malformed retained audit/i)
+
+    expect(await readFile(`${auditPath}.1`, 'utf8')).toBe(retainedBefore)
+    expect(await readFile(auditPath, 'utf8')).toBe(activeBefore)
+    await expectMissing(`${auditPath}.readiness.json`)
+  })
+
   it('keeps a minimal availability watermark until the decision cohort changes', async () => {
     const auditPath = await createAuditPath('belay-audit-storage-readiness-watermark-')
     const cohortA = {

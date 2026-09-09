@@ -19,14 +19,18 @@ import {
   toAuditRecord,
 } from './audit-query.js'
 import {
+  type AuditReadinessStateSnapshot,
+  readinessStateMatchesCohort,
+} from './audit-readiness-state.js'
+import {
   computeRecoveryMetrics,
   type RecoveryMetrics,
   type RecoveryMetricsCohort,
 } from './audit-recovery-metrics.js'
 import { isValidSessionCorrelationId } from './audit-serialize.js'
-import { type AuditReadinessStateSnapshot, auditBoundaryFingerprint } from './audit-storage.js'
 import type {
   AvailabilityAskCounts,
+  DecisionCohortIdentity,
   ReasonApprovalRatio,
   RepeatedFingerprintAsk,
 } from './audit-types.js'
@@ -37,10 +41,7 @@ export const MIN_REVIEWED_BENIGN_EVENTS = 150
 export const MIN_REVIEWED_SESSIONS = 3
 export const MAX_BENIGN_BLOCK_RATE = 0.02
 
-export interface AuditCohortIdentity {
-  runtimeArtifactHash: string
-  decisionConfigFingerprint: string
-  boundaryProfile: string
+export interface AuditCohortIdentity extends DecisionCohortIdentity {
   /** Display / forensics metadata — not used for v3 cohort matching when artifact hash is present. */
   runtimeBuildStamp: string
   configFingerprint: string
@@ -183,13 +184,7 @@ function auditAvailabilityWatermark(
   if (!snapshot) return { status: 'not-evaluated', availabilityAsks: 0 }
   if (snapshot.status === 'missing') return { status: 'missing', availabilityAsks: 0 }
   if (snapshot.status === 'invalid') return { status: 'invalid', availabilityAsks: 0 }
-  if (
-    !activeCohort ||
-    snapshot.state.cohort.runtimeArtifactHash !== activeCohort.runtimeArtifactHash ||
-    snapshot.state.cohort.decisionConfigFingerprint !== activeCohort.decisionConfigFingerprint ||
-    snapshot.state.cohort.boundaryFingerprint !==
-      auditBoundaryFingerprint(activeCohort.boundaryProfile)
-  ) {
+  if (!activeCohort || !readinessStateMatchesCohort(snapshot.state, activeCohort)) {
     return { status: 'cohort-mismatch', availabilityAsks: 0 }
   }
   return {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -13,7 +13,6 @@ import {
 } from '../commands/quality.js'
 import { loadConfigFile } from '../config-io.js'
 import { appendAuditRecord } from '../core/audit-serialize.js'
-import { appendBoundedAuditLine } from '../core/audit-storage.js'
 import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
@@ -274,7 +273,7 @@ describe('quality loop', () => {
     expect(report.ok).toBe(true)
   })
 
-  it('keeps an active-cohort availability blocker after its audit generation is rotated out', async () => {
+  it('seeds a missing watermark from retained availability evidence before rotation', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-sticky-availability-'))
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot, dogfood: true })
@@ -300,7 +299,7 @@ describe('quality loop', () => {
         ],
       })}\n`,
     )
-    const tinyRetention = { maxBytes: 131_072, maxFiles: 1 }
+    const tinyRetention = { maxBytes: 1, maxFiles: 1 }
     await appendAuditRecord(
       auditPath,
       {
@@ -316,11 +315,21 @@ describe('quality loop', () => {
       DEFAULT_REDACTION_V3,
       tinyRetention,
     )
-    await appendBoundedAuditLine({
+    await unlink(`${auditPath}.readiness.json`)
+    await appendAuditRecord(
       auditPath,
-      line: JSON.stringify({ event: 'diagnostic', padding: 'x'.repeat(130_900) }),
-      ...tinyRetention,
-    })
+      {
+        timestamp: '2026-09-08T02:01:00.000Z',
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'allow',
+        reason: 'read_only',
+        wouldBlock: false,
+        ...cohort,
+      },
+      DEFAULT_REDACTION_V3,
+      tinyRetention,
+    )
     const cleanRecords = Array.from({ length: 150 }, (_, index) => ({
       timestamp: new Date(1_780_100_000_000 + index).toISOString(),
       event: 'beforeShellExecution',
