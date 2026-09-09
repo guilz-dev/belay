@@ -145,6 +145,26 @@ describe('compact audit action snapshots', () => {
     expect(JSON.stringify(snapshot)).not.toContain(toolInputMarker)
   })
 
+  it('projects an unknown path-only tool as a mutation like the live classifier fallback', () => {
+    const payload = { path: 'notes.txt' }
+
+    const snapshot = buildAuditActionSnapshot(
+      'tool',
+      { summary: 'CustomPathTool notes.txt' },
+      { kind: 'tool', cwd, toolName: 'CustomPathTool', payload },
+    )
+
+    expect(snapshot).toEqual({
+      schemaVersion: 2,
+      kind: 'tool',
+      cwd,
+      toolName: 'CustomPathTool',
+      operation: 'write',
+      path: 'notes.txt',
+      payloadHash: hashReplayPayload(payload),
+    })
+  })
+
   it('writes only a SHA-256 hash for a subagent summary and omits replay payloads', () => {
     const promptMarker = 'task ten subagent prompt canary'
     const summary = `Review this change: ${promptMarker}`

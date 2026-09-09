@@ -38,6 +38,69 @@ describe('audit-telemetry-projection', () => {
     expect(projection.observedPayloadHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('never embeds command, pattern, prompt, or raw tool ids in compact summaries', () => {
+    const rawToolUseId = 'tool_abc'
+    const commandProjection = projectObservedAudit(
+      {
+        tool_name: 'Shell',
+        tool_input: { command: `printf secret-${rawToolUseId}` },
+        tool_use_id: rawToolUseId,
+      },
+      'postToolUse',
+      '/repo',
+      DEFAULT_REDACTION_V3,
+    )
+    const patternProjection = projectObservedAudit(
+      {
+        tool_name: 'Search',
+        tool_input: { pattern: `customer-secret-${rawToolUseId}` },
+        tool_use_id: rawToolUseId,
+      },
+      'postToolUse',
+      '/repo',
+      DEFAULT_REDACTION_V3,
+    )
+    const genericSummary = compactToolGateSummary(
+      'CustomPromptTool',
+      { prompt: 'short private prompt' },
+      '',
+      DEFAULT_REDACTION_V3,
+    )
+    const gateSummary = compactToolGateSummary(
+      'CustomShellTool',
+      { command: `printf secret-${rawToolUseId}` },
+      '',
+      DEFAULT_REDACTION_V3,
+      rawToolUseId,
+    )
+
+    expect(commandProjection.summary).not.toContain('printf secret')
+    expect(commandProjection.summary).not.toContain(rawToolUseId)
+    expect(patternProjection.summary).not.toContain('customer-secret')
+    expect(patternProjection.summary).not.toContain(rawToolUseId)
+    expect(genericSummary).not.toContain('short private prompt')
+    expect(gateSummary).not.toContain('printf secret')
+    expect(gateSummary).not.toContain(rawToolUseId)
+  })
+
+  it('stores cwd relative to the repository, including root and outside paths', () => {
+    const atRoot = projectObservedAudit(
+      { tool_name: 'Read', cwd: '/repo', tool_input: { file_path: 'src/foo.ts' } },
+      'postToolUse',
+      '/repo',
+      DEFAULT_REDACTION_V3,
+    )
+    const outside = projectObservedAudit(
+      { tool_name: 'Read', cwd: '/other', tool_input: { file_path: 'src/foo.ts' } },
+      'postToolUse',
+      '/repo',
+      DEFAULT_REDACTION_V3,
+    )
+
+    expect(atRoot.observedCwd).toBe('.')
+    expect(outside.observedCwd).toBe('../other')
+  })
+
   it('compacts subagent prompts to byte length and hash', () => {
     const summary = compactSubagentGateSummary({
       tool_name: 'Task',

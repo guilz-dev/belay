@@ -285,6 +285,12 @@ such logs to `audit.ndjson.legacy-<timestamp>.ndjson` when placeholders are dete
 Gate, CLI, and egress appenders share the bounded storage sink described above. Compact post-tool
 telemetry uses the same rotation and lock path as gate and CLI records.
 
+Gate rows use compact `actionSnapshot.schemaVersion: 2` projections. Shell snapshots retain a
+scrubbed `normalizedAction`; tool snapshots retain `toolName`, `operation`, normalized `path`, and
+an optional payload hash without file or patch bodies; subagent snapshots retain only `toolName`
+and a one-way `summaryHash`. Incomplete tool projections and body-free subagent projections are
+explicitly non-replayable. Schema v1 snapshots remain readable for existing audit generations.
+
 ## `controlPlane`
 
 | Field | Notes |

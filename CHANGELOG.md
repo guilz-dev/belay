@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Bounded audit follow-up** — Compact audit summaries omit command, pattern, prompt, and raw tool
+  identifiers; action snapshots preserve path-only mutation and Cursor subagent-type evidence;
+  observed cwd values are repository-relative; and doctor reports storage diagnostics even when
+  legacy retention is disabled.
+
 ## 0.11.1 — 2026-09-09
 
 ### Fixed

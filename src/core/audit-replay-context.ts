@@ -417,6 +417,9 @@ function toolProjection(
   if (['read', 'view'].includes(lowered)) {
     return { operation: 'read', path: targetPath }
   }
+  if (targetPath) {
+    return { operation: 'write', path: targetPath }
+  }
   return {}
 }
 

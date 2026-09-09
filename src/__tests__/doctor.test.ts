@@ -1008,4 +1008,32 @@ describe('doctorProject', () => {
     expect(report.notes.some((note) => note.includes('file-checkpoint mirror'))).toBe(true)
     expect(report.notes.some((note) => note.includes('File checkpoint eligibility:'))).toBe(true)
   })
+
+  it('always reports audit storage and malformed lines when retention is disabled', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-audit-storage-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    delete config.audit.maxBytes
+    delete config.audit.maxFiles
+    config.audit.retention = { maxBytes: 0, maxFiles: 0 }
+    await writeTrustedConfigFile(repoRoot, config)
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      '{"event":"valid"}\n{malformed\n',
+      'utf8',
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    const formatted = formatDoctorReport(report)
+
+    expect(report.auditStorage).toMatchObject({
+      filesRead: 1,
+      parsedRecords: 1,
+      malformedLines: 1,
+    })
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- malformed lines skipped: 1')
+  })
 })

@@ -1046,6 +1046,13 @@ export async function evaluateGatedAction(
 
   const scrubOpts = scrubOptionsFromConfig(ctx.config)
   const scrubbedPayload = fingerprintReplayPayload(params.kind, params.payload, scrubOpts)
+  const replayToolName =
+    params.toolName ??
+    (params.kind === 'subagent'
+      ? params.payload?.tool_name === 'Task'
+        ? 'Task'
+        : String(params.payload?.subagent_type ?? 'generalPurpose')
+      : undefined)
 
   return gateDecisionToVerdict(ctx, deps, params.kind, result, {
     sourceEvent: params.sourceEvent,
@@ -1078,7 +1085,7 @@ export async function evaluateGatedAction(
     replayAction: {
       kind: params.kind,
       cwd: params.cwd,
-      toolName: params.toolName,
+      toolName: replayToolName,
       command: params.command,
       payload: scrubbedPayload,
       fingerprint: result.fingerprint,

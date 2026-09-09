@@ -290,7 +290,7 @@ describe('gate-runtime integration', () => {
     expect(snapshot?.schemaVersion).toBe(2)
     expect(snapshot?.kind).toBe('shell')
     expect(snapshot?.cwd).toBe(repoRoot)
-    expect(snapshot?.normalizedAction).toBeTruthy()
+    expect(snapshot?.normalizedAction).toBe('rm -rf .git')
   })
 
   it('writes actionSnapshot with subdirectory cwd for simulate replay', async () => {
@@ -319,7 +319,38 @@ describe('gate-runtime integration', () => {
 
     const snapshot = auditEvents[0]?.actionSnapshot as Record<string, unknown> | undefined
     expect(snapshot?.cwd).toBe(srcCwd)
-    expect(snapshot?.normalizedAction).toContain('rm')
+    expect(snapshot?.normalizedAction).toBe('rm -rf .git')
+  })
+
+  it('preserves Cursor subagent type and classifier evidence without task text', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-subagent-snapshot-'))
+    const auditEvents: Record<string, unknown>[] = []
+    const deps = createDefaultGateRuntimeDeps()
+    const ctx = gateContext(repoRoot)
+    const patchedDeps = {
+      ...deps,
+      async appendAudit(_ctx: typeof ctx, event: Record<string, unknown>) {
+        auditEvents.push(event)
+      },
+    }
+
+    await evaluateGatedAction(ctx, patchedDeps, {
+      kind: 'subagent',
+      cwd: repoRoot,
+      payload: {
+        subagent_type: 'explore',
+        task: { description: 'publish private release notes' },
+      },
+    })
+
+    const snapshot = auditEvents[0]?.actionSnapshot
+    expect(snapshot).toMatchObject({
+      schemaVersion: 2,
+      kind: 'subagent',
+      toolName: 'explore',
+      summaryHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('private release notes')
   })
 
   it('denies judge infrastructure failures with recovery hints and without approval ids', async () => {
