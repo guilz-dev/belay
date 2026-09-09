@@ -167,10 +167,11 @@ The gate runtime continues to own:
 - capability-grant consumption after the one-shot path;
 - approval-prompt replay and boundary execution.
 
-It no longer owns approval-state mutation callbacks. Existing private helpers for pending creation,
-approved claim, and discard are replaced by approval-service calls. Scope-hint derivation remains
-in the gate runtime because it is derived from classifier and adapter payload context, not approval
-state.
+It no longer owns one-shot approval-state mutation callbacks. Existing private helpers for pending
+creation, approved claim, and discard are replaced by approval-service calls. The separate
+standalone capability-grant consumption callback remains in the gate runtime for this scope.
+Scope-hint derivation remains in the gate runtime because it is derived from classifier and adapter
+payload context, not approval state.
 
 ### Compatibility exports
 
@@ -264,7 +265,7 @@ pnpm test:structural:run
 pnpm corpus
 ```
 
-The full test baseline at design time is 194 passing test files and 2,873 passing tests with two
+The full test baseline at design time is 194 passing test files and 2,876 passing tests with two
 skipped tests. Any changed snapshot, approval message, audit reason, or corpus decision is a
 regression unless separately authorized.
 
