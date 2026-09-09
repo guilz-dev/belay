@@ -82,6 +82,14 @@ authorization model. It complements
     authorization-relevant config hash (`decisionConfigFingerprint`), and `boundaryProfile`.
     `mode` and audit display settings do not reset the decision cohort. Readiness still uses a
     minimum gate-event count today; stricter reviewed-benign thresholds are planned (same doc §6).
+    When its sidecar is missing, invalid, or for another cohort, readiness is reconstructed under
+    the audit writer lock from the exact retained generations before rotation and applies the
+    incoming delta once. A proven complete empty snapshot may seed zero; malformed, unreadable,
+    truncated, oversized, or identity-changing retained evidence fails closed. Harvest defaults to
+    the active cohort. Forensic `--all-cohorts` review preserves the candidate's source boundary,
+    requires exact `(fingerprint, kind, boundaryProfile)` selection, and uses
+    `harvest apply --boundary-profile <id>` when boundaries are ambiguous. Reviews and corpus
+    entries remain evidence only and cannot grant runtime authority.
 12. **Host execution policy is a separate decision boundary**: an editor or agent host may deny an
     invocation after Belay returned `permission: allow`. A correlated host
     `permission_denied` is operational evidence, not a Belay ask and not a reason to mint a Belay
@@ -135,6 +143,11 @@ authorization model. It complements
     inheritance; hooks, runtime bundles, and audit storage remain per checkout. Sibling checks
     may pass an existing checkout as the Git cwd when the evaluated path is prunable
     ([ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md)).
+18. **Audit writer lock recovery is fail-closed**: the exclusive lock records a bounded schema-v1
+    owner with PID, random token, and acquisition timestamp. Only a process proven absent may be
+    reclaimed, through an inode-bound hard-link claim followed by identity, token, and liveness
+    rechecks. Live, inaccessible, malformed, symlinked, identity-changing, and otherwise
+    unverifiable owners are never removed; acquisition instead ends at the fixed 2,000 ms deadline.
 
 ## Policy precedence
 

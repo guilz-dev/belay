@@ -1,12 +1,21 @@
 # PR #118 Remaining Follow-ups
 
-Status: deferred from PR #118 on 2026-09-08
+Status: P0/P1 completed by the recent-review remediation on 2026-09-10
 
-PR #118 can be merged without publishing a package, upgrading another repository, or enabling
-enforce mode. The two items below remain required before enforce activation or the next release
-workflow that depends on cross-repository dogfood evidence.
+When PR #118 merged, it did not publish a package, upgrade another repository, or enable enforce
+mode. At that point, the two items below remained required before enforce activation or the next
+release workflow that depended on cross-repository dogfood evidence.
 
-## P0: Seed repaired readiness state from retained audit evidence
+Completion record:
+
+- `2231ad1` implements retained-evidence readiness reconstruction (P0).
+- `6bed57e` binds harvest reviews to their source boundaries.
+- `208b6ba` safely recovers locks left by crashed audit writers.
+- P1 is completed by the release-ordering update that retains this historical problem statement.
+
+## P0: Seed repaired readiness state from retained audit evidence — completed in `2231ad1`
+
+Original problem statement (historical):
 
 The persistent availability watermark currently fails readiness closed when it is missing,
 malformed, or for another cohort. Its next repair starts from the incoming gate record, however,
@@ -36,10 +45,17 @@ Acceptance evidence:
 The initial RED integration test for this scenario is intentionally excluded from PR #118 and is
 saved locally in the named stash `wip: sticky readiness seed RED test`.
 
-## P1: Run cross-repository checks only after package publication
+## P1: Run cross-repository checks only after package publication — completed
+
+Original problem statement (historical):
 
 The release guide currently asks non-Belay targets to execute the requested release version before
 that version is published. This makes the documented order impossible for a new version.
+
+Completed disposition: [releasing.md](./releasing.md) now keeps only the Belay source-build helper
+in pre-release checks, then selects the shared cutoff, performs authorized target upgrades, and
+runs the pinned published-package checks after publication. Every result is retained in the release
+PR.
 
 Required documentation change:
 
@@ -52,8 +68,8 @@ Required documentation change:
 
 ## Non-blocking backlog
 
-These findings do not block PR #118 or enforce readiness, but should be handled in later focused
-changes:
+These findings did not block PR #118 or enforce readiness. Items not marked completed should be
+handled in later focused changes:
 
 1. Clarify whether `harvest apply --include-reviewed` should accept already reviewed candidates.
 2. Reject malformed Git ranges containing additional dots consistently.
@@ -62,8 +78,10 @@ changes:
 5. Normalize canonical `tool_name` projection across adapters.
 6. Define fail-closed behavior for unknown future snapshot schemas.
 7. Prefer explicit telemetry cwd evidence in the Claude adapter when multiple cwd sources exist.
-8. Recheck lock-file ownership after open/stat failures so orphan cleanup cannot race.
-9. Keep lock acquisition timeout behavior within the documented deadline.
+8. Recheck lock-file ownership after open/stat failures so orphan cleanup cannot race. Completed in
+   `208b6ba` with inode-bound recovery claims and owner-token verification.
+9. Keep lock acquisition timeout behavior within the documented deadline. Completed in `208b6ba`;
+   the 2,000 ms deadline remains authoritative.
 10. Escape remaining C1 control characters in raw session identifiers used by diagnostics.
 
 ## Explicitly out of scope for this merge
@@ -73,6 +91,8 @@ changes:
 - selection of the release-window cutoff
 - activation of enforce mode
 
-Enforce activation remains blocked until the P0 migration behavior is implemented and verified.
+P0 is implemented and verified, but this documentation change does not activate enforce mode.
+Enforce activation still requires the ordinary readiness gates and a separately authorized
+operator decision.
 The executable task breakdown remains in
 [`2026-09-08-pr118-readiness-followup.md`](../superpowers/plans/2026-09-08-pr118-readiness-followup.md).

@@ -1,9 +1,8 @@
 import path from 'node:path'
 import { applyConfigPreset, type ConfigPresetName } from '../presets.js'
+import type { ConfigLayerSource } from '../types.js'
 import type { BelayConfigV3 } from './config.js'
 import { DEFAULT_CONFIG_V3, mergeConfig, rejectTeamLayerJudgeSecrets } from './config.js'
-
-export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'inherited' | 'protected'
 
 export interface ConfigProvenanceEntry {
   path: string

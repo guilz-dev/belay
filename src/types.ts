@@ -139,9 +139,11 @@ export interface DogfoodStatus {
   notes: string[]
 }
 
+export type ConfigLayerSource = 'builtin' | 'team' | 'repo' | 'inherited' | 'protected'
+
 export interface ConfigProvenanceNote {
   path: string
-  source: 'builtin' | 'team' | 'repo' | 'inherited' | 'protected'
+  source: ConfigLayerSource
 }
 
 export interface DoctorReport {
