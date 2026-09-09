@@ -19,6 +19,7 @@ import {
 } from '../core/harvest.js'
 import {
   type HarvestReviewRecordV1,
+  harvestReviewKey,
   latestHarvestReviews,
   loadHarvestReviewLedger,
   writeHarvestReviewLedgerAtomic,
@@ -48,6 +49,8 @@ export interface HarvestApplyOptions {
   allCohorts?: boolean
   /** Optional discriminator when one displayed command has multiple candidate fingerprints. */
   fingerprint?: string
+  /** Optional discriminator when evidence spans multiple boundary profiles. */
+  boundaryProfile?: string
 }
 
 function auditLogPath(repoRoot: string, configuredPath: string): string {
@@ -94,24 +97,23 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
       : [],
     since: options.since,
     until: options.until,
+    ...(options.allCohorts || !cohort
+      ? {}
+      : { legacyBoundaryProfile: cohort.boundaryProfile }),
   })
-  if (options.includeReviewed || !cohort) {
+  if (options.includeReviewed) {
     return report
   }
   const ledger = await loadHarvestReviewLedger(
     harvestReviewLedgerPath(repoRoot, config.audit.logPath),
   )
-  const reviewedFingerprints = new Set(
-    [...latestHarvestReviews(ledger).values()]
-      .filter(
-        (review) => review.kind === 'shell' && review.boundaryProfile === cohort.boundaryProfile,
-      )
-      .map((review) => review.fingerprint),
-  )
+  const reviewedKeys = new Set(latestHarvestReviews(ledger).keys())
   return {
     ...report,
     candidates: report.candidates.filter(
-      (candidate) => !reviewedFingerprints.has(candidate.fingerprint),
+      (candidate) =>
+        candidate.boundaryProfile === null ||
+        !reviewedKeys.has(harvestReviewKey(candidate)),
     ),
   }
 }
@@ -153,6 +155,7 @@ function scopedHarvestReport(
     notes: string[]
     since?: string
     until?: string
+    legacyBoundaryProfile?: string
   },
 ): HarvestReport {
   const report = harvestReportFromRecords(records, options)
@@ -167,10 +170,17 @@ function scopedHarvestReport(
 
 export function harvestReportFromRecords(
   records: AuditRecord[],
-  options: { since?: string; until?: string } = {},
+  options: { since?: string; until?: string; legacyBoundaryProfile?: string } = {},
 ): HarvestReport {
+  const filtered = filterRecordsForHarvest(records, {
+    since: options.since,
+    until: options.until,
+  })
   return buildHarvestReport(
-    filterRecordsForHarvest(records, { since: options.since, until: options.until }),
+    filtered,
+    options.legacyBoundaryProfile
+      ? { legacyBoundaryProfile: options.legacyBoundaryProfile }
+      : {},
   )
 }
 
@@ -243,28 +253,37 @@ export async function harvestApplyProject(
   const matchingCandidates = options.fingerprint
     ? commandMatches.filter((entry) => entry.fingerprint === options.fingerprint)
     : commandMatches
-  const [candidate] = matchingCandidates
+  const boundaryMatches = options.boundaryProfile
+    ? matchingCandidates.filter((entry) => entry.boundaryProfile === options.boundaryProfile)
+    : matchingCandidates
+  const [candidate] = boundaryMatches
   if (!candidate) {
+    const selectorMessage =
+      options.fingerprint && options.boundaryProfile
+        ? `No candidate matches the exact command, fingerprint ${options.fingerprint}, and boundary profile ${JSON.stringify(options.boundaryProfile)} in the selected harvest report.`
+        : options.fingerprint
+          ? `No candidate matches the exact command and fingerprint ${options.fingerprint} in the selected harvest report.`
+          : options.boundaryProfile
+            ? `No candidate matches the exact command and boundary profile ${JSON.stringify(options.boundaryProfile)} in the selected harvest report.`
+            : `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`
     return {
       ok: false,
-      message: options.fingerprint
-        ? `No candidate matches the exact command and fingerprint ${options.fingerprint} in the selected harvest report.`
-        : `Command is not an exact candidate in the selected harvest report: ${JSON.stringify(options.command)}.`,
+      message: selectorMessage,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
-  const matchingFingerprints = new Set(matchingCandidates.map((entry) => entry.fingerprint))
-  if (matchingFingerprints.size > 1) {
+  const matchingReviewKeys = new Set(boundaryMatches.map((entry) => harvestReviewKey(entry)))
+  if (matchingReviewKeys.size > 1) {
     return {
       ok: false,
-      message: `Multiple candidate fingerprints match ${JSON.stringify(options.command)}; inspect harvest list --include-reviewed --json and retry with --fingerprint <64-hex>.`,
+      message: `Multiple candidate fingerprints or boundary profiles match ${JSON.stringify(options.command)}; inspect harvest list --include-reviewed --json and retry with both --fingerprint <64-hex> and --boundary-profile <id>.`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
-  if (!report.cohort) {
+  if (candidate.boundaryProfile === null) {
     return {
       ok: false,
-      message: 'Active audit cohort is unavailable; cannot bind the review to a boundary profile.',
+      message: 'Candidate boundary profile is unavailable; cannot bind the review.',
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }
@@ -275,7 +294,7 @@ export async function harvestApplyProject(
   const review: HarvestReviewRecordV1 = {
     fingerprint: candidate.fingerprint,
     kind: candidate.kind,
-    boundaryProfile: report.cohort.boundaryProfile,
+    boundaryProfile: candidate.boundaryProfile,
     outcome: options.outcome,
     ...(options.reason?.trim() ? { reason: options.reason.trim() } : {}),
     reviewedAt,

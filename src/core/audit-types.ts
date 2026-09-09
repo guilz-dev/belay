@@ -121,6 +121,7 @@ export interface ApprovalRoundTrip {
   reason: string
   summary: string
   kind: string
+  boundaryProfile?: string
   approvalLatencyMs?: number
 }
 

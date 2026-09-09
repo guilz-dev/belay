@@ -107,10 +107,12 @@ function parseLedger(value: unknown): HarvestReviewLedgerV1 {
   }
 }
 
-function reviewKey(
-  review: Pick<HarvestReviewRecordV1, 'fingerprint' | 'kind' | 'boundaryProfile'>,
-) {
-  return `${review.fingerprint}\u0000${review.kind}\u0000${review.boundaryProfile}`
+export function harvestReviewKey(
+  review: Pick<HarvestReviewRecordV1, 'fingerprint' | 'kind'> & {
+    boundaryProfile: string | null
+  },
+): string {
+  return `${review.fingerprint}\u0000${review.kind}\u0000${review.boundaryProfile ?? ''}`
 }
 
 export function latestHarvestReviews(
@@ -119,7 +121,7 @@ export function latestHarvestReviews(
   const parsed = parseLedger(ledger)
   const latest = new Map<string, HarvestReviewRecordV1>()
   for (const review of parsed.reviews) {
-    const key = reviewKey(review)
+    const key = harvestReviewKey(review)
     const previous = latest.get(key)
     if (!previous || Date.parse(review.reviewedAt) >= Date.parse(previous.reviewedAt)) {
       latest.set(key, review)
@@ -132,7 +134,7 @@ function normalizedLedger(ledger: HarvestReviewLedgerV1): HarvestReviewLedgerV1 
   return {
     version: 1,
     reviews: [...latestHarvestReviews(ledger).values()].sort((left, right) =>
-      reviewKey(left).localeCompare(reviewKey(right)),
+      harvestReviewKey(left).localeCompare(harvestReviewKey(right)),
     ),
   }
 }

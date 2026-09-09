@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { formatCliHelp, parseArgs } from '../cli.js'
 import {
   harvestApplyProject,
   harvestListProject,
@@ -100,11 +101,213 @@ describe('harvest', () => {
     const allReport = await harvestListProject({ targetDir: repoRoot, allCohorts: true })
 
     expect(currentReport.candidates.map((entry) => entry.command)).toEqual(['current command'])
+    expect(currentReport.candidates[0]?.boundaryProfile).toBe(currentCohort.boundaryProfile)
     expect(currentReport.excludedGateEvents).toBe(2)
     expect(allReport.candidates.map((entry) => entry.command)).toEqual([
       'current command',
       'old command',
     ])
+  })
+
+  it('keeps the same command and fingerprint separate across recorded boundaries', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const command = 'git diff --stat'
+    const fingerprint = testFingerprint('same-command-and-fingerprint')
+    const records = ['l3-l4-only', 'l1-attested-boundary'].flatMap(
+      (boundaryProfile, boundaryIndex) =>
+        [1, 2].map((askIndex) => ({
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint,
+          summary: command,
+          reason: 'unknown_local_effect',
+          ...cohort,
+          boundaryProfile,
+          timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
+        })),
+    )
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot, allCohorts: true })
+
+    expect(report.candidates).toHaveLength(2)
+    expect(report.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fingerprint, boundaryProfile: 'l3-l4-only', askCount: 2 }),
+        expect.objectContaining({
+          fingerprint,
+          boundaryProfile: 'l1-attested-boundary',
+          askCount: 2,
+        }),
+      ]),
+    )
+  })
+
+  it('fails closed without selectors when the same command spans two review keys', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const command = 'git diff --stat'
+    const fingerprint = testFingerprint('ambiguous-boundary-review')
+    const records = ['l3-l4-only', 'l1-attested-boundary'].flatMap(
+      (boundaryProfile, boundaryIndex) =>
+        [1, 2].map((askIndex) => ({
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint,
+          summary: command,
+          reason: 'unknown_local_effect',
+          ...cohort,
+          boundaryProfile,
+          timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
+        })),
+    )
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    const corpusPath = path.join(repoRoot, 'shell-commands.json')
+    await writeFile(corpusPath, '[]\n')
+
+    const result = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'accepted-benign',
+      allCohorts: true,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/--fingerprint.*--boundary-profile/i)
+    expect(await readFile(corpusPath, 'utf8')).toBe('[]\n')
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toEqual({ version: 1, reviews: [] })
+  })
+
+  it('hides only the reviewed boundary when a fingerprint is shared', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const fingerprint = testFingerprint('shared-fingerprint-review')
+    const records = ['l3-l4-only', 'l1-attested-boundary'].flatMap(
+      (boundaryProfile, boundaryIndex) =>
+        [1, 2].map((askIndex) => ({
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint,
+          summary: 'pnpm test',
+          reason: 'unknown_local_effect',
+          ...cohort,
+          boundaryProfile,
+          timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
+        })),
+    )
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    await writeHarvestReviewLedgerAtomic(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+      {
+        version: 1,
+        reviews: [
+          {
+            fingerprint,
+            kind: 'shell',
+            boundaryProfile: 'l1-attested-boundary',
+            outcome: 'reject',
+            reviewedAt: '2026-09-07T01:00:00.000Z',
+          },
+        ],
+      },
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot, allCohorts: true })
+
+    expect(report.candidates).toEqual([
+      expect.objectContaining({ fingerprint, boundaryProfile: 'l3-l4-only' }),
+    ])
+  })
+
+  it('leaves a legacy mixed-history boundary unknown and refuses to review it', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const command = 'legacy opaque command'
+    const fingerprint = testFingerprint('legacy-boundaryless-candidate')
+    const records = [1, 2].map((askIndex) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint,
+      summary: command,
+      reason: 'unknown_local_effect',
+      timestamp: `2026-09-07T00:00:0${askIndex}.000Z`,
+    }))
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    const corpusPath = path.join(repoRoot, 'shell-commands.json')
+    await writeFile(corpusPath, '[]\n')
+
+    const report = await harvestListProject({ targetDir: repoRoot, allCohorts: true })
+    const result = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command,
+      outcome: 'accepted-benign',
+      allCohorts: true,
+    })
+
+    expect(report.candidates).toEqual([
+      expect.objectContaining({ fingerprint, boundaryProfile: null }),
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/boundary profile.*unavailable/i)
+    expect(await readFile(corpusPath, 'utf8')).toBe('[]\n')
+    expect(
+      await loadHarvestReviewLedger(path.join(path.dirname(auditPath), 'harvest-reviews.json')),
+    ).toEqual({ version: 1, reviews: [] })
+  })
+
+  it('parses and documents the boundary selector only for harvest apply', () => {
+    const apply = parseArgs([
+      'harvest',
+      'apply',
+      '--command',
+      'git diff --stat',
+      '--outcome',
+      'reject',
+      '--all-cohorts',
+      '--boundary-profile',
+      'l1-attested-boundary',
+    ])
+
+    expect(apply.options.boundaryProfile).toBe('l1-attested-boundary')
+    expect(apply.options.allCohorts).toBe(true)
+    expect(formatCliHelp()).toContain('[--boundary-profile <id>]')
+    expect(() =>
+      parseArgs(['harvest', 'list', '--boundary-profile', 'l1-attested-boundary']),
+    ).toThrow(/--boundary-profile.*harvest apply/i)
   })
 
   it('fails closed when the active cohort cannot be resolved', async () => {
@@ -128,6 +331,39 @@ describe('harvest', () => {
 
     expect(report.candidates).toEqual([])
     expect(report.notes.join(' ')).toMatch(/active audit cohort.*unavailable/i)
+  })
+
+  it('attributes matching legacy active-cohort records to the selected active boundary', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const fingerprint = testFingerprint('legacy-active-candidate')
+    const records = [1, 2].map((askIndex) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint,
+      summary: 'legacy active command',
+      reason: 'unknown_local_effect',
+      runtimeBuildStamp: cohort.runtimeBuildStamp,
+      configFingerprint: cohort.configFingerprint,
+      timestamp: `2026-09-07T00:00:0${askIndex}.000Z`,
+    }))
+    await writeFile(
+      path.join(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+
+    expect(report.candidates).toEqual([
+      expect.objectContaining({ fingerprint, boundaryProfile: cohort.boundaryProfile }),
+    ])
   })
 
   it('excludes a stale wrapper ask while current allow evidence remains non-candidate', async () => {

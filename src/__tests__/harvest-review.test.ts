@@ -144,6 +144,83 @@ describe('harvest review ledger', () => {
     expect(corpus[0].provenance).not.toHaveProperty('reviewedBy')
   })
 
+  it('persists the selected historical boundary instead of the active boundary', async () => {
+    const command = 'git diff --stat'
+    const fixture = await createFixture({ command })
+    const config = await loadConfigFile(fixture.repoRoot)
+    const cohort = await resolveActiveAuditCohort(fixture.repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    expect(cohort.boundaryProfile).toBe('l3-l4-only')
+    const auditPath = path.resolve(fixture.repoRoot, config.audit.logPath)
+    const records = ['l3-l4-only', 'l1-attested-boundary'].flatMap(
+      (boundaryProfile, boundaryIndex) =>
+        [1, 2].map((askIndex) => ({
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'deny_pending_approval',
+          wouldBlock: true,
+          fingerprint: fixture.fingerprint,
+          summary: command,
+          reason: 'unknown_local_effect',
+          ...cohort,
+          boundaryProfile,
+          timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
+        })),
+    )
+    await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+
+    const result = await harvestApplyProject({
+      targetDir: fixture.repoRoot,
+      corpusPath: fixture.corpusPath,
+      command,
+      outcome: 'reject',
+      allCohorts: true,
+      fingerprint: fixture.fingerprint,
+      boundaryProfile: 'l1-attested-boundary',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(await loadHarvestReviewLedger(fixture.ledgerPath)).toMatchObject({
+      version: 1,
+      reviews: [
+        {
+          fingerprint: fixture.fingerprint,
+          boundaryProfile: 'l1-attested-boundary',
+          outcome: 'reject',
+        },
+      ],
+    })
+  })
+
+  it('reviews a recorded all-cohort boundary when the active cohort is unavailable', async () => {
+    const command = 'historical review without runtime'
+    const fixture = await createFixture({ command })
+    await rm(path.join(fixture.repoRoot, '.cursor', 'belay', 'runtime', 'core.mjs'))
+
+    const result = await harvestApplyProject({
+      targetDir: fixture.repoRoot,
+      corpusPath: fixture.corpusPath,
+      command,
+      outcome: 'reject',
+      allCohorts: true,
+      boundaryProfile: fixture.boundaryProfile,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(await loadHarvestReviewLedger(fixture.ledgerPath)).toMatchObject({
+      reviews: [
+        {
+          fingerprint: fixture.fingerprint,
+          boundaryProfile: fixture.boundaryProfile,
+          outcome: 'reject',
+        },
+      ],
+    })
+  })
+
   it('uses the latest review for the same fingerprint and boundary profile', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'belay-harvest-latest-'))
     tempDirs.push(dir)
