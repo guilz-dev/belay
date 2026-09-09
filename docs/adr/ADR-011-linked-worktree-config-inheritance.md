@@ -50,6 +50,9 @@ must not be copied without an explicit operator target and review.
 
 - Linked worktrees without a local config inherit primary dogfood/enforce policy instead of
   builtin enforce defaults.
+- Sibling evaluation uses an existing checkout as the Git cwd for `git worktree list` when the
+  evaluated path is missing (prunable). Without an explicit `gitCwd` and a missing `repoRoot`,
+  inheritance does not run (fail-closed).
 - Dogfood environment skew checks treat inherited dogfood policy as aligned.
 - Malformed local config no longer silently falls back to sibling inheritance.
 - Operators can still override one worktree by writing a local config file there.

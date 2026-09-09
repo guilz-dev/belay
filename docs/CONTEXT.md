@@ -126,7 +126,8 @@ authorization model. It complements
     file, Belay inherits readable policy config from the primary linked checkout (then other
     siblings) instead of falling back to builtin enforce defaults. A present but unreadable local
     config file fails closed and does not inherit sibling policy. Local config overrides
-    inheritance; hooks, runtime bundles, and audit storage remain per checkout
+    inheritance; hooks, runtime bundles, and audit storage remain per checkout. Sibling checks
+    may pass an existing checkout as the Git cwd when the evaluated path is prunable
     ([ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md)).
 
 ## Policy precedence
