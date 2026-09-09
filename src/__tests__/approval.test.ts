@@ -114,9 +114,7 @@ describe('compactApprovals', () => {
     expect(compactApprovalsAt(state, Date.parse('2026-09-10T00:00:00.000Z'))).toEqual({
       version: 3,
       revision: 7,
-      approvals: [
-        approvalRecord({ approvalId: 'active', expiresAt: '2026-09-11T00:00:00.000Z' }),
-      ],
+      approvals: [approvalRecord({ approvalId: 'active', expiresAt: '2026-09-11T00:00:00.000Z' })],
     })
   })
 

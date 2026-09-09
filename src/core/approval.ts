@@ -35,15 +35,11 @@ export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
   return compactApprovalsAt(state, Date.now())
 }
 
-export function compactApprovalsAt(
-  state: ApprovalStateFile,
-  nowMs: number,
-): ApprovalStateFile {
+export function compactApprovalsAt(state: ApprovalStateFile, nowMs: number): ApprovalStateFile {
   const compacted: ApprovalStateFile = {
     version: state.version,
     approvals: state.approvals.filter(
-      (approval) =>
-        !isExpiredAt(approval, nowMs) && !isExecutionLeaseExpiredAt(approval, nowMs),
+      (approval) => !isExpiredAt(approval, nowMs) && !isExecutionLeaseExpiredAt(approval, nowMs),
     ),
   }
   if (state.revision !== undefined) {
