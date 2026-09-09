@@ -1,47 +1,54 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { type FileHandle, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
+import {
+  type FileHandle,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  unlink,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import type { Readable } from 'node:stream'
+import { isAvailabilityCausedAsk } from './audit-availability.js'
+import {
+  AUDIT_READINESS_STATE_MAX_BYTES,
+  type AuditReadinessStateSnapshot,
+  type AuditReadinessStateV1,
+  type AuditReadinessUpdate,
+  auditRecordMatchesCohort,
+  buildAuditReadinessState,
+  isValidAuditReadinessTimestamp,
+  isValidDecisionCohortIdentity,
+  parseAuditReadinessState,
+  type RetainedAvailabilityEvidence,
+  readinessStateMatchesCohort,
+  validAuditReadinessUpdate,
+} from './audit-readiness-state.js'
 import type { AuditRecord } from './audit-types.js'
 import { MAX_AUDIT_FILES } from './config.js'
 
+export type {
+  AuditReadinessStateSnapshot,
+  AuditReadinessStateV1,
+  AuditReadinessUpdate,
+  RetainedAvailabilityEvidence,
+} from './audit-readiness-state.js'
+export {
+  AUDIT_READINESS_STATE_SCHEMA_VERSION,
+  auditBoundaryFingerprint,
+} from './audit-readiness-state.js'
+
 const AUDIT_LOCK_TIMEOUT_MS = 2_000
 const AUDIT_LOCK_RETRY_DELAY_MS = 25
-const AUDIT_READINESS_STATE_MAX_BYTES = 4_096
+const AUDIT_LOCK_OWNER_MAX_BYTES = 1_024
 const CARRIAGE_RETURN = Buffer.from('\r')
-const HEX64_PATTERN = /^[a-f0-9]{64}$/
-const ISO8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 export const MAX_AUDIT_RECORD_BYTES = 33_554_432
-export const AUDIT_READINESS_STATE_SCHEMA_VERSION = 1
-
-export interface AuditReadinessUpdate {
-  runtimeArtifactHash: string
-  decisionConfigFingerprint: string
-  boundaryProfile: string
-  availabilityCausedAsk: boolean
-  timestamp: string
-}
-
-export interface AuditReadinessStateV1 {
-  schemaVersion: typeof AUDIT_READINESS_STATE_SCHEMA_VERSION
-  cohort: {
-    runtimeArtifactHash: string
-    decisionConfigFingerprint: string
-    boundaryFingerprint: string
-  }
-  availabilityAskCount: number
-  firstAvailabilityAt?: string
-  lastAvailabilityAt?: string
-  updatedAt: string
-}
-
-export type AuditReadinessStateSnapshot =
-  | { status: 'missing' }
-  | { status: 'invalid' }
-  | { status: 'valid'; state: AuditReadinessStateV1 }
 
 export interface AppendBoundedAuditLineOptions {
   auditPath: string
@@ -79,6 +86,7 @@ export interface AuditReadOperations {
 
 export interface AuditStorageOperations {
   open(filePath: string, flags: number, mode: number): Promise<FileHandle>
+  processLiveness(pid: number): 'alive' | 'absent' | 'unknown'
   rename(sourcePath: string, destinationPath: string): Promise<void>
   write(handle: FileHandle, bytes: Buffer): Promise<number>
 }
@@ -92,6 +100,20 @@ interface AcquiredAuditLock {
   handle: FileHandle
   identity: FileIdentity
   lockPath: string
+  ownerToken: string
+}
+
+interface AuditLockOwnerV1 {
+  schemaVersion: 1
+  pid: number
+  ownerToken: string
+  acquiredAt: string
+}
+
+interface OpenedAuditLockOwner {
+  handle: FileHandle
+  identity: FileIdentity
+  owner: AuditLockOwnerV1
 }
 
 interface OwnedAuditPath {
@@ -105,6 +127,7 @@ interface CompletedMove extends OwnedAuditPath {
 
 interface OpenedRetainedAuditFile {
   handle: FileHandle
+  identity: FileIdentity
   path: string
 }
 
@@ -115,6 +138,16 @@ interface RetainedAuditSnapshot {
 
 const DEFAULT_AUDIT_STORAGE_OPERATIONS: AuditStorageOperations = {
   open,
+  processLiveness(pid) {
+    try {
+      process.kill(pid, 0)
+      return 'alive'
+    } catch (error) {
+      if (errno(error) === 'ESRCH') return 'absent'
+      if (errno(error) === 'EPERM') return 'alive'
+      return 'unknown'
+    }
+  },
   rename,
   async write(handle, bytes) {
     const { bytesWritten } = await handle.write(bytes, 0, bytes.length, null)
@@ -180,25 +213,225 @@ function sameIdentity(
   return left.dev === BigInt(right.dev) && left.ino === BigInt(right.ino)
 }
 
+function validAuditLockOwner(value: unknown): value is AuditLockOwnerV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 4 ||
+    record.schemaVersion !== 1 ||
+    !Number.isSafeInteger(record.pid) ||
+    (record.pid as number) <= 0 ||
+    typeof record.ownerToken !== 'string' ||
+    !UUID_PATTERN.test(record.ownerToken) ||
+    typeof record.acquiredAt !== 'string'
+  ) {
+    return false
+  }
+  const timestamp = Date.parse(record.acquiredAt)
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === record.acquiredAt
+}
+
+async function readAuditLockOwner(handle: FileHandle): Promise<AuditLockOwnerV1 | null> {
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile() || before.size < 1n || before.size > BigInt(AUDIT_LOCK_OWNER_MAX_BYTES)) {
+      return null
+    }
+    const bytes = Buffer.alloc(AUDIT_LOCK_OWNER_MAX_BYTES + 1)
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
+    const after = await handle.stat({ bigint: true })
+    if (
+      !sameIdentity(fileIdentity(before), after) ||
+      after.size !== before.size ||
+      bytesRead !== Number(before.size) ||
+      bytesRead > AUDIT_LOCK_OWNER_MAX_BYTES
+    ) {
+      return null
+    }
+    const raw = bytes.subarray(0, bytesRead).toString('utf8')
+    if (!raw.endsWith('\n') || raw.slice(0, -1).includes('\n')) return null
+    const parsed: unknown = JSON.parse(raw.slice(0, -1))
+    return validAuditLockOwner(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function openAuditLockOwner(
+  lockPath: string,
+  operations: AuditStorageOperations,
+): Promise<OpenedAuditLockOwner | null> {
+  let handle: FileHandle | undefined
+  try {
+    const before = await lstat(lockPath, { bigint: true })
+    if (before.isSymbolicLink() || !before.isFile()) return null
+    const flags = constants.O_RDONLY | constants.O_NONBLOCK | noFollowFlag()
+    handle = await operations.open(lockPath, flags, 0o600)
+    const opened = await handle.stat({ bigint: true })
+    const current = await lstat(lockPath, { bigint: true })
+    const identity = fileIdentity(opened)
+    if (
+      !opened.isFile() ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameIdentity(fileIdentity(before), opened) ||
+      !sameIdentity(identity, current)
+    ) {
+      return null
+    }
+    const owner = await readAuditLockOwner(handle)
+    if (!owner) return null
+    const result = { handle, identity, owner }
+    handle = undefined
+    return result
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+async function removePathIfIdentityMatches(
+  filePath: string,
+  identity: FileIdentity,
+): Promise<void> {
+  try {
+    const current = await lstat(filePath, { bigint: true })
+    if (sameIdentity(identity, current)) await unlink(filePath)
+  } catch (error) {
+    if (errno(error) !== 'ENOENT') throw error
+  }
+}
+
+async function createAuditLock(
+  lockPath: string,
+  flags: number,
+  operations: AuditStorageOperations,
+): Promise<AcquiredAuditLock> {
+  const handle = await operations.open(lockPath, flags, 0o600)
+  let identity: FileIdentity | undefined
+  try {
+    const created = await handle.stat({ bigint: true })
+    if (!created.isFile()) throw new Error(`Audit lock path is not a regular file: ${lockPath}`)
+    identity = fileIdentity(created)
+    const owner: AuditLockOwnerV1 = {
+      schemaVersion: 1,
+      pid: process.pid,
+      ownerToken: randomUUID(),
+      acquiredAt: new Date().toISOString(),
+    }
+    const bytes = Buffer.from(`${JSON.stringify(owner)}\n`, 'utf8')
+    if (bytes.length > AUDIT_LOCK_OWNER_MAX_BYTES) {
+      throw new Error(`Audit lock owner exceeds ${AUDIT_LOCK_OWNER_MAX_BYTES} bytes`)
+    }
+    const bytesWritten = await operations.write(handle, bytes)
+    if (bytesWritten !== bytes.length) {
+      throw new Error(`Incomplete audit lock owner: wrote ${bytesWritten} of ${bytes.length} bytes`)
+    }
+    await handle.sync()
+    const current = await lstat(lockPath, { bigint: true })
+    if (current.isSymbolicLink() || !sameIdentity(identity, current)) {
+      throw new Error(`Refusing replaced or symbolic link for audit lock: ${lockPath}`)
+    }
+    return { handle, identity, lockPath, ownerToken: owner.ownerToken }
+  } catch (error) {
+    await handle.close().catch(() => undefined)
+    if (identity) await removePathIfIdentityMatches(lockPath, identity)
+    throw error
+  }
+}
+
+async function cleanForeignAuditReclaimClaim(
+  lockPath: string,
+  claimPath: string,
+): Promise<boolean> {
+  try {
+    const claim = await lstat(claimPath, { bigint: true })
+    const currentLock = await lstatBigintIfPresent(lockPath)
+    if (currentLock && sameIdentity(fileIdentity(claim), currentLock)) return false
+    await removePathIfIdentityMatches(claimPath, fileIdentity(claim))
+    return true
+  } catch (error) {
+    if (errno(error) === 'ENOENT') return true
+    return false
+  }
+}
+
+async function recoverAbsentAuditLockOwner(
+  lockPath: string,
+  claimPath: string,
+  operations: AuditStorageOperations,
+): Promise<boolean> {
+  const observed = await openAuditLockOwner(lockPath, operations)
+  if (!observed) return false
+  try {
+    if (operations.processLiveness(observed.owner.pid) !== 'absent') return false
+    try {
+      await link(lockPath, claimPath)
+    } catch (error) {
+      if (errno(error) !== 'EEXIST') return false
+      return cleanForeignAuditReclaimClaim(lockPath, claimPath)
+    }
+
+    let claim: OpenedAuditLockOwner | null = null
+    let createdClaimIdentity: FileIdentity | undefined
+    try {
+      const createdClaim = await lstatBigintIfPresent(claimPath)
+      if (!createdClaim) return false
+      createdClaimIdentity = fileIdentity(createdClaim)
+      claim = await openAuditLockOwner(claimPath, operations)
+      if (!claim || !sameIdentity(observed.identity, claim.identity)) return false
+      const currentLock = await lstatBigintIfPresent(lockPath)
+      const currentClaim = await lstatBigintIfPresent(claimPath)
+      if (
+        !currentLock ||
+        !currentClaim ||
+        !sameIdentity(observed.identity, currentLock) ||
+        !sameIdentity(observed.identity, currentClaim)
+      ) {
+        return false
+      }
+      const currentOwner = await readAuditLockOwner(observed.handle)
+      if (
+        !currentOwner ||
+        currentOwner.ownerToken !== observed.owner.ownerToken ||
+        claim.owner.ownerToken !== observed.owner.ownerToken ||
+        claim.owner.pid !== observed.owner.pid
+      ) {
+        return false
+      }
+      if (operations.processLiveness(observed.owner.pid) !== 'absent') return false
+      const finalLock = await lstatBigintIfPresent(lockPath)
+      if (!finalLock || !sameIdentity(observed.identity, finalLock)) return false
+      await unlink(lockPath)
+      return true
+    } finally {
+      await claim?.handle.close().catch(() => undefined)
+      if (createdClaimIdentity) {
+        await removePathIfIdentityMatches(claimPath, createdClaimIdentity).catch(() => undefined)
+      }
+    }
+  } finally {
+    await observed.handle.close().catch(() => undefined)
+  }
+}
+
 async function acquireAuditLock(
   lockPath: string,
   operations: AuditStorageOperations,
 ): Promise<AcquiredAuditLock> {
   const deadline = performance.now() + AUDIT_LOCK_TIMEOUT_MS
   const flags = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollowFlag()
+  const claimPath = `${lockPath}.reclaim`
 
   for (;;) {
     try {
-      const handle = await operations.open(lockPath, flags, 0o600)
-      return {
-        handle,
-        identity: fileIdentity(await handle.stat({ bigint: true })),
-        lockPath,
-      }
+      return await createAuditLock(lockPath, flags, operations)
     } catch (error) {
       const code = errno(error)
       if (code !== 'EEXIST' && code !== 'ELOOP') throw error
       await assertNotSymlink(lockPath, 'audit lock')
+      if (await recoverAbsentAuditLockOwner(lockPath, claimPath, operations)) continue
       const remainingMs = deadline - performance.now()
       if (remainingMs <= 0) {
         throw new Error(
@@ -212,15 +445,23 @@ async function acquireAuditLock(
   }
 }
 
-async function releaseAuditLock(lock: AcquiredAuditLock): Promise<void> {
-  await lock.handle.close().catch(() => undefined)
+async function releaseAuditLock(
+  lock: AcquiredAuditLock,
+  operations: AuditStorageOperations,
+): Promise<void> {
+  let current: OpenedAuditLockOwner | null = null
   try {
-    const current = await lstat(lock.lockPath, { bigint: true })
-    if (sameIdentity(lock.identity, current)) {
+    current = await openAuditLockOwner(lock.lockPath, operations)
+    if (
+      current &&
+      sameIdentity(lock.identity, current.identity) &&
+      current.owner.ownerToken === lock.ownerToken
+    ) {
       await unlink(lock.lockPath)
     }
-  } catch (error) {
-    if (errno(error) !== 'ENOENT') throw error
+  } finally {
+    await current?.handle.close().catch(() => undefined)
+    await lock.handle.close().catch(() => undefined)
   }
 }
 
@@ -239,7 +480,7 @@ export async function withAuditStorageLock<T>(
   try {
     return await operation(auditPath)
   } finally {
-    await releaseAuditLock(lock)
+    await releaseAuditLock(lock, operations)
   }
 }
 
@@ -252,79 +493,6 @@ export function auditGenerationPath(auditPath: string, generation: number): stri
 
 export function auditReadinessStatePath(auditPath: string): string {
   return `${path.resolve(auditPath)}.readiness.json`
-}
-
-export function auditBoundaryFingerprint(boundaryProfile: string): string {
-  return createHash('sha256').update(boundaryProfile).digest('hex')
-}
-
-function validAuditReadinessUpdate(update: AuditReadinessUpdate): boolean {
-  return (
-    HEX64_PATTERN.test(update.runtimeArtifactHash) &&
-    HEX64_PATTERN.test(update.decisionConfigFingerprint) &&
-    update.boundaryProfile.length > 0 &&
-    Buffer.byteLength(update.boundaryProfile, 'utf8') <= 1_024 &&
-    typeof update.availabilityCausedAsk === 'boolean' &&
-    ISO8601_PATTERN.test(update.timestamp)
-  )
-}
-
-function parseAuditReadinessState(value: unknown): AuditReadinessStateV1 | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null
-  }
-  const candidate = value as Record<string, unknown>
-  const cohort = candidate.cohort
-  if (!cohort || typeof cohort !== 'object' || Array.isArray(cohort)) {
-    return null
-  }
-  const cohortRecord = cohort as Record<string, unknown>
-  const runtimeArtifactHash = cohortRecord.runtimeArtifactHash
-  const decisionConfigFingerprint = cohortRecord.decisionConfigFingerprint
-  const boundaryFingerprint = cohortRecord.boundaryFingerprint
-  const availabilityAskCount = candidate.availabilityAskCount
-  const updatedAt = candidate.updatedAt
-  const firstAvailabilityAt = candidate.firstAvailabilityAt
-  const lastAvailabilityAt = candidate.lastAvailabilityAt
-  if (
-    candidate.schemaVersion !== AUDIT_READINESS_STATE_SCHEMA_VERSION ||
-    typeof runtimeArtifactHash !== 'string' ||
-    !HEX64_PATTERN.test(runtimeArtifactHash) ||
-    typeof decisionConfigFingerprint !== 'string' ||
-    !HEX64_PATTERN.test(decisionConfigFingerprint) ||
-    typeof boundaryFingerprint !== 'string' ||
-    !HEX64_PATTERN.test(boundaryFingerprint) ||
-    !Number.isSafeInteger(availabilityAskCount) ||
-    (availabilityAskCount as number) < 0 ||
-    typeof updatedAt !== 'string' ||
-    !ISO8601_PATTERN.test(updatedAt) ||
-    (firstAvailabilityAt !== undefined &&
-      (typeof firstAvailabilityAt !== 'string' || !ISO8601_PATTERN.test(firstAvailabilityAt))) ||
-    (lastAvailabilityAt !== undefined &&
-      (typeof lastAvailabilityAt !== 'string' || !ISO8601_PATTERN.test(lastAvailabilityAt)))
-  ) {
-    return null
-  }
-  if (
-    ((availabilityAskCount as number) === 0 &&
-      (firstAvailabilityAt !== undefined || lastAvailabilityAt !== undefined)) ||
-    ((availabilityAskCount as number) > 0 &&
-      (firstAvailabilityAt === undefined || lastAvailabilityAt === undefined))
-  ) {
-    return null
-  }
-  return {
-    schemaVersion: AUDIT_READINESS_STATE_SCHEMA_VERSION,
-    cohort: {
-      runtimeArtifactHash,
-      decisionConfigFingerprint,
-      boundaryFingerprint,
-    },
-    availabilityAskCount: availabilityAskCount as number,
-    ...(typeof firstAvailabilityAt === 'string' ? { firstAvailabilityAt } : {}),
-    ...(typeof lastAvailabilityAt === 'string' ? { lastAvailabilityAt } : {}),
-    updatedAt,
-  }
 }
 
 async function loadAuditReadinessStateUnlocked(
@@ -431,63 +599,71 @@ function parseAuditRecordBytes(
   return parsed as AuditRecord
 }
 
-async function openRetainedAuditSnapshot(
+async function openRetainedAuditSnapshotUnlocked(
   options: AuditReadOptions,
 ): Promise<RetainedAuditSnapshot> {
   const auditPath = path.resolve(options.auditPath)
-  return withAuditStorageLock(auditPath, async (resolvedAuditPath) => {
-    const retainedPaths: string[] = []
-    for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
-      retainedPaths.push(auditGenerationPath(resolvedAuditPath, generation))
-    }
-    retainedPaths.push(resolvedAuditPath)
-    const files: OpenedRetainedAuditFile[] = []
-    try {
-      for (const retainedPath of retainedPaths) {
-        const before = await lstatBigintIfPresent(retainedPath)
-        if (!before) continue
-        if (before.isSymbolicLink()) {
-          throw new Error(`Refusing symbolic link for retained audit log: ${retainedPath}`)
-        }
-        if (!before.isFile()) {
-          throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
-        }
+  const retainedPaths: string[] = []
+  for (let generation = options.maxFiles - 1; generation >= 1; generation -= 1) {
+    retainedPaths.push(auditGenerationPath(auditPath, generation))
+  }
+  retainedPaths.push(auditPath)
+  const files: OpenedRetainedAuditFile[] = []
+  try {
+    for (const retainedPath of retainedPaths) {
+      const before = await lstatBigintIfPresent(retainedPath)
+      if (!before) continue
+      if (before.isSymbolicLink()) {
+        throw new Error(`Refusing symbolic link for retained audit log: ${retainedPath}`)
+      }
+      if (!before.isFile()) {
+        throw new Error(`Retained audit path is not a regular file: ${retainedPath}`)
+      }
 
-        let handle: FileHandle
-        try {
-          handle = await open(retainedPath, constants.O_RDONLY | noFollowFlag())
-        } catch (error) {
-          if (errno(error) === 'ENOENT') continue
-          throw error
-        }
-        const opened = await handle.stat({ bigint: true })
-        const current = await lstatBigintIfPresent(retainedPath)
-        if (
-          !opened.isFile() ||
-          !current ||
-          current.isSymbolicLink() ||
-          !sameIdentity(fileIdentity(opened), current)
-        ) {
-          await handle.close()
-          throw new Error(`Retained audit path changed while opening snapshot: ${retainedPath}`)
-        }
-        files.push({ handle, path: retainedPath })
+      let handle: FileHandle
+      try {
+        handle = await open(retainedPath, constants.O_RDONLY | noFollowFlag())
+      } catch (error) {
+        if (errno(error) === 'ENOENT') continue
+        throw error
       }
-      return {
-        files,
-        readinessState: await loadAuditReadinessStateUnlocked(resolvedAuditPath),
+      const opened = await handle.stat({ bigint: true })
+      const current = await lstatBigintIfPresent(retainedPath)
+      const identity = fileIdentity(opened)
+      if (
+        !opened.isFile() ||
+        !current ||
+        current.isSymbolicLink() ||
+        !sameIdentity(identity, current)
+      ) {
+        await handle.close()
+        throw new Error(`Retained audit path changed while opening snapshot: ${retainedPath}`)
       }
-    } catch (error) {
-      await Promise.all(files.map(({ handle }) => handle.close().catch(() => undefined)))
-      throw error
+      files.push({ handle, identity, path: retainedPath })
     }
-  })
+    return {
+      files,
+      readinessState: await loadAuditReadinessStateUnlocked(auditPath),
+    }
+  } catch (error) {
+    await Promise.all(files.map(({ handle }) => handle.close().catch(() => undefined)))
+    throw error
+  }
+}
+
+async function openRetainedAuditSnapshot(
+  options: AuditReadOptions,
+): Promise<RetainedAuditSnapshot> {
+  return withAuditStorageLock(options.auditPath, (auditPath) =>
+    openRetainedAuditSnapshotUnlocked({ ...options, auditPath }),
+  )
 }
 
 async function* iterateOpenedAuditRecords(
   snapshot: RetainedAuditSnapshot,
   options: AuditReadOptions,
   operations: AuditReadOperations,
+  strict = false,
 ): AsyncGenerator<AuditRecord, AuditLoadDiagnostics, void> {
   const diagnostics = emptyAuditLoadDiagnostics()
   let lineBuffer: Buffer | undefined
@@ -579,6 +755,10 @@ async function* iterateOpenedAuditRecords(
           }
         }
 
+        if (strict && (discardingOversizedLine || pendingCarriageReturn || lineLength > 0)) {
+          throw new Error(`Truncated retained audit line: ${retainedPath}`)
+        }
+
         if (!discardingOversizedLine) {
           if (pendingCarriageReturn) {
             appendLineBytes(CARRIAGE_RETURN)
@@ -588,6 +768,12 @@ async function* iterateOpenedAuditRecords(
             if (record) {
               yield record
             }
+          }
+        }
+        if (strict) {
+          const current = await lstatBigintIfPresent(retainedPath)
+          if (!current || current.isSymbolicLink() || !sameIdentity(retained.identity, current)) {
+            throw new Error(`Retained audit path changed while reading snapshot: ${retainedPath}`)
           }
         }
       } finally {
@@ -816,16 +1002,78 @@ async function writeAuditReadinessStateAtomic(
   }
 }
 
-function sameReadinessCohort(state: AuditReadinessStateV1, update: AuditReadinessUpdate): boolean {
-  return (
-    state.cohort.runtimeArtifactHash === update.runtimeArtifactHash &&
-    state.cohort.decisionConfigFingerprint === update.decisionConfigFingerprint &&
-    state.cohort.boundaryFingerprint === auditBoundaryFingerprint(update.boundaryProfile)
-  )
+function retainedAvailabilityEvidence(state: AuditReadinessStateV1): RetainedAvailabilityEvidence {
+  return {
+    availabilityAskCount: state.availabilityAskCount,
+    ...(state.firstAvailabilityAt ? { firstAvailabilityAt: state.firstAvailabilityAt } : {}),
+    ...(state.lastAvailabilityAt ? { lastAvailabilityAt: state.lastAvailabilityAt } : {}),
+  }
+}
+
+async function reconstructRetainedAvailabilityEvidence(
+  auditPath: string,
+  maxFiles: number,
+  update: AuditReadinessUpdate,
+): Promise<RetainedAvailabilityEvidence> {
+  const options = { auditPath, maxFiles, maxLineBytes: MAX_AUDIT_RECORD_BYTES }
+  const snapshot = await openRetainedAuditSnapshotUnlocked(options)
+  const iterator = iterateOpenedAuditRecords(snapshot, options, DEFAULT_AUDIT_READ_OPERATIONS, true)
+  let availabilityAskCount = 0
+  let firstAvailabilityAt: string | undefined
+  let lastAvailabilityAt: string | undefined
+  let completed = false
+  try {
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) {
+        completed = true
+        if (next.value.malformedLines > 0) {
+          throw new Error('Malformed retained audit evidence prevents readiness reconstruction')
+        }
+        if (next.value.oversizedLines > 0) {
+          throw new Error('Oversized retained audit evidence prevents readiness reconstruction')
+        }
+        break
+      }
+      const record = next.value
+      if (!isAvailabilityCausedAsk(record)) {
+        continue
+      }
+      const hasV3CohortEvidence =
+        record.schemaVersion === 3 ||
+        record.runtimeArtifactHash !== undefined ||
+        record.decisionConfigFingerprint !== undefined ||
+        record.boundaryProfile !== undefined
+      if (hasV3CohortEvidence && !isValidDecisionCohortIdentity(record)) {
+        throw new Error(
+          'Malformed retained audit cohort identity prevents readiness reconstruction',
+        )
+      }
+      if (!auditRecordMatchesCohort(record, update.cohort)) {
+        continue
+      }
+      if (!isValidAuditReadinessTimestamp(record.timestamp)) {
+        throw new Error('Malformed retained audit timestamp prevents readiness reconstruction')
+      }
+      availabilityAskCount = Math.min(Number.MAX_SAFE_INTEGER, availabilityAskCount + 1)
+      firstAvailabilityAt ??= record.timestamp
+      lastAvailabilityAt = record.timestamp
+    }
+  } finally {
+    if (!completed) {
+      await iterator.return(emptyAuditLoadDiagnostics())
+    }
+  }
+  return {
+    availabilityAskCount,
+    ...(firstAvailabilityAt ? { firstAvailabilityAt } : {}),
+    ...(lastAvailabilityAt ? { lastAvailabilityAt } : {}),
+  }
 }
 
 async function updateAuditReadinessState(
   auditPath: string,
+  maxFiles: number,
   update: AuditReadinessUpdate,
   operations: AuditStorageOperations,
 ): Promise<void> {
@@ -834,33 +1082,16 @@ async function updateAuditReadinessState(
   }
   const current = await loadAuditReadinessStateUnlocked(auditPath)
   const retainedState =
-    current.status === 'valid' && sameReadinessCohort(current.state, update)
+    current.status === 'valid' && readinessStateMatchesCohort(current.state, update.cohort)
       ? current.state
       : undefined
   if (retainedState && !update.availabilityCausedAsk) {
     return
   }
-
-  const previousCount = retainedState?.availabilityAskCount ?? 0
-  const availabilityAskCount = update.availabilityCausedAsk
-    ? Math.min(Number.MAX_SAFE_INTEGER, previousCount + 1)
-    : 0
-  const next: AuditReadinessStateV1 = {
-    schemaVersion: AUDIT_READINESS_STATE_SCHEMA_VERSION,
-    cohort: {
-      runtimeArtifactHash: update.runtimeArtifactHash,
-      decisionConfigFingerprint: update.decisionConfigFingerprint,
-      boundaryFingerprint: auditBoundaryFingerprint(update.boundaryProfile),
-    },
-    availabilityAskCount,
-    ...(availabilityAskCount > 0
-      ? {
-          firstAvailabilityAt: retainedState?.firstAvailabilityAt ?? update.timestamp,
-          lastAvailabilityAt: update.timestamp,
-        }
-      : {}),
-    updatedAt: update.timestamp,
-  }
+  const evidence = retainedState
+    ? retainedAvailabilityEvidence(retainedState)
+    : await reconstructRetainedAvailabilityEvidence(auditPath, maxFiles, update)
+  const next = buildAuditReadinessState(update, evidence)
   await writeAuditReadinessStateAtomic(auditPath, next, operations)
 }
 
@@ -1045,7 +1276,12 @@ export async function appendBoundedAuditLine(
     options.auditPath,
     async (auditPath) => {
       if (options.readinessUpdate) {
-        await updateAuditReadinessState(auditPath, options.readinessUpdate, operations)
+        await updateAuditReadinessState(
+          auditPath,
+          options.maxFiles,
+          options.readinessUpdate,
+          operations,
+        )
       }
       if (options.rotationEnabled !== false) {
         await pruneExcessAuditGenerations(auditPath, options.maxFiles)

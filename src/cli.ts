@@ -122,6 +122,7 @@ export function parseArgs(argv: string[]) {
     allCohorts?: boolean
     includeReviewed?: boolean
     corpusPath?: string
+    boundaryProfile?: string
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -290,6 +291,18 @@ export function parseArgs(argv: string[]) {
         throw new Error('--include-reviewed is only valid for harvest list.')
       }
       options.includeReviewed = true
+      continue
+    }
+    if (token === '--boundary-profile') {
+      const next = rest[index + 1]
+      if (command !== 'harvest' || options.harvestSubcommand !== 'apply') {
+        throw new Error('--boundary-profile is only valid for harvest apply.')
+      }
+      if (!next) {
+        throw new Error('--boundary-profile requires an id.')
+      }
+      options.boundaryProfile = next
+      index += 1
       continue
     }
     if (token === '--since') {
@@ -674,8 +687,12 @@ export function parseArgs(argv: string[]) {
     throw new Error(`Unknown argument: ${token}`)
   }
 
-  if (options.allCohorts && options.harvestSubcommand !== 'list') {
-    throw new Error('--all-cohorts is only valid for harvest list.')
+  if (
+    options.allCohorts &&
+    options.harvestSubcommand !== 'list' &&
+    options.harvestSubcommand !== 'apply'
+  ) {
+    throw new Error('--all-cohorts is only valid for harvest list or apply.')
   }
 
   return { command: command ?? 'help', options }
@@ -728,7 +745,7 @@ Usage:
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
   ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--include-reviewed] [--json]
-  ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
+  ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
 `
 }
 
@@ -1069,6 +1086,7 @@ async function main() {
           corpusPath: options.corpusPath,
           allCohorts: options.allCohorts,
           fingerprint: options.fingerprint,
+          boundaryProfile: options.boundaryProfile,
         })
         process.stdout.write(`${result.message}\n`)
         process.exitCode = result.ok ? 0 : 1

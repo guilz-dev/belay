@@ -11,7 +11,7 @@ import {
   parseTimestamp,
 } from './audit-query.js'
 import type { AuditRecord } from './audit-types.js'
-import type { HarvestReviewOutcome } from './harvest-review.js'
+import { type HarvestReviewOutcome, harvestReviewKey } from './harvest-review.js'
 
 export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
@@ -25,6 +25,7 @@ export interface HarvestCandidate {
   kind: 'shell'
   command: string
   fingerprint: string
+  boundaryProfile: string | null
   reason: string
   sources: HarvestCandidateSource[]
   askCount: number
@@ -115,18 +116,33 @@ function hasReadStyleSignal(summary: string): boolean {
   return READ_STYLE_COMMAND_PATTERN.test(summary)
 }
 
+function candidateBoundaryProfile(
+  record: Pick<AuditRecord, 'boundaryProfile'>,
+  legacyBoundaryProfile?: string,
+): string | null {
+  return typeof record.boundaryProfile === 'string'
+    ? record.boundaryProfile
+    : (legacyBoundaryProfile ?? null)
+}
+
 function upsertCandidate(
   map: Map<string, HarvestCandidate>,
   params: {
     fingerprint: string
     command: string
+    boundaryProfile: string | null
     reason: string
     source: HarvestCandidateSource
     askCount?: number
     approvedAfterDeny?: boolean
   },
 ): void {
-  const existing = map.get(params.fingerprint)
+  const key = harvestReviewKey({
+    fingerprint: params.fingerprint,
+    kind: 'shell',
+    boundaryProfile: params.boundaryProfile,
+  })
+  const existing = map.get(key)
   if (existing) {
     if (!existing.sources.includes(params.source)) {
       existing.sources.push(params.source)
@@ -142,10 +158,11 @@ function upsertCandidate(
     return
   }
 
-  map.set(params.fingerprint, {
+  map.set(key, {
     kind: 'shell',
     command: params.command,
     fingerprint: params.fingerprint,
+    boundaryProfile: params.boundaryProfile,
     reason: params.reason,
     sources: [params.source],
     askCount: params.askCount ?? 1,
@@ -268,7 +285,10 @@ export function filterRecordsForHarvest(
   return augmentHarvestRoundTripPairs(scoped, timeFiltered)
 }
 
-export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandidate[] {
+export function extractHarvestCandidates(
+  records: AuditRecord[],
+  options: { legacyBoundaryProfile?: string } = {},
+): HarvestCandidate[] {
   const shellOnly = shellRecords(records)
   const classifierAsks = shellOnly.filter(
     (record) => inferWouldBlock(record) && !isAvailabilityCausedAsk(record),
@@ -286,20 +306,31 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
     upsertCandidate(map, {
       fingerprint: trip.fingerprint,
       command: trip.summary,
+      boundaryProfile: trip.boundaryProfile ?? options.legacyBoundaryProfile ?? null,
       reason: trip.reason,
       source: 'deny_then_approve',
       approvedAfterDeny: true,
     })
   }
 
-  for (const entry of computeRepeatedFingerprintAsks(classifierAsks, 2, 50)) {
-    upsertCandidate(map, {
-      fingerprint: entry.fingerprint,
-      command: entry.summary,
-      reason: entry.reason,
-      source: 'repeated_ask',
-      askCount: entry.askCount,
-    })
+  const asksByBoundary = new Map<string | null, AuditRecord[]>()
+  for (const record of classifierAsks) {
+    const boundaryProfile = candidateBoundaryProfile(record, options.legacyBoundaryProfile)
+    const grouped = asksByBoundary.get(boundaryProfile) ?? []
+    grouped.push(record)
+    asksByBoundary.set(boundaryProfile, grouped)
+  }
+  for (const [boundaryProfile, boundaryRecords] of asksByBoundary) {
+    for (const entry of computeRepeatedFingerprintAsks(boundaryRecords, 2, 50)) {
+      upsertCandidate(map, {
+        fingerprint: entry.fingerprint,
+        command: entry.summary,
+        boundaryProfile,
+        reason: entry.reason,
+        source: 'repeated_ask',
+        askCount: entry.askCount,
+      })
+    }
   }
 
   for (const record of classifierAsks) {
@@ -313,6 +344,7 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
     upsertCandidate(map, {
       fingerprint: record.fingerprint,
       command,
+      boundaryProfile: candidateBoundaryProfile(record, options.legacyBoundaryProfile),
       reason: record.reason ?? 'unknown',
       source: 'read_style_signal',
     })
@@ -326,14 +358,17 @@ export function extractHarvestCandidates(records: AuditRecord[]): HarvestCandida
   })
 }
 
-export function buildHarvestReport(records: AuditRecord[]): HarvestReport {
+export function buildHarvestReport(
+  records: AuditRecord[],
+  options: { legacyBoundaryProfile?: string } = {},
+): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
     scope: 'shell',
     cohort: null,
     matchingGateEvents: shellRecords(records).length,
     excludedGateEvents: 0,
-    candidates: extractHarvestCandidates(records),
+    candidates: extractHarvestCandidates(records, options),
     availabilityQueue: extractAvailabilityQueue(records),
     notes: [],
   }

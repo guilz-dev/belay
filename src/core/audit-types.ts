@@ -15,6 +15,12 @@ export const AUDIT_METRICS_SCHEMA_VERSION = 4
 
 export const GATE_EVENTS = new Set(['beforeShellExecution', 'preToolUse', 'subagentGate'])
 
+export interface DecisionCohortIdentity {
+  runtimeArtifactHash: string
+  decisionConfigFingerprint: string
+  boundaryProfile: string
+}
+
 export interface CompactHostTelemetryV1 {
   schemaVersion: 1
   event: string
@@ -115,6 +121,7 @@ export interface ApprovalRoundTrip {
   reason: string
   summary: string
   kind: string
+  boundaryProfile?: string
   approvalLatencyMs?: number
 }
 

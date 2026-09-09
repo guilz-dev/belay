@@ -173,6 +173,9 @@ export function buildApprovalRoundTrips(records: AuditRecord[]): ApprovalRoundTr
         kind: record.kind ?? 'unknown',
         approvalId: record.approvalId,
         approvalCorrelationId: correlationId,
+        ...(typeof record.boundaryProfile === 'string'
+          ? { boundaryProfile: record.boundaryProfile }
+          : {}),
       }
       trips.push(trip)
       if (correlationId) {

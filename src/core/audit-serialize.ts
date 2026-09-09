@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { isAvailabilityCausedAsk } from './audit-availability.js'
+import type { AuditReadinessUpdate } from './audit-readiness-state.js'
 import { minimizeAuditShellAction } from './audit-replay-context.js'
-import { type AuditReadinessUpdate, appendBoundedAuditLine } from './audit-storage.js'
+import { appendBoundedAuditLine } from './audit-storage.js'
 import { type AuditRecord, GATE_EVENTS } from './audit-types.js'
 import {
   DEFAULT_AUDIT_MAX_BYTES,
@@ -599,9 +600,7 @@ function readinessUpdateForRecord(
     return undefined
   }
   return {
-    runtimeArtifactHash,
-    decisionConfigFingerprint,
-    boundaryProfile,
+    cohort: { runtimeArtifactHash, decisionConfigFingerprint, boundaryProfile },
     availabilityCausedAsk: isAvailabilityCausedAsk(record as AuditRecord),
     timestamp,
   }

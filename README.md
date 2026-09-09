@@ -129,6 +129,12 @@ config + boundary profile); legacy placeholder logs should be archived via
 `belay upgrade` before trusting readiness. See
 [config schema — audit log](./docs/config-schema.md#audit-log-ndjson-schema-v3) and
 [dogfood audit remediation](./docs/dogfood-audit-remediation-2026-08-22.ja.md).
+If the readiness sidecar is missing, invalid, or belongs to another cohort, the next audit writer
+reconstructs same-cohort availability asks from the exact retained generations while holding the
+writer lock and before rotation. Unreadable or malformed retained evidence fails closed instead of
+being treated as zero. A crashed writer's lock is reclaimed only when its recorded process is
+proven absent and the lock inode and owner token still match; live, malformed, or unverifiable
+owners remain locked until the bounded acquisition attempt fails.
 
 In **audit mode** (`mode: "audit"`), would-be denials are recorded
 (`wouldBlock: true`) but execution still continues, and no approval IDs are
@@ -291,6 +297,21 @@ npx @guilz-dev/belay dogfood --enforce
 `belay.config.json` uses `version: 4`. v1/v2/v3 configs migrate automatically on
 load.
 
+### Linked-worktree configuration
+
+Configuration layers apply in this order: built-in adapter defaults, optional team config,
+repository config, then protected settings. In a linked checkout, a readable local repository
+config is the repository layer and overrides inheritance. If the local file is absent, Belay looks
+first at the primary linked checkout and then at other siblings; the first readable repository
+config becomes the inherited layer. A present but unreadable or malformed local file fails closed
+and never falls back to a sibling.
+
+Inherited policy follows the source checkout, but hooks, runtime bundles, and audit storage remain
+local to the checkout being used. Repository-config trust is also checked against
+the canonical source checkout and adapter: consuming a sibling config does not transfer or invent
+trust at the receiving checkout. `belay doctor` reports the inherited path and every effective
+configuration layer.
+
 ```json
 {
   "version": 4,
@@ -417,6 +438,43 @@ belay judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>]
 belay judge test
 belay judge consent <provider-id> [--endpoint <url>]
 ```
+
+### Review harvest evidence
+
+By default, harvest selects only the active runtime/config/boundary cohort and lists its unreviewed
+shell candidates. On `harvest list`, `--include-reviewed` also includes candidates that already
+have a review under their exact `(fingerprint, kind, boundaryProfile)` key; it does not list review
+ledger records or outcomes.
+
+```bash
+belay harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--include-reviewed] [--json]
+belay harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--target <dir>]
+```
+
+Use mixed-history mode only for forensic review. It preserves each candidate's recorded boundary
+and does not use the active boundary as a fallback for legacy evidence:
+
+```bash
+belay harvest list [--target <dir>] [--since <iso>] [--until <iso>] --all-cohorts [--include-reviewed] [--json]
+belay harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] --all-cohorts [--target <dir>]
+```
+
+Pass `--fingerprint` when one displayed command has multiple fingerprints. Pass
+`--boundary-profile` when the same command/fingerprint has evidence at multiple boundaries; an
+ambiguous selection may require both. Apply fails without writing the ledger or corpus if the
+selection remains ambiguous or its boundary is unavailable, so a legacy all-cohort candidate with
+no recorded boundary can be listed but not reviewed.
+
+The four outcomes are:
+
+- `provably-benign`: add a corpus case expecting `allow`.
+- `accepted-benign`: add a soft-gated corpus case expecting `allow_flagged`.
+- `must-ask`: add a corpus case expecting `deny_pending_approval`.
+- `reject`: record the review without adding a corpus case.
+
+Harvest candidates, review-ledger entries, and corpus outcomes are evidence only. They never grant
+runtime authority; shell authorization remains exclusively derived from EffectPlan and
+PolicyEngine.
 
 ## Coexisting with existing hooks
 

@@ -53,34 +53,16 @@ scripts/pre-release-check.sh
 That script runs lint, typecheck, tests, corpus, build, CLI version checks, and
 `npm pack --dry-run`. Do not publish if it fails.
 
-6. Immediately before the first authorized target upgrade, choose one release-window cutoff
-   (`since`, ISO8601) and reuse that same literal cutoff for **every active target** listed in
-   [dogfood-install-targets.md](./dogfood-install-targets.md).
-
-   For the **Belay product checkout only**, set the host Shell action `working_directory` to the
-   Belay checkout and invoke its source-build helper by absolute path:
+6. For the **Belay product checkout only**, set the host Shell action `working_directory` to the
+   Belay checkout and invoke its source-build helper by absolute path with a pre-release cutoff:
 
 ```bash
-/absolute/path/to/belay/scripts/pre-release-dogfood-check.sh /absolute/path/to/belay <literal-cutoff-iso>
+/absolute/path/to/belay/scripts/pre-release-dogfood-check.sh /absolute/path/to/belay <pre-release-cutoff-iso>
 ```
 
    The helper changes to the Belay checkout and runs `pnpm build`; it is not a valid check action
-   for another target repository.
-
-   For each non-Belay target, create a separate host Shell action whose `working_directory` is that
-   target's literal absolute path. Use the published package at the release version, and make the
-   same target path explicit in the command:
-
-```bash
-npx -y @guilz-dev/belay@<version> dogfood --check --target /absolute/target/path --since <literal-cutoff-iso> --json
-```
-
-   An explicitly unpacked released artifact may be used instead, but its CLI path must also be
-   absolute; do not rely on a `belay` found through `PATH`. Do not combine target checks in a loop
-   or run a non-Belay check from the Belay checkout. Record the shared cutoff and each command
-   output in the release PR. Selecting the cutoff, publishing or choosing the released artifact,
-   upgrading other repositories, and running their checks remain explicit operator-authorized
-   external actions. This is a local operator gate; do **not** move it into public GitHub CI.
+   for another target repository. Record its result in the release PR. Do not select the shared
+   release-window cutoff or execute the requested package in another repository before publish.
 
 7. Verify Ubuntu and macOS CI are green on the release commit.
 
@@ -154,15 +136,36 @@ npx @guilz-dev/belay@0.0.2 --version
 4. If the release changed installation or workflow guidance, verify the README
    quick start against the published package.
 
-5. Run `dogfood`, `upgrade`, `doctor`, and `status` as separate host Shell actions in
-   every active repository listed in [dogfood-install-targets.md](./dogfood-install-targets.md).
-   Give each action the repository's absolute `working_directory` and one command with
-   that same literal absolute `--target`; do not collect readiness through a shell loop
-   or function that changes to a variable-derived directory.
+5. Immediately before the first authorized target upgrade, choose one shared release-window
+   cutoff (`since`, ISO8601). Record it in the release PR and reuse that same literal cutoff for
+   every active target listed in
+   [dogfood-install-targets.md](./dogfood-install-targets.md).
+
+6. Perform each authorized target upgrade. Run `upgrade` as a separate host Shell action from that
+   target's own trusted, literal absolute `working_directory`, with the same literal absolute
+   `--target`. After the upgrade, run `dogfood`, `doctor`, and `status` as separate actions under
+   that same working-directory/target rule. Follow the product-checkout and published-package forms in
+   [dogfood-install-targets.md](./dogfood-install-targets.md); do not use a shell loop or a function
+   that changes to a variable-derived directory. Record every upgrade and diagnostic result in the
+   release PR.
+
+7. After each non-Belay target has been upgraded, run the published release check as a separate
+   host Shell action from that target's own trusted working directory:
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /absolute/target/path --since <literal-shared-cutoff-iso> --json
+```
+
+   An explicitly unpacked released artifact may be used instead, but its CLI path must be absolute;
+   do not rely on a `belay` found through `PATH`. Do not combine target checks in a loop or run them
+   from the Belay checkout. Record every command and result in the release PR. All target checks
+   must pass before the release is considered verified.
 
    `npx -y`, package publishing, push, and control-plane mutation may still need exact
-   approval. These are classifier decisions, not action-working-directory availability
-   failures.
+   approval. Selecting the cutoff, upgrading another repository, and running its checks remain
+   explicit operator-authorized external actions. These are classifier decisions, not
+   action-working-directory availability failures, and this local operator gate must not be moved
+   into public GitHub CI.
 
 ## npm authentication
 
