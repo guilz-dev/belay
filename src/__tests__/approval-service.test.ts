@@ -3,10 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { recordApproval } from '../core/approval-service.js'
+import {
+  claimApprovedForGate,
+  discardApprovedOneShotApproval,
+  ensurePendingOneShotApproval,
+  recordApproval,
+} from '../core/approval-service.js'
 import { issueApprovalToken } from '../core/approval-token.js'
 import { DEFAULT_CONFIG_V3 } from '../core/config.js'
-import type { ApprovalStateFile } from '../core/types.js'
+import type { ApprovalRecord, ApprovalStateFile } from '../core/types.js'
 
 const tempDirs: string[] = []
 
@@ -33,6 +38,80 @@ function memoryStore(
     },
   }
 }
+
+function approvalRecord(overrides: Partial<ApprovalRecord> = {}): ApprovalRecord {
+  return {
+    approvalId: 'belay_default',
+    kind: 'shell',
+    fingerprint: 'fp',
+    repoRoot: '/repo',
+    reason: 'external_effect',
+    summary: 'git push',
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    ...overrides,
+  }
+}
+
+describe('one-shot approval service', () => {
+  it('persists one pending approval for duplicate ensure requests', async () => {
+    const pending: ApprovalStateFile = { version: 3, approvals: [] }
+    const store = memoryStore(pending)
+
+    const first = await ensurePendingOneShotApproval({
+      candidate: approvalRecord({ approvalId: 'belay_candidate' }),
+      store,
+    })
+    const second = await ensurePendingOneShotApproval({
+      candidate: approvalRecord({ approvalId: 'belay_other' }),
+      store,
+    })
+
+    expect(first.created).toBe(true)
+    expect(second.created).toBe(false)
+    expect(second.approval.approvalId).toBe('belay_candidate')
+    expect(pending.approvals).toHaveLength(1)
+  })
+
+  it('claims an approved action and persists its execution lease', async () => {
+    const approvedRecord = approvalRecord({
+      approvalId: 'belay_approved',
+      approvedAt: new Date().toISOString(),
+    })
+    const approved: ApprovalStateFile = { version: 3, approvals: [approvedRecord] }
+
+    const claimed = await claimApprovedForGate({
+      kind: approvedRecord.kind,
+      fingerprint: approvedRecord.fingerprint,
+      repoRoot: approvedRecord.repoRoot,
+      requests: [],
+      executionLeaseMs: 30_000,
+      store: memoryStore({ version: 3, approvals: [] }, approved),
+    })
+
+    expect(claimed).toMatchObject({ status: 'consumed', firstExecution: true })
+    expect(Date.parse(approved.approvals[0]?.executionLeaseExpiresAt ?? '')).toBeGreaterThan(
+      Date.now(),
+    )
+  })
+
+  it('discards only the targeted approved action', async () => {
+    const approved: ApprovalStateFile = {
+      version: 3,
+      approvals: [
+        approvalRecord({ approvalId: 'belay_rejected', approvedAt: new Date().toISOString() }),
+        approvalRecord({ approvalId: 'belay_retained', approvedAt: new Date().toISOString() }),
+      ],
+    }
+
+    await discardApprovedOneShotApproval({
+      approvalId: 'belay_rejected',
+      store: memoryStore({ version: 3, approvals: [] }, approved),
+    })
+
+    expect(approved.approvals.map((entry) => entry.approvalId)).toEqual(['belay_retained'])
+  })
+})
 
 describe('recordApproval', () => {
   afterEach(async () => {

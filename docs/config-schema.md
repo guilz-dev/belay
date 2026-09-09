@@ -25,7 +25,7 @@ exhaustive field defaults).
 | `approvalSigning` | object | `required: false` | Signed OOB approval tokens |
 | `egress` | object | disabled | L1 partial — egress proxy |
 | `sandbox` | object | disabled | L1-full — external sandbox broker |
-| `audit` | object | | `logPath`, `includeAssessment`, `retention` |
+| `audit` | object | bounded storage | `logPath`, `includeAssessment`, `maxBytes`, `maxFiles` |
 | `judge` | object | local-ollama | Tier1 judge provider (see below) |
 
 ## `installScope`
@@ -191,10 +191,54 @@ applied/conflict/rejected outcomes for all-time and active-cohort records. Recov
 observational only; they do not affect authorization, `readyForEnforce`, or automatic feature
 enablement. Older audit records without recovery fields remain readable.
 
+## `audit`
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Active NDJSON file |
+| `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
+| `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
+| `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |
+| `retention` | object | none | Legacy read compatibility for nested `maxBytes` / `maxFiles`; use the flat fields in new config |
+
+Positive fractional bounds are floored. Missing, non-finite, zero, or negative bounds use the
+defaults. A `maxFiles` value above 100, an unsafe value, or a value that floors outside 1 through
+100 also uses the default of 5, keeping rotation work strictly bounded. These storage/display
+settings do not affect `decisionConfigFingerprint` and do not change the stored config schema
+version. The positive-bound rule applies to the canonical flat fields. Existing configs that use
+the legacy nested `audit.retention` spelling keep their non-negative values; setting either nested
+value to `0` disables rotation. Legacy positive `maxFiles` values remain capped at 100.
+
+The active file is `audit.ndjson`; numbered generations are `.1` (newest) through the
+`maxFiles - 1` suffix (oldest). Rotation uses an exclusive sibling `.lock` for at most two seconds
+and occurs before appending the complete newline-terminated record. `maxFiles: 1` keeps only the
+new active record after rotation. A single record larger than `maxBytes` remains intact, so the
+active file can temporarily exceed the threshold by that unavoidable one-record amount. Numbered
+retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files. Every bounded
+append also removes exact numeric generations outside the current `maxFiles` window, so reducing
+the configured count takes effect without waiting for the next rotation.
+
+Availability-caused asks are also summarized in a bounded 4 KiB sibling
+`audit.ndjson.readiness.json`. It stores only the runtime artifact hash, decision-config hash,
+hashed boundary profile, count, and timestamps. The writer updates it under the same `.lock` and
+resets it only when that three-part decision cohort changes, so numbered retention cannot make a
+cohort appear ready by forgetting an older availability failure. Readers fix all retained file
+handles and read this watermark under the writer lock before streaming; a missing, malformed, or
+cohort-mismatched watermark fails readiness closed. Older NDJSON remains readable, and the next
+valid current-cohort gate record creates or repairs the watermark.
+
 ## Audit log (NDJSON schema v3)
 
 Gate, CLI, and egress writers append one JSON object per line via `serializeAuditRecordV3()`
 (`src/core/audit-serialize.ts`). Schema version is implicit v3 (no per-line version field).
+
+Audit storage is bounded by the canonical flat `audit.maxBytes` and `audit.maxFiles` fields.
+`maxBytes` defaults to 33,554,432 bytes (32 MiB) and `maxFiles` defaults to 5 files total,
+including the active log. Before an append would cross `maxBytes`, Belay rotates the active file
+to `.1`, shifts older generations upward, and removes the oldest excess generation. Readers
+stream retained generations from oldest to newest. For legacy nested `audit.retention` configs,
+setting either value to `0` disables rotation. An individual record larger than a positive
+`maxBytes` threshold is retained whole in the active file rather than split.
 
 ### Preserved correlation fields
 
@@ -238,21 +282,14 @@ Records with scrub placeholders in correlation fields (`<timestamp>`, `<high-ent
 `<approval-id>`) are invalid for metrics joins. `belay doctor` warns; `belay upgrade` archives
 such logs to `audit.ndjson.legacy-<timestamp>.ndjson` when placeholders are detected.
 
-Rotation, retention caps, and compact post-tool telemetry are enabled by default:
+Gate, CLI, and egress appenders share the bounded storage sink described above. Compact post-tool
+telemetry uses the same rotation and lock path as gate and CLI records.
 
-| Field | Default | Notes |
-|-------|---------|-------|
-| `retention.maxBytes` | `33554432` (32 MiB) | Active log rotates when size reached; `0` disables rotation |
-| `retention.maxFiles` | `5` | Active + archived generations (`audit.ndjson`, `audit.ndjson.1`, …) |
-
-Observed post-tool rows store compact metadata (`observedInputBytes`, `observedOutputBytes`,
-`observedPayloadHash`, repo-relative `observedCwd`) and a one-line summary — not full tool payloads.
-Legacy archives (`*.legacy-*.ndjson`) are excluded from metrics readers.
-
-Gate rows use `actionSnapshot.schemaVersion: 2` with a discriminated action shape. Shell snapshots
-retain the scrubbed normalized command; file and patch snapshots retain paths and operations but no
-file or patch bodies; subagent snapshots retain only the type, an external-intent classifier signal,
-and a one-way summary hash. Schema v1 snapshots remain readable for existing audit generations.
+Gate rows use compact `actionSnapshot.schemaVersion: 2` projections. Shell snapshots retain a
+scrubbed `normalizedAction`; tool snapshots retain `toolName`, `operation`, normalized `path`, and
+an optional payload hash without file or patch bodies; subagent snapshots retain only `toolName`
+and a one-way `summaryHash`. Incomplete tool projections and body-free subagent projections are
+explicitly non-replayable. Schema v1 snapshots remain readable for existing audit generations.
 
 ## `controlPlane`
 

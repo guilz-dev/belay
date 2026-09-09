@@ -463,7 +463,7 @@ export async function runAuditHook() { process.stdout.write('{}\\n') }
         schemaVersion: 2,
         kind: 'shell',
         cwd: scrubString(childRoot, { ...childConfig.redaction, maskHighEntropyStrings: true }),
-        action: { type: 'shell', command: 'make guarded' },
+        normalizedAction: 'make guarded',
       },
       effectPlanRequestActions: expect.arrayContaining(['network.connect']),
       effectPlanRequirements: expect.arrayContaining([

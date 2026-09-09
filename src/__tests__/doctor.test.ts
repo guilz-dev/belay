@@ -6,7 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { doctorProject } from '../commands/doctor.js'
+import { doctorProject, formatDoctorReport } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
 import { pendingApprovalsPath, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
@@ -695,7 +695,52 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
-  it('warns when linked worktrees are not dogfooded while dogfood is active here', async () => {
+  it('exposes retained audit diagnostics without echoing invalid line contents', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-audit-storage-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    const rotationMaxBytes = 256
+    await writeTrustedConfigFile(repoRoot, {
+      ...config,
+      audit: { ...config.audit, maxBytes: rotationMaxBytes, maxFiles: 2 },
+    })
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const generation = `${JSON.stringify({ event: 'beforeShellExecution', verdict: 'allow' })}\n`
+    const malformed = '{"private-doctor-malformed":'
+    const aboveRotationThreshold = JSON.stringify({
+      event: 'beforeShellExecution',
+      verdict: 'deny_pending_approval',
+      summary: 'private-doctor-valid-record',
+      padding: 'x'.repeat(300),
+    })
+    expect(Buffer.byteLength(`${aboveRotationThreshold}\n`, 'utf8')).toBeGreaterThan(
+      rotationMaxBytes,
+    )
+    const active = `${malformed}\n${aboveRotationThreshold}\n`
+    await writeFile(`${auditPath}.1`, generation, 'utf8')
+    await writeFile(auditPath, active, 'utf8')
+
+    const report = await doctorProject({ targetDir: repoRoot })
+    const formatted = formatDoctorReport(report)
+
+    expect(report.auditStorage).toEqual({
+      filesRead: 2,
+      bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
+      parsedRecords: 2,
+      malformedLines: 1,
+      oversizedLines: 0,
+    })
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- files read: 2')
+    expect(formatted).toContain('- malformed lines skipped: 1')
+    expect(formatted).toContain('- oversized lines skipped: 0')
+    expect(formatted).not.toContain('private-doctor-malformed')
+    expect(formatted).not.toContain('private-doctor-valid-record')
+  })
+
+  it('does not warn when linked worktrees inherit primary dogfood config', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dogfood-worktree-'))
     const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-linked-'))
     const linkedWorktree = path.join(worktreeParent, 'linked-worktree')
@@ -728,7 +773,100 @@ describe('doctorProject', () => {
       report.warnings.some(
         (warning) =>
           warning.includes('Dogfood is active here but') &&
-          warning.includes('has no belay.config.json (defaults to enforce)'),
+          warning.includes('has no belay.config.json and no inheritable sibling config was found'),
+      ),
+    ).toBe(false)
+  })
+
+  it('does not warn for prunable linked worktrees that inherit primary dogfood config', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-prunable-inherit-'))
+    const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-prunable-linked-'))
+    const linkedWorktree = path.join(worktreeParent, 'linked-worktree')
+    tempDirs.push(repoRoot, worktreeParent)
+    await initProject({ targetDir: repoRoot })
+    await dogfoodProject({ targetDir: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync(
+      'git',
+      ['worktree', 'add', linkedWorktree, '-b', 'linked-prunable-inherit'],
+      {
+        cwd: repoRoot,
+      },
+    )
+    await rm(linkedWorktree, { recursive: true, force: true })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.includes('Dogfood is active here but') &&
+          warning.includes('has no belay.config.json and no inheritable sibling config was found'),
+      ),
+    ).toBe(false)
+  })
+
+  it('warns when linked worktrees override inherited config with enforce mode', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dogfood-missing-config-'))
+    const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-linked-missing-'))
+    const linkedWorktree = path.join(worktreeParent, 'linked-worktree')
+    tempDirs.push(repoRoot, worktreeParent)
+    await initProject({ targetDir: repoRoot })
+    await dogfoodProject({ targetDir: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync(
+      'git',
+      ['worktree', 'add', linkedWorktree, '-b', 'linked-dogfood-missing'],
+      {
+        cwd: repoRoot,
+      },
+    )
+    const primaryConfig = JSON.parse(
+      await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
+    )
+    await mkdir(path.join(linkedWorktree, '.cursor'), { recursive: true })
+    await writeFile(
+      path.join(linkedWorktree, '.cursor', 'belay.config.json'),
+      `${JSON.stringify({ ...primaryConfig, mode: 'enforce' })}\n`,
+    )
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.includes('Dogfood is active here but') &&
+          warning.includes('is not in dogfood mode'),
       ),
     ).toBe(true)
   })
@@ -877,6 +1015,8 @@ describe('doctorProject', () => {
     await initProject({ targetDir: repoRoot })
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
     const config = JSON.parse(await readFile(configPath, 'utf8'))
+    delete config.audit.maxBytes
+    delete config.audit.maxFiles
     config.audit.retention = { maxBytes: 0, maxFiles: 0 }
     await writeTrustedConfigFile(repoRoot, config)
     await writeFile(
@@ -886,12 +1026,14 @@ describe('doctorProject', () => {
     )
 
     const report = await doctorProject({ targetDir: repoRoot })
+    const formatted = formatDoctorReport(report)
 
-    expect(
-      report.notes.some(
-        (note) => note.includes('Audit storage:') && note.includes('retention disabled'),
-      ),
-    ).toBe(true)
-    expect(report.warnings).toContain('Audit log contains 1 malformed line(s).')
+    expect(report.auditStorage).toMatchObject({
+      filesRead: 1,
+      parsedRecords: 1,
+      malformedLines: 1,
+    })
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- malformed lines skipped: 1')
   })
 })

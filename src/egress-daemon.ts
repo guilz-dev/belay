@@ -1,12 +1,13 @@
+import path from 'node:path'
+
 import {
   belayStateDir,
   loadApprovalState,
   loadConfigFile,
   repoLocalStateDirFor,
 } from './config-io.js'
-import { resolveRepoAuditPath } from './core/audit-reader.js'
-import { appendAuditLine } from './core/audit-sink.js'
-import { auditRetentionFromConfig, scrubOptionsFromConfig } from './core/config.js'
+import { appendAuditRecord } from './core/audit-serialize.js'
+import { normalizeAuditConfig, scrubOptionsFromConfig } from './core/config.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
 import { resolveActiveAuditCohort } from './runtime-provenance.js'
 import {
@@ -32,7 +33,9 @@ async function main(): Promise<void> {
 
   const store = createEgressApprovalStore(repoRoot, config)
   const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
-  const auditPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
+  const auditPath = path.isAbsolute(config.audit.logPath)
+    ? config.audit.logPath
+    : path.join(repoRoot, config.audit.logPath)
 
   const { server, host, port } = await bindEgressProxy({
     config,
@@ -58,12 +61,12 @@ async function main(): Promise<void> {
           : {}),
         ...event,
       }
-      await appendAuditLine({
+      await appendAuditRecord(
         auditPath,
         record,
-        scrubOptions: scrubOptionsFromConfig(config),
-        retention: auditRetentionFromConfig(config),
-      })
+        scrubOptionsFromConfig(config),
+        normalizeAuditConfig(config.audit),
+      )
     },
   })
 

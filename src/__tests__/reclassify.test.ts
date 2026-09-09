@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AuditSnapshotActionV2 } from '../core/audit-replay-context.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import { mergeConfig } from '../core/config.js'
 import * as gateEngine from '../core/gate-engine.js'
@@ -8,6 +7,74 @@ import { diffReclassification, reclassifyAuditRecord } from '../core/reclassify.
 describe('reclassify replay fidelity', () => {
   const repoRoot = '/workspace/project'
   const config = mergeConfig({ mode: 'audit' })
+
+  it('keeps the privacy-safe v1 executable-heredoc replay on its stable must-ask input', async () => {
+    const command = "python3 - <<'PY'\nprint('fixture')\nPY"
+    const result = await reclassifyAuditRecord(
+      {
+        event: 'beforeShellExecution',
+        kind: 'shell',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        fingerprint: '6d7c6101'.padEnd(64, '0'),
+        summary: 'python3 heredoc (source omitted)',
+        actionSnapshot: {
+          schemaVersion: 1,
+          kind: 'shell',
+          cwd: repoRoot,
+          normalizedAction: command,
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(result).toMatchObject({
+      verdict: 'deny_pending_approval',
+      reason: 'unknown_local_effect',
+      normalizedCommand: command,
+    })
+  })
+
+  it('does not recover an incomplete v2 tool projection from a legacy full payload', async () => {
+    const payloadMarker = 'task ten forbidden replay payload'
+    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction')
+
+    const result = await reclassifyAuditRecord(
+      {
+        event: 'preToolUse',
+        kind: 'tool',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        summary: 'Write',
+        actionSnapshot: {
+          schemaVersion: 2,
+          kind: 'tool',
+          cwd: repoRoot,
+          toolName: 'Write',
+          payloadHash: 'a'.repeat(64),
+        },
+        replayContext: {
+          cwd: repoRoot,
+          kind: 'tool',
+          toolName: 'Write',
+          payload: { path: 'src/index.ts', contents: payloadMarker },
+        },
+      },
+      config,
+      repoRoot,
+    )
+
+    expect(result).toEqual({
+      replayable: false,
+      reason: 'tool_projection_incomplete',
+      sourceSchemaVersion: 2,
+      kind: 'tool',
+      cwd: repoRoot,
+    })
+    expect(classifySpy).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain(payloadMarker)
+  })
 
   it('uses preserved replayContext cwd for shell commands', async () => {
     const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
@@ -50,7 +117,7 @@ describe('reclassify replay fidelity', () => {
     )
   })
 
-  it('replays a v2 Read snapshot with its classifier path input', async () => {
+  it('uses preserved tool replayContext instead of generic Shell fallback', async () => {
     const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
       verdict: 'allow',
       reason: 'read_only',
@@ -65,27 +132,18 @@ describe('reclassify replay fidelity', () => {
       },
     })
 
+    const payload = { path: 'src/index.ts' }
     const record: AuditRecord = {
       event: 'preToolUse',
       kind: 'tool',
       verdict: 'deny_pending_approval',
       reason: 'unknown_local_effect',
-      summary: 'Read src/index.ts',
-      actionSnapshot: {
-        schemaVersion: 2,
-        kind: 'tool',
-        cwd: `${repoRoot}/src`,
-        toolName: 'Read',
-        action: {
-          type: 'file',
-          operation: 'read',
-          path: 'src/index.ts',
-        },
-      },
+      summary: 'Read',
       replayContext: {
         cwd: `${repoRoot}/src`,
         kind: 'tool',
         toolName: 'Read',
+        payload,
       },
     }
 
@@ -98,87 +156,8 @@ describe('reclassify replay fidelity', () => {
         toolName: 'Read',
         payload: {
           tool_name: 'Read',
-          tool_input: { file_path: 'src/index.ts' },
+          tool_input: payload,
         },
-      }),
-      config,
-      expect.anything(),
-    )
-  })
-
-  const toolSnapshotCases: Array<{
-    label: string
-    toolName: string
-    action: AuditSnapshotActionV2
-    toolInput: Record<string, unknown>
-  }> = [
-    {
-      label: 'Write',
-      toolName: 'Write',
-      action: { type: 'file', operation: 'write', path: 'src/index.ts' },
-      toolInput: { file_path: 'src/index.ts', contents: '' },
-    },
-    {
-      label: 'Patch',
-      toolName: 'ApplyPatch',
-      action: {
-        type: 'patch',
-        targets: [
-          { operation: 'update', path: 'src/index.ts' },
-          { operation: 'delete', path: 'src/old.ts' },
-        ],
-      },
-      toolInput: {
-        patch:
-          '*** Begin Patch\n*** Update File: src/index.ts\n*** Delete File: src/old.ts\n*** End Patch',
-      },
-    },
-  ]
-
-  it.each(toolSnapshotCases)('replays a v2 $label snapshot with minimal classifier inputs', async ({
-    toolName,
-    action,
-    toolInput,
-  }) => {
-    const classifySpy = vi.spyOn(gateEngine, 'classifyGatedAction').mockResolvedValue({
-      verdict: 'allow_flagged',
-      reason: 'file_mutation',
-      summary: toolName,
-      fingerprint: 'tool-fp',
-      assessment: {
-        reversibility: 'recoverable_with_cost',
-        external: false,
-        blastRadius: 'this repository',
-        confidence: 1,
-        signals: [],
-      },
-    })
-
-    await reclassifyAuditRecord(
-      {
-        event: 'preToolUse',
-        kind: 'tool',
-        verdict: 'allow_flagged',
-        reason: 'file_mutation',
-        summary: toolName,
-        actionSnapshot: {
-          schemaVersion: 2,
-          kind: 'tool',
-          cwd: `${repoRoot}/src`,
-          toolName,
-          action,
-        },
-      },
-      config,
-      repoRoot,
-    )
-
-    expect(classifySpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'tool',
-        cwd: `${repoRoot}/src`,
-        toolName,
-        payload: { tool_name: toolName, tool_input: toolInput },
       }),
       config,
       expect.anything(),

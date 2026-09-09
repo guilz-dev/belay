@@ -107,7 +107,8 @@ export function compactToolGateSummary(
   }
 
   if (typeof input.command === 'string' && input.command.trim()) {
-    return `Shell: ${input.command.trim()}`
+    const command = input.command.trim()
+    return `${normalizedName} command (${utf8ByteLength(command)}B, hash ${hashText(command)})`
   }
 
   if (typeof input.pattern === 'string' && input.pattern.trim()) {

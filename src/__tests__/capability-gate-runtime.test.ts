@@ -149,7 +149,7 @@ describe('capability gate runtime', () => {
       toolInvocationCorrelationId: auditEvents[0]?.toolInvocationCorrelationId,
     })
     expect(auditEvents[0]?.toolInvocationCorrelationId).not.toBe(toolUseId)
-    expect(auditEvents[1]?.summary).not.toContain(toolUseId)
+    expect(auditEvents[1]?.summary).toBeUndefined()
     expect(
       JSON.stringify(serializeAuditRecordV3(auditEvents[0] ?? {}, scrubOptionsFromConfig(config))),
     ).not.toContain(toolUseId)

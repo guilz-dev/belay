@@ -1,6 +1,6 @@
 {
   "name": "@guilz-dev/belay",
-  "version": "0.10.1",
+  "version": "0.11.1",
   "description": "Belay-style approval and audit gating for agent runtimes.",
   "type": "module",
   "license": "MIT",
@@ -42,6 +42,7 @@
   },
   "files": [
     "dist",
+    "corpus",
     "skills",
     "README.md",
     "LICENSE",

@@ -36,10 +36,17 @@ export async function verdict(command: string, context: VerdictContext): Promise
             (presentation.location === 'repo_outside' || presentation.location === 'mixed') &&
             presentation.effect === 'local_mutation'
           ? 'repo_outside_local_mutation'
-          : policySignals.includes('shell.cwd_unknown') && policy.projection.permission === 'ask'
-            ? 'missing_trusted_cwd'
-            : policy.projection.reason
-  const location = policySignals.includes('shell.cwd_unknown') ? 'unknown' : presentation.location
+          : policySignals.includes('shell.cwd_dynamic_transition') &&
+              policy.projection.permission === 'ask'
+            ? 'dynamic_cwd_transition'
+            : policySignals.includes('shell.cwd_unknown') && policy.projection.permission === 'ask'
+              ? 'missing_trusted_cwd'
+              : policy.projection.reason
+  const location =
+    policySignals.includes('shell.cwd_dynamic_transition') ||
+    policySignals.includes('shell.cwd_unknown')
+      ? 'unknown'
+      : presentation.location
 
   return {
     permission: policy.projection.permission,

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
+import { lexShell } from '../shell-tokenizer.js'
 import {
   expandMakeExpression,
   normalizeMakeRecipeLine,
@@ -178,6 +179,161 @@ interface MakeTarget {
   opaquePrerequisites: boolean
 }
 
+function hasRecipeContinuation(line: string): boolean {
+  let trailingBackslashes = 0
+  for (let index = line.length - 1; index >= 0 && line[index] === '\\'; index -= 1) {
+    trailingBackslashes += 1
+  }
+  return trailingBackslashes % 2 === 1
+}
+
+function logicalMakeRecipeLines(lines: readonly string[]): string[] {
+  const logical: string[] = []
+  let current = ''
+  for (const line of lines) {
+    current = current ? `${current}\n${line}` : line
+    if (hasRecipeContinuation(line)) {
+      continue
+    }
+    logical.push(current)
+    current = ''
+  }
+  if (current) {
+    logical.push(current)
+  }
+  return logical
+}
+
+function hasBackgroundControl(recipe: string): boolean {
+  return lexShell(recipe).tokens.some((token) => token.kind === 'operator' && token.value === '&')
+}
+
+const MAKE_GROUPABLE_SHORT_FLAGS_PATTERN = /^[bmBdehikLnpqrRsStvw]*$/
+const MAKE_NO_OPERAND_LONG_FLAGS = new Set([
+  '--always-make',
+  '--check-symlink-times',
+  '--debug',
+  '--dry-run',
+  '--environment-overrides',
+  '--help',
+  '--ignore-errors',
+  '--just-print',
+  '--keep-going',
+  '--no-builtin-rules',
+  '--no-builtin-variables',
+  '--no-keep-going',
+  '--no-print-directory',
+  '--print-data-base',
+  '--print-directory',
+  '--question',
+  '--quiet',
+  '--recon',
+  '--silent',
+  '--stop',
+  '--touch',
+  '--version',
+  '--warn-undefined-variables',
+])
+
+interface MakefileOperand {
+  value: string | null
+  consumesNext: boolean
+}
+
+interface MakefileOptions {
+  explicit: boolean
+  complete: boolean
+  opaque: boolean
+  sources: string[]
+  operandIndexes: Set<number>
+}
+
+interface MakefileSnapshot {
+  path: string
+  content: string
+}
+
+function makefileOperand(token: string, nextToken: string | undefined): MakefileOperand | null {
+  if (token === '--file' || token === '--makefile') {
+    return { value: nextToken ?? null, consumesNext: true }
+  }
+  const longOption = /^--(?:file|makefile)=(.*)$/.exec(token)
+  if (longOption) {
+    return { value: longOption[1] ?? null, consumesNext: false }
+  }
+  if (!token.startsWith('-') || token.startsWith('--')) {
+    return null
+  }
+  const options = token.slice(1)
+  const fileOptionIndex = options.indexOf('f')
+  if (
+    fileOptionIndex === -1 ||
+    !MAKE_GROUPABLE_SHORT_FLAGS_PATTERN.test(options.slice(0, fileOptionIndex))
+  ) {
+    return null
+  }
+  const attached = options.slice(fileOptionIndex + 1)
+  return {
+    value: attached || nextToken || null,
+    consumesNext: attached.length === 0,
+  }
+}
+
+function parseMakefileOptions(tokens: readonly string[]): MakefileOptions {
+  const sources: string[] = []
+  const operandIndexes = new Set<number>()
+  let explicit = false
+  let complete = true
+  let opaque = false
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? ''
+    if (token === '--') {
+      break
+    }
+    const operand = makefileOperand(token, tokens[index + 1])
+    if (!operand) {
+      if (
+        token.startsWith('-') &&
+        !(
+          token.length > 1 &&
+          !token.startsWith('--') &&
+          MAKE_GROUPABLE_SHORT_FLAGS_PATTERN.test(token.slice(1))
+        ) &&
+        !MAKE_NO_OPERAND_LONG_FLAGS.has(token)
+      ) {
+        opaque = true
+      }
+      continue
+    }
+    explicit = true
+    if (operand.consumesNext && tokens[index + 1] !== undefined) {
+      operandIndexes.add(index + 1)
+      index += 1
+    }
+    if (!operand.value) {
+      complete = false
+      continue
+    }
+    sources.push(operand.value)
+  }
+  return { explicit, complete, opaque, sources, operandIndexes }
+}
+
+function readExplicitMakefile(source: string, cwd: string): MakefileSnapshot | null {
+  if (source === '-' || /[$`*?[]/.test(source)) {
+    return null
+  }
+  const resolved = path.resolve(cwd, source)
+  try {
+    if (!statSync(resolved).isFile()) {
+      return null
+    }
+    return { path: resolved, content: readFileSync(resolved, 'utf8') }
+  } catch {
+    return null
+  }
+}
+
 function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
   const targets = new Map<string, MakeTarget>()
   try {
@@ -194,7 +350,9 @@ function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
         }
         targets.set(currentTarget, {
           prerequisites: current.prerequisites,
-          recipes: recipeLines.map((line) => line.trim()).filter((line) => line.length > 0),
+          recipes: logicalMakeRecipeLines(recipeLines)
+            .map(normalizeMakeRecipeLine)
+            .filter((line) => line.length > 0),
           opaquePrerequisites: current.opaquePrerequisites,
         })
       }
@@ -236,7 +394,7 @@ function parseMakefileRecipeContent(content: string): Map<string, MakeTarget> {
         continue
       }
       if (currentTarget && /^\t/.test(line)) {
-        recipeLines.push(line.trim())
+        recipeLines.push(line.slice(1).replace(/\r$/, ''))
       }
     }
     flush()
@@ -251,12 +409,13 @@ function resolveMakeRecipe(
   repoRoot: string,
   target: string,
   cliVars: Readonly<Record<string, string>> = {},
+  explicitMakefile?: MakefileSnapshot,
 ): LauncherResolution {
   const candidates = ['Makefile', 'makefile', 'GNUmakefile']
-  let makefilePath: string | null = null
+  let makefilePath: string | null = explicitMakefile?.path ?? null
   let searchDir = path.resolve(cwd)
   const stop = path.resolve(repoRoot)
-  while (true) {
+  while (!makefilePath) {
     for (const name of candidates) {
       const candidate = path.join(searchDir, name)
       if (existsSync(candidate)) {
@@ -272,7 +431,12 @@ function resolveMakeRecipe(
   if (!makefilePath) {
     return { recipes: [], opaque: true, reason: 'unknown_local_effect' }
   }
-  const makefileContent = readFileSync(makefilePath, 'utf8')
+  let makefileContent: string
+  try {
+    makefileContent = explicitMakefile?.content ?? readFileSync(makefilePath, 'utf8')
+  } catch {
+    return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+  }
   const makefileVars = parseMakefileVariables(makefileContent)
   const targets = parseMakefileRecipeContent(makefileContent)
   if (!targets.has(target)) {
@@ -323,6 +487,9 @@ function resolveMakeRecipe(
       return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_dynamic' }
     }
   }
+  if (expandedRecipes.some(hasBackgroundControl)) {
+    return { recipes: expandedRecipes, opaque: true, reason: 'make_recipe_background' }
+  }
   if (hasDependencyCycle) {
     return { recipes: expandedRecipes, opaque: true, reason: 'make_dependency_cycle' }
   }
@@ -372,12 +539,32 @@ export function resolveLauncherRecipe(params: {
     if (params.depth >= MAX_RESOLVE_DEPTH) {
       return { recipes: [], opaque: true, reason: 'launcher_depth_exceeded' }
     }
+    const makefileOptions = parseMakefileOptions(tokens)
+    if (makefileOptions.opaque) {
+      return { recipes: [], opaque: true, reason: 'make_option_opaque' }
+    }
+    let explicitMakefile: MakefileSnapshot | undefined
+    if (makefileOptions.explicit) {
+      if (!makefileOptions.complete || makefileOptions.sources.length !== 1) {
+        return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+      }
+      const source = makefileOptions.sources[0]
+      const snapshot = source ? readExplicitMakefile(source, params.cwd) : null
+      if (!snapshot) {
+        return { recipes: [], opaque: true, reason: 'makefile_source_opaque' }
+      }
+      explicitMakefile = snapshot
+    }
     if (tokens.includes('-n') || tokens.includes('--dry-run')) {
       return null
     }
     let target: string | null = null
     const cliVars: Record<string, string> = {}
-    for (const token of tokens.slice(1)) {
+    for (let index = 1; index < tokens.length; index += 1) {
+      if (makefileOptions.operandIndexes.has(index)) {
+        continue
+      }
+      const token = tokens[index] ?? ''
       if (token.startsWith('-')) {
         continue
       }
@@ -391,7 +578,7 @@ export function resolveLauncherRecipe(params: {
       }
     }
     if (target) {
-      return resolveMakeRecipe(params.cwd, params.repoRoot, target, cliVars)
+      return resolveMakeRecipe(params.cwd, params.repoRoot, target, cliVars, explicitMakefile)
     }
   }
 

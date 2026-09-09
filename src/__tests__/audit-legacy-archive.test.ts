@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -65,6 +65,32 @@ describe('audit legacy archive', () => {
     expect(existsSync(auditPath)).toBe(false)
     expect(existsSync(result.archivedPath)).toBe(true)
     expect(await readFile(result.archivedPath, 'utf8')).toContain('<timestamp>')
+    await expect(lstat(`${auditPath}.lock`)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('waits on the writer lock before scanning or renaming the active log', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-archive-lock-'))
+    tempDirs.push(repoRoot)
+    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const lockPath = `${auditPath}.lock`
+    const legacyRecord = '{"timestamp":"<timestamp>","fingerprint":"<high-entropy>"}\n'
+    await mkdir(path.dirname(auditPath), { recursive: true })
+    await writeFile(auditPath, legacyRecord, 'utf8')
+    await writeFile(lockPath, 'writer-owner\n', 'utf8')
+    const config = mergeConfig({
+      audit: { logPath: '.cursor/belay/audit.ndjson' },
+    })
+    const startedAt = Date.now()
+
+    await expect(archiveLegacyAuditLogIfNeeded(repoRoot, config)).rejects.toThrow(
+      /audit lock.*timed out/i,
+    )
+    const elapsedMs = Date.now() - startedAt
+
+    expect(elapsedMs).toBeGreaterThanOrEqual(1_800)
+    expect(elapsedMs).toBeLessThan(2_500)
+    expect(await readFile(auditPath, 'utf8')).toBe(legacyRecord)
+    expect(await readFile(lockPath, 'utf8')).toBe('writer-owner\n')
   })
 
   it('archives a legacy placeholder after the first 256 KiB', async () => {

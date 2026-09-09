@@ -79,6 +79,7 @@ describe('audit-telemetry-projection', () => {
     expect(patternProjection.summary).not.toContain('customer-secret')
     expect(patternProjection.summary).not.toContain(rawToolUseId)
     expect(genericSummary).not.toContain('short private prompt')
+    expect(gateSummary).not.toContain('printf secret')
     expect(gateSummary).not.toContain(rawToolUseId)
   })
 

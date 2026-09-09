@@ -93,6 +93,32 @@ describe('git-classifier', () => {
     ])
   })
 
+  it.each([
+    ['diff range', ['git', 'diff', 'origin/main...HEAD']],
+    ['diff ancestry range', ['git', 'diff', 'HEAD~3..HEAD']],
+    ['log range', ['git', 'log', '--oneline', 'origin/main..HEAD']],
+    ['merge-base refs', ['git', 'merge-base', 'origin/main', 'HEAD']],
+    ['diff dotted ref', ['git', 'diff', 'release/1.2']],
+    ['diff numeric-leading ref', ['git', 'diff', '2026-release']],
+  ])('treats read-only %s operands as revisions instead of paths', (_name, tokens) => {
+    const semantics = classifyGitCommand(tokens, cwd)
+
+    expect(semantics?.effect).toBe('read_only')
+    expect(semantics?.isReadOnly).toBe(true)
+    expect(semantics?.pathTargets).toEqual([])
+  })
+
+  it.each([
+    ['git', 'push', 'origin/main:main'],
+    ['git', 'update-ref', 'refs/heads/main', 'HEAD'],
+    ['git', 'branch', '-D', 'origin/main'],
+  ])('does not grant ref-writing invocation %s read-only authority', (...tokens) => {
+    const semantics = classifyGitCommand(tokens, cwd)
+
+    expect(semantics?.isReadOnly).toBe(false)
+    expect(semantics?.effect).not.toBe('read_only')
+  })
+
   it('keeps checkout file operands after --', () => {
     const semantics = classifyGitCommand(['git', 'checkout', '--', 'src/foo.ts'], cwd)
     expect(semantics?.pathTargets).toEqual(['src/foo.ts'])

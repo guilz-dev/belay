@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
-import { formatMetricsReport } from '../commands/metrics.js'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { formatMetricsReport, metricsProject } from '../commands/metrics.js'
+import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import {
   computeApprovalRatioByReason,
   computeAvailabilityAskCounts,
@@ -11,7 +15,9 @@ import {
 import {
   buildApprovalRoundTrips,
   computeAuditMetrics,
-  MIN_GATE_EVENTS_FOR_ENFORCE,
+  MAX_BENIGN_BLOCK_RATE,
+  MIN_REVIEWED_BENIGN_EVENTS,
+  MIN_REVIEWED_SESSIONS,
   parseAuditNdjson,
   toAuditRecord,
 } from '../core/audit-metrics.js'
@@ -19,6 +25,15 @@ import {
   computeRecoveryMetrics,
   sanitizeRecoveryFailureReason,
 } from '../core/audit-recovery-metrics.js'
+import type { HarvestReviewLedgerV1, HarvestReviewOutcome } from '../core/harvest-review.js'
+import { initProject } from '../installer.js'
+import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
 const ACTIVE_COHORT = {
   runtimeArtifactHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -36,6 +51,10 @@ const LEGACY_COHORT = {
   configFingerprint: 'old-config-fingerprint',
 }
 
+const REVIEWED_FINGERPRINT = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+const VALID_SESSION_IDS = ['1111111111111111', '2222222222222222', '3333333333333333']
+const LEGACY_DIAGNOSTIC_SAMPLE_COUNT = 20
+
 function testFingerprint(label: string): string {
   return createHash('sha256').update(label).digest('hex')
 }
@@ -50,6 +69,67 @@ function cohortGate(overrides: Record<string, unknown> = {}): Record<string, unk
     ...ACTIVE_COHORT,
     ...overrides,
   }
+}
+
+function reviewLedger(
+  outcome: HarvestReviewOutcome = 'provably-benign',
+  overrides: Partial<HarvestReviewLedgerV1['reviews'][number]> = {},
+): HarvestReviewLedgerV1 {
+  return {
+    version: 1,
+    reviews: [
+      {
+        fingerprint: REVIEWED_FINGERPRINT,
+        kind: 'shell',
+        boundaryProfile: ACTIVE_COHORT.boundaryProfile,
+        outcome,
+        reviewedAt: '2026-09-08T00:00:00.000Z',
+        ...overrides,
+      },
+    ],
+  }
+}
+
+function reviewedBenignGateEvents(
+  count: number,
+  options: {
+    sessionIds?: string[]
+    explicitBlocked?: number
+    legacyBlocked?: number
+    fingerprint?: string
+    kind?: string
+  } = {},
+): Record<string, unknown>[] {
+  const sessionIds = options.sessionIds ?? VALID_SESSION_IDS
+  const explicitBlocked = options.explicitBlocked ?? 0
+  const legacyBlocked = options.legacyBlocked ?? 0
+  return Array.from({ length: count }, (_, index) => {
+    const record = cohortGate({
+      fingerprint: options.fingerprint ?? REVIEWED_FINGERPRINT,
+      kind: options.kind ?? 'shell',
+      sessionCorrelationId: sessionIds[index % sessionIds.length],
+    })
+    if (index < explicitBlocked) {
+      record.verdict = 'allow'
+      record.wouldBlock = true
+    } else if (index < explicitBlocked + legacyBlocked) {
+      record.verdict = 'deny_pending_approval'
+      delete record.wouldBlock
+    }
+    return record
+  })
+}
+
+function reviewedMetrics(
+  records: Record<string, unknown>[],
+  ledger: HarvestReviewLedgerV1 | undefined = reviewLedger(),
+) {
+  return computeAuditMetrics(records, {
+    mode: 'audit',
+    unknownLocalEffect: 'deny',
+    activeCohort: ACTIVE_COHORT,
+    reviewLedger: ledger,
+  })
 }
 
 describe('audit-metrics', () => {
@@ -87,6 +167,90 @@ describe('audit-metrics', () => {
     expect(report.gateEvents).toBe(1)
     expect(report.wouldBlockCount).toBe(1)
     expect(report.gateEventsByRuntime).toEqual({ unrecorded: 1 })
+  })
+
+  it('aggregates the current cohort across generations and exposes content-free storage diagnostics', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-audit-metrics-generations-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const initialConfig = await loadConfigFile(repoRoot)
+    const rotationMaxBytes = 1_024
+    await writeTrustedConfigFile(repoRoot, {
+      ...initialConfig,
+      audit: { ...initialConfig.audit, maxBytes: rotationMaxBytes, maxFiles: 3 },
+    })
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+
+    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const generation = `${JSON.stringify(
+      cohortGate({
+        timestamp: '2026-09-08T00:00:00.000Z',
+        fingerprint: REVIEWED_FINGERPRINT,
+        sessionCorrelationId: VALID_SESSION_IDS[0],
+        ...cohort,
+      }),
+    )}\n\n`
+    const activeRecord = JSON.stringify(
+      cohortGate({
+        timestamp: '2026-09-08T00:00:01.000Z',
+        fingerprint: REVIEWED_FINGERPRINT,
+        sessionCorrelationId: VALID_SESSION_IDS[1],
+        ...cohort,
+      }),
+    )
+    const malformed = '{"private-malformed-marker":'
+    const nonObject = '"private-non-object-marker"'
+    const aboveRotationThreshold = JSON.stringify(
+      cohortGate({
+        timestamp: '2026-09-08T00:00:02.000Z',
+        verdict: 'deny_pending_approval',
+        reason: 'unknown_local_effect',
+        wouldBlock: true,
+        summary: 'valid record above the rotation threshold',
+        padding: 'x'.repeat(1_500),
+        fingerprint: REVIEWED_FINGERPRINT,
+        sessionCorrelationId: VALID_SESSION_IDS[2],
+        ...cohort,
+      }),
+    )
+    expect(Buffer.byteLength(`${aboveRotationThreshold}\n`, 'utf8')).toBeGreaterThan(
+      rotationMaxBytes,
+    )
+    const active = `${activeRecord}\n${malformed}\n${nonObject}\n${aboveRotationThreshold}\n`
+    await writeFile(`${auditPath}.1`, generation, 'utf8')
+    await writeFile(auditPath, active, 'utf8')
+    await writeFile(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+      `${JSON.stringify(reviewLedger())}\n`,
+      'utf8',
+    )
+
+    const report = await metricsProject({ targetDir: repoRoot })
+    const formatted = formatMetricsReport(report)
+
+    expect(report.auditStorage).toEqual({
+      filesRead: 2,
+      bytesRead: Buffer.byteLength(generation, 'utf8') + Buffer.byteLength(active, 'utf8'),
+      parsedRecords: 3,
+      malformedLines: 2,
+      oversizedLines: 0,
+    })
+    expect(report.currentCohort.gateEvents).toBe(3)
+    expect(report.currentCohort.wouldBlockCount).toBe(1)
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(3)
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignBlocked).toBe(1)
+    expect(report.currentCohort.reviewedTraffic.distinctSessions).toBe(3)
+    expect(formatted).toContain('Retained audit storage:')
+    expect(formatted).toContain('- files read: 2')
+    expect(formatted).toContain('- malformed lines skipped: 2')
+    expect(formatted).toContain('- oversized lines skipped: 0')
+    expect(formatted).not.toContain('private-malformed-marker')
+    expect(formatted).not.toContain('private-non-object-marker')
   })
 
   it('computes would-block metrics for dogfood config', () => {
@@ -220,26 +384,224 @@ describe('audit-metrics', () => {
     expect(report.byConfidence).toEqual({ deterministic: 2 })
   })
 
-  it('requires minimum gate events before readyForEnforce with zero would-block rate', () => {
-    const fewEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () => cohortGate())
-    const notReady = computeAuditMetrics(fewEvents, {
-      mode: 'audit',
-      unknownLocalEffect: 'deny',
-      activeCohort: ACTIVE_COHORT,
-    })
-    expect(notReady.dogfood.readyForEnforce).toBe(false)
+  it.each([
+    {
+      name: '149 reviewed benign events across 3 sessions',
+      events: reviewedBenignGateEvents(149),
+      expectedEvents: 149,
+      expectedSessions: 3,
+      expectedBlocked: 0,
+      expectedRate: 0,
+      ready: false,
+    },
+    {
+      name: '150 reviewed benign events across only 2 sessions',
+      events: reviewedBenignGateEvents(150, {
+        sessionIds: VALID_SESSION_IDS.slice(0, 2),
+      }),
+      expectedEvents: 150,
+      expectedSessions: 2,
+      expectedBlocked: 0,
+      expectedRate: 0,
+      ready: false,
+    },
+    {
+      name: '150 reviewed benign events across 3 sessions with 2 blocks',
+      events: reviewedBenignGateEvents(150, { explicitBlocked: 2 }),
+      expectedEvents: 150,
+      expectedSessions: 3,
+      expectedBlocked: 2,
+      expectedRate: 2 / 150,
+      ready: true,
+    },
+    {
+      name: '150 reviewed benign events across 3 sessions with exactly 3 blocks',
+      events: reviewedBenignGateEvents(150, { explicitBlocked: 3 }),
+      expectedEvents: 150,
+      expectedSessions: 3,
+      expectedBlocked: 3,
+      expectedRate: 0.02,
+      ready: false,
+    },
+  ])('$name applies every strict traffic-readiness boundary', (fixture) => {
+    const report = reviewedMetrics(fixture.events)
 
-    const enoughEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate())
-    const ready = computeAuditMetrics(enoughEvents, {
+    expect(report.currentCohort.reviewedTraffic).toEqual({
+      reviewedBenignEvents: fixture.expectedEvents,
+      reviewedBenignBlocked: fixture.expectedBlocked,
+      benignBlockRate: fixture.expectedRate,
+      distinctSessions: fixture.expectedSessions,
+      availabilityAsks: 0,
+      ready: fixture.ready,
+    })
+    expect(report.dogfood.readyForEnforce).toBe(fixture.ready)
+  })
+
+  it('requires zero availability asks across all active-cohort gate events', () => {
+    const events = reviewedBenignGateEvents(150)
+    events.push(
+      cohortGate({
+        fingerprint: testFingerprint('unreviewed-availability-event'),
+        sessionCorrelationId: VALID_SESSION_IDS[0],
+        verdict: 'deny_pending_approval',
+        wouldBlock: true,
+        reason: 'missing_trusted_cwd',
+      }),
+    )
+
+    const report = reviewedMetrics(events)
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(150)
+    expect(report.currentCohort.reviewedTraffic.availabilityAsks).toBe(1)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(false)
+  })
+
+  it('does not admit accepted-benign reviews to the traffic denominator', () => {
+    const report = reviewedMetrics(reviewedBenignGateEvents(150), reviewLedger('accepted-benign'))
+
+    expect(report.currentCohort.reviewEvidencePresent).toBe(true)
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(0)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(false)
+  })
+
+  it.each([
+    ['accepted-benign', 'accepted-benign'],
+    ['must-ask', 'must-ask'],
+    ['reject', 'reject'],
+  ] as const)('excludes %s review evidence from benign samples', (_name, outcome) => {
+    const report = reviewedMetrics(reviewedBenignGateEvents(1), reviewLedger(outcome))
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(0)
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignBlocked).toBe(0)
+  })
+
+  it('fails closed when the active cohort or review ledger is missing', () => {
+    const events = reviewedBenignGateEvents(150)
+    const missingCohort = computeAuditMetrics(events, {
+      mode: 'audit',
+      unknownLocalEffect: 'deny',
+      activeCohort: null,
+      reviewLedger: reviewLedger(),
+    })
+    const missingLedger = computeAuditMetrics(events, {
       mode: 'audit',
       unknownLocalEffect: 'deny',
       activeCohort: ACTIVE_COHORT,
     })
-    expect(ready.dogfood.readyForEnforce).toBe(true)
+    const emptyLedger = reviewedMetrics(events, { version: 1, reviews: [] })
+
+    expect(missingCohort.currentCohort.reviewedTraffic.ready).toBe(false)
+    expect(missingLedger.currentCohort.reviewEvidencePresent).toBe(false)
+    expect(missingLedger.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(0)
+    expect(missingLedger.currentCohort.reviewedTraffic.ready).toBe(false)
+    expect(emptyLedger.currentCohort.reviewEvidencePresent).toBe(false)
+    expect(emptyLedger.currentCohort.reviewedTraffic.ready).toBe(false)
+  })
+
+  it('uses only the latest review for a fingerprint, kind, and boundary profile', () => {
+    const events = reviewedBenignGateEvents(150)
+    const acceptedLatest = reviewedMetrics(events, {
+      version: 1,
+      reviews: [
+        ...reviewLedger('provably-benign', {
+          reviewedAt: '2026-09-08T00:00:00.000Z',
+        }).reviews,
+        ...reviewLedger('accepted-benign', {
+          reviewedAt: '2026-09-08T00:01:00.000Z',
+        }).reviews,
+      ],
+    })
+    const provableLatest = reviewedMetrics(events, {
+      version: 1,
+      reviews: [
+        ...reviewLedger('accepted-benign', {
+          reviewedAt: '2026-09-08T00:00:00.000Z',
+        }).reviews,
+        ...reviewLedger('provably-benign', {
+          reviewedAt: '2026-09-08T00:01:00.000Z',
+        }).reviews,
+      ],
+    })
+
+    expect(acceptedLatest.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(0)
+    expect(provableLatest.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(150)
+  })
+
+  it('joins review evidence only on the exact fingerprint, kind, and boundary profile', () => {
+    const matching = reviewedBenignGateEvents(150)
+    const wrongFingerprint = reviewedBenignGateEvents(1, {
+      fingerprint: testFingerprint('wrong-fingerprint'),
+    })
+    const wrongKind = reviewedBenignGateEvents(1, { kind: 'tool' })
+    const reviews: HarvestReviewLedgerV1 = {
+      version: 1,
+      reviews: [
+        ...reviewLedger().reviews,
+        ...reviewLedger('provably-benign', {
+          fingerprint: testFingerprint('review-only-wrong-fingerprint'),
+        }).reviews,
+        ...reviewLedger('provably-benign', {
+          boundaryProfile: 'future-boundary-profile',
+        }).reviews,
+      ],
+    }
+
+    const report = reviewedMetrics([...matching, ...wrongFingerprint, ...wrongKind], reviews)
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(150)
+    expect(report.currentCohort.reviewedTraffic.distinctSessions).toBe(3)
+  })
+
+  it('counts only distinct valid lowercase 16-hex session hashes', () => {
+    const events = reviewedBenignGateEvents(150, {
+      sessionIds: [
+        '1111111111111111',
+        '2222222222222222',
+        'ABCDEFABCDEFABCD',
+        'short',
+        'gggggggggggggggg',
+      ],
+    })
+
+    const report = reviewedMetrics(events)
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(150)
+    expect(report.currentCohort.reviewedTraffic.distinctSessions).toBe(2)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(false)
+  })
+
+  it('uses canonical would-block inference for explicit and legacy verdict encodings', () => {
+    const report = reviewedMetrics(
+      reviewedBenignGateEvents(150, { explicitBlocked: 1, legacyBlocked: 1 }),
+    )
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignBlocked).toBe(2)
+    expect(report.currentCohort.reviewedTraffic.benignBlockRate).toBe(2 / 150)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(true)
+  })
+
+  it('formats every reviewed traffic counter separately from raw cohort diagnostics', () => {
+    const formatted = formatMetricsReport(
+      reviewedMetrics(reviewedBenignGateEvents(150, { explicitBlocked: 2 })),
+    )
+
+    expect(formatted).toContain('Reviewed provably-benign traffic:')
+    expect(formatted).toContain('- reviewed benign events: 150')
+    expect(formatted).toContain('- reviewed benign blocked: 2 (1.33%)')
+    expect(formatted).toContain('- distinct valid sessions: 3')
+    expect(formatted).toContain('- active-cohort availability asks: 0')
+    expect(formatted).toContain('- traffic ready for enforce: yes')
+    expect(formatted).toContain('- would-block: 2 (1.3%)')
+  })
+
+  it('publishes the exact reviewed traffic thresholds', () => {
+    expect(MIN_REVIEWED_BENIGN_EVENTS).toBe(150)
+    expect(MIN_REVIEWED_SESSIONS).toBe(3)
+    expect(MAX_BENIGN_BLOCK_RATE).toBe(0.02)
   })
 
   it('does not reuse old clean events as active-cohort readiness evidence', () => {
-    const oldCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
+    const oldCleanEvents = Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT }, () =>
       cohortGate({
         ...LEGACY_COHORT,
       }),
@@ -251,9 +613,9 @@ describe('audit-metrics', () => {
       activeCohort: ACTIVE_COHORT,
     })
 
-    expect(report.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.gateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
     expect(report.currentCohort.gateEvents).toBe(0)
-    expect(report.currentCohort.excludedGateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.excludedGateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
     expect(report.dogfood.readyForEnforce).toBe(false)
     expect(report.dogfood.notes.join(' ')).toContain(
       'No gate events for the active runtime/config cohort',
@@ -261,7 +623,7 @@ describe('audit-metrics', () => {
   })
 
   it('ignores old noisy events when the active cohort is clean', () => {
-    const oldNoisyEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
+    const oldNoisyEvents = Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT }, () =>
       cohortGate({
         verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
@@ -269,21 +631,20 @@ describe('audit-metrics', () => {
         ...LEGACY_COHORT,
       }),
     )
-    const currentCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () =>
-      cohortGate(),
-    )
+    const currentCleanEvents = reviewedBenignGateEvents(150)
 
     const report = computeAuditMetrics([...oldNoisyEvents, ...currentCleanEvents], {
       mode: 'audit',
       unknownLocalEffect: 'deny',
       activeCohort: ACTIVE_COHORT,
+      reviewLedger: reviewLedger(),
     })
 
-    expect(report.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE * 2)
-    expect(report.wouldBlockCount).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
-    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.gateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT + 150)
+    expect(report.wouldBlockCount).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
+    expect(report.currentCohort.gateEvents).toBe(150)
     expect(report.currentCohort.wouldBlockCount).toBe(0)
-    expect(report.currentCohort.excludedGateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.excludedGateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
     expect(report.dogfood.readyForEnforce).toBe(true)
   })
 
@@ -341,7 +702,7 @@ describe('audit-metrics', () => {
   })
 
   it('excludes a matching runtime build with a different config fingerprint', () => {
-    const currentEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () =>
+    const currentEvents = Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT - 1 }, () =>
       cohortGate(),
     )
     const mismatchedConfigEvent = cohortGate({
@@ -355,13 +716,13 @@ describe('audit-metrics', () => {
       activeCohort: ACTIVE_COHORT,
     })
 
-    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE - 1)
+    expect(report.currentCohort.gateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT - 1)
     expect(report.currentCohort.excludedGateEvents).toBe(1)
     expect(report.dogfood.readyForEnforce).toBe(false)
   })
 
   it('withholds readiness for an active-cohort availability ask', () => {
-    const currentCleanEvents = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE - 1 }, () =>
+    const currentCleanEvents = Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT - 1 }, () =>
       cohortGate(),
     )
     const availabilityAsk = cohortGate({
@@ -377,7 +738,7 @@ describe('audit-metrics', () => {
       activeCohort: ACTIVE_COHORT,
     })
 
-    expect(report.currentCohort.gateEvents).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.currentCohort.gateEvents).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
     expect(report.currentCohort.availabilityAsks.total).toBe(1)
     expect(report.currentCohort.classifierWouldBlockRate).toBe(0)
     expect(report.dogfood.readyForEnforce).toBe(false)
@@ -386,7 +747,7 @@ describe('audit-metrics', () => {
 
   it('fails closed when the active cohort identity is unavailable', () => {
     const report = computeAuditMetrics(
-      Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate()),
+      Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT }, () => cohortGate()),
       { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: null },
     )
 
@@ -472,6 +833,13 @@ describe('audit-metrics', () => {
       {
         event: 'beforeShellExecution',
         verdict: 'deny_pending_approval',
+        reason: 'dynamic_cwd_transition',
+        wouldBlock: true,
+        fingerprint: testFingerprint('fp-dynamic-cwd'),
+      },
+      {
+        event: 'beforeShellExecution',
+        verdict: 'deny_pending_approval',
         reason: 'unknown_local_effect',
         wouldBlock: true,
         judgeFallbackReason: 'eval_timeout',
@@ -495,8 +863,9 @@ describe('audit-metrics', () => {
     ].map(toAuditRecord)
 
     expect(computeAvailabilityAskCounts(records)).toEqual({
-      total: 3,
+      total: 4,
       missingTrustedCwd: 1,
+      dynamicCwdTransition: 1,
       judgeTimeout: 1,
       judgeFallback: 1,
     })
@@ -504,7 +873,8 @@ describe('audit-metrics', () => {
 
     const formatted = formatMetricsReport(computeAuditMetrics(records))
     expect(formatted).toContain('Availability-caused asks')
-    expect(formatted).toContain('missing trusted cwd: 1')
+    expect(formatted).toContain('missing action/trusted cwd: 1')
+    expect(formatted).toContain('dynamic cwd transition: 1')
     expect(formatted).toContain('Would-block by reason')
     expect(formatted).not.toContain('Repeated fingerprint asks')
   })
@@ -524,6 +894,7 @@ describe('audit-metrics', () => {
     expect(computeAvailabilityAskCounts(records)).toEqual({
       total: 1,
       missingTrustedCwd: 1,
+      dynamicCwdTransition: 0,
       judgeTimeout: 0,
       judgeFallback: 0,
     })
@@ -561,7 +932,7 @@ describe('audit-metrics', () => {
 
   it('withholds readyForEnforce when availability-caused asks are present', () => {
     const report = computeAuditMetrics(
-      Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => ({
+      Array.from({ length: LEGACY_DIAGNOSTIC_SAMPLE_COUNT }, () => ({
         event: 'beforeShellExecution',
         kind: 'shell',
         verdict: 'deny_pending_approval',
@@ -573,7 +944,7 @@ describe('audit-metrics', () => {
       { mode: 'audit', unknownLocalEffect: 'deny', activeCohort: ACTIVE_COHORT },
     )
 
-    expect(report.availabilityAsks.total).toBe(MIN_GATE_EVENTS_FOR_ENFORCE)
+    expect(report.availabilityAsks.total).toBe(LEGACY_DIAGNOSTIC_SAMPLE_COUNT)
     expect(report.classifierWouldBlockCount).toBe(0)
     expect(report.dogfood.readyForEnforce).toBe(false)
     expect(report.dogfood.notes.join(' ')).toContain('Ready for enforce withheld')
@@ -729,11 +1100,12 @@ describe('audit-metrics', () => {
   })
 
   it('does not let recovery metrics change readyForEnforce', () => {
-    const records = Array.from({ length: MIN_GATE_EVENTS_FOR_ENFORCE }, () => cohortGate())
+    const records = reviewedBenignGateEvents(150)
     records.push({
       event: 'beforeShellExecution',
       kind: 'shell',
       verdict: 'deny_pending_approval',
+      fingerprint: testFingerprint('recovery-only-event'),
       transactional: false,
       transactionalSkipReason: 'dirty_worktree',
       recoveryFailClosed: true,
@@ -744,6 +1116,7 @@ describe('audit-metrics', () => {
       mode: 'audit',
       unknownLocalEffect: 'deny',
       activeCohort: ACTIVE_COHORT,
+      reviewLedger: reviewLedger(),
     })
 
     expect(report.recovery.snapshot.skipped).toBe(1)

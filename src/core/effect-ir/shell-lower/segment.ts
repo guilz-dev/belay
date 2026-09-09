@@ -11,6 +11,10 @@ const DYNAMIC_SHELL_VALUE_PATTERN =
   /(?:\$\(|`|\$(?:\d+|[@*#?$!-]|\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*))/
 const SHELL_GLOB_PATTERN = /[*?[]/
 
+export type CdTransition =
+  | { cwd: string; known: true }
+  | { cwd: string; known: false; signal: 'shell.cwd_dynamic_transition' }
+
 export function requiresKnownCwd(requirementValue: ShellEffectRequirement): boolean {
   if (
     requirementValue.action === 'fs.write' ||
@@ -50,14 +54,18 @@ export function startsLocalPostgresService(command: string): boolean {
 export function resolveCdTransition(
   command: string,
   currentCwd: string,
-): { cwd: string; known: boolean } | null {
+  currentCwdKnown = true,
+): CdTransition | null {
   const tokens = tokenizeShell(command)
   if (path.basename(tokens[0] ?? '') !== 'cd') {
     return null
   }
-  const target = tokens[1] ?? '~'
+  const target = tokens[1] ?? ''
   if (!target || target === '-' || target.includes('$') || target.includes('`')) {
-    return { cwd: currentCwd, known: false }
+    return { cwd: currentCwd, known: false, signal: 'shell.cwd_dynamic_transition' }
+  }
+  if (!currentCwdKnown && !path.isAbsolute(target)) {
+    return { cwd: currentCwd, known: false, signal: 'shell.cwd_dynamic_transition' }
   }
   return { cwd: resolvePathOperand(target, currentCwd), known: true }
 }

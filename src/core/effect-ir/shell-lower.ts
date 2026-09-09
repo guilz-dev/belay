@@ -1,6 +1,11 @@
 import path from 'node:path'
 
-import { lexShell } from '../shell-tokenizer.js'
+import {
+  isHeredocOperator,
+  isHereStringOperator,
+  lexShell,
+  type ShellHeredoc,
+} from '../shell-tokenizer.js'
 import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
 import { decodeGitEffects } from '../verdict/git-classifier.js'
@@ -37,6 +42,7 @@ import {
   withProvenances,
 } from './shell-lower/requirement.js'
 import {
+  type CdTransition,
   joinNestedOpacity,
   requiresKnownCwd,
   resolveCdTransition,
@@ -58,6 +64,19 @@ import type { EffectPlan, EffectProvenance } from './types.js'
 export type { LowerShellEffectPlanParams } from './shell-lower/context.js'
 
 const MAX_LOWER_DEPTH = 8
+const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
+  'bash',
+  'dash',
+  'fish',
+  'node',
+  'osascript',
+  'perl',
+  'python',
+  'python3',
+  'ruby',
+  'sh',
+  'zsh',
+])
 
 /**
  * Parse and lower a general shell command into the canonical Task 2 model.
@@ -67,35 +86,48 @@ const MAX_LOWER_DEPTH = 8
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
   const context: LowerContext = { ...params, depth: 0 }
   const segments = lowerTopLevelSegments(params.command, context)
+  const lexed = lexShell(params.command)
+  const structuralCommand = maskHeredocBodies(params.command, lexed.heredocs)
   return buildShellEffectPlan({
     inputFingerprint: params.inputFingerprint,
     segments,
-    signals: pipeToShell(params.command) ? ['pipe_to_shell'] : [],
+    signals: pipeToShell(structuralCommand) ? ['pipe_to_shell'] : [],
   })
 }
 
 function lowerTopLevelSegments(command: string, context: LowerContext): ShellEffectSegment[] {
-  const commands = splitStructuralShellSegments(command)
+  const commandLexed = lexShell(command)
+  const structuralCommand = maskHeredocBodies(command, commandLexed.heredocs)
+  const commands = splitStructuralShellSegments(structuralCommand)
   if (commands.length === 0 && command.trim()) {
     commands.push(command.trim())
   }
-  const pipedToShell = pipeToShell(command)
+  const pipedToShell = pipeToShell(structuralCommand)
   const lowered: ShellEffectSegment[] = []
   let cwd = context.cwd
   let cwdKnown = true
+  let cwdTransitionSignal: Extract<CdTransition, { known: false }>['signal'] | null = null
   let inferredEnv = { ...context.env }
+  let heredocOffset = 0
   for (const segment of commands) {
-    let result = lowerSegment(segment, {
-      ...context,
-      cwd,
-      env: inferredEnv,
-      command: segment,
-      depth: context.depth,
-      inputFingerprint: context.inputFingerprint,
-      ...(pipedToShell && isShellHead(parseSegment(segment).head)
-        ? { pipeToShellSegment: true }
-        : {}),
-    })
+    const declaredHeredocs = lexShell(segment).heredocs.length
+    const heredocs = commandLexed.heredocs.slice(heredocOffset, heredocOffset + declaredHeredocs)
+    heredocOffset += declaredHeredocs
+    let result = lowerSegment(
+      segment,
+      {
+        ...context,
+        cwd,
+        env: inferredEnv,
+        command: segment,
+        depth: context.depth,
+        inputFingerprint: context.inputFingerprint,
+        ...(pipedToShell && isShellHead(parseSegment(segment).head)
+          ? { pipeToShellSegment: true }
+          : {}),
+      },
+      heredocs,
+    )
     if (!cwdKnown) {
       const requiresCwd = result.requirements.some(requiresKnownCwd)
       const requirements = [...result.requirements]
@@ -106,7 +138,7 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
             'indeterminate',
             { kind: 'unknown' },
             result.commandRedacted,
-            ['shell.cwd_unknown'],
+            cwdTransitionSignal ? [cwdTransitionSignal] : ['shell.cwd_unknown'],
           ),
         )
       }
@@ -119,7 +151,14 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
               opacity: joinEffectOpacity(result.opacity, 'opaque'),
             }
           : {}),
-        signals: [...new Set([...result.signals, 'shell.cwd_unknown'])],
+        signals: requiresCwd
+          ? [
+              ...new Set([
+                ...result.signals,
+                ...(cwdTransitionSignal ? [cwdTransitionSignal] : ['shell.cwd_unknown']),
+              ]),
+            ]
+          : result.signals,
       }
     }
     lowered.push(result)
@@ -129,10 +168,11 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
         DATABASE_URL: 'postgresql://127.0.0.1:5432/local',
       }
     }
-    const nextCwd = resolveCdTransition(segment, cwd)
+    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown)
     if (nextCwd) {
       cwd = nextCwd.cwd
       cwdKnown = nextCwd.known
+      cwdTransitionSignal = nextCwd.known ? null : nextCwd.signal
     }
   }
   if (
@@ -160,15 +200,43 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
       ),
     )
   }
+  if (
+    !commandLexed.syntaxComplete &&
+    !lowered.some((segment) => segment.signals.includes('shell.grammar_incomplete'))
+  ) {
+    lowered.push(
+      shellSegment(
+        '[shell grammar boundary]',
+        'shell-boundary',
+        [
+          requirement(
+            'indeterminate',
+            'indeterminate',
+            { kind: 'unknown' },
+            '[shell grammar boundary]',
+            ['shell.grammar_incomplete'],
+          ),
+        ],
+        'unparseable',
+        new Set(['shell.grammar_incomplete']),
+      ),
+    )
+  }
   return lowered
 }
 
 function lowerSegment(
   command: string,
   context: LowerContext & { pipeToShellSegment?: boolean },
+  attachedHeredocs?: readonly ShellHeredoc[],
 ): ShellEffectSegment {
   const commandRedacted = redactCommand(command)
   const lexed = lexShell(command)
+  const heredocs = attachedHeredocs ?? lexed.heredocs
+  const lexComplete =
+    lexed.syntaxComplete &&
+    heredocs.length === lexed.heredocs.length &&
+    heredocs.every((heredoc) => heredoc.complete)
   const rawTokens = lexed.tokens.map((token) => token.value)
   const environment = extractEnvironment(rawTokens, context.env)
   const env = environment.env
@@ -190,7 +258,7 @@ function lowerSegment(
   const signals = new Set<string>()
   const requirements: ShellEffectRequirement[] = []
 
-  if (!lexed.complete) {
+  if (!lexComplete) {
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
         'shell.grammar_incomplete',
@@ -200,8 +268,60 @@ function lowerSegment(
     opacity = joinEffectOpacity(opacity, 'unparseable')
   }
 
-  addRedirectEffects(requirements, rawTokens, env, context, commandRedacted)
+  addRedirectEffects(
+    requirements,
+    stripStdinDataRedirects(rawTokens),
+    env,
+    context,
+    commandRedacted,
+  )
   addSubstitutionEffects(requirements, command, context, commandRedacted, signals)
+  if (rawTokens.some(isHereStringOperator)) {
+    requirements.push(
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        'shell.here_string_opaque',
+      ]),
+    )
+    signals.add('shell.here_string_opaque')
+    opacity = joinEffectOpacity(opacity, 'opaque')
+  }
+  let executableHeredoc = false
+  for (const heredoc of heredocs) {
+    const heredocSignal = heredoc.expands
+      ? 'shell.heredoc_expanding_stdin'
+      : 'shell.heredoc_literal_stdin'
+    signals.add(heredocSignal)
+    if (!heredoc.complete) {
+      requirements.push(
+        requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+          'shell.heredoc_incomplete',
+        ]),
+      )
+      signals.add('shell.heredoc_incomplete')
+      opacity = joinEffectOpacity(opacity, 'unparseable')
+    }
+    if (heredoc.expands) {
+      const expansion = scanHeredocCommandSubstitutions(heredoc.body.value)
+      addSubstitutionEffects(
+        requirements,
+        heredoc.body.value,
+        context,
+        commandRedacted,
+        signals,
+        expansion.inners,
+      )
+      if (!expansion.complete) {
+        requirements.push(
+          requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+            'shell.heredoc_expansion_incomplete',
+          ]),
+        )
+        signals.add('shell.heredoc_expansion_incomplete')
+        opacity = joinEffectOpacity(opacity, 'opaque')
+      }
+    }
+    executableHeredoc ||= HEREDOC_EXECUTABLE_INTERPRETERS.has(head)
+  }
   if (environment.malformed) {
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
@@ -224,6 +344,27 @@ function lowerSegment(
     requirements.push(
       requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
         'shell.lower_depth_exceeded',
+      ]),
+    )
+    return shellSegment(
+      commandRedacted,
+      head,
+      requirements,
+      joinEffectOpacity(opacity, 'opaque'),
+      signals,
+    )
+  }
+
+  if (executableHeredoc) {
+    signals.add('shell.heredoc_executable_body')
+    ensureRequirement(
+      requirements,
+      processRequirement(head, 'spawn', commandRedacted, ['shell.heredoc_executable_body']),
+    )
+    ensureRequirement(
+      requirements,
+      requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+        'shell.heredoc_executable_body',
       ]),
     )
     return shellSegment(
@@ -441,6 +582,7 @@ function lowerSegment(
         repoRoot: context.repoRoot,
         segment: commandRedacted,
       })
+      let loweredArgvDelegate = false
       if (isGrammarUnknownOnly(processRequirements, head)) {
         const argvDelegate = peelArgvDelegateArgv(tokens)
         if (
@@ -450,21 +592,28 @@ function lowerSegment(
         ) {
           const innerRecipe = innerRecipeFromArgvDelegate(argvDelegate)
           if (innerRecipe) {
-            requirements.push(
-              processRequirement(head, 'inspect', commandRedacted, [
-                'process.argv_delegate',
-                ...argvDelegate.signals,
-              ]),
-            )
-            for (const signal of argvDelegate.signals) {
-              signals.add(signal)
-            }
             const nested = lowerTopLevelSegments(innerRecipe, {
               ...context,
               command: innerRecipe,
               env,
               depth: context.depth + 1,
             })
+            const innerComplete =
+              nested.length > 0 &&
+              nested.every((nestedSegment) => nestedSegment.completeness === 'complete')
+            requirements.push(
+              ...(innerComplete
+                ? [
+                    processRequirement(head, 'inspect', commandRedacted, [
+                      'process.argv_delegate',
+                      ...argvDelegate.signals,
+                    ]),
+                  ]
+                : processRequirements),
+            )
+            for (const signal of argvDelegate.signals) {
+              signals.add(signal)
+            }
             for (const nestedSegment of nested) {
               requirements.push(
                 ...nestedSegment.requirements.map((entry) =>
@@ -476,10 +625,10 @@ function lowerSegment(
               }
               opacity = joinNestedOpacity(opacity, nestedSegment)
             }
-            return shellSegment(commandRedacted, head, requirements, opacity, signals)
+            loweredArgvDelegate = true
           }
         }
-        if (argvDelegate?.opaque) {
+        if (!loweredArgvDelegate && argvDelegate?.opaque) {
           requirements.push(
             processRequirement(head, 'spawn', commandRedacted, [
               'process.argv_delegate',
@@ -504,7 +653,9 @@ function lowerSegment(
           )
         }
       }
-      requirements.push(...processRequirements)
+      if (!loweredArgvDelegate) {
+        requirements.push(...processRequirements)
+      }
     }
   }
 
@@ -557,14 +708,143 @@ function lowerSegment(
   return shellSegment(commandRedacted, head, requirements, opacity, signals)
 }
 
+function maskHeredocBodies(command: string, heredocs: readonly ShellHeredoc[]): string {
+  const masked = command.split('')
+  for (const heredoc of heredocs) {
+    const end = heredoc.complete ? heredoc.terminator.end : heredoc.body.end
+    for (let index = heredoc.body.start; index < end; index += 1) {
+      const char = masked[index]
+      if (char !== '\n' && char !== '\r') {
+        masked[index] = ' '
+      }
+    }
+  }
+  return masked.join('')
+}
+
+function scanHeredocCommandSubstitutions(input: string): {
+  inners: string[]
+  complete: boolean
+} {
+  const folded = input.replace(/\\\r?\n/g, '')
+  const inners: string[] = []
+  let index = 0
+  while (index < folded.length) {
+    const char = folded[index] ?? ''
+    const next = folded[index + 1] ?? ''
+    if (char === '\\' && (next === '\\' || next === '$' || next === '`')) {
+      index += 2
+      continue
+    }
+    if (char === '`') {
+      const end = findHeredocBacktickEnd(folded, index + 1)
+      if (end === -1) {
+        return { inners, complete: false }
+      }
+      const inner = folded.slice(index + 1, end).trim()
+      if (inner) {
+        inners.push(inner)
+      }
+      index = end + 1
+      continue
+    }
+    if (char === '$' && next === '(') {
+      const closed = extractHeredocDollarParen(folded, index + 2)
+      if (!closed) {
+        return { inners, complete: false }
+      }
+      const inner = closed.content.trim()
+      if (inner) {
+        inners.push(inner)
+      }
+      index = closed.endIndex
+      continue
+    }
+    index += 1
+  }
+  return { inners, complete: true }
+}
+
+function findHeredocBacktickEnd(input: string, start: number): number {
+  for (let index = start; index < input.length; index += 1) {
+    if (input[index] === '\\' && index + 1 < input.length) {
+      index += 1
+      continue
+    }
+    if (input[index] === '`') {
+      return index
+    }
+  }
+  return -1
+}
+
+function extractHeredocDollarParen(
+  input: string,
+  start: number,
+): { content: string; endIndex: number } | null {
+  let depth = 1
+  let index = start
+  let quote: "'" | '"' | null = null
+  let escaping = false
+  while (index < input.length) {
+    const char = input[index] ?? ''
+    if (escaping) {
+      escaping = false
+      index += 1
+      continue
+    }
+    if (char === '\\' && quote !== "'") {
+      escaping = true
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null
+      }
+      index += 1
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      index += 1
+      continue
+    }
+    if (char === '(') {
+      depth += 1
+    } else if (char === ')') {
+      depth -= 1
+      if (depth === 0) {
+        return { content: input.slice(start, index), endIndex: index + 1 }
+      }
+    }
+    index += 1
+  }
+  return null
+}
+
+function stripStdinDataRedirects(tokens: readonly string[]): string[] {
+  const stripped: string[] = []
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? ''
+    if (isHeredocOperator(token) || isHereStringOperator(token)) {
+      index += 1
+      continue
+    }
+    stripped.push(token)
+  }
+  return stripped
+}
+
 function addSubstitutionEffects(
   requirements: ShellEffectRequirement[],
   command: string,
   context: LowerContext,
   segment: string,
   signals: Set<string>,
+  knownInners?: readonly string[],
 ): void {
-  const inners = structuralSubstitutionInners(command)
+  const inners = knownInners ?? structuralSubstitutionInners(command)
   for (const inner of inners) {
     signals.add('command_substitution')
     if (context.depth >= MAX_LOWER_DEPTH) {

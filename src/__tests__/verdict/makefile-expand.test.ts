@@ -33,6 +33,12 @@ TEST_DOCKER_RUN = docker-compose run --rm test
     expect(normalizeMakeRecipeLine('-git status')).toBe('git status')
   })
 
+  it('joins a deterministic recipe continuation before stripping control prefixes', () => {
+    expect(normalizeMakeRecipeLine('@printf "%s" first \\\n\t  second')).toBe(
+      'printf "%s" first second',
+    )
+  })
+
   it('expands braced makefile variables including PWD', () => {
     const pwdVariable = '$' + '{PWD}'
     const appComposeVariable = '$' + '{APP_COMPOSE_FILE}'

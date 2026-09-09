@@ -1,29 +1,16 @@
-import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
 import type { getAdapterLayout } from '../adapters/layouts/index.js'
 import { loadLayeredConfig } from '../config-io.js'
 import type { AdapterName } from '../types.js'
+import {
+  effectiveDogfoodEnabled,
+  listLinkedWorktreePaths,
+  resolveRepoConfig,
+} from './linked-worktree-config.js'
 
-const execFileAsync = promisify(execFile)
-
-export async function listLinkedWorktreePaths(repoRoot: string): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    })
-    return stdout
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('worktree '))
-      .map((line) => line.slice('worktree '.length).trim())
-      .filter((entry) => entry.length > 0)
-  } catch {
-    return []
-  }
-}
+export { listLinkedWorktreePaths }
 
 export async function listDogfoodWorkspacePaths(repoRoot: string): Promise<string[]> {
   const candidates = [repoRoot, ...(await listLinkedWorktreePaths(repoRoot))]
@@ -63,25 +50,33 @@ export async function detectUndogfoodedLinkedWorktrees(params: {
     if (canonicalPath === repoRootCanonical) {
       continue
     }
-    const configPath = params.layout.configPath(worktreePath)
-    if (!existsSync(configPath)) {
-      warnings.push(
-        `Dogfood is active here but ${path.basename(worktreePath)} has no belay.config.json (defaults to enforce). Run belay dogfood in each worktree you use with Cursor.`,
-      )
-      continue
-    }
+
+    const worktreeLabel = path.basename(worktreePath)
     try {
-      const candidate = await loadLayeredConfig(worktreePath, params.adapterName)
-      const dogfoodEnabled =
-        candidate.config.mode === 'audit' && candidate.config.policy.unknownLocalEffect === 'deny'
-      if (!dogfoodEnabled) {
-        warnings.push(
-          `Dogfood is active here but ${path.basename(worktreePath)} is not in dogfood mode (mode=${candidate.config.mode}, unknownLocalEffect=${candidate.config.policy.unknownLocalEffect}). Run belay dogfood in each worktree you use with Cursor.`,
-        )
+      const gitOptions = { gitCwd: params.repoRoot }
+      const resolution = await resolveRepoConfig(worktreePath, params.adapterName, gitOptions)
+      const layered = await loadLayeredConfig(worktreePath, params.adapterName, gitOptions)
+      if (effectiveDogfoodEnabled(layered.config)) {
+        continue
       }
+      if (resolution.inherited) {
+        warnings.push(
+          `Dogfood is active here but ${worktreeLabel} inherits non-dogfood config from ${path.basename(resolution.configSourceRoot)} (mode=${layered.config.mode}, unknownLocalEffect=${layered.config.policy.unknownLocalEffect}). Run belay dogfood in that worktree or align the source config.`,
+        )
+        continue
+      }
+      if (!existsSync(params.layout.configPath(worktreePath))) {
+        warnings.push(
+          `Dogfood is active here but ${worktreeLabel} has no belay.config.json and no inheritable sibling config was found. Run belay dogfood in each worktree you use with Cursor.`,
+        )
+        continue
+      }
+      warnings.push(
+        `Dogfood is active here but ${worktreeLabel} is not in dogfood mode (mode=${layered.config.mode}, unknownLocalEffect=${layered.config.policy.unknownLocalEffect}). Run belay dogfood in each worktree you use with Cursor.`,
+      )
     } catch {
       warnings.push(
-        `Dogfood is active here but ${path.basename(worktreePath)} has an unreadable belay.config.json. Run belay doctor and belay dogfood in that worktree.`,
+        `Dogfood is active here but ${worktreeLabel} has an unreadable belay.config.json. Run belay doctor and belay dogfood in that worktree.`,
       )
     }
   }

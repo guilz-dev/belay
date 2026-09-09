@@ -23,33 +23,180 @@ import {
 
 export type { UnknownLocalEffectPolicy }
 
+export const DEFAULT_AUDIT_MAX_BYTES = 33_554_432
+export const DEFAULT_AUDIT_MAX_FILES = 5
+export const MAX_AUDIT_FILES = 100
+
+/** Compatibility shape for the current-main audit sink/reader adapters. */
 export interface AuditRetentionConfig {
   maxBytes: number
   maxFiles: number
 }
 
-export const DEFAULT_AUDIT_RETENTION: AuditRetentionConfig = {
-  maxBytes: 33_554_432,
-  maxFiles: 5,
+export interface BelayAuditConfig {
+  logPath: string
+  includeAssessment: boolean
+  /** Optional in source config for backwards compatibility; normalization always supplies it. */
+  maxBytes?: number
+  /** Optional in source config for backwards compatibility; active counts as one retained file. */
+  maxFiles?: number
+  /** Legacy current-main spelling; canonical normalized config uses maxBytes/maxFiles directly. */
+  retention?: Partial<AuditRetentionConfig>
 }
 
-export function normalizeAuditRetention(raw?: Partial<AuditRetentionConfig>): AuditRetentionConfig {
+export interface NormalizedBelayAuditConfig extends BelayAuditConfig {
+  maxBytes: number
+  maxFiles: number
+  /** Preserved only when the loaded source used the legacy nested spelling. */
+  retention?: AuditRetentionConfig
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback
+  }
+  const floored = Math.floor(value)
+  return floored > 0 ? floored : fallback
+}
+
+function normalizeAuditMaxFiles(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    value > MAX_AUDIT_FILES
+  ) {
+    return DEFAULT_AUDIT_MAX_FILES
+  }
+  const floored = Math.floor(value)
+  return Number.isSafeInteger(floored) && floored >= 1 && floored <= MAX_AUDIT_FILES
+    ? floored
+    : DEFAULT_AUDIT_MAX_FILES
+}
+
+const LEGACY_DISABLED_RETENTION = Symbol('legacy-disabled-audit-retention')
+
+type AuditConfigWithLegacyMarker = Partial<BelayAuditConfig> & {
+  [LEGACY_DISABLED_RETENTION]?: true
+}
+
+function hasOwn(object: object | undefined, key: PropertyKey): boolean {
+  return object !== undefined && Object.hasOwn(object, key)
+}
+
+export function normalizeAuditConfig(
+  audit: Partial<BelayAuditConfig> | undefined,
+): NormalizedBelayAuditConfig {
+  const selected = auditConfigWithSourceRetention(
+    {
+      logPath: 'belay/audit.ndjson',
+      includeAssessment: true,
+      maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+      maxFiles: DEFAULT_AUDIT_MAX_FILES,
+    },
+    audit,
+  )
+  const compatibilityRetention = selected.retention
+    ? normalizeAuditRetention(selected.retention)
+    : undefined
+  const { retention: _retention, ...selectedWithoutRetention } = selected
   return {
-    maxBytes:
-      typeof raw?.maxBytes === 'number' && raw.maxBytes >= 0
-        ? Math.floor(raw.maxBytes)
-        : DEFAULT_AUDIT_RETENTION.maxBytes,
-    maxFiles:
-      typeof raw?.maxFiles === 'number' && raw.maxFiles >= 0
-        ? Math.floor(raw.maxFiles)
-        : DEFAULT_AUDIT_RETENTION.maxFiles,
+    ...selectedWithoutRetention,
+    logPath: selected.logPath || 'belay/audit.ndjson',
+    includeAssessment: selected.includeAssessment !== false,
+    maxBytes: normalizePositiveInteger(selected.maxBytes, DEFAULT_AUDIT_MAX_BYTES),
+    maxFiles: normalizeAuditMaxFiles(selected.maxFiles),
+    ...(compatibilityRetention ? { retention: compatibilityRetention } : {}),
   }
 }
 
+export const DEFAULT_AUDIT_RETENTION: AuditRetentionConfig = {
+  maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+  maxFiles: DEFAULT_AUDIT_MAX_FILES,
+}
+
+export function normalizeAuditRetention(raw?: Partial<AuditRetentionConfig>): AuditRetentionConfig {
+  const maxBytes =
+    typeof raw?.maxBytes === 'number' && Number.isFinite(raw.maxBytes) && raw.maxBytes >= 0
+      ? Math.floor(raw.maxBytes)
+      : DEFAULT_AUDIT_MAX_BYTES
+  const maxFiles =
+    typeof raw?.maxFiles === 'number' &&
+    Number.isFinite(raw.maxFiles) &&
+    raw.maxFiles >= 0 &&
+    raw.maxFiles <= MAX_AUDIT_FILES
+      ? Math.floor(raw.maxFiles)
+      : DEFAULT_AUDIT_MAX_FILES
+  return { maxBytes, maxFiles }
+}
+
+function auditConfigWithSourceRetention(
+  defaults: BelayAuditConfig,
+  source: Partial<BelayAuditConfig> | undefined,
+): BelayAuditConfig {
+  const markedSource = source as AuditConfigWithLegacyMarker | undefined
+  if (markedSource?.[LEGACY_DISABLED_RETENTION] && source?.retention) {
+    return {
+      ...defaults,
+      ...source,
+      retention: normalizeAuditRetention(source.retention),
+    }
+  }
+
+  const nested = source?.retention
+  const normalizedNested = nested ? normalizeAuditRetention(nested) : undefined
+  const flatMaxBytesExplicit = hasOwn(source, 'maxBytes')
+  const flatMaxFilesExplicit = hasOwn(source, 'maxFiles')
+  const nestedMaxBytesExplicit = hasOwn(nested, 'maxBytes')
+  const nestedMaxFilesExplicit = hasOwn(nested, 'maxFiles')
+  const selectedNestedMaxBytes = !flatMaxBytesExplicit && nestedMaxBytesExplicit
+  const selectedNestedMaxFiles = !flatMaxFilesExplicit && nestedMaxFilesExplicit
+  const maxBytes = normalizePositiveInteger(
+    flatMaxBytesExplicit
+      ? source?.maxBytes
+      : selectedNestedMaxBytes
+        ? normalizedNested?.maxBytes
+        : defaults.maxBytes,
+    DEFAULT_AUDIT_MAX_BYTES,
+  )
+  const maxFiles = normalizeAuditMaxFiles(
+    flatMaxFilesExplicit
+      ? source?.maxFiles
+      : selectedNestedMaxFiles
+        ? normalizedNested?.maxFiles
+        : defaults.maxFiles,
+  )
+  const nestedMaxBytesDisabled = selectedNestedMaxBytes && normalizedNested?.maxBytes === 0
+  const nestedMaxFilesDisabled = selectedNestedMaxFiles && normalizedNested?.maxFiles === 0
+  const legacyDisabled = nestedMaxBytesDisabled || nestedMaxFilesDisabled
+  const { retention: _retention, ...sourceWithoutRetention } = source ?? {}
+  const selected: AuditConfigWithLegacyMarker = {
+    ...defaults,
+    ...sourceWithoutRetention,
+    maxBytes,
+    maxFiles,
+  }
+  if (legacyDisabled) {
+    selected.retention = {
+      maxBytes: nestedMaxBytesDisabled ? 0 : maxBytes,
+      maxFiles: nestedMaxFilesDisabled ? 0 : maxFiles,
+    }
+    selected[LEGACY_DISABLED_RETENTION] = true
+  } else {
+    delete selected.retention
+    delete selected[LEGACY_DISABLED_RETENTION]
+  }
+  return selected as BelayAuditConfig
+}
+
 export function auditRetentionFromConfig(config: {
-  audit?: { retention?: Partial<AuditRetentionConfig> }
+  audit?: Partial<BelayAuditConfig>
 }): AuditRetentionConfig {
-  return normalizeAuditRetention(config.audit?.retention)
+  const normalized = normalizeAuditConfig(config.audit)
+  if (normalized.retention) {
+    return normalized.retention
+  }
+  return { maxBytes: normalized.maxBytes, maxFiles: normalized.maxFiles }
 }
 
 export interface BelayConfigV1 {
@@ -61,9 +208,7 @@ export interface BelayConfigV1 {
     shell: boolean
     subagent: boolean
   }
-  audit: {
-    logPath: string
-  }
+  audit: Pick<BelayAuditConfig, 'logPath'>
 }
 
 export interface BelayConfigV2 {
@@ -83,11 +228,7 @@ export interface BelayConfigV2 {
     customAllowCommands: string[]
     sensitivePaths: string[]
   }
-  audit: {
-    logPath: string
-    includeAssessment: boolean
-    retention?: AuditRetentionConfig
-  }
+  audit: BelayAuditConfig
 }
 
 export interface BelayConfidenceThresholds {
@@ -630,7 +771,8 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
   audit: {
     logPath: 'belay/audit.ndjson',
     includeAssessment: true,
-    retention: { ...DEFAULT_AUDIT_RETENTION },
+    maxBytes: DEFAULT_AUDIT_MAX_BYTES,
+    maxFiles: DEFAULT_AUDIT_MAX_FILES,
   },
 }
 
@@ -954,7 +1096,10 @@ function looksLikeV2Config(raw: RawConfigInput): boolean {
     raw.gates?.toolShell !== undefined ||
     raw.classifier?.customAllowCommands !== undefined ||
     raw.classifier?.customExternalCommands !== undefined ||
-    raw.audit?.includeAssessment !== undefined
+    raw.audit?.includeAssessment !== undefined ||
+    raw.audit?.maxBytes !== undefined ||
+    raw.audit?.maxFiles !== undefined ||
+    raw.audit?.retention !== undefined
   )
 }
 
@@ -1062,14 +1207,7 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
       ...DEFAULT_SANDBOX_V3,
       ...(raw.sandbox ?? {}),
     },
-    audit: {
-      ...DEFAULT_CONFIG_V3.audit,
-      ...(raw.audit ?? {}),
-      retention: normalizeAuditRetention({
-        ...DEFAULT_CONFIG_V3.audit.retention,
-        ...(raw.audit?.retention ?? {}),
-      }),
-    },
+    audit: auditConfigWithSourceRetention(DEFAULT_CONFIG_V3.audit, raw.audit),
   })
 }
 
@@ -1122,7 +1260,6 @@ export function migrateConfig(loaded: unknown): BelayConfigV4 {
       audit: {
         ...baseV2.audit,
         logPath: raw.audit?.logPath ?? baseV2.audit.logPath,
-        retention: normalizeAuditRetention(baseV2.audit.retention),
       },
     })
     return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw)
@@ -1140,14 +1277,7 @@ export function migrateConfig(loaded: unknown): BelayConfigV4 {
       ...baseV2.classifier,
       ...(raw.classifier ?? {}),
     },
-    audit: {
-      ...baseV2.audit,
-      ...(raw.audit ?? {}),
-      retention: normalizeAuditRetention({
-        ...baseV2.audit.retention,
-        ...(raw.audit?.retention ?? {}),
-      }),
-    },
+    audit: auditConfigWithSourceRetention(baseV2.audit, raw.audit),
   })
 
   return mergeV3FromRaw(migrateV2ToV3(migratedV2, raw.overrides), raw)
@@ -1180,11 +1310,10 @@ export function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2 {
         ? config.classifier.sensitivePaths
         : DEFAULT_CONFIG_V2.classifier.sensitivePaths,
     },
-    audit: {
-      logPath: config.audit?.logPath || DEFAULT_CONFIG_V2.audit.logPath,
-      includeAssessment: config.audit?.includeAssessment !== false,
-      retention: normalizeAuditRetention(config.audit?.retention),
-    },
+    audit: normalizeAuditConfig({
+      ...DEFAULT_CONFIG_V2.audit,
+      ...config.audit,
+    }),
   }
 }
 
@@ -1397,11 +1526,10 @@ export function normalizeConfig(
       demoteL3External: v4.egress?.demoteL3External !== false,
     },
     sandbox: normalizeSandboxConfig(v4.sandbox),
-    audit: {
-      logPath: v4.audit?.logPath || DEFAULT_CONFIG_V4.audit.logPath,
-      includeAssessment: v4.audit?.includeAssessment !== false,
-      retention: normalizeAuditRetention(v4.audit?.retention),
-    },
+    audit: normalizeAuditConfig({
+      ...DEFAULT_CONFIG_V4.audit,
+      ...v4.audit,
+    }),
     judge: normalizeJudgeConfig(v4.judge ?? DEFAULT_JUDGE_LOCAL_OLLAMA),
   }
   if (version === 5 || v4.capability) {
@@ -1435,6 +1563,23 @@ export function stripForbiddenShellOverrideLists(config: BelayConfigV4): BelayCo
       external: [],
     },
   }
+}
+
+export function configForPersistence(config: BelayConfigV4): BelayConfigV4 {
+  const stripped = stripForbiddenShellOverrideLists(config)
+  const markedAudit = stripped.audit as BelayAuditConfig & AuditConfigWithLegacyMarker
+  if (!markedAudit[LEGACY_DISABLED_RETENTION] || !markedAudit.retention) {
+    return stripped
+  }
+
+  const audit = { ...markedAudit }
+  if (markedAudit.retention.maxBytes === 0) {
+    delete audit.maxBytes
+  }
+  if (markedAudit.retention.maxFiles === 0) {
+    delete audit.maxFiles
+  }
+  return { ...stripped, audit }
 }
 
 export function mergeConfig(
@@ -1503,10 +1648,6 @@ export function mergeConfig(
     audit: {
       ...defaults.audit,
       ...migrated.audit,
-      retention: normalizeAuditRetention({
-        ...defaults.audit.retention,
-        ...(migrated.audit?.retention ?? {}),
-      }),
     },
     ...(migrated.installScope ? { installScope: migrated.installScope } : {}),
     ...(migrated.version === 5 || migrated.capability

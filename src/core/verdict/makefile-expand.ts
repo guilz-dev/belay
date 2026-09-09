@@ -34,7 +34,11 @@ export function parsePhonyTargets(content: string): Set<string> {
 }
 
 export function normalizeMakeRecipeLine(line: string): string {
-  let normalized = line.trim()
+  let normalized = line
+    .replace(/([\t ]*)\\\r?\n([\t ]*)/g, (_match, before: string, after: string) =>
+      before || after ? ' ' : '',
+    )
+    .trim()
   while (normalized.startsWith('@') || normalized.startsWith('-') || normalized.startsWith('+')) {
     normalized = normalized.slice(1).trimStart()
   }

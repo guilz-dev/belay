@@ -315,9 +315,10 @@ export async function runToolGateHook(_eventName: string) {
 export async function runAuditHook(eventName: string) {
   try {
     const payload = await readStdinJson()
-    const ctx = await loadRuntimeContext(process.cwd())
+    const cwd = process.cwd()
+    const ctx = await loadRuntimeContext(cwd)
     const deps = createDefaultGateRuntimeDeps()
-    await appendObservedAudit(ctx, deps, eventName, payload)
+    await appendObservedAudit(ctx, deps, eventName, payload, cwd)
     jsonResponse({})
   } catch (error) {
     console.error(

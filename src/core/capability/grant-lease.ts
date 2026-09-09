@@ -190,12 +190,14 @@ export function validateGrantBundleForLeaseReuse(
 }
 
 /** Consume every grant in an approved record after fingerprint/hash replay validation. */
-export function consumeApprovedRecordGrantBundle(approval: ApprovalRecord): {
+export function consumeApprovedRecordGrantBundle(
+  approval: ApprovalRecord,
+  now = Date.now(),
+): {
   approval: ApprovalRecord
   consumed: boolean
 } {
   const bundle = grantsFromApproval(approval)
-  const now = Date.now()
   if (
     !bundle.length ||
     bundle.some((grant) => {

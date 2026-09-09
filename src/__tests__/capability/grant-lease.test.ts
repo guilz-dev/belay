@@ -69,6 +69,15 @@ function approvedWithGrant(): ApprovalRecord {
 }
 
 describe('grant lease', () => {
+  it('uses an explicit instant when consuming an approved replay bundle', () => {
+    const consumed = consumeApprovedRecordGrantBundle(
+      approvedWithGrant(),
+      Date.parse('2100-01-01T00:00:00.000Z'),
+    )
+
+    expect(consumed.consumed).toBe(false)
+  })
+
   it('loads active grants from approved state', () => {
     const grants = grantsFromApprovedState(
       { version: 3, approvals: [approvedWithGrant()] },
