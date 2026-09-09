@@ -10,24 +10,40 @@ export function nowIso(): string {
   return new Date().toISOString()
 }
 
-export function isExpired(approval: ApprovalRecord): boolean {
+function isExpiredAt(approval: ApprovalRecord, nowMs: number): boolean {
   const expiresAt = Date.parse(approval.expiresAt)
-  return !Number.isFinite(expiresAt) || expiresAt <= Date.now()
+  return !Number.isFinite(expiresAt) || expiresAt <= nowMs
 }
 
-export function isExecutionLeaseExpired(approval: ApprovalRecord): boolean {
+export function isExpired(approval: ApprovalRecord): boolean {
+  return isExpiredAt(approval, Date.now())
+}
+
+function isExecutionLeaseExpiredAt(approval: ApprovalRecord, nowMs: number): boolean {
   if (!approval.executionLeaseExpiresAt) {
     return false
   }
   const expiresAt = Date.parse(approval.executionLeaseExpiresAt)
-  return !Number.isFinite(expiresAt) || expiresAt <= Date.now()
+  return !Number.isFinite(expiresAt) || expiresAt <= nowMs
+}
+
+export function isExecutionLeaseExpired(approval: ApprovalRecord): boolean {
+  return isExecutionLeaseExpiredAt(approval, Date.now())
 }
 
 export function compactApprovals(state: ApprovalStateFile): ApprovalStateFile {
+  return compactApprovalsAt(state, Date.now())
+}
+
+export function compactApprovalsAt(
+  state: ApprovalStateFile,
+  nowMs: number,
+): ApprovalStateFile {
   const compacted: ApprovalStateFile = {
     version: state.version,
     approvals: state.approvals.filter(
-      (approval) => !isExpired(approval) && !isExecutionLeaseExpired(approval),
+      (approval) =>
+        !isExpiredAt(approval, nowMs) && !isExecutionLeaseExpiredAt(approval, nowMs),
     ),
   }
   if (state.revision !== undefined) {
