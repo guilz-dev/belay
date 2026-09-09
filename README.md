@@ -441,8 +441,10 @@ belay judge consent <provider-id> [--endpoint <url>]
 
 ### Review harvest evidence
 
-By default, harvest selects only the active runtime/config/boundary cohort. List its unreviewed
-shell candidates, or include prior exact `(fingerprint, kind, boundaryProfile)` reviews, with:
+By default, harvest selects only the active runtime/config/boundary cohort and lists its unreviewed
+shell candidates. On `harvest list`, `--include-reviewed` also includes candidates that already
+have a review under their exact `(fingerprint, kind, boundaryProfile)` key; it does not list review
+ledger records or outcomes.
 
 ```bash
 belay harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--include-reviewed] [--json]

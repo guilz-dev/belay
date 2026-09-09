@@ -11,7 +11,7 @@ Completion record:
 - `2231ad1` implements retained-evidence readiness reconstruction (P0).
 - `6bed57e` binds harvest reviews to their source boundaries.
 - `208b6ba` safely recovers locks left by crashed audit writers.
-- P1 is completed by the release-ordering update that retains this historical problem statement.
+- `cc0b031` (`docs: complete recent review remediation`) implements the P1 release-ordering update.
 
 ## P0: Seed repaired readiness state from retained audit evidence — completed in `2231ad1`
 
