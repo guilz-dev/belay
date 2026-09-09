@@ -149,6 +149,53 @@ describe('linked-worktree-config', () => {
     expect(warnings).toEqual([])
   })
 
+  it('inherits repo config for a prunable linked worktree when gitCwd points at an existing checkout', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-prunable-inherit-'))
+    const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-prunable-linked-'))
+    const linkedWorktree = path.join(linkedParent, 'linked-worktree')
+    tempDirs.push(repoRoot, linkedParent)
+    await initProject({ targetDir: repoRoot })
+    await dogfoodProject({ targetDir: repoRoot })
+    await initGitRepo(repoRoot)
+    await addLinkedWorktree(repoRoot, linkedWorktree)
+    await rm(linkedWorktree, { recursive: true, force: true })
+
+    const gitOptions = { gitCwd: repoRoot }
+    const resolution = await resolveRepoConfig(linkedWorktree, 'cursor', gitOptions)
+    expect(resolution.inherited).toBe(true)
+    expect(realpathSync(resolution.configSourceRoot)).toBe(realpathSync(repoRoot))
+
+    const layered = await loadLayeredConfig(linkedWorktree, 'cursor', gitOptions)
+    expect(layered.config.mode).toBe('audit')
+    expect(layered.provenance.some((entry) => entry.source === 'inherited')).toBe(true)
+
+    const warnings = await detectUndogfoodedLinkedWorktrees({
+      repoRoot,
+      adapterName: 'cursor',
+      layout: getAdapterLayout('cursor'),
+    })
+    expect(
+      warnings.some((warning) =>
+        warning.includes('has no belay.config.json and no inheritable sibling config was found'),
+      ),
+    ).toBe(false)
+  })
+
+  it('does not inherit repo config for a missing checkout without gitCwd', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-prunable-fail-closed-'))
+    const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-prunable-fail-closed-linked-'))
+    const linkedWorktree = path.join(linkedParent, 'linked-worktree')
+    tempDirs.push(repoRoot, linkedParent)
+    await initProject({ targetDir: repoRoot, dogfood: true })
+    await initGitRepo(repoRoot)
+    await addLinkedWorktree(repoRoot, linkedWorktree)
+    await rm(linkedWorktree, { recursive: true, force: true })
+
+    const resolution = await resolveRepoConfig(linkedWorktree, 'cursor')
+    expect(resolution.inherited).toBe(false)
+    expect(resolution.configSourceRoot).toBe(linkedWorktree)
+  })
+
   it('reports inherited config in doctor without a missing-config issue', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-inherited-config-'))
     const linkedParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-inherited-linked-'))

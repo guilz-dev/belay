@@ -53,8 +53,9 @@ export async function detectUndogfoodedLinkedWorktrees(params: {
 
     const worktreeLabel = path.basename(worktreePath)
     try {
-      const resolution = await resolveRepoConfig(worktreePath, params.adapterName)
-      const layered = await loadLayeredConfig(worktreePath, params.adapterName)
+      const gitOptions = { gitCwd: params.repoRoot }
+      const resolution = await resolveRepoConfig(worktreePath, params.adapterName, gitOptions)
+      const layered = await loadLayeredConfig(worktreePath, params.adapterName, gitOptions)
       if (effectiveDogfoodEnabled(layered.config)) {
         continue
       }

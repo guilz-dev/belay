@@ -778,6 +778,45 @@ describe('doctorProject', () => {
     ).toBe(false)
   })
 
+  it('does not warn for prunable linked worktrees that inherit primary dogfood config', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-prunable-inherit-'))
+    const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-prunable-linked-'))
+    const linkedWorktree = path.join(worktreeParent, 'linked-worktree')
+    tempDirs.push(repoRoot, worktreeParent)
+    await initProject({ targetDir: repoRoot })
+    await dogfoodProject({ targetDir: repoRoot })
+    await writeFile(path.join(repoRoot, 'README.md'), '# root\n')
+    await execFileAsync('git', ['init', '--quiet'], { cwd: repoRoot })
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot })
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.name=belay-test',
+        '-c',
+        'user.email=belay-test@example.com',
+        'commit',
+        '-m',
+        'init',
+      ],
+      { cwd: repoRoot },
+    )
+    await execFileAsync('git', ['worktree', 'add', linkedWorktree, '-b', 'linked-prunable-inherit'], {
+      cwd: repoRoot,
+    })
+    await rm(linkedWorktree, { recursive: true, force: true })
+
+    const report = await doctorProject({ targetDir: repoRoot })
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.includes('Dogfood is active here but') &&
+          warning.includes('has no belay.config.json and no inheritable sibling config was found'),
+      ),
+    ).toBe(false)
+  })
+
   it('warns when linked worktrees override inherited config with enforce mode', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-dogfood-missing-config-'))
     const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-linked-missing-'))

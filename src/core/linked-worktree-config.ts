@@ -8,6 +8,10 @@ import type { AdapterName } from '../types.js'
 
 const execFileAsync = promisify(execFile)
 
+export interface LinkedWorktreeGitOptions {
+  gitCwd?: string
+}
+
 function canonicalWorktreePath(value: string): string {
   try {
     return realpathSync.native(value)
@@ -16,10 +20,17 @@ function canonicalWorktreePath(value: string): string {
   }
 }
 
-export async function listLinkedWorktreePaths(repoRoot: string): Promise<string[]> {
+export async function listLinkedWorktreePaths(
+  repoRoot: string,
+  options?: LinkedWorktreeGitOptions,
+): Promise<string[]> {
+  const cwd = options?.gitCwd ?? repoRoot
+  if (!existsSync(cwd)) {
+    return []
+  }
   try {
     const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], {
-      cwd: repoRoot,
+      cwd,
       encoding: 'utf8',
     })
     return stdout
@@ -92,8 +103,11 @@ export function readRepoConfigFile(configPath: string): RepoConfigFileReadResult
 export async function findInheritedRepoConfig(
   repoRoot: string,
   adapter: AdapterName,
+  options?: LinkedWorktreeGitOptions,
 ): Promise<{ sourceRoot: string; configPath: string; repoConfig: unknown } | null> {
-  const worktrees = await listLinkedWorktreePaths(repoRoot)
+  const worktrees = await listLinkedWorktreePaths(repoRoot, {
+    gitCwd: options?.gitCwd ?? repoRoot,
+  })
   if (worktrees.length === 0) {
     return null
   }
@@ -116,6 +130,7 @@ export async function findInheritedRepoConfig(
 export async function resolveRepoConfig(
   repoRoot: string,
   adapter: AdapterName = 'cursor',
+  options?: LinkedWorktreeGitOptions,
 ): Promise<RepoConfigResolution> {
   const layout = getAdapterLayout(adapter)
   const configPath = layout.configPath(repoRoot)
@@ -132,7 +147,7 @@ export async function resolveRepoConfig(
     throw new RepoConfigReadError(configPath)
   }
 
-  const inherited = await findInheritedRepoConfig(repoRoot, adapter)
+  const inherited = await findInheritedRepoConfig(repoRoot, adapter, options)
   if (inherited) {
     return {
       repoConfig: inherited.repoConfig,
