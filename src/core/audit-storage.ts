@@ -22,6 +22,7 @@ import {
   auditRecordMatchesCohort,
   buildAuditReadinessState,
   isValidAuditReadinessTimestamp,
+  isValidDecisionCohortIdentity,
   parseAuditReadinessState,
   type RetainedAvailabilityEvidence,
   readinessStateMatchesCohort,
@@ -1035,7 +1036,20 @@ async function reconstructRetainedAvailabilityEvidence(
         break
       }
       const record = next.value
-      if (!auditRecordMatchesCohort(record, update.cohort) || !isAvailabilityCausedAsk(record)) {
+      if (!isAvailabilityCausedAsk(record)) {
+        continue
+      }
+      const hasV3CohortEvidence =
+        record.schemaVersion === 3 ||
+        record.runtimeArtifactHash !== undefined ||
+        record.decisionConfigFingerprint !== undefined ||
+        record.boundaryProfile !== undefined
+      if (hasV3CohortEvidence && !isValidDecisionCohortIdentity(record)) {
+        throw new Error(
+          'Malformed retained audit cohort identity prevents readiness reconstruction',
+        )
+      }
+      if (!auditRecordMatchesCohort(record, update.cohort)) {
         continue
       }
       if (!isValidAuditReadinessTimestamp(record.timestamp)) {

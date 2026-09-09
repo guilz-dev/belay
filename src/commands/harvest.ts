@@ -35,7 +35,7 @@ export interface HarvestListOptions {
   json?: boolean
   /** Explicit forensic mode; mixed history must never be bulk-promoted. */
   allCohorts?: boolean
-  /** Include candidates already reviewed at the active boundary. */
+  /** Include candidates already reviewed under the exact boundary-qualified review key. */
   includeReviewed?: boolean
 }
 
@@ -194,8 +194,12 @@ export function formatHarvestReport(report: HarvestReport): string {
     lines.push('- (none)')
   } else {
     for (const candidate of report.candidates) {
+      const boundaryProfile =
+        candidate.boundaryProfile === null
+          ? 'legacy/unknown (null)'
+          : JSON.stringify(candidate.boundaryProfile)
       lines.push(
-        `- ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}…`,
+        `- ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}… boundary=${boundaryProfile}`,
       )
     }
   }
@@ -216,7 +220,7 @@ export function formatHarvestReport(report: HarvestReport): string {
     ...report.notes,
     'Candidates are review-only signals — approve in audit does not auto-promote to corpus.',
     'Time filters (--since/--until) keep paired deny/approval rows for round-trip detection.',
-    'Use --include-reviewed to display candidates already reviewed at the active boundary.',
+    'Use --include-reviewed to display candidates already reviewed under the exact (fingerprint, kind, boundaryProfile) review key.',
     'Use: belay harvest apply --command "<text>" --outcome provably-benign|accepted-benign|must-ask|reject',
   )
   return lines.join('\n')

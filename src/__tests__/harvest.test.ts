@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { formatCliHelp, parseArgs } from '../cli.js'
 import {
+  formatHarvestReport,
   harvestApplyProject,
   harvestListProject,
   harvestReportFromNdjson,
@@ -152,6 +153,12 @@ describe('harvest', () => {
         }),
       ]),
     )
+
+    const text = formatHarvestReport(report)
+    expect(text).toContain('boundary="l3-l4-only"')
+    expect(text).toContain('boundary="l1-attested-boundary"')
+    expect(text).toContain('(fingerprint, kind, boundaryProfile)')
+    expect(text).not.toContain('reviewed at the active boundary')
   })
 
   it('fails closed without selectors when the same command spans two review keys', async () => {
@@ -281,6 +288,7 @@ describe('harvest', () => {
     expect(report.candidates).toEqual([
       expect.objectContaining({ fingerprint, boundaryProfile: null }),
     ])
+    expect(formatHarvestReport(report)).toContain('boundary=legacy/unknown (null)')
     expect(result.ok).toBe(false)
     expect(result.message).toMatch(/boundary profile.*unavailable/i)
     expect(await readFile(corpusPath, 'utf8')).toBe('[]\n')

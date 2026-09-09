@@ -8,12 +8,12 @@ release workflow that depended on cross-repository dogfood evidence.
 
 Completion record:
 
-- `2231ad1` implements retained-evidence readiness reconstruction (P0).
-- `6bed57e` binds harvest reviews to their source boundaries.
-- `208b6ba` safely recovers locks left by crashed audit writers.
-- `cc0b031` (`docs: complete recent review remediation`) implements the P1 release-ordering update.
+- `010acb1` implements retained-evidence readiness reconstruction (P0).
+- `1155137` binds harvest reviews to their source boundaries.
+- `a5e5914` safely recovers locks left by crashed audit writers.
+- `c5769c5` (`docs: complete recent review remediation`) implements the P1 release-ordering update.
 
-## P0: Seed repaired readiness state from retained audit evidence — completed in `2231ad1`
+## P0: Seed repaired readiness state from retained audit evidence — completed in `010acb1`
 
 Original problem statement (historical):
 
@@ -79,8 +79,8 @@ handled in later focused changes:
 6. Define fail-closed behavior for unknown future snapshot schemas.
 7. Prefer explicit telemetry cwd evidence in the Claude adapter when multiple cwd sources exist.
 8. Recheck lock-file ownership after open/stat failures so orphan cleanup cannot race. Completed in
-   `208b6ba` with inode-bound recovery claims and owner-token verification.
-9. Keep lock acquisition timeout behavior within the documented deadline. Completed in `208b6ba`;
+   `a5e5914` with inode-bound recovery claims and owner-token verification.
+9. Keep lock acquisition timeout behavior within the documented deadline. Completed in `a5e5914`;
    the 2,000 ms deadline remains authoritative.
 10. Escape remaining C1 control characters in raw session identifiers used by diagnostics.
 

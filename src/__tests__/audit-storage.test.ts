@@ -819,6 +819,92 @@ describe('retained audit reads', () => {
     await expectMissing(`${auditPath}.readiness.json`)
   })
 
+  it.each([
+    {
+      name: 'missing decision config fingerprint',
+      cohortFields: {
+        runtimeArtifactHash: 'a'.repeat(64),
+        boundaryProfile: 'l3-l4-only',
+      },
+    },
+    {
+      name: 'invalid decision config fingerprint',
+      cohortFields: {
+        runtimeArtifactHash: 'a'.repeat(64),
+        decisionConfigFingerprint: 'not-a-fingerprint',
+        boundaryProfile: 'l3-l4-only',
+      },
+    },
+    {
+      name: 'missing boundary profile',
+      cohortFields: {
+        runtimeArtifactHash: 'a'.repeat(64),
+        decisionConfigFingerprint: 'b'.repeat(64),
+      },
+    },
+    {
+      name: 'invalid runtime artifact hash',
+      cohortFields: {
+        runtimeArtifactHash: 'not-a-fingerprint',
+        decisionConfigFingerprint: 'b'.repeat(64),
+        boundaryProfile: 'l3-l4-only',
+      },
+    },
+  ])('rejects a v3 availability ask with $name without mutating storage', async ({
+    cohortFields,
+  }) => {
+    const auditPath = await createAuditPath('belay-audit-storage-readiness-invalid-cohort-')
+    const cohort = {
+      runtimeArtifactHash: 'a'.repeat(64),
+      decisionConfigFingerprint: 'b'.repeat(64),
+      boundaryProfile: 'l3-l4-only',
+    }
+    const retainedBefore = `${JSON.stringify({
+      schemaVersion: 3,
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      reason: 'missing_trusted_cwd',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      ...cohortFields,
+    })}\n`
+    const activeBefore = `${JSON.stringify({ schemaVersion: 3, event: 'diagnostic' })}\n`
+    await writeFile(`${auditPath}.1`, retainedBefore, 'utf8')
+    await writeFile(auditPath, activeBefore, 'utf8')
+
+    await expect(
+      appendBoundedAuditLine({
+        auditPath,
+        line: JSON.stringify({
+          schemaVersion: 3,
+          event: 'beforeShellExecution',
+          kind: 'shell',
+          verdict: 'allow',
+          wouldBlock: false,
+          reason: 'read_only',
+          timestamp: '2026-09-08T01:00:00.000Z',
+          ...cohort,
+        }),
+        maxBytes: 1,
+        maxFiles: 2,
+        readinessUpdate: {
+          cohort,
+          availabilityCausedAsk: false,
+          timestamp: '2026-09-08T01:00:00.000Z',
+        },
+      }),
+    ).rejects.toThrow(/malformed retained audit cohort identity/i)
+
+    expect(await readFile(`${auditPath}.1`, 'utf8')).toBe(retainedBefore)
+    expect(await readFile(auditPath, 'utf8')).toBe(activeBefore)
+    await expectMissing(`${auditPath}.readiness.json`)
+    expect((await readdir(path.dirname(auditPath))).sort()).toEqual([
+      'audit.ndjson',
+      'audit.ndjson.1',
+    ])
+  })
+
   it('keeps a minimal availability watermark until the decision cohort changes', async () => {
     const auditPath = await createAuditPath('belay-audit-storage-readiness-watermark-')
     const cohortA = {

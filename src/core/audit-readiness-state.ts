@@ -46,12 +46,23 @@ export function isValidAuditReadinessTimestamp(timestamp: unknown): timestamp is
   return typeof timestamp === 'string' && ISO8601_PATTERN.test(timestamp)
 }
 
+export function isValidDecisionCohortIdentity(
+  cohort: Partial<Record<keyof DecisionCohortIdentity, unknown>>,
+): cohort is DecisionCohortIdentity {
+  return (
+    typeof cohort.runtimeArtifactHash === 'string' &&
+    HEX64_PATTERN.test(cohort.runtimeArtifactHash) &&
+    typeof cohort.decisionConfigFingerprint === 'string' &&
+    HEX64_PATTERN.test(cohort.decisionConfigFingerprint) &&
+    typeof cohort.boundaryProfile === 'string' &&
+    cohort.boundaryProfile.length > 0 &&
+    Buffer.byteLength(cohort.boundaryProfile, 'utf8') <= 1_024
+  )
+}
+
 export function validAuditReadinessUpdate(update: AuditReadinessUpdate): boolean {
   return (
-    HEX64_PATTERN.test(update.cohort.runtimeArtifactHash) &&
-    HEX64_PATTERN.test(update.cohort.decisionConfigFingerprint) &&
-    update.cohort.boundaryProfile.length > 0 &&
-    Buffer.byteLength(update.cohort.boundaryProfile, 'utf8') <= 1_024 &&
+    isValidDecisionCohortIdentity(update.cohort) &&
     typeof update.availabilityCausedAsk === 'boolean' &&
     isValidAuditReadinessTimestamp(update.timestamp)
   )
