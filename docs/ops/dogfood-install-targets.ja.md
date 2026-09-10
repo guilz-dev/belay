@@ -13,16 +13,18 @@ Belay を **dogfood モード**（`mode: audit` + `policy.unknownLocalEffect: de
 | 確認 | `belay doctor` が `Dogfood: active` を示すこと |
 | enforce 移行 | 各リポの **active cohort** が readiness を満たすまで不可（[監査 remediation §1](../dogfood-audit-remediation-2026-08-22.ja.md)） |
 
-## アクティブ導入先（2026-08-22 時点）
+## アクティブ導入先（2026-09-10 時点）
 
 | GitHub | ローカルパス（maintainer 端末） | adapter | 役割 |
 | --- | --- | --- | --- |
 | [guilz-dev/belay](https://github.com/guilz-dev/belay) | `/Users/kaz/product/guilz/belay` | cursor | 製品本体。リリース検証 |
 | [DriveX-Co/scheduling-editor](https://github.com/DriveX-Co/scheduling-editor) | `/Users/kaz/product/drivex/scheduling-editor` | cursor | 実分布 dogfood の主戦場 |
+| [guilz-dev/guilz-trace](https://github.com/guilz-dev/guilz-trace) | `/Users/kaz/product/guilz/guilz-trace` | cursor | 副次 dogfood。trace ツール |
+| [kaz-toc/r3-doctor](https://github.com/kaz-toc/r3-doctor) | `/Users/kaz/product/zoe/r3-doctor` | cursor | 副次 dogfood |
 | [guilz-dev/pr-tour](https://github.com/guilz-dev/pr-tour) | `/Users/kaz/product/zoe/pr-tour` | cursor | 副次 dogfood |
 | [agency-star/freelance.modis.co.jp](https://github.com/agency-star/freelance.modis.co.jp) | `/Users/kaz/modis/freelance.base/repos/freelance.modis.co.jp` | cursor | 副次 dogfood |
 
-**最終 upgrade:** `@guilz-dev/belay@0.9.1`（2026-08-22）
+**最終 upgrade:** `@guilz-dev/belay@0.12.0`（2026-09-10、対象ごとに release PR へ記録）
 
 以下で説明する remediation runtime は、まだ release も各対象への install も行っていない。
 release、他リポジトリの upgrade、新 cohort の収集、限定 enforce trial は、いずれも operator
@@ -150,6 +152,18 @@ direct command を別々の action として実行する。次の例は version 
 
 ```bash
 npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/drivex/scheduling-editor --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/guilz/guilz-trace`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/guilz/guilz-trace --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/zoe/r3-doctor`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/zoe/r3-doctor --since <literal-cutoff-iso> --json
 ```
 
 `working_directory: /Users/kaz/product/zoe/pr-tour`
