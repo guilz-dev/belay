@@ -6,12 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.12.0 — 2026-09-10
+
+### Changed
+
+- **One-shot approval lifecycle** — Gate runtime, CLI approval flows, and grant leasing now route
+  through a shared lifecycle module with deterministic compaction and explicit claim transitions.
+  Approval identity is preserved across recording so pending and approved records stay correlated.
+
 ### Fixed
 
 - **Bounded audit follow-up** — Compact audit summaries omit command, pattern, prompt, and raw tool
   identifiers; action snapshots preserve path-only mutation and Cursor subagent-type evidence;
   observed cwd values are repository-relative; and doctor reports storage diagnostics even when
   legacy retention is disabled.
+- **Audit readiness seeding** — Missing or repaired cohort watermarks are seeded from the exact
+  retained generation snapshot under the audit writer lock instead of silently defaulting to zero.
+- **Crashed audit writer recovery** — Stale writer locks from interrupted processes are reclaimed
+  safely so rotation and readiness evaluation can resume.
+- **Harvest review boundaries** — Review ledger entries bind to source boundaries so cross-cohort
+  candidates cannot pollute enforce readiness counts.
+- **Prunable linked worktree inheritance** — Linked checkouts whose evaluated path is prunable now
+  inherit repository policy from an existing sibling checkout when `gitCwd` resolves to one.
 
 ## 0.11.1 — 2026-09-09
 
