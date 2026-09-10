@@ -6,16 +6,18 @@ Repositories where Belay runs in **dogfood mode** (`mode: audit` +
 
 Maintainer notes (local paths, Japanese): [dogfood-install-targets.ja.md](./dogfood-install-targets.ja.md)
 
-## Active targets (2026-08-22)
+## Active targets (2026-09-10)
 
 | GitHub | Role |
 | --- | --- |
 | [guilz-dev/belay](https://github.com/guilz-dev/belay) | Product repo; release verification |
 | [DriveX-Co/scheduling-editor](https://github.com/DriveX-Co/scheduling-editor) | Primary real-distribution dogfood |
+| [guilz-dev/guilz-trace](https://github.com/guilz-dev/guilz-trace) | Secondary dogfood; trace tooling |
+| [kaz-toc/r3-doctor](https://github.com/kaz-toc/r3-doctor) | Secondary dogfood |
 | [guilz-dev/pr-tour](https://github.com/guilz-dev/pr-tour) | Secondary dogfood |
 | [agency-star/freelance.modis.co.jp](https://github.com/agency-star/freelance.modis.co.jp) | Secondary dogfood |
 
-Last upgraded to `@guilz-dev/belay@0.9.1` on 2026-08-22.
+Last upgraded to `@guilz-dev/belay@0.12.0` on 2026-09-10 (partial; see per-target notes in release PRs).
 
 The remediation runtime described below has not been released or installed on these targets yet.
 Its release, cross-repository upgrades, new-cohort collection, and limited enforce trial remain
@@ -161,6 +163,18 @@ package; do not combine them in a loop:
 
 ```bash
 npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/drivex/scheduling-editor --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/guilz/guilz-trace`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/guilz/guilz-trace --since <literal-cutoff-iso> --json
+```
+
+`working_directory: /Users/kaz/product/zoe/r3-doctor`
+
+```bash
+npx -y @guilz-dev/belay@<version> dogfood --check --target /Users/kaz/product/zoe/r3-doctor --since <literal-cutoff-iso> --json
 ```
 
 `working_directory: /Users/kaz/product/zoe/pr-tour`
