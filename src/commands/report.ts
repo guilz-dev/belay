@@ -7,14 +7,18 @@ import {
   summarizeAuditVisibility,
 } from '../core/audit-summary.js'
 import type { AuditFilter } from '../core/audit-types.js'
+import { resolveActiveAuditLogPath } from '../core/audit-version-path.js'
 import type { AuditVisibilityReport, ReportOptions } from '../types.js'
 import { loadAuditRecords } from './audit.js'
 
 export async function reportProject(options: ReportOptions = {}): Promise<AuditVisibilityReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const auditLogPath = path.join(repoRoot, config.audit.logPath)
-  const records = await loadAuditRecords(repoRoot)
+  const auditLogPath = await resolveActiveAuditLogPath(repoRoot, config)
+  const records = await loadAuditRecords(repoRoot, {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
+  })
 
   const filter: AuditFilter = {
     since: options.since,

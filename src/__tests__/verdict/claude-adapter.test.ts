@@ -2,12 +2,11 @@ import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { describe, expect, it } from 'vitest'
-
 import { claudeAdapter } from '../../adapters/claude/adapter.js'
 import { gateVerdictToClaudeUserPromptResponse } from '../../adapters/shared/gate-runtime.js'
 import { loadConfigFile, pendingApprovalsPath } from '../../config-io.js'
+import { testAuditLogPath } from '../helpers/audit-test-path.js'
 
 async function runClaudeRunner(
   repoRoot: string,
@@ -107,7 +106,7 @@ describe('claude adapter', () => {
       const config = await loadConfigFile(repoRoot, 'claude')
       const auditPath = path.isAbsolute(config.audit.logPath)
         ? config.audit.logPath
-        : path.join(repoRoot, config.audit.logPath)
+        : testAuditLogPath(repoRoot, config.audit.logPath)
       const auditLines = (await readFile(auditPath, 'utf8')).trim().split('\n')
       const auditRecord = JSON.parse(auditLines.at(-1) ?? '{}')
       expect(auditRecord).toMatchObject({

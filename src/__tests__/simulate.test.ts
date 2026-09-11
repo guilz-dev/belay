@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { simulateProject } from '../commands/simulate.js'
 import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -19,7 +20,7 @@ describe('simulate', () => {
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
 
-    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const auditPath = testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson')
     await mkdir(path.dirname(auditPath), { recursive: true })
     await writeFile(
       auditPath,
@@ -65,7 +66,7 @@ describe('simulate', () => {
       audit: { ...initialConfig.audit, maxBytes: 64, maxFiles: 2 },
     })
 
-    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const auditPath = testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson')
     const baseRecord = {
       event: 'beforeShellExecution',
       kind: 'shell',

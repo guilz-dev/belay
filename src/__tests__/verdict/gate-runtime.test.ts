@@ -12,6 +12,7 @@ import { buildShellEffectPlan } from '../../core/effect-ir/index.js'
 import * as gateEngine from '../../core/gate-engine.js'
 import { standingAllowFile } from '../../core/standing-allow.js'
 import { PACKAGE_VERSION } from '../../version.js'
+import { testAuditLogPath } from '../helpers/audit-test-path.js'
 
 describe('gate-runtime integration', () => {
   afterEach(() => {
@@ -68,7 +69,7 @@ describe('gate-runtime integration', () => {
       command: 'git status',
     })
 
-    const auditPath = path.join(repoRoot, enforceConfig.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, enforceConfig.audit.logPath)
     const [record] = (await readFile(auditPath, 'utf8'))
       .trim()
       .split('\n')

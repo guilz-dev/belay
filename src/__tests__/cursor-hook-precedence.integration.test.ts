@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
 import { loadConfigFile } from '../config-io.js'
 import { repoConfigTrustPath } from '../core/repo-config-trust.js'
 import { initProject, upgradeProject } from '../installer.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
@@ -77,7 +77,7 @@ async function prependCoreMarker(runtimeDir: string, source: string): Promise<vo
 
 async function auditRecords(repoRoot: string): Promise<Array<Record<string, unknown>>> {
   const config = await loadConfigFile(repoRoot)
-  const raw = await readFile(path.join(repoRoot, config.audit.logPath), 'utf8')
+  const raw = await readFile(testAuditLogPath(repoRoot, config.audit.logPath), 'utf8')
   return raw
     .split('\n')
     .filter(Boolean)

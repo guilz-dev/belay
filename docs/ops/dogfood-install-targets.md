@@ -133,11 +133,13 @@ specific recorded review error is documented first.
 ### Retained audit generations
 
 The defaults are `audit.maxBytes: 33554432` (32 MiB) and `audit.maxFiles: 5`, including the active
-`audit.ndjson`. Numbered files are `.1` newest through `.4` oldest; readers stream the exact
-retained set from oldest to active. Rotation is serialized by the audit lock. Metrics and doctor
-report files/bytes read, parsed records, and skipped malformed or oversized lines; preserve those
-counts with the readiness evidence and investigate nonzero skipped-line counts. Numbered rotation
-never removes `audit.ndjson.legacy-*.ndjson` archives.
+`v{semver}.log` for the installed runtime version. Numbered files are `.1` newest through `.4`
+oldest per version file; default readers stream the exact retained set for the active version from
+oldest to active. Rotation is serialized by the audit lock. Metrics and doctor report
+files/bytes read, parsed records, and skipped malformed or oversized lines; preserve those counts
+with the readiness evidence and investigate nonzero skipped-line counts. Numbered rotation never
+removes `audit.ndjson.legacy-*.ndjson` archives. Older release logs remain on disk but are excluded
+from default metrics unless you pass `--audit-version` or `--all-versions` (forensic only).
 
 ## Release-window blocking check
 

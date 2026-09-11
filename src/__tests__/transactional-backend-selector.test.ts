@@ -17,6 +17,7 @@ import {
   probeTransactionalBackends,
   selectTransactionalBackend,
 } from '../core/transactional/backend-selector.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -298,7 +299,7 @@ describe('transactional backend selector', () => {
   it('treats belay init artifacts as clean when dirtyIgnoreRoots is provided', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
-    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), '')
     await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
 
     const selection = await selectTransactionalBackend(

@@ -3,7 +3,6 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/pro
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadAuditRecords } from '../commands/audit.js'
 import { doctorProject } from '../commands/doctor.js'
@@ -18,6 +17,7 @@ import { canonicalStringify, hashValue } from '../core/fingerprint.js'
 import { initProject } from '../installer.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 const execFileAsync = promisify(execFile)
@@ -79,7 +79,7 @@ function isoMinutesAgo(minutes: number): string {
 
 async function writeAuditLines(repoRoot: string, lines: string): Promise<void> {
   const config = await loadConfigFile(repoRoot)
-  await writeFile(path.join(repoRoot, config.audit.logPath), lines)
+  await writeFile(testAuditLogPath(repoRoot, config.audit.logPath), lines)
 }
 
 async function seedPassingCorpus(repoRoot: string): Promise<void> {
@@ -146,7 +146,7 @@ async function seedDogfoodEnforceReady(repoRoot: string): Promise<void> {
     sessionCorrelationId: REVIEWED_SESSION_IDS[index % REVIEWED_SESSION_IDS.length],
     ...cohort,
   }))
-  const auditPath = path.join(repoRoot, persistedConfig.audit.logPath)
+  const auditPath = testAuditLogPath(repoRoot, persistedConfig.audit.logPath)
   await writeFile(
     auditPath,
     `${records
@@ -257,7 +257,10 @@ describe('dogfood command', () => {
 
     const config = await loadConfigFile(repoRoot)
     await writeFile(
-      path.join(path.dirname(path.join(repoRoot, config.audit.logPath)), 'harvest-reviews.json'),
+      path.join(
+        path.dirname(testAuditLogPath(repoRoot, config.audit.logPath)),
+        'harvest-reviews.json',
+      ),
       '{"version":1,"reviews":[]}\n',
     )
 
@@ -323,7 +326,7 @@ describe('dogfood command', () => {
       `${JSON.stringify(config, null, 2)}\n`,
     )
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       auditAllowLine({
         runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
         configFingerprint: hashValue(canonicalStringify(config)),
@@ -389,7 +392,7 @@ describe('dogfood command', () => {
     await seedDogfoodEnforceReady(repoRoot)
     const config = await loadConfigFile(repoRoot)
     await appendFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       auditWouldBlockLine({
         runtimeBuildStamp: '0.7.0@2026-08-11T23:28:49.254Z',
         configFingerprint: 'old-config-fingerprint',
@@ -499,11 +502,11 @@ describe('dogfood release check', () => {
     const cursorConfig = await loadConfigFile(repoRoot, 'cursor')
     const claudeConfig = await loadConfigFile(repoRoot, 'claude')
     await writeFile(
-      path.join(repoRoot, cursorConfig.audit.logPath),
+      testAuditLogPath(repoRoot, cursorConfig.audit.logPath),
       auditRecordLine({ timestamp: new Date().toISOString(), event: 'cursor-only' }),
     )
     await writeFile(
-      path.join(repoRoot, claudeConfig.audit.logPath),
+      testAuditLogPath(repoRoot, claudeConfig.audit.logPath),
       auditRecordLine({ timestamp: new Date().toISOString(), event: 'claude-only' }),
     )
 

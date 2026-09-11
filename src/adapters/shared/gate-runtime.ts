@@ -34,6 +34,7 @@ import {
   toolInvocationCorrelationId,
 } from '../../core/audit-serialize.js'
 import type { CompactHostTelemetryV1 } from '../../core/audit-types.js'
+import { resolveVersionedAuditLogPath } from '../../core/audit-version-path.js'
 import { boundedUtf8Tail } from '../../core/bounded-output.js'
 import { mutateApprovalStateWithRetry } from '../../core/capability/approval-state-mutation.js'
 import { readSignedAttestationFile } from '../../core/capability/boundary-attestation-sign.js'
@@ -316,10 +317,12 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       }
     },
     async appendAudit(ctx, event) {
-      const auditPath = path.isAbsolute(ctx.config.audit.logPath)
-        ? ctx.config.audit.logPath
-        : path.join(ctx.repoRoot, ctx.config.audit.logPath)
       const provenance = auditProvenance(ctx.config)
+      const auditPath = resolveVersionedAuditLogPath(
+        ctx.repoRoot,
+        ctx.config.audit.logPath,
+        provenance.runtimeVersion,
+      )
       const record: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
         mode: ctx.config.mode,

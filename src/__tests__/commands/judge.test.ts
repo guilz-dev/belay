@@ -2,10 +2,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-
 import { judgeBench, judgeList, judgeStatus, judgeUse } from '../../commands/judge.js'
 import { loadConfigFile } from '../../config-io.js'
 import { initProject } from '../../installer.js'
+import { testAuditLogPath } from '../helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -133,7 +133,7 @@ describe('belay judge command', () => {
       model: 'gemma4:e2b',
     })
     const config = await loadConfigFile(repoRoot)
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     const audit = await readFile(auditPath, 'utf8')
     expect(audit).toContain('judge_provider_changed')
   })

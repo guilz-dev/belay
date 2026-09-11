@@ -3,12 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
-
 import { handleToolGateHook } from '../adapters/cursor/runtime-entry.js'
 import { loadConfigFile, writeTrustedConfigFile } from '../config-io.js'
 import { mergeConfig } from '../core/config.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { initProject } from '../installer.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -97,7 +97,7 @@ describe('adapter unmapped tool invariants', () => {
       }),
     ).resolves.toMatchObject({ permission: 'allow' })
 
-    const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const audit = await readFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), 'utf8')
     expect(audit).toContain('"kind":"tool"')
     expect(audit).not.toContain('"reason":"unmapped_tool"')
   })
@@ -118,7 +118,7 @@ describe('adapter unmapped tool invariants', () => {
       }),
     ).resolves.toMatchObject({ permission: 'allow' })
 
-    const audit = await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+    const audit = await readFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), 'utf8')
     expect(audit).toContain('"kind":"tool"')
     expect(audit).toContain('"mode":"audit"')
     expect(audit).toContain('"reason":"indeterminate_tool_effect"')

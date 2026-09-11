@@ -231,6 +231,7 @@ export interface StatusReport {
   dogfood: DogfoodStatus
   health: HealthSnapshot
   visibility: AuditVisibilityReport
+  versionedAuditLogs?: string[]
   auditStorage?: {
     activeBytes: number
     totalBytes: number
@@ -257,6 +258,8 @@ export interface ReportOptions {
   until?: string
   limit?: number
   json?: boolean
+  auditVersion?: string
+  allVersions?: boolean
 }
 
 export interface AuditVisibilityReport {

@@ -148,6 +148,10 @@ authorization model. It complements
     reclaimed, through an inode-bound hard-link claim followed by identity, token, and liveness
     rechecks. Live, inaccessible, malformed, symlinked, identity-changing, and otherwise
     unverifiable owners are never removed; acquisition instead ends at the fixed 2,000 ms deadline.
+19. **Audit log versioning is release-scoped**: gate audit writers append to a release-scoped log
+    file (`v{semver}.log`) under the configured audit directory. Default readers scope to the
+    installed runtime version; mixed-version aggregation is forensic-only and must not drive enforce
+    readiness. Legacy flat `audit.ndjson` is not in the default read scope.
 
 ## Policy precedence
 

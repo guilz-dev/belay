@@ -3,9 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promise
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-
 import { afterEach, describe, expect, it } from 'vitest'
-
 import {
   formatQualityReport,
   qualityCheck,
@@ -16,6 +14,7 @@ import { appendAuditRecord } from '../core/audit-serialize.js'
 import { DEFAULT_REDACTION_V3 } from '../core/config.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -34,7 +33,7 @@ async function seedReviewedTraffic(repoRoot: string, count = 150): Promise<void>
   if (!cohort) {
     throw new Error('fixture active cohort unavailable')
   }
-  const auditPath = path.join(repoRoot, config.audit.logPath)
+  const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
   await mkdir(path.dirname(auditPath), { recursive: true })
   const records = Array.from({ length: count }, (_, index) => ({
     timestamp: new Date(1_780_000_000_000 + index).toISOString(),
@@ -283,7 +282,7 @@ describe('quality loop', () => {
     if (!cohort) {
       throw new Error('fixture active cohort unavailable')
     }
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(
       path.join(path.dirname(auditPath), 'harvest-reviews.json'),
       `${JSON.stringify({
@@ -376,7 +375,7 @@ describe('quality loop', () => {
     if (!cohort) {
       throw new Error('fixture active cohort unavailable')
     }
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(
       auditPath,
       `${await readFile(auditPath, 'utf8')}${JSON.stringify({

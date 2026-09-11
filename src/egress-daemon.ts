@@ -1,5 +1,3 @@
-import path from 'node:path'
-
 import {
   belayStateDir,
   loadApprovalState,
@@ -7,6 +5,7 @@ import {
   repoLocalStateDirFor,
 } from './config-io.js'
 import { appendAuditRecord } from './core/audit-serialize.js'
+import { resolveActiveAuditLogPath } from './core/audit-version-path.js'
 import { normalizeAuditConfig, scrubOptionsFromConfig } from './core/config.js'
 import { startEgressProxy as bindEgressProxy } from './core/egress/proxy-server.js'
 import { resolveActiveAuditCohort } from './runtime-provenance.js'
@@ -33,9 +32,7 @@ async function main(): Promise<void> {
 
   const store = createEgressApprovalStore(repoRoot, config)
   const stateDir = belayStateDir(config, repoLocalStateDirFor(repoRoot, config))
-  const auditPath = path.isAbsolute(config.audit.logPath)
-    ? config.audit.logPath
-    : path.join(repoRoot, config.audit.logPath)
+  const auditPath = await resolveActiveAuditLogPath(repoRoot, config)
 
   const { server, host, port } = await bindEgressProxy({
     config,

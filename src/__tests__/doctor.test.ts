@@ -4,12 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { doctorProject, formatDoctorReport } from '../commands/doctor.js'
 import { dogfoodProject } from '../commands/dogfood.js'
 import { pendingApprovalsPath, writeTrustedConfigFile } from '../config-io.js'
 import { initProject } from '../installer.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 const execFileAsync = promisify(execFile)
@@ -175,7 +175,7 @@ describe('doctorProject', () => {
     const config = JSON.parse(
       await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),
     )
-    await rm(path.join(repoRoot, config.audit.logPath))
+    await rm(testAuditLogPath(repoRoot, config.audit.logPath))
     await rm(pendingApprovalsPath(repoRoot, config))
 
     const report = await doctorProject({ targetDir: repoRoot })
@@ -706,7 +706,7 @@ describe('doctorProject', () => {
       ...config,
       audit: { ...config.audit, maxBytes: rotationMaxBytes, maxFiles: 2 },
     })
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     const generation = `${JSON.stringify({ event: 'beforeShellExecution', verdict: 'allow' })}\n`
     const malformed = '{"private-doctor-malformed":'
     const aboveRotationThreshold = JSON.stringify({
@@ -1020,7 +1020,7 @@ describe('doctorProject', () => {
     config.audit.retention = { maxBytes: 0, maxFiles: 0 }
     await writeTrustedConfigFile(repoRoot, config)
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       '{"event":"valid"}\n{malformed\n',
       'utf8',
     )

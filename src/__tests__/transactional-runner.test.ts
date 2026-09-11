@@ -20,6 +20,7 @@ import {
   TRANSACTIONAL_APPLY_FAILED,
 } from '../core/transactional/reasons.js'
 import { runTransactionalExecution } from '../core/transactional/runner.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
@@ -572,7 +573,7 @@ describe('transactional runner', () => {
   it('ignores untracked belay init artifacts when dirtyIgnoreRoots is provided', async () => {
     const repoRoot = await createGitRepo()
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
-    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), '')
     await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
     const predicted = await classifyShellCore('touch safe.txt', repoRoot, repoRoot, {
       unknownLocalEffect: 'allow_flagged',

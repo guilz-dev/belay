@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-
 import { formatCliHelp, parseArgs } from '../cli.js'
 import {
   formatHarvestReport,
@@ -26,6 +25,7 @@ import {
 import { loadHarvestReviewLedger, writeHarvestReviewLedgerAtomic } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -94,7 +94,7 @@ describe('harvest', () => {
       })),
     ]
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
 
@@ -136,7 +136,7 @@ describe('harvest', () => {
         })),
     )
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
 
@@ -186,7 +186,7 @@ describe('harvest', () => {
           timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
         })),
     )
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     const corpusPath = path.join(repoRoot, 'shell-commands.json')
     await writeFile(corpusPath, '[]\n')
@@ -231,7 +231,7 @@ describe('harvest', () => {
           timestamp: `2026-09-07T00:0${boundaryIndex}:0${askIndex}.000Z`,
         })),
     )
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     await writeHarvestReviewLedgerAtomic(
       path.join(path.dirname(auditPath), 'harvest-reviews.json'),
@@ -271,7 +271,7 @@ describe('harvest', () => {
       reason: 'unknown_local_effect',
       timestamp: `2026-09-07T00:00:0${askIndex}.000Z`,
     }))
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     const corpusPath = path.join(repoRoot, 'shell-commands.json')
     await writeFile(corpusPath, '[]\n')
@@ -322,7 +322,7 @@ describe('harvest', () => {
     const repoRoot = await createHarvestFixtureRepo()
     const config = await loadConfigFile(repoRoot)
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${JSON.stringify({
         event: 'beforeShellExecution',
         kind: 'shell',
@@ -363,7 +363,7 @@ describe('harvest', () => {
       timestamp: `2026-09-07T00:00:0${askIndex}.000Z`,
     }))
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
 
@@ -408,7 +408,7 @@ describe('harvest', () => {
       },
     ]
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
 
@@ -455,7 +455,7 @@ describe('harvest', () => {
     expect(serializedRecords[0]?.approvalId).toBeUndefined()
     expect(serializedRecords[0]?.approvalCorrelationId).toBe(approvalCorrelationId(approvalId))
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${serializedRecords.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
 
@@ -506,7 +506,7 @@ describe('harvest', () => {
       },
       DEFAULT_REDACTION_V3,
     )
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(
       `${auditPath}.2`,
       `${JSON.stringify(deny('2026-09-08T00:00:00.000Z'))}\n`,
@@ -552,7 +552,7 @@ describe('harvest', () => {
       ...cohort,
       timestamp: `2026-09-07T00:00:0${index}.000Z`,
     }))
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     await writeHarvestReviewLedgerAtomic(
       path.join(path.dirname(auditPath), 'harvest-reviews.json'),
@@ -596,7 +596,7 @@ describe('harvest', () => {
       ...cohort,
       timestamp: `2026-09-07T00:00:0${index}.000Z`,
     }))
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     await writeHarvestReviewLedgerAtomic(
       path.join(path.dirname(auditPath), 'harvest-reviews.json'),
@@ -645,7 +645,7 @@ describe('harvest', () => {
       timestamp: `2026-09-07T00:00:0${index}.000Z`,
     }))
     await writeFile(
-      path.join(repoRoot, config.audit.logPath),
+      testAuditLogPath(repoRoot, config.audit.logPath),
       `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
     )
     const corpusPath = path.join(repoRoot, 'shell-commands.json')
@@ -694,7 +694,7 @@ describe('harvest', () => {
         timestamp: `2026-09-07T00:0${fingerprintIndex}:0${askIndex}.000Z`,
       })),
     )
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     await writeFile(auditPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
     const corpusPath = path.join(repoRoot, 'shell-commands.json')
     await writeFile(corpusPath, '[]\n')

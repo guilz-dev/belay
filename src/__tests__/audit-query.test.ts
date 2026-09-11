@@ -13,6 +13,7 @@ import {
 } from '../core/audit-query.js'
 import { appendBoundedAuditLine } from '../core/audit-storage.js'
 import { initProject } from '../installer.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -250,7 +251,7 @@ describe('audit query', () => {
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
 
-    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const auditPath = testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson')
     await mkdir(path.dirname(auditPath), { recursive: true })
     await writeFile(
       auditPath,
@@ -286,8 +287,11 @@ describe('audit query', () => {
     })
 
     expect(report.subcommand).toBe('summarize')
+    if (report.subcommand !== 'summarize') {
+      throw new Error('expected summarize report')
+    }
     expect(report.roundTrips).toHaveLength(1)
-    expect(report.roundTrips?.[0]?.summary).toBe('curl https://example.com')
+    expect(report.roundTrips[0]?.summary).toBe('curl https://example.com')
   })
 
   it('joins one correlated ask-approval-replay chain across retained generations', async () => {
@@ -295,7 +299,7 @@ describe('audit query', () => {
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
 
-    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const auditPath = testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson')
     const fingerprint = testFingerprint('retained-generation-round-trip')
     const approvalCorrelationId = '1234567890abcdef'
     await writeFile(
@@ -340,6 +344,9 @@ describe('audit query', () => {
     )
 
     const report = await auditProject({ targetDir: repoRoot, subcommand: 'summarize' })
+    if (report.subcommand !== 'summarize') {
+      throw new Error('expected summarize report')
+    }
 
     expect(report.roundTrips).toEqual([
       expect.objectContaining({
@@ -362,7 +369,7 @@ describe('audit query', () => {
       audit: { ...initialConfig.audit, maxBytes: rotationMaxBytes, maxFiles: retainedFiles },
     })
     const config = await loadConfigFile(repoRoot)
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     const record = {
       timestamp: '2026-09-08T00:00:00.000Z',
       event: 'beforeShellExecution',
@@ -393,7 +400,7 @@ describe('audit query', () => {
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
 
-    const auditPath = path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson')
+    const auditPath = testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson')
     await writeFile(
       `${auditPath}.1`,
       `${JSON.stringify({ timestamp: '2026-06-01T10:00:00.000Z', summary: 'older' })}\n`,

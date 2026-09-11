@@ -5,6 +5,7 @@ import path from 'node:path'
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterName } from '../adapters/layouts/types.js'
 import { approvedApprovalsPath, pendingApprovalsPath } from '../config-io.js'
+import { resolveActiveAuditLogPath } from '../core/audit-version-path.js'
 import type { BelayConfigV3 } from '../core/config.js'
 import { EMPTY_APPROVALS } from '../defaults.js'
 
@@ -54,7 +55,7 @@ export async function bootstrapStateFiles(
   await writeJsonIfMissing(pendingApprovalsPath(repoRoot, config), EMPTY_APPROVALS)
   await writeJsonIfMissing(approvedApprovalsPath(repoRoot, config), EMPTY_APPROVALS)
 
-  const auditPath = path.join(repoRoot, config.audit.logPath)
+  const auditPath = await resolveActiveAuditLogPath(repoRoot, config)
   if (!existsSync(auditPath)) {
     await mkdir(path.dirname(auditPath), { recursive: true })
     await writeFile(auditPath, '', 'utf8')
