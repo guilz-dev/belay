@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadScopedAuditRecords } from '../core/audit-load.js'
 import { resolveVersionedAuditLogPath } from '../core/audit-version-path.js'
 import { DEFAULT_CONFIG_V4 } from '../core/config.js'
+import { PACKAGE_VERSION } from '../version.js'
 
 const tempDirs: string[] = []
 
@@ -46,12 +47,16 @@ describe('audit-load', () => {
     await mkdir(path.join(repoRoot, '.cursor', 'runtime'), { recursive: true })
     await writeFile(
       path.join(repoRoot, '.cursor', 'runtime', 'core.mjs'),
-      'export const RUNTIME_PACKAGE_VERSION = "0.12.0";\nexport const RUNTIME_BUILD_STAMP = "0.12.0@test";\n',
+      `export const RUNTIME_PACKAGE_VERSION = "${PACKAGE_VERSION}";\nexport const RUNTIME_BUILD_STAMP = "${PACKAGE_VERSION}@test";\n`,
       'utf8',
     )
 
     const oldPath = resolveVersionedAuditLogPath(repoRoot, config.audit.logPath, '0.11.0')
-    const activePath = resolveVersionedAuditLogPath(repoRoot, config.audit.logPath, '0.12.0')
+    const activePath = resolveVersionedAuditLogPath(
+      repoRoot,
+      config.audit.logPath,
+      PACKAGE_VERSION,
+    )
     await writeFile(
       oldPath,
       [
