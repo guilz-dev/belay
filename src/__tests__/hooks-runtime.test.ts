@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as cwdResolution from '../adapters/cursor/cwd-resolution.js'
 import { resolveCursorActionCwd } from '../adapters/cursor/runtime-entry.js'
@@ -20,6 +19,7 @@ import { scrubString } from '../core/scrub.js'
 import { writeRuntimeArtifacts } from '../installer/runtime-artifacts.js'
 import { initProject } from '../installer.js'
 import { PACKAGE_VERSION } from '../version.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
@@ -94,7 +94,7 @@ async function readJson(filePath: string) {
 
 async function auditLogPath(repoRoot: string): Promise<string> {
   const config = await loadConfigFile(repoRoot)
-  return path.join(repoRoot, config.audit.logPath)
+  return testAuditLogPath(repoRoot, config.audit.logPath)
 }
 
 async function runHookScript(

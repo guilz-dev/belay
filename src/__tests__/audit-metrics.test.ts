@@ -28,6 +28,7 @@ import {
 import type { HarvestReviewLedgerV1, HarvestReviewOutcome } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -186,7 +187,7 @@ describe('audit-metrics', () => {
       throw new Error('fixture active cohort unavailable')
     }
 
-    const auditPath = path.join(repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
     const generation = `${JSON.stringify(
       cohortGate({
         timestamp: '2026-09-08T00:00:00.000Z',

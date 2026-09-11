@@ -4,19 +4,29 @@ import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
-import { toAuditRecord } from '../core/audit-metrics.js'
+import {
+  type AuditReadScopeOptions,
+  loadAuditRecords,
+  loadScopedAuditRecords,
+} from '../core/audit-load.js'
 import {
   buildApprovalRoundTrips,
   filterAuditRecords,
   summarizeRoundTrips,
 } from '../core/audit-query.js'
-import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from '../core/audit-storage.js'
-import type { AuditFilter, AuditRecord } from '../core/audit-types.js'
-import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
+import type { AuditFilter } from '../core/audit-types.js'
+import {
+  listVersionedAuditLogRoots,
+  resolveActiveAuditLogPath,
+  resolveAuditLogDirectory,
+} from '../core/audit-version-path.js'
+import { type BelayConfigV3, mergeConfig } from '../core/config.js'
 import { diffReclassification } from '../core/reclassify.js'
 import type { AdapterName } from '../types.js'
 
-export type AuditSubcommand = 'query' | 'summarize' | 'replay'
+export type AuditSubcommand = 'query' | 'summarize' | 'replay' | 'versions'
+
+export type { AuditReadScopeOptions }
 
 export interface AuditOptions {
   targetDir?: string
@@ -35,28 +45,81 @@ export interface AuditOptions {
   confidence?: string
   limit?: number
   configPath?: string
+  auditVersion?: string
+  allVersions?: boolean
 }
 
-export async function loadAuditRecords(
-  repoRoot: string,
-  adapter?: AdapterName,
-): Promise<AuditRecord[]> {
-  const config = await loadConfigFile(repoRoot, adapter)
-  const audit = normalizeAuditConfig(config.audit)
-  const auditLogPath = path.isAbsolute(audit.logPath)
-    ? audit.logPath
-    : path.join(repoRoot, audit.logPath)
-  const { records } = await loadRetainedAuditRecords({
-    auditPath: auditLogPath,
-    maxFiles: audit.maxFiles,
-    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
-  })
-  return records.map(toAuditRecord)
+export { loadAuditRecords, loadScopedAuditRecords }
+
+export type AuditVersionsReport = {
+  subcommand: 'versions'
+  directory: string
+  activePath: string
+  versions: Array<{ path: string; basename: string; active: boolean }>
 }
 
-export async function auditProject(options: AuditOptions) {
+export type AuditQueryReport = {
+  subcommand: 'query'
+  records: import('../core/audit-types.js').AuditRecord[]
+  count: number
+}
+
+export type AuditSummarizeReport = {
+  subcommand: 'summarize'
+  roundTrips: ReturnType<typeof buildApprovalRoundTrips>
+  lines: string[]
+  bypassAttempts: ReturnType<typeof detectBypassAttempts>
+  noisyRules: ReturnType<typeof detectNoisyRules>
+}
+
+type ReclassificationDiff = NonNullable<Awaited<ReturnType<typeof diffReclassification>>>
+
+export type AuditReplayReport = {
+  subcommand: 'replay'
+  candidateConfigPath: string | null
+  configWarning?: string
+  changedCount: number
+  diffs: ReclassificationDiff[]
+}
+
+export type AuditProjectReport =
+  | AuditVersionsReport
+  | AuditQueryReport
+  | AuditSummarizeReport
+  | AuditReplayReport
+
+export async function auditVersionsProject(
+  options: { targetDir?: string; adapter?: AdapterName } = {},
+): Promise<AuditVersionsReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const records = await loadAuditRecords(repoRoot)
+  const config = await loadConfigFile(repoRoot, options.adapter)
+  const directory = resolveAuditLogDirectory(repoRoot, config.audit.logPath)
+  const activePath = await resolveActiveAuditLogPath(repoRoot, config)
+  const versions = listVersionedAuditLogRoots(directory).map((filePath) => ({
+    path: filePath,
+    basename: path.basename(filePath),
+    active: filePath === activePath,
+  }))
+  return {
+    subcommand: 'versions' as const,
+    directory,
+    activePath,
+    versions,
+  }
+}
+
+export async function auditProject(options: AuditOptions): Promise<AuditProjectReport> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+
+  if (options.subcommand === 'versions') {
+    return auditVersionsProject({ targetDir: repoRoot })
+  }
+
+  const readScope: AuditReadScopeOptions = {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
+  }
+  const records = await loadAuditRecords(repoRoot, readScope)
   const filter: AuditFilter = {
     since: options.since,
     until: options.until,
@@ -74,7 +137,7 @@ export async function auditProject(options: AuditOptions) {
 
   if (options.subcommand === 'query') {
     const filtered = filterAuditRecords(records, filter)
-    return { subcommand: 'query', records: filtered, count: filtered.length }
+    return { subcommand: 'query' as const, records: filtered, count: filtered.length }
   }
 
   if (options.subcommand === 'summarize') {
@@ -83,7 +146,7 @@ export async function auditProject(options: AuditOptions) {
     const bypassAttempts = detectBypassAttempts(filtered)
     const noisyRules = detectNoisyRules(filtered, trips)
     return {
-      subcommand: 'summarize',
+      subcommand: 'summarize' as const,
       roundTrips: trips,
       lines: summarizeRoundTrips(trips),
       bypassAttempts,
@@ -111,7 +174,7 @@ export async function auditProject(options: AuditOptions) {
   ).filter((diff): diff is NonNullable<typeof diff> => diff !== null)
 
   return {
-    subcommand: 'replay',
+    subcommand: 'replay' as const,
     candidateConfigPath: options.configPath ?? null,
     configWarning,
     changedCount: diffs.length,
@@ -119,7 +182,23 @@ export async function auditProject(options: AuditOptions) {
   }
 }
 
-export function formatAuditReport(report: Awaited<ReturnType<typeof auditProject>>): string {
+export function formatAuditReport(report: AuditProjectReport): string {
+  if (report.subcommand === 'versions') {
+    const lines = [
+      'audit versions:',
+      `directory: ${report.directory}`,
+      `active: ${report.activePath}`,
+    ]
+    if (report.versions.length === 0) {
+      lines.push('No versioned audit logs found.')
+    } else {
+      for (const version of report.versions) {
+        lines.push(`- ${version.basename}${version.active ? ' (active)' : ''}`)
+      }
+    }
+    return `${lines.join('\n')}\n`
+  }
+
   if (report.subcommand === 'query') {
     const records = report.records ?? []
     const count = report.count ?? records.length
@@ -171,13 +250,16 @@ export function formatAuditReport(report: Awaited<ReturnType<typeof auditProject
     return `${lines.join('\n')}\n`
   }
 
+  if (report.subcommand !== 'replay') {
+    return ''
+  }
+
   const lines = [
     `audit replay: ${report.changedCount} verdict change(s)`,
     report.candidateConfigPath ? `Candidate config: ${report.candidateConfigPath}` : '',
     report.configWarning ?? '',
   ].filter(Boolean)
-  const diffs = report.diffs ?? []
-  for (const diff of diffs.slice(0, 30)) {
+  for (const diff of report.diffs.slice(0, 30)) {
     lines.push(
       `- ${diff.summary ?? diff.fingerprint}: ${diff.previousVerdict}/${diff.previousReason} → ${diff.nextVerdict}/${diff.nextReason}`,
     )

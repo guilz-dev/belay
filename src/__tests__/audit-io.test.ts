@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { afterEach, describe, expect, it } from 'vitest'
 import { cursorLayout } from '../adapters/layouts/cursor.js'
 import {
@@ -22,6 +21,7 @@ import {
 import { buildApprovalRoundTrips, filterAuditRecords, toAuditRecord } from '../core/audit-query.js'
 import { sessionCorrelationId } from '../core/audit-serialize.js'
 import { DEFAULT_REDACTION_V3, mergeConfig } from '../core/config.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -224,7 +224,7 @@ describe('serializeAuditRecordV3', () => {
       sourceEvent: 'beforeShellExecution',
     })
 
-    const records = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+    const records = (await readFile(testAuditLogPath(repoRoot, config.audit.logPath), 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>)

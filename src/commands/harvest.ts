@@ -10,6 +10,7 @@ import {
 } from '../core/audit-query.js'
 import { isValidAuditFingerprint } from '../core/audit-serialize.js'
 import type { AuditRecord } from '../core/audit-types.js'
+import { harvestReviewLedgerPath } from '../core/audit-version-path.js'
 import {
   applyHarvestReview,
   buildHarvestReport,
@@ -37,6 +38,8 @@ export interface HarvestListOptions {
   allCohorts?: boolean
   /** Include candidates already reviewed under the exact boundary-qualified review key. */
   includeReviewed?: boolean
+  auditVersion?: string
+  allVersions?: boolean
 }
 
 export interface HarvestApplyOptions {
@@ -51,24 +54,24 @@ export interface HarvestApplyOptions {
   fingerprint?: string
   /** Optional discriminator when evidence spans multiple boundary profiles. */
   boundaryProfile?: string
-}
-
-function auditLogPath(repoRoot: string, configuredPath: string): string {
-  return path.isAbsolute(configuredPath) ? configuredPath : path.join(repoRoot, configuredPath)
-}
-
-function harvestReviewLedgerPath(repoRoot: string, configuredAuditPath: string): string {
-  return path.join(
-    path.dirname(auditLogPath(repoRoot, configuredAuditPath)),
-    'harvest-reviews.json',
-  )
+  auditVersion?: string
+  allVersions?: boolean
 }
 
 export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = await loadConfigFile(repoRoot)
-  const records = await loadAuditRecords(repoRoot)
+  const records = await loadAuditRecords(repoRoot, {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
+  })
   const cohort = await resolveActiveAuditCohort(repoRoot, config)
+  const forensicNotes = [
+    ...(options.allVersions
+      ? ['Mixed-version forensic mode: do not bulk-promote candidates.']
+      : []),
+    ...(options.auditVersion ? [`Audit version scope: v${options.auditVersion}.`] : []),
+  ]
   const shellGateRecords = records.filter(isShellGateRecord)
   const matchingGateRecords = cohort
     ? shellGateRecords.filter((record) => matchesAuditCohort(record, cohort))
@@ -92,9 +95,12 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
     cohort,
     matchingGateEvents: matchingGateRecords.length,
     excludedGateEvents: shellGateRecords.length - matchingGateRecords.length,
-    notes: options.allCohorts
-      ? ['Mixed-history forensic mode: do not bulk-promote candidates.']
-      : [],
+    notes: [
+      ...(options.allCohorts
+        ? ['Mixed-history forensic mode: do not bulk-promote candidates.']
+        : []),
+      ...forensicNotes,
+    ],
     since: options.since,
     until: options.until,
     ...(options.allCohorts || !cohort ? {} : { legacyBoundaryProfile: cohort.boundaryProfile }),
@@ -247,6 +253,8 @@ export async function harvestApplyProject(
     targetDir: repoRoot,
     allCohorts: options.allCohorts,
     includeReviewed: true,
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
   })
   const commandMatches = report.candidates.filter((entry) => entry.command === options.command)
   const matchingCandidates = options.fingerprint

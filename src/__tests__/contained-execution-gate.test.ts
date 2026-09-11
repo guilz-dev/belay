@@ -1,7 +1,6 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cursorLayout } from '../adapters/layouts/cursor.js'
 import {
@@ -35,6 +34,7 @@ import type { GateVerdict } from '../core/gate-contract.js'
 import * as gateEngine from '../core/gate-engine.js'
 import { runProcessWithBoundedOutput } from '../core/process-runner.js'
 import type { ClassifyResult } from '../core/types.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
 const roots: string[] = []
@@ -215,7 +215,7 @@ describe('contained unknown execution gate integration', () => {
       wouldMediate: true,
       permission: 'allow',
     })
-    const raw = await readFile(path.join(repoRoot, ctx.config.audit.logPath), 'utf8')
+    const raw = await readFile(testAuditLogPath(repoRoot, ctx.config.audit.logPath), 'utf8')
     expect(raw).toContain('"wouldMediate":true')
     expect(raw).not.toContain('fictional-runner verify')
     expect(raw).not.toContain(repoRoot)
@@ -929,7 +929,7 @@ describe('contained unknown execution gate integration', () => {
       { kind: 'shell', cwd: path.join(repoRoot, 'app'), command },
     )
 
-    const raw = await readFile(path.join(repoRoot, ctx.config.audit.logPath), 'utf8')
+    const raw = await readFile(testAuditLogPath(repoRoot, ctx.config.audit.logPath), 'utf8')
     expect(raw).toContain('e'.repeat(64))
     expect(raw).not.toContain(command)
     expect(raw).not.toContain('never-persist-this-secret')
@@ -937,15 +937,18 @@ describe('contained unknown execution gate integration', () => {
     expect(raw).not.toContain('stdout')
     expect(raw).not.toContain('stderr')
     const queried = await auditProject({ targetDir: repoRoot, subcommand: 'query' })
+    if (queried.subcommand !== 'query') {
+      throw new Error('expected query report')
+    }
     expect(queried.records).toHaveLength(1)
-    expect(queried.records?.[0]).toMatchObject({
+    expect(queried.records[0]).toMatchObject({
       receiptHash: 'e'.repeat(64),
       imageId: `sha256:${'c'.repeat(64)}`,
       mirrorBackend: 'file_copy',
       exitCode: 0,
       timedOut: false,
     })
-    expect(queried.records?.[0]?.workspaceChangesDiscarded).toBeUndefined()
+    expect(queried.records[0]?.workspaceChangesDiscarded).toBeUndefined()
     expect((await metricsProject({ targetDir: repoRoot })).containedExecution.complete).toBe(1)
   })
 

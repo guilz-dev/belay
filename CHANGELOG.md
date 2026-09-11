@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- **Audit log versioning** — Gate writers append to release-scoped `v{semver}.log` files under the
+  configured audit directory. Default readers scope to the installed runtime version; use
+  `--audit-version` or `--all-versions` for forensic cross-version views. `belay audit versions`
+  lists available versioned logs.
+
 ## 0.12.0 — 2026-09-10
 
 ### Changed

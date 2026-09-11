@@ -19,6 +19,7 @@ import {
 } from '../core/harvest-review.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -42,7 +43,7 @@ async function createFixture(params: { command: string; payloadFixture?: string 
     throw new Error('fixture active cohort unavailable')
   }
   const commandFingerprint = fingerprint(params.command)
-  const auditPath = path.resolve(repoRoot, config.audit.logPath)
+  const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
   const records = [1, 2].map((index) => ({
     event: 'beforeShellExecution',
     kind: 'shell',
@@ -154,7 +155,7 @@ describe('harvest review ledger', () => {
       throw new Error('fixture active cohort unavailable')
     }
     expect(cohort.boundaryProfile).toBe('l3-l4-only')
-    const auditPath = path.resolve(fixture.repoRoot, config.audit.logPath)
+    const auditPath = testAuditLogPath(fixture.repoRoot, config.audit.logPath)
     const records = ['l3-l4-only', 'l1-attested-boundary'].flatMap(
       (boundaryProfile, boundaryIndex) =>
         [1, 2].map((askIndex) => ({

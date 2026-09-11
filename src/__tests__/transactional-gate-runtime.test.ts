@@ -18,6 +18,7 @@ import { RECOVERY_DIRTY_WORKTREE } from '../core/recovery/fail-closed.js'
 import { FILE_CHECKPOINT_ISOLATION_UNAVAILABLE } from '../core/transactional/backend-selector.js'
 import { runShellCommand } from '../core/transactional/git-worktree.js'
 import { TRANSACTIONAL_ALREADY_APPLIED } from '../core/transactional/reasons.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 import { classifyShellCore } from './helpers/shell-classify.js'
 
 const execFileAsync = promisify(execFile)
@@ -233,7 +234,7 @@ describe('transactional gate runtime', () => {
     expect(verdict.reason).toBe(TRANSACTIONAL_ALREADY_APPLIED)
     await expect(readFile(path.join(repoRoot, 'safe-dirty.txt'), 'utf8')).resolves.toBeDefined()
     const auditLines = (
-      await readFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+      await readFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), 'utf8')
     )
       .trim()
       .split('\n')
@@ -319,7 +320,7 @@ describe('transactional gate runtime', () => {
       readFile(path.join(workspaceRoot, 'safe-plain.txt'), 'utf8'),
     ).resolves.toBeDefined()
     const auditLines = (
-      await readFile(path.join(workspaceRoot, '.cursor', 'belay', 'audit.ndjson'), 'utf8')
+      await readFile(testAuditLogPath(workspaceRoot, '.cursor/belay/audit.ndjson'), 'utf8')
     )
       .trim()
       .split('\n')
@@ -335,7 +336,7 @@ describe('transactional gate runtime', () => {
   it('runs transactional recovery when only belay init artifacts are untracked', async () => {
     const repoRoot = await createGitRepo({ gitignoreCursor: false })
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
-    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), '')
     await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
     const ctx = {
       layout: cursorAdapter.layout,

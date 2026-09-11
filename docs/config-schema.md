@@ -195,7 +195,7 @@ enablement. Older audit records without recovery fields remain readable.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Active NDJSON file |
+| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Audit directory or legacy file path (dirname used for versioned logs) |
 | `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
 | `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
 | `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |
@@ -209,23 +209,29 @@ version. The positive-bound rule applies to the canonical flat fields. Existing 
 the legacy nested `audit.retention` spelling keep their non-negative values; setting either nested
 value to `0` disables rotation. Legacy positive `maxFiles` values remain capped at 100.
 
-The active file is `audit.ndjson`; numbered generations are `.1` (newest) through the
-`maxFiles - 1` suffix (oldest). Rotation uses an exclusive sibling `.lock` for at most two seconds
-and occurs before appending the complete newline-terminated record. `maxFiles: 1` keeps only the
-new active record after rotation. A single record larger than `maxBytes` remains intact, so the
-active file can temporarily exceed the threshold by that unavoidable one-record amount. Numbered
-retention does not remove `*.legacy-*.ndjson` archives or unrelated sibling files. Every bounded
-append also removes exact numeric generations outside the current `maxFiles` window, so reducing
-the configured count takes effect without waiting for the next rotation.
+Gate writers append to a release-scoped active file `v{semver}.log` under the audit directory
+derived from `logPath`. Legacy configs may still name `audit.ndjson`; the dirname is treated as the
+audit directory and the active versioned file is used for writes and default reads. Numbered
+generations per version file are `.1` (newest) through the `maxFiles - 1` suffix (oldest).
+Rotation uses an exclusive sibling `.lock` for at most two seconds and occurs before appending the
+complete newline-terminated record. `maxFiles: 1` keeps only the new active record after rotation.
+A single record larger than `maxBytes` remains intact, so the active file can temporarily exceed the
+threshold by that unavoidable one-record amount. Numbered retention does not remove
+`*.legacy-*.ndjson` archives or unrelated sibling files. Every bounded append also removes exact
+numeric generations outside the current `maxFiles` window, so reducing the configured count takes
+effect without waiting for the next rotation.
 
 Availability-caused asks are also summarized in a bounded 4 KiB sibling
-`audit.ndjson.readiness.json`. It stores only the runtime artifact hash, decision-config hash,
-hashed boundary profile, count, and timestamps. The writer updates it under the same `.lock` and
-resets it only when that three-part decision cohort changes, so numbered retention cannot make a
-cohort appear ready by forgetting an older availability failure. Readers fix all retained file
-handles and read this watermark under the writer lock before streaming; a missing, malformed, or
-cohort-mismatched watermark fails readiness closed. Older NDJSON remains readable, and the next
-valid current-cohort gate record creates or repairs the watermark.
+`v{semver}.log.readiness.json` per active version file. It stores only the runtime artifact hash,
+decision-config hash, hashed boundary profile, count, and timestamps. The writer updates it under
+the same `.lock` and resets it only when that three-part decision cohort changes, so numbered
+retention cannot make a cohort appear ready by forgetting an older availability failure. Readers
+fix all retained file handles and read this watermark under the writer lock before streaming; a
+missing, malformed, or cohort-mismatched watermark fails readiness closed. Older NDJSON remains
+readable, and the next valid current-cohort gate record creates or repairs the watermark.
+
+Default readers scope to the installed runtime version only. `--audit-version` and `--all-versions`
+select forensic scopes; mixed-version aggregation must not drive enforce readiness.
 
 ## Audit log (NDJSON schema v3)
 

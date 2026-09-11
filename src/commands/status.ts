@@ -9,8 +9,13 @@ import {
   repoLocalStateDirFor,
 } from '../config-io.js'
 import { compactApprovals } from '../core/approval.js'
-import { resolveRepoAuditPath, statAuditStorage } from '../core/audit-reader.js'
+import { statAuditStorage } from '../core/audit-reader.js'
 import { formatAskBreakdown } from '../core/audit-summary.js'
+import {
+  listVersionedAuditLogRoots,
+  resolveActiveAuditLogPath,
+  resolveAuditLogDirectory,
+} from '../core/audit-version-path.js'
 import { auditRetentionFromConfig } from '../core/config.js'
 import { loadOperationalInsights } from '../operational-insights.js'
 import type { StatusOptions, StatusReport } from '../types.js'
@@ -29,7 +34,9 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
   })
   const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
   const visibility = await reportProject({ targetDir: repoRoot })
-  const auditLogPath = resolveRepoAuditPath(repoRoot, config.audit.logPath)
+  const auditLogPath = await resolveActiveAuditLogPath(repoRoot, config)
+  const auditDirectory = resolveAuditLogDirectory(repoRoot, config.audit.logPath)
+  const versionedLogs = listVersionedAuditLogRoots(auditDirectory)
   const retention = auditRetentionFromConfig(config)
   const storageStats = await statAuditStorage(auditLogPath, retention)
 
@@ -42,6 +49,7 @@ export async function statusProject(options: StatusOptions = {}): Promise<Status
     dogfood: operational.dogfood,
     health,
     visibility,
+    versionedAuditLogs: versionedLogs.map((filePath) => path.basename(filePath)),
     auditStorage: {
       activeBytes: storageStats.activeBytes,
       totalBytes: storageStats.totalBytes,
@@ -88,6 +96,10 @@ export function formatStatusReport(report: StatusReport): string {
     `Combined quality ready for enforce: ${report.dogfood.readyForEnforce ? 'yes' : 'no'}`,
     `File checkpoint: ${report.fileCheckpoint.enabled ? 'enabled' : 'disabled'} (transactional=${report.fileCheckpoint.transactionalEnabled}, durable=${report.fileCheckpoint.durableCheckpointEnabled}, nonGit=${report.fileCheckpoint.allowNonGit})`,
     `File checkpoint limits: files=${report.fileCheckpoint.maxFiles}, sourceBytes=${report.fileCheckpoint.maxSourceBytes}, workspaceBytes=${report.fileCheckpoint.maxWorkspaceBytes}, prepareTimeoutMs=${report.fileCheckpoint.prepareTimeoutMs}, copyConcurrency=${report.fileCheckpoint.copyConcurrency}`,
+    `Active audit log: ${report.visibility.auditLogPath}`,
+    ...(report.versionedAuditLogs && report.versionedAuditLogs.length > 0
+      ? [`Versioned audit logs: ${report.versionedAuditLogs.join(', ')}`]
+      : []),
     '',
     'Audit visibility:',
     ...(report.auditStorage?.retentionEnabled

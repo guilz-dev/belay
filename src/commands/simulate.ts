@@ -3,15 +3,16 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile } from '../config-io.js'
-import { toAuditRecord } from '../core/audit-metrics.js'
-import { loadRetainedAuditRecords, MAX_AUDIT_RECORD_BYTES } from '../core/audit-storage.js'
-import { type BelayConfigV3, mergeConfig, normalizeAuditConfig } from '../core/config.js'
+import { loadScopedAuditRecords } from '../core/audit-load.js'
+import { type BelayConfigV3, mergeConfig } from '../core/config.js'
 import { countMissingActionSnapshots, diffReclassification } from '../core/reclassify.js'
 
 export interface SimulateOptions {
   targetDir?: string
   configPath: string
   json?: boolean
+  auditVersion?: string
+  allVersions?: boolean
 }
 
 export async function simulateProject(options: SimulateOptions) {
@@ -25,16 +26,10 @@ export async function simulateProject(options: SimulateOptions) {
   const candidateRaw = JSON.parse(await readFile(options.configPath, 'utf8')) as unknown
   const candidateConfig: BelayConfigV3 = mergeConfig(candidateRaw, currentConfig)
 
-  const audit = normalizeAuditConfig(currentConfig.audit)
-  const auditLogPath = path.isAbsolute(audit.logPath)
-    ? audit.logPath
-    : path.join(repoRoot, audit.logPath)
-  const { records: retainedRecords } = await loadRetainedAuditRecords({
-    auditPath: auditLogPath,
-    maxFiles: audit.maxFiles,
-    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
+  const { records } = await loadScopedAuditRecords(repoRoot, {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
   })
-  const records = retainedRecords.map(toAuditRecord)
   const missingSnapshotCount = countMissingActionSnapshots(records)
   const diffs = (
     await Promise.all(

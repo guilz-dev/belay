@@ -3,9 +3,7 @@ import { once } from 'node:events'
 import { access, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { afterEach, describe, expect, it } from 'vitest'
-
 import { configPathFor, loadConfigFile, writeConfigFile } from '../config-io.js'
 import { readAuditRecordsFromPath, resolveAuditLogFiles } from '../core/audit-reader.js'
 import { appendAuditRecord } from '../core/audit-serialize.js'
@@ -17,6 +15,7 @@ import {
   mergeConfig,
   normalizeAuditConfig,
 } from '../core/config.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const tempDirs: string[] = []
 
@@ -162,7 +161,7 @@ describe('audit-sink', () => {
     const loaded = await loadConfigFile(repoRoot, 'cursor')
     await writeConfigFile(repoRoot, loaded, 'cursor')
     const reloaded = await loadConfigFile(repoRoot, 'cursor')
-    const auditPath = path.join(repoRoot, reloaded.audit.logPath)
+    const auditPath = testAuditLogPath(repoRoot, reloaded.audit.logPath)
     await mkdir(path.dirname(auditPath), { recursive: true })
     await writeFile(auditPath, Buffer.alloc(DEFAULT_AUDIT_MAX_BYTES, 0x78))
 

@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cursorAdapter } from '../adapters/cursor/adapter.js'
 import {
@@ -17,6 +16,7 @@ import { recordCapabilityApproval } from '../core/capability-approval.js'
 import { type BelayConfigV3, DEFAULT_CONFIG_V3, scrubOptionsFromConfig } from '../core/config.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
@@ -788,7 +788,7 @@ describe('capability gate runtime', () => {
       expect.objectContaining({ approvalId: replay.approvalId }),
     ])
 
-    const auditRecords = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+    const auditRecords = (await readFile(testAuditLogPath(repoRoot, config.audit.logPath), 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>)
@@ -939,7 +939,7 @@ describe('capability gate runtime', () => {
     expect(pendingAfter.approvals).toEqual([
       expect.objectContaining({ approvalId: replay.approvalId }),
     ])
-    const auditRecords = (await readFile(path.join(repoRoot, config.audit.logPath), 'utf8'))
+    const auditRecords = (await readFile(testAuditLogPath(repoRoot, config.audit.logPath), 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>)

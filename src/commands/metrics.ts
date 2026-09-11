@@ -2,16 +2,13 @@ import path from 'node:path'
 
 import type { AdapterName } from '../adapters/layouts/index.js'
 import { loadConfigFile } from '../config-io.js'
+import { loadScopedAuditRecords, resolveHarvestReviewLedgerPath } from '../core/audit-load.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
-import {
-  type AuditLoadDiagnostics,
-  loadRetainedAuditRecords,
-  MAX_AUDIT_RECORD_BYTES,
-} from '../core/audit-storage.js'
+import type { AuditLoadDiagnostics } from '../core/audit-storage.js'
 import type { AuditRecord } from '../core/audit-types.js'
+import type { ResolvedAuditReadScope } from '../core/audit-version-path.js'
 import type { BelayConfigV3 } from '../core/config.js'
-import { normalizeAuditConfig } from '../core/config.js'
 import { loadHarvestReviewLedger } from '../core/harvest-review.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
 
@@ -19,10 +16,13 @@ export interface MetricsOptions {
   targetDir?: string
   adapter?: AdapterName
   json?: boolean
+  auditVersion?: string
+  allVersions?: boolean
 }
 
 export type MetricsReport = AuditMetricsReport & {
   auditStorage: AuditLoadDiagnostics
+  auditLogScope: ResolvedAuditReadScope
 }
 
 export interface MetricsEvaluationSnapshot {
@@ -43,32 +43,34 @@ export async function evaluateMetricsSnapshot(
 ): Promise<MetricsEvaluationSnapshot> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
-  const audit = normalizeAuditConfig(config.audit)
-  const auditLogPath = path.isAbsolute(audit.logPath)
-    ? audit.logPath
-    : path.join(repoRoot, audit.logPath)
-  const { records, diagnostics, readinessState } = await loadRetainedAuditRecords({
-    auditPath: auditLogPath,
-    maxFiles: audit.maxFiles,
-    maxLineBytes: MAX_AUDIT_RECORD_BYTES,
+  const loaded = await loadScopedAuditRecords(repoRoot, {
+    adapter: options.adapter,
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
   })
   const reviewLedger = await loadHarvestReviewLedger(
-    path.join(path.dirname(auditLogPath), 'harvest-reviews.json'),
+    resolveHarvestReviewLedgerPath(repoRoot, config.audit.logPath),
   )
   const activeCohort = await resolveActiveAuditCohort(repoRoot, config)
+  const metrics = computeAuditMetrics(loaded.records, {
+    auditLogPath: loaded.scope.primaryPath,
+    mode: config.mode,
+    unknownLocalEffect: config.policy.unknownLocalEffect,
+    activeCohort,
+    reviewLedger,
+    readinessState: loaded.readinessState,
+  })
+  if (loaded.scope.forensic) {
+    metrics.dogfood.readyForEnforce = false
+    metrics.dogfood.notes.push('Forensic audit scope — not valid for enforce readiness.')
+  }
   return {
     report: {
-      ...computeAuditMetrics(records, {
-        auditLogPath: audit.logPath,
-        mode: config.mode,
-        unknownLocalEffect: config.policy.unknownLocalEffect,
-        activeCohort,
-        reviewLedger,
-        readinessState,
-      }),
-      auditStorage: diagnostics,
+      ...metrics,
+      auditStorage: loaded.diagnostics,
+      auditLogScope: loaded.scope,
     },
-    auditRecords: records,
+    auditRecords: loaded.records,
   }
 }
 

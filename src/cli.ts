@@ -72,7 +72,9 @@ export function parseArgs(argv: string[]) {
     enforce?: boolean
     force?: boolean
     adapter?: 'cursor' | 'claude' | 'codex'
-    auditSubcommand?: 'query' | 'summarize' | 'replay'
+    auditSubcommand?: 'query' | 'summarize' | 'replay' | 'versions'
+    auditVersion?: string
+    allVersions?: boolean
     since?: string
     until?: string
     verdict?: string
@@ -284,6 +286,29 @@ export function parseArgs(argv: string[]) {
         throw new Error('--all-cohorts is only valid for harvest.')
       }
       options.allCohorts = true
+      continue
+    }
+    if (token === '--all-versions') {
+      if (!['metrics', 'report', 'audit', 'harvest', 'simulate'].includes(command ?? '')) {
+        throw new Error(
+          '--all-versions is only valid for metrics, report, audit, harvest, or simulate.',
+        )
+      }
+      options.allVersions = true
+      continue
+    }
+    if (token === '--audit-version') {
+      if (!['metrics', 'report', 'audit', 'harvest', 'simulate'].includes(command ?? '')) {
+        throw new Error(
+          '--audit-version is only valid for metrics, report, audit, harvest, or simulate.',
+        )
+      }
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--audit-version requires a semver value.')
+      }
+      options.auditVersion = next
+      index += 1
       continue
     }
     if (token === '--include-reviewed') {
@@ -534,11 +559,16 @@ export function parseArgs(argv: string[]) {
       break
     }
     if (command === 'audit' && !options.auditSubcommand) {
-      if (token === 'query' || token === 'summarize' || token === 'replay') {
+      if (
+        token === 'query' ||
+        token === 'summarize' ||
+        token === 'replay' ||
+        token === 'versions'
+      ) {
         options.auditSubcommand = token
         continue
       }
-      throw new Error('audit requires subcommand: query, summarize, or replay')
+      throw new Error('audit requires subcommand: query, summarize, replay, or versions')
     }
     if (command === 'egress' && !options.egressSubcommand) {
       if (token === 'start' || token === 'stop' || token === 'status' || token === 'env') {
@@ -721,15 +751,15 @@ Usage:
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
   ${c} dogfood --check --since <iso> [--target <dir>] [--adapter cursor|claude|codex] [--json]
   ${c} doctor [--target <dir>] [--adapter cursor|claude|codex] [--json] [--fix] [--dry-run]
-  ${c} metrics [--target <dir>] [--json]
+  ${c} metrics [--target <dir>] [--audit-version <semver>] [--all-versions] [--json]
   ${c} quality [--target <dir>] [--corpus <path>] [--json]
-  ${c} report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--json]
+  ${c} report [--target <dir>] [--since <iso>] [--until <iso>] [--limit <n>] [--audit-version <semver>] [--all-versions] [--json]
   ${c} recover [advice] [--target <dir>] [--since <iso>] [--fingerprint <fp>] [--command "<text>"] [--limit <n>] [--json]
     (--limit picks the Nth recover candidate after priority ranking: local_mutation first, then recency; 1 = highest priority, default 1)
   ${c} recover <status|list> [--target <dir>] [--json]
   ${c} recover <show|apply> <checkpoint-id> [--target <dir>] [--json]
-  ${c} audit <query|summarize|replay> [--target <dir>] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
-  ${c} simulate --config <path> [--target <dir>] [--json]
+  ${c} audit <query|summarize|replay|versions> [--target <dir>] [--audit-version <semver>] [--all-versions] [--json] [--since <iso>] [--until <iso>] [--verdict <v>] [--reason <r>] [--kind <k>] [--fingerprint <fp>] [--event <e>] [--location <v>] [--opacity <v>] [--effect <v>] [--confidence <v>] [--limit <n>] [--config <path>]
+  ${c} simulate --config <path> [--target <dir>] [--audit-version <semver>] [--all-versions] [--json]
   ${c} status [--target <dir>] [--json]
   ${c} explain [--target <dir>] [--cwd <dir>] [--kind shell|tool|subagent] [--tool <name>] [--payload-json <json>] [--command <text>] [--json] [-- <command>]
   ${c} egress <start|stop|status|env> [--target <dir>] [--json]
@@ -744,8 +774,8 @@ Usage:
   ${c} approval-token <approval-id> [--target <dir>] [--json]
   ${c} revoke <approval-id> [--target <dir>]
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
-  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--all-cohorts] [--include-reviewed] [--json]
-  ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--all-cohorts] [--target <dir>]
+  ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--audit-version <semver>] [--all-versions] [--all-cohorts] [--include-reviewed] [--json]
+  ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--audit-version <semver>] [--all-versions] [--all-cohorts] [--target <dir>]
 `
 }
 
@@ -984,6 +1014,8 @@ async function main() {
         confidence: options.confidence,
         limit: options.limit,
         configPath: options.configPath,
+        auditVersion: options.auditVersion,
+        allVersions: options.allVersions,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1001,6 +1033,8 @@ async function main() {
         targetDir: options.targetDir,
         configPath: options.configPath,
         json: options.json,
+        auditVersion: options.auditVersion,
+        allVersions: options.allVersions,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1014,6 +1048,8 @@ async function main() {
       const report = await metricsProject({
         targetDir: options.targetDir,
         json: options.json,
+        auditVersion: options.auditVersion,
+        allVersions: options.allVersions,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1045,6 +1081,8 @@ async function main() {
         until: options.until,
         limit: options.limit,
         json: options.json,
+        auditVersion: options.auditVersion,
+        allVersions: options.allVersions,
       })
       if (options.json) {
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1063,6 +1101,8 @@ async function main() {
           json: options.json,
           allCohorts: options.allCohorts,
           includeReviewed: options.includeReviewed,
+          auditVersion: options.auditVersion,
+          allVersions: options.allVersions,
         })
         if (options.json) {
           process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -1087,6 +1127,8 @@ async function main() {
           allCohorts: options.allCohorts,
           fingerprint: options.fingerprint,
           boundaryProfile: options.boundaryProfile,
+          auditVersion: options.auditVersion,
+          allVersions: options.allVersions,
         })
         process.stdout.write(`${result.message}\n`)
         process.exitCode = result.ok ? 0 : 1

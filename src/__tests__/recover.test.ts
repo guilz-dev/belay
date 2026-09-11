@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const execFileMock = vi.hoisted(() =>
   vi.fn((...args: unknown[]) => {
@@ -143,7 +144,7 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
     }
 
     await writeFile(
-      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
       `${JSON.stringify(auditRecord)}\n`,
       'utf8',
     )
@@ -171,7 +172,7 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
     await initProject({ targetDir: tempDir })
 
     await writeFile(
-      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
       `${JSON.stringify({
         timestamp: '2026-06-01T12:00:00.000Z',
         event: 'beforeShellExecution',
@@ -252,7 +253,7 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
     }
 
     await writeFile(
-      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
       `${JSON.stringify(externalAsk)}\n${JSON.stringify(localAllow)}\n`,
       'utf8',
     )
@@ -297,7 +298,7 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
     }
 
     await writeFile(
-      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
       `${JSON.stringify(externalAsk)}\n${JSON.stringify(blockedLocal)}\n`,
       'utf8',
     )
@@ -320,7 +321,7 @@ describe('recoverProject integration (T-R1, T-R2)', () => {
     await initProject({ targetDir: tempDir })
 
     await writeFile(
-      path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+      testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
       `${JSON.stringify({
         timestamp: '2026-06-01T12:00:00.000Z',
         event: 'beforeShellExecution',

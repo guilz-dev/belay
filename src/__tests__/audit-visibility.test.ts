@@ -21,6 +21,7 @@ import {
 import { mergeConfig } from '../core/config.js'
 import { initProject } from '../installer.js'
 import { resolveActiveAuditCohort } from '../runtime-provenance.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 async function activeAuditCohort(repoRoot: string) {
   const cohort = await resolveActiveAuditCohort(repoRoot, await loadConfigFile(repoRoot))
@@ -514,7 +515,7 @@ describe('audit visibility (T-V1)', () => {
     try {
       await initProject({ targetDir: tempDir })
       await writeFile(
-        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
         `${JSON.stringify({
           timestamp: '2026-01-01T00:00:00.000Z',
           event: 'beforeShellExecution',
@@ -552,7 +553,7 @@ describe('audit visibility (T-V1)', () => {
         summary: 'docker push myapp',
       }
       await writeFile(
-        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
         `${JSON.stringify(record)}\n`,
         'utf8',
       )
@@ -568,7 +569,7 @@ describe('audit visibility (T-V1)', () => {
       expect(parsed.silentPassRate).toBe(0)
       expect(parsed.recentAsks).toHaveLength(1)
       expect(parsed.recentAsks[0]?.tier).toBe('Tier0')
-      expect(parsed.auditLogPath).toContain('audit.ndjson')
+      expect(parsed.auditLogPath).toMatch(/v\d+\.\d+\.\d+\.log$/)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
@@ -598,7 +599,7 @@ describe('audit visibility (T-V1)', () => {
         }),
       ).join('\n')
       await writeFile(
-        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
         `${auditLines}\n`,
         'utf8',
       )
@@ -663,7 +664,7 @@ describe('fence drift warnings (T-V2)', () => {
       ).join('\n')
 
       await writeFile(
-        path.join(tempDir, '.cursor', 'belay', 'audit.ndjson'),
+        testAuditLogPath(tempDir, '.cursor/belay/audit.ndjson'),
         `${auditLines}\n`,
         'utf8',
       )

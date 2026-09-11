@@ -18,6 +18,7 @@ import {
   resolveWorktreeCwd,
   runShellCommand,
 } from '../core/transactional/git-worktree.js'
+import { testAuditLogPath } from './helpers/audit-test-path.js'
 
 const execFileAsync = promisify(execFile)
 const tempDirs: string[] = []
@@ -151,7 +152,7 @@ describe('transactional git worktree helpers', () => {
     const repoRoot = await createGitRepo()
     const ignoreRoots = protectedArtifactRoots(cursorAdapter.layout, repoRoot, null)
     await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
-    await writeFile(path.join(repoRoot, '.cursor', 'belay', 'audit.ndjson'), '')
+    await writeFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), '')
     await writeFile(path.join(repoRoot, '.cursor', 'belay.config.json'), '{}\n')
 
     expect(await isDirtyWorktree(repoRoot)).toBe(true)

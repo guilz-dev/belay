@@ -34,6 +34,11 @@ import { approvalSigningKeyPath } from '../core/approval-token.js'
 import { auditRecordHasLegacyCorrelationPlaceholders } from '../core/audit-legacy-archive.js'
 import type { AuditLoadDiagnostics } from '../core/audit-storage.js'
 import { detectFenceDrift, summarizeAuditVisibility } from '../core/audit-summary.js'
+import {
+  listVersionedAuditLogRoots,
+  resolveActiveAuditLogPath,
+  resolveAuditLogDirectory,
+} from '../core/audit-version-path.js'
 import { inspectBoundaryAttestationFile } from '../core/capability/boundary-attestation-sign.js'
 import {
   boundaryAttestationPath,
@@ -357,6 +362,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     ...(adapterName === 'cursor' ? [path.join(scopedPaths.runtimeDir, 'dispatcher.mjs')] : []),
     corePath,
   ]
+  const activeAuditLogPath = loadedConfig
+    ? await resolveActiveAuditLogPath(repoRoot, loadedConfig)
+    : null
   const operationalPaths = [
     loadedConfig
       ? pendingApprovalsPath(repoRoot, loadedConfig)
@@ -364,8 +372,20 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     loadedConfig
       ? approvedApprovalsPath(repoRoot, loadedConfig)
       : path.join(repoLocalDir, 'approved-approvals.json'),
-    path.join(repoRoot, loadedConfig?.audit.logPath ?? activeLayout.defaultAuditLogPath(repoRoot)),
+    ...(activeAuditLogPath ? [activeAuditLogPath] : []),
   ]
+  if (loadedConfig) {
+    const legacyAuditPath = path.isAbsolute(loadedConfig.audit.logPath)
+      ? loadedConfig.audit.logPath
+      : path.join(repoRoot, loadedConfig.audit.logPath)
+    const auditDirectory = resolveAuditLogDirectory(repoRoot, loadedConfig.audit.logPath)
+    const versionedLogs = listVersionedAuditLogRoots(auditDirectory)
+    if (existsSync(legacyAuditPath) && versionedLogs.length === 0) {
+      warnings.push(
+        `Legacy audit log ${legacyAuditPath} exists but no versioned audit logs were found. Default metrics read the installed runtime version file only.`,
+      )
+    }
+  }
   const requiredPaths = [...routingOwnerPaths, ...operationalPaths]
   for (const requiredPath of requiredPaths) {
     if (!existsSync(requiredPath)) {
