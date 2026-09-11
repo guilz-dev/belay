@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.12.1 — 2026-09-11
+
 ### Added
 
 - **Audit log versioning** — Gate writers append to release-scoped `v{semver}.log` files under the
