@@ -168,6 +168,7 @@ export async function upgradeCursorProject(
     await cleanupStaleProjectCursorInstall(repoRoot)
   }
 
+  await bootstrapStateFiles(repoRoot, installedConfig, paths)
   await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
   await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
   return { repoRoot }
