@@ -52,11 +52,7 @@ describe('audit-load', () => {
     )
 
     const oldPath = resolveVersionedAuditLogPath(repoRoot, config.audit.logPath, '0.11.0')
-    const activePath = resolveVersionedAuditLogPath(
-      repoRoot,
-      config.audit.logPath,
-      PACKAGE_VERSION,
-    )
+    const activePath = resolveVersionedAuditLogPath(repoRoot, config.audit.logPath, PACKAGE_VERSION)
     await writeFile(
       oldPath,
       [
