@@ -921,6 +921,25 @@ function builtInRule(
     }
   }
 
+  // A path outside the repository is not a mutation when the effect is a read.
+  // Use the shell effect's credential and configured-sensitive-path semantics.
+  if (request.action === 'fs.read' && request.resource.kind === 'path') {
+    const sensitive = effectPathIsSecretOrCredentialPath(request.resource.path, {
+      repoRoot: request.principal.repoRoot,
+      cwd: request.context.cwd,
+      trustedWorkspaceRoots,
+      sensitivePaths,
+    })
+    return {
+      outcome: sensitive ? 'require_approval' : 'allow',
+      reason: sensitive ? 'high_stakes_path' : 'read_only',
+      signals: sensitive
+        ? [...request.evidence.signals, 'sensitive_path_read']
+        : [...request.evidence.signals],
+      matchedRule: sensitive ? 'effect.fs_read_high_stakes' : 'effect.fs_read',
+    }
+  }
+
   if (request.resource.kind === 'path' && sensitivePaths?.length) {
     const repoRoot = canonicalPath(request.principal.repoRoot)
     const resolved = resolveCapabilityPath(request.resource.path, request.context.cwd)

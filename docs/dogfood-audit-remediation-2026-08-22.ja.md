@@ -380,6 +380,11 @@ contained execution または exact approval へ送る。
 
 ## 6. readiness 判定の見直し
 
+> 2026-09-13 追記: 以下の20件閾値は分析時点の旧実装。現在は150件以上のレビュー済み
+> provably-benign、3セッション以上、benign block rate 2%未満、availability askゼロを
+> 実装済み。corpus hard gateも必要。残件は新cohortでの実運用証拠収集である。
+> [現行の実測と次の対応](./ops/dogfood-frontier-2026-09-13.md)を参照。
+
 [`MIN_GATE_EVENTS_FOR_ENFORCE`](../src/core/audit-metrics.ts) は 20 で、zero would-block なら
 enforce ready になりうる。しかし 20 件で失敗 0 件でも、rule-of-three による 95% 上限は約 15%
 であり、silent-pass 98% という目標の証拠には弱い。

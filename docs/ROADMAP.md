@@ -133,6 +133,8 @@ re-asking what a human already blessed.*
   review (`provably-benign` promotion). The active execution frontier is
   [Issue #72](https://github.com/guilz-dev/belay/issues/72). Shadow judge
   calibration remains observational only.
+  The [2026-09-13 dogfood inspection](./ops/dogfood-frontier-2026-09-13.md) identifies
+  a tool-read precision increment and records the remaining fresh-cohort evidence gap.
 - **Latency budget — partially delivered.** Judge session transport and gate CI
   p95 budgets ship; optional Ollama prewarm on `beforeSubmitPrompt` remains
   future work because the sync gate does not call Tier1.
