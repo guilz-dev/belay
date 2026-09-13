@@ -1,0 +1,160 @@
+{
+  "version": 4,
+  "installScope": "global",
+  "mode": "enforce",
+  "approvalTtlMinutes": 15,
+  "tokenPrefix": "/belay-approve",
+  "gates": {
+    "shell": true,
+    "subagent": true,
+    "fileMutation": true,
+    "toolShell": true
+  },
+  "classifier": {
+    "strictChains": true,
+    "sensitivePaths": [
+      ".env",
+      ".env.*",
+      "**/credentials/**"
+    ]
+  },
+  "policy": {
+    "unknownLocalEffect": "allow_flagged",
+    "unparseableShell": "deny",
+    "codexUnmappedTool": "allow",
+    "fenceWarnThreshold": 0.5,
+    "confidenceThresholds": {
+      "allow": 0.88,
+      "flag": 0.72
+    },
+    "modelAssist": {
+      "enabled": false,
+      "timeoutMs": 3000
+    },
+    "transactional": {
+      "enabled": true,
+      "minConfidence": 0.72,
+      "maxConfidence": 0.88,
+      "timeoutMs": 30000,
+      "maxDeletionCount": 10,
+      "gates": {
+        "shell": true
+      },
+      "fileCheckpoint": {
+        "enabled": false,
+        "allowNonGit": false,
+        "maxFiles": 100000,
+        "maxSourceBytes": 2147483648,
+        "maxWorkspaceBytes": 4294967296,
+        "prepareTimeoutMs": 30000,
+        "copyConcurrency": 8
+      },
+      "checkpoint": {
+        "enabled": true,
+        "appliedRetentionHours": 168,
+        "restoredRetentionHours": 24,
+        "maxCheckpoints": 20,
+        "maxBytes": 1073741824
+      }
+    }
+  },
+  "overrides": {
+    "allow": [],
+    "external": []
+  },
+  "redaction": {
+    "maskApprovalIds": true,
+    "maskBearerTokens": true,
+    "maskAuthHeaders": true,
+    "maskKeyValueSecrets": true,
+    "maskHighEntropyStrings": true
+  },
+  "controlPlane": {
+    "enabled": true,
+    "configDir": null,
+    "integrity": "hash-pinned",
+    "isolation": {
+      "mode": "none",
+      "verifyAgentWritable": true
+    }
+  },
+  "notifications": {},
+  "approvalSigning": {
+    "required": false
+  },
+  "approval": {
+    "flow": "one_step",
+    "autoReplayScopes": {
+      "shell": true,
+      "tool": false,
+      "subagent": false
+    },
+    "executionLeaseMs": 60000
+  },
+  "egress": {
+    "enabled": false,
+    "listenHost": "127.0.0.1",
+    "listenPort": 17831,
+    "demoteL3External": true
+  },
+  "sandbox": {
+    "enabled": false,
+    "runtime": "none",
+    "denyNetworkByDefault": true,
+    "containedExecution": {
+      "enabled": false,
+      "image": null,
+      "dockerExecutable": null,
+      "dockerHost": null,
+      "timeoutMs": 30000,
+      "memoryMiB": 2048,
+      "cpus": 2,
+      "pids": 256
+    }
+  },
+  "audit": {
+    "logPath": ".cursor/belay/audit-recovery-pilot.ndjson",
+    "includeAssessment": true,
+    "maxBytes": 33554432,
+    "maxFiles": 5
+  },
+  "judge": {
+    "mode": "shadow",
+    "provider": "openai-compatible",
+    "providerId": "cursor",
+    "model": "composer-2.5",
+    "timeoutMs": 30000,
+    "endpoint": null,
+    "keepAlive": null,
+    "credential": {
+      "mode": "project"
+    },
+    "runtime": {
+      "session": {
+        "enabled": true,
+        "maxTurns": 8,
+        "maxAgeMs": 600000,
+        "maxIdleMs": 120000,
+        "maxPromptBytes": 32768,
+        "providerAllowlist": [
+          "cursor"
+        ],
+        "connectTimeoutMs": 5000,
+        "evalTimeoutMs": null,
+        "parseTimeoutMs": 2000,
+        "maxSessionsPerProvider": 1
+      },
+      "shadow": {
+        "enabled": false,
+        "sampleRate": 0.01,
+        "sampleRateMax": 0.05,
+        "dailyRequestCap": 500,
+        "mismatchRateThreshold": 0.02,
+        "providerAllowlist": [
+          "cursor"
+        ],
+        "windowSize": 100
+      }
+    }
+  }
+}
