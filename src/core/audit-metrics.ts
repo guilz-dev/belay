@@ -35,6 +35,7 @@ import type {
   RepeatedFingerprintAsk,
 } from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
+import { DEFAULT_AUDIT_LOG_PATH } from './config/audit.js'
 import { type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-review.js'
 
 export const MIN_REVIEWED_BENIGN_EVENTS = 150
@@ -476,7 +477,7 @@ export function computeAuditMetrics(
 
   return {
     schemaVersion: AUDIT_METRICS_SCHEMA_VERSION,
-    auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
+    auditLogPath: options.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH,
     totalLines: records.length,
     parsedRecords: records.length,
     gateEvents,

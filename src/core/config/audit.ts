@@ -11,6 +11,9 @@ export const DEFAULT_AUDIT_RETENTION: AuditRetentionConfig = {
   maxFiles: DEFAULT_AUDIT_MAX_FILES,
 }
 
+/** Adapter-less fallback; hidden under repo root (not visible `belay/`). */
+export const DEFAULT_AUDIT_LOG_PATH = '.belay/audit.ndjson'
+
 function normalizePositiveInteger(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return fallback
@@ -49,7 +52,7 @@ export function normalizeAuditConfig(
 ): NormalizedBelayAuditConfig {
   const selected = auditConfigWithSourceRetention(
     {
-      logPath: 'belay/audit.ndjson',
+      logPath: DEFAULT_AUDIT_LOG_PATH,
       includeAssessment: true,
       maxBytes: DEFAULT_AUDIT_MAX_BYTES,
       maxFiles: DEFAULT_AUDIT_MAX_FILES,
@@ -62,7 +65,7 @@ export function normalizeAuditConfig(
   const { retention: _retention, ...selectedWithoutRetention } = selected
   return {
     ...selectedWithoutRetention,
-    logPath: selected.logPath || 'belay/audit.ndjson',
+    logPath: selected.logPath || DEFAULT_AUDIT_LOG_PATH,
     includeAssessment: selected.includeAssessment !== false,
     maxBytes: normalizePositiveInteger(selected.maxBytes, DEFAULT_AUDIT_MAX_BYTES),
     maxFiles: normalizeAuditMaxFiles(selected.maxFiles),
