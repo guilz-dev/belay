@@ -1,454 +1,141 @@
 import path from 'node:path'
-import type { BoundaryDriverId } from './capability/attestation.js'
-import { warnDeprecatedJudgeModelAuto } from './judge-model-policy.js'
+import {
+  auditConfigForPersistence,
+  auditConfigWithSourceRetention,
+  normalizeAuditConfig,
+} from './config/audit.js'
+import {
+  DEFAULT_APPROVAL_CONFIG,
+  DEFAULT_APPROVAL_SIGNING_V3,
+  DEFAULT_CAPABILITY_V5,
+  DEFAULT_CONFIDENCE_THRESHOLDS,
+  DEFAULT_CONFIG_V2,
+  DEFAULT_CONFIG_V3,
+  DEFAULT_CONFIG_V4,
+  DEFAULT_CONTAINED_EXECUTION,
+  DEFAULT_CONTROL_PLANE_ISOLATION_V3,
+  DEFAULT_CONTROL_PLANE_V3,
+  DEFAULT_EGRESS_V3,
+  DEFAULT_FENCE_WARN_THRESHOLD,
+  DEFAULT_FILE_CHECKPOINT,
+  DEFAULT_JUDGE_LOCAL_OLLAMA,
+  DEFAULT_MODEL_ASSIST,
+  DEFAULT_NOTIFICATIONS_V3,
+  DEFAULT_POLICY_V3,
+  DEFAULT_RECOVERY_CHECKPOINT,
+  DEFAULT_REDACTION_V3,
+  DEFAULT_SANDBOX_V3,
+  DEFAULT_TRANSACTIONAL_V3,
+  LEGACY_CONTROL_PLANE_V3,
+  LEGACY_POLICY_V3,
+} from './config/defaults.js'
+import { normalizeJudgeConfig, synthesizeJudgeFromRaw } from './config/judge.js'
+import { resolveControlPlaneDir } from './config/paths.js'
 import type {
-  BelayMode,
-  ClassifierOptions,
-  ControlPlaneIntegrity,
-  ScrubOptions,
-  UnknownLocalEffectPolicy,
-  UnparseableShellPolicy,
-} from './types.js'
-import {
-  getJudgeProviderSpec,
-  inferProviderIdFromConfig,
-  isRemovedProviderId,
-  normalizeLegacyProviderId,
-  warnRemovedProviderId,
-} from './verdict/judge-catalog.js'
-import {
-  type BelayJudgeRuntimeConfig,
-  normalizeJudgeRuntimeConfig,
-} from './verdict/judge-runtime-config.js'
+  BelayCapabilityConfig,
+  BelayConfigV1,
+  BelayConfigV2,
+  BelayConfigV4,
+  BelayContainedExecutionConfig,
+  BelayFileCheckpointConfig,
+  BelayOverridesConfig,
+  BelaySandboxConfig,
+  RawConfigInput,
+  SandboxRuntime,
+} from './config/types.js'
+import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
 
+export {
+  auditRetentionFromConfig,
+  DEFAULT_AUDIT_MAX_BYTES,
+  DEFAULT_AUDIT_MAX_FILES,
+  DEFAULT_AUDIT_RETENTION,
+  MAX_AUDIT_FILES,
+  normalizeAuditConfig,
+  normalizeAuditRetention,
+} from './config/audit.js'
+export {
+  DEFAULT_APPROVAL_CONFIG,
+  DEFAULT_APPROVAL_SIGNING_V3,
+  DEFAULT_CAPABILITY_V5,
+  DEFAULT_CONFIDENCE_THRESHOLDS,
+  DEFAULT_CONFIG_V2,
+  DEFAULT_CONFIG_V3,
+  DEFAULT_CONFIG_V4,
+  DEFAULT_CONTAINED_EXECUTION,
+  DEFAULT_CONTROL_PLANE_ISOLATION_V3,
+  DEFAULT_CONTROL_PLANE_V3,
+  DEFAULT_EGRESS_V3,
+  DEFAULT_FENCE_WARN_THRESHOLD,
+  DEFAULT_FILE_CHECKPOINT,
+  DEFAULT_JUDGE_CURSOR_COMPOSER,
+  DEFAULT_JUDGE_LOCAL_OLLAMA,
+  DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE,
+  DEFAULT_MODEL_ASSIST,
+  DEFAULT_NOTIFICATIONS_V3,
+  DEFAULT_OVERRIDES_V3,
+  DEFAULT_POLICY_V3,
+  DEFAULT_RECOVERY_CHECKPOINT,
+  DEFAULT_REDACTION_V3,
+  DEFAULT_SANDBOX_V3,
+  DEFAULT_TRANSACTIONAL_V3,
+  LEGACY_CONTROL_PLANE_V3,
+  LEGACY_POLICY_V3,
+} from './config/defaults.js'
+export {
+  normalizeJudgeConfig,
+  normalizeJudgeProvider,
+  rejectTeamLayerJudgeSecrets,
+} from './config/judge.js'
+export {
+  approvedApprovalsFile,
+  belayStateDir,
+  configuredControlPlaneDir,
+  defaultControlPlaneDir,
+  pendingApprovalsFile,
+  resolveControlPlaneDir,
+} from './config/paths.js'
+export type {
+  ApprovalFlow,
+  AuditRetentionConfig,
+  BelayApprovalAutoReplayScopes,
+  BelayApprovalConfig,
+  BelayApprovalSigningConfig,
+  BelayAuditConfig,
+  BelayCapabilityConfig,
+  BelayClassifierConfig,
+  BelayConfidenceThresholds,
+  BelayConfig,
+  BelayConfigV1,
+  BelayConfigV2,
+  BelayConfigV3,
+  BelayConfigV4,
+  BelayContainedExecutionConfig,
+  BelayControlPlaneConfig,
+  BelayControlPlaneIsolationConfig,
+  BelayEgressConfig,
+  BelayFileCheckpointConfig,
+  BelayJudgeConfig,
+  BelayJudgeMode,
+  BelayModelAssistConfig,
+  BelayNotificationsConfig,
+  BelayOverridesConfig,
+  BelayPolicyConfig,
+  BelayRedactionConfig,
+  BelaySandboxConfig,
+  BelayTransactionalConfig,
+  ControlPlaneIsolationMode,
+  DeprecatedJudgeProviderId,
+  JudgeCloudConsent,
+  JudgeCredentialConfig,
+  JudgeCredentialMode,
+  JudgeCredentialRef,
+  JudgeProvider,
+  JudgeProviderId,
+  NormalizedBelayAuditConfig,
+  SandboxRuntime,
+} from './config/types.js'
 export type { UnknownLocalEffectPolicy }
-
-export const DEFAULT_AUDIT_MAX_BYTES = 33_554_432
-export const DEFAULT_AUDIT_MAX_FILES = 5
-export const MAX_AUDIT_FILES = 100
-
-/** Compatibility shape for the current-main audit sink/reader adapters. */
-export interface AuditRetentionConfig {
-  maxBytes: number
-  maxFiles: number
-}
-
-export interface BelayAuditConfig {
-  logPath: string
-  includeAssessment: boolean
-  /** Optional in source config for backwards compatibility; normalization always supplies it. */
-  maxBytes?: number
-  /** Optional in source config for backwards compatibility; active counts as one retained file. */
-  maxFiles?: number
-  /** Legacy current-main spelling; canonical normalized config uses maxBytes/maxFiles directly. */
-  retention?: Partial<AuditRetentionConfig>
-}
-
-export interface NormalizedBelayAuditConfig extends BelayAuditConfig {
-  maxBytes: number
-  maxFiles: number
-  /** Preserved only when the loaded source used the legacy nested spelling. */
-  retention?: AuditRetentionConfig
-}
-
-function normalizePositiveInteger(value: unknown, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return fallback
-  }
-  const floored = Math.floor(value)
-  return floored > 0 ? floored : fallback
-}
-
-function normalizeAuditMaxFiles(value: unknown): number {
-  if (
-    typeof value !== 'number' ||
-    !Number.isFinite(value) ||
-    value <= 0 ||
-    value > MAX_AUDIT_FILES
-  ) {
-    return DEFAULT_AUDIT_MAX_FILES
-  }
-  const floored = Math.floor(value)
-  return Number.isSafeInteger(floored) && floored >= 1 && floored <= MAX_AUDIT_FILES
-    ? floored
-    : DEFAULT_AUDIT_MAX_FILES
-}
-
-const LEGACY_DISABLED_RETENTION = Symbol('legacy-disabled-audit-retention')
-
-type AuditConfigWithLegacyMarker = Partial<BelayAuditConfig> & {
-  [LEGACY_DISABLED_RETENTION]?: true
-}
-
-function hasOwn(object: object | undefined, key: PropertyKey): boolean {
-  return object !== undefined && Object.hasOwn(object, key)
-}
-
-export function normalizeAuditConfig(
-  audit: Partial<BelayAuditConfig> | undefined,
-): NormalizedBelayAuditConfig {
-  const selected = auditConfigWithSourceRetention(
-    {
-      logPath: 'belay/audit.ndjson',
-      includeAssessment: true,
-      maxBytes: DEFAULT_AUDIT_MAX_BYTES,
-      maxFiles: DEFAULT_AUDIT_MAX_FILES,
-    },
-    audit,
-  )
-  const compatibilityRetention = selected.retention
-    ? normalizeAuditRetention(selected.retention)
-    : undefined
-  const { retention: _retention, ...selectedWithoutRetention } = selected
-  return {
-    ...selectedWithoutRetention,
-    logPath: selected.logPath || 'belay/audit.ndjson',
-    includeAssessment: selected.includeAssessment !== false,
-    maxBytes: normalizePositiveInteger(selected.maxBytes, DEFAULT_AUDIT_MAX_BYTES),
-    maxFiles: normalizeAuditMaxFiles(selected.maxFiles),
-    ...(compatibilityRetention ? { retention: compatibilityRetention } : {}),
-  }
-}
-
-export const DEFAULT_AUDIT_RETENTION: AuditRetentionConfig = {
-  maxBytes: DEFAULT_AUDIT_MAX_BYTES,
-  maxFiles: DEFAULT_AUDIT_MAX_FILES,
-}
-
-export function normalizeAuditRetention(raw?: Partial<AuditRetentionConfig>): AuditRetentionConfig {
-  const maxBytes =
-    typeof raw?.maxBytes === 'number' && Number.isFinite(raw.maxBytes) && raw.maxBytes >= 0
-      ? Math.floor(raw.maxBytes)
-      : DEFAULT_AUDIT_MAX_BYTES
-  const maxFiles =
-    typeof raw?.maxFiles === 'number' &&
-    Number.isFinite(raw.maxFiles) &&
-    raw.maxFiles >= 0 &&
-    raw.maxFiles <= MAX_AUDIT_FILES
-      ? Math.floor(raw.maxFiles)
-      : DEFAULT_AUDIT_MAX_FILES
-  return { maxBytes, maxFiles }
-}
-
-function auditConfigWithSourceRetention(
-  defaults: BelayAuditConfig,
-  source: Partial<BelayAuditConfig> | undefined,
-): BelayAuditConfig {
-  const markedSource = source as AuditConfigWithLegacyMarker | undefined
-  if (markedSource?.[LEGACY_DISABLED_RETENTION] && source?.retention) {
-    return {
-      ...defaults,
-      ...source,
-      retention: normalizeAuditRetention(source.retention),
-    }
-  }
-
-  const nested = source?.retention
-  const normalizedNested = nested ? normalizeAuditRetention(nested) : undefined
-  const flatMaxBytesExplicit = hasOwn(source, 'maxBytes')
-  const flatMaxFilesExplicit = hasOwn(source, 'maxFiles')
-  const nestedMaxBytesExplicit = hasOwn(nested, 'maxBytes')
-  const nestedMaxFilesExplicit = hasOwn(nested, 'maxFiles')
-  const selectedNestedMaxBytes = !flatMaxBytesExplicit && nestedMaxBytesExplicit
-  const selectedNestedMaxFiles = !flatMaxFilesExplicit && nestedMaxFilesExplicit
-  const maxBytes = normalizePositiveInteger(
-    flatMaxBytesExplicit
-      ? source?.maxBytes
-      : selectedNestedMaxBytes
-        ? normalizedNested?.maxBytes
-        : defaults.maxBytes,
-    DEFAULT_AUDIT_MAX_BYTES,
-  )
-  const maxFiles = normalizeAuditMaxFiles(
-    flatMaxFilesExplicit
-      ? source?.maxFiles
-      : selectedNestedMaxFiles
-        ? normalizedNested?.maxFiles
-        : defaults.maxFiles,
-  )
-  const nestedMaxBytesDisabled = selectedNestedMaxBytes && normalizedNested?.maxBytes === 0
-  const nestedMaxFilesDisabled = selectedNestedMaxFiles && normalizedNested?.maxFiles === 0
-  const legacyDisabled = nestedMaxBytesDisabled || nestedMaxFilesDisabled
-  const { retention: _retention, ...sourceWithoutRetention } = source ?? {}
-  const selected: AuditConfigWithLegacyMarker = {
-    ...defaults,
-    ...sourceWithoutRetention,
-    maxBytes,
-    maxFiles,
-  }
-  if (legacyDisabled) {
-    selected.retention = {
-      maxBytes: nestedMaxBytesDisabled ? 0 : maxBytes,
-      maxFiles: nestedMaxFilesDisabled ? 0 : maxFiles,
-    }
-    selected[LEGACY_DISABLED_RETENTION] = true
-  } else {
-    delete selected.retention
-    delete selected[LEGACY_DISABLED_RETENTION]
-  }
-  return selected as BelayAuditConfig
-}
-
-export function auditRetentionFromConfig(config: {
-  audit?: Partial<BelayAuditConfig>
-}): AuditRetentionConfig {
-  const normalized = normalizeAuditConfig(config.audit)
-  if (normalized.retention) {
-    return normalized.retention
-  }
-  return { maxBytes: normalized.maxBytes, maxFiles: normalized.maxFiles }
-}
-
-export interface BelayConfigV1 {
-  version: 1
-  mode: BelayMode
-  approvalTtlMinutes: number
-  tokenPrefix: string
-  gates: {
-    shell: boolean
-    subagent: boolean
-  }
-  audit: Pick<BelayAuditConfig, 'logPath'>
-}
-
-export interface BelayConfigV2 {
-  version: 2
-  mode: BelayMode
-  approvalTtlMinutes: number
-  tokenPrefix: string
-  gates: {
-    shell: boolean
-    subagent: boolean
-    fileMutation: boolean
-    toolShell: boolean
-  }
-  classifier: {
-    strictChains: boolean
-    customExternalCommands: string[]
-    customAllowCommands: string[]
-    sensitivePaths: string[]
-  }
-  audit: BelayAuditConfig
-}
-
-export interface BelayConfidenceThresholds {
-  allow: number
-  flag: number
-}
-
-export interface BelayModelAssistConfig {
-  enabled: boolean
-  model?: string
-  timeoutMs?: number
-}
-
-export interface BelayFileCheckpointConfig {
-  enabled: boolean
-  allowNonGit: boolean
-  maxFiles: number
-  maxSourceBytes: number
-  maxWorkspaceBytes: number
-  prepareTimeoutMs: number
-  copyConcurrency: number
-}
-
-export interface BelayTransactionalConfig {
-  enabled: boolean
-  minConfidence: number
-  maxConfidence: number
-  timeoutMs: number
-  maxDeletionCount: number
-  gates: {
-    shell: boolean
-  }
-  fileCheckpoint: BelayFileCheckpointConfig
-  checkpoint?: {
-    enabled: boolean
-    appliedRetentionHours: number
-    restoredRetentionHours: number
-    maxCheckpoints: number
-    maxBytes: number
-  }
-}
-
-export interface BelayPolicyConfig {
-  unknownLocalEffect: UnknownLocalEffectPolicy
-  unparseableShell: UnparseableShellPolicy
-  confidenceThresholds: BelayConfidenceThresholds
-  modelAssist: BelayModelAssistConfig
-  transactional: BelayTransactionalConfig
-  // Adapter compatibility name: how to treat a tool whose name belay does not yet map to a known
-  // kind. 'deny' (default) is the fail-closed floor — an unmapped tool must not
-  // silently bypass the gate (FN=0). 'allow' is the opt-out: pass the tool but record it to the
-  // audit log for vocabulary learning (use only if fail-closed over-blocks in practice). See
-  // unknownLocalEffect. Optional; runtime defaults to 'deny' when absent.
-  codexUnmappedTool?: 'allow' | 'deny'
-  /** R-V2: silent-pass rate below this triggers fence-drift warning (default 0.5). */
-  fenceWarnThreshold: number
-}
-
-export interface BelayOverridesConfig {
-  allow: string[]
-  external: string[]
-}
-
-export interface BelayRedactionConfig {
-  maskApprovalIds: boolean
-  maskBearerTokens: boolean
-  maskAuthHeaders: boolean
-  maskKeyValueSecrets: boolean
-  maskHighEntropyStrings: boolean
-}
-
-export type JudgeProvider = 'ollama' | 'openai-compatible' | 'anthropic'
-
-export type JudgeProviderId = 'ollama' | 'codex' | 'claude' | 'cursor'
-
-/** Read-only legacy ids; preserved on load with warning until `belay config` migrates. */
-export type DeprecatedJudgeProviderId = 'openrouter' | 'custom'
-
-export type JudgeCredentialMode = 'project' | 'apiKey'
-
-export type JudgeCredentialRef = `store:judge` | `env:${string}`
-
-export interface JudgeCredentialConfig {
-  mode: JudgeCredentialMode
-  ref?: JudgeCredentialRef
-}
-
-export interface JudgeCloudConsent {
-  accepted: boolean
-  at: string
-  providerId: JudgeProviderId
-  endpoint: string
-  by: string
-}
-
-export type BelayJudgeMode = 'shadow' | 'off'
-
-export interface BelayJudgeConfig {
-  /** Gate uses PolicyEngine; judge runs async shadow/compare only. */
-  mode?: BelayJudgeMode
-  provider: JudgeProvider
-  providerId?: JudgeProviderId | DeprecatedJudgeProviderId
-  model: string
-  timeoutMs: number
-  endpoint: string | null
-  keepAlive: string | null
-  cloudConsent?: JudgeCloudConsent
-  credential?: JudgeCredentialConfig
-  runtime?: BelayJudgeRuntimeConfig
-}
-
-export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
-  mode: 'shadow',
-  provider: 'ollama',
-  providerId: 'ollama',
-  model: 'gemma4:e2b',
-  endpoint: 'http://localhost:11434',
-  timeoutMs: 25000,
-  keepAlive: '30m',
-}
-
-export const DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE: BelayJudgeConfig = {
-  mode: 'shadow',
-  provider: 'openai-compatible',
-  providerId: 'codex',
-  model: 'gpt-5.3-codex-high',
-  timeoutMs: 8000,
-  endpoint: null,
-  keepAlive: null,
-}
-
-/** @deprecated Use DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE */
-export const DEFAULT_JUDGE_CURSOR_COMPOSER = DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
-
-export type ControlPlaneIsolationMode = 'none' | 'read-only-mount' | 'separate-user'
-
-export interface BelayControlPlaneIsolationConfig {
-  mode: ControlPlaneIsolationMode
-  expectedOwnerUid?: number
-  verifyAgentWritable: boolean
-}
-
-export interface BelayControlPlaneConfig {
-  enabled: boolean
-  configDir: string | null
-  integrity: ControlPlaneIntegrity
-  isolation: BelayControlPlaneIsolationConfig
-}
-
-export type SandboxRuntime = 'none' | 'cursor-sandbox' | 'container' | 'seatbelt' | 'landlock'
-
-export interface BelaySandboxConfig {
-  enabled: boolean
-  runtime: SandboxRuntime
-  denyNetworkByDefault: boolean
-  /** Optional in source config for backwards compatibility; normalization always supplies it. */
-  containedExecution?: BelayContainedExecutionConfig
-}
-
-export interface BelayContainedExecutionConfig {
-  enabled: boolean
-  image: string | null
-  /** Required when enabled; optional in source objects for disabled backwards compatibility. */
-  dockerExecutable?: string | null
-  /** Required when enabled; only local absolute unix:// endpoints are accepted. */
-  dockerHost?: string | null
-  timeoutMs: number
-  memoryMiB: number
-  cpus: number
-  pids: number
-}
-
-export interface BelayClassifierConfig {
-  strictChains: boolean
-  sensitivePaths: string[]
-}
-
-export interface BelayNotificationsConfig {
-  webhookUrl?: string
-  commandHook?: string
-}
-
-export interface BelayApprovalSigningConfig {
-  /** When true, out-of-band approvals must present a signed token. */
-  required: boolean
-}
-
-export type ApprovalFlow = 'one_step' | 'two_step'
-
-export interface BelayApprovalAutoReplayScopes {
-  shell: boolean
-  tool: boolean
-  subagent: boolean
-}
-
-export interface BelayApprovalConfig {
-  flow: ApprovalFlow
-  autoReplayScopes: BelayApprovalAutoReplayScopes
-  executionLeaseMs: number
-}
-
-export interface BelayEgressConfig {
-  enabled: boolean
-  listenHost: string
-  listenPort: number
-  /** When true with egress enabled, L3 external command lists become hints only. */
-  demoteL3External: boolean
-}
-
-export interface BelayCapabilityConfig {
-  grantsEnabled?: boolean
-  boundaryDriver?: BoundaryDriverId
-  attestationRelPath?: string
-}
-
-export const DEFAULT_CAPABILITY_V5: BelayCapabilityConfig = {
-  grantsEnabled: true,
-  boundaryDriver: 'host-integration',
-  attestationRelPath: '.belay/attestation.json',
-}
 
 function normalizeCapabilityConfig(
   capability: BelayCapabilityConfig | undefined,
@@ -463,61 +150,6 @@ function normalizeCapabilityConfig(
     boundaryDriver: capability.boundaryDriver ?? DEFAULT_CAPABILITY_V5.boundaryDriver,
     attestationRelPath: capability.attestationRelPath ?? DEFAULT_CAPABILITY_V5.attestationRelPath,
   }
-}
-
-export interface BelayConfigV4 {
-  version: 4 | 5
-  adapter?: 'cursor' | 'claude' | 'codex'
-  /** Where hooks/runtime/skill artifacts are installed. Defaults to project. */
-  installScope?: 'project' | 'global'
-  mode: BelayMode
-  approvalTtlMinutes: number
-  tokenPrefix: string
-  gates: BelayConfigV2['gates']
-  classifier: BelayClassifierConfig
-  policy: BelayPolicyConfig
-  overrides: BelayOverridesConfig
-  redaction: BelayRedactionConfig
-  controlPlane: BelayControlPlaneConfig
-  notifications: BelayNotificationsConfig
-  approvalSigning: BelayApprovalSigningConfig
-  approval: BelayApprovalConfig
-  egress: BelayEgressConfig
-  sandbox: BelaySandboxConfig
-  audit: BelayConfigV2['audit']
-  judge: BelayJudgeConfig
-  capability?: BelayCapabilityConfig
-}
-
-/** @deprecated Use BelayConfigV4 */
-export type BelayConfigV3 = BelayConfigV4
-
-export type BelayConfig = BelayConfigV4
-
-/** Pre-v0.4 defaults preserved when migrating existing v1/v2/v3 configs. */
-import { DEFAULT_SILENT_PASS_THRESHOLD } from './audit-summary.js'
-
-/** @deprecated Use DEFAULT_SILENT_PASS_THRESHOLD from audit-summary.js */
-export const DEFAULT_FENCE_WARN_THRESHOLD = DEFAULT_SILENT_PASS_THRESHOLD
-
-export const DEFAULT_CONFIDENCE_THRESHOLDS: BelayConfidenceThresholds = {
-  allow: 0.88,
-  flag: 0.72,
-}
-
-export const DEFAULT_MODEL_ASSIST: BelayModelAssistConfig = {
-  enabled: false,
-  timeoutMs: 3000,
-}
-
-export const DEFAULT_FILE_CHECKPOINT: BelayFileCheckpointConfig = {
-  enabled: false,
-  allowNonGit: false,
-  maxFiles: 100_000,
-  maxSourceBytes: 2_147_483_648,
-  maxWorkspaceBytes: 4_294_967_296,
-  prepareTimeoutMs: 30_000,
-  copyConcurrency: 8,
 }
 
 function clampCopyConcurrency(value: number): number {
@@ -551,97 +183,6 @@ export function normalizeFileCheckpointConfig(
         ? clampCopyConcurrency(raw.copyConcurrency)
         : DEFAULT_FILE_CHECKPOINT.copyConcurrency,
   }
-}
-
-export const DEFAULT_RECOVERY_CHECKPOINT: NonNullable<BelayTransactionalConfig['checkpoint']> = {
-  enabled: false,
-  appliedRetentionHours: 7 * 24,
-  restoredRetentionHours: 24,
-  maxCheckpoints: 20,
-  maxBytes: 1024 * 1024 * 1024,
-}
-
-export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
-  enabled: false,
-  minConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.flag,
-  maxConfidence: DEFAULT_CONFIDENCE_THRESHOLDS.allow,
-  timeoutMs: 30_000,
-  maxDeletionCount: 10,
-  gates: {
-    shell: true,
-  },
-  fileCheckpoint: { ...DEFAULT_FILE_CHECKPOINT },
-  checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT },
-}
-
-export const LEGACY_POLICY_V3: BelayPolicyConfig = {
-  unknownLocalEffect: 'allow_flagged',
-  unparseableShell: 'allow_flagged',
-  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-  modelAssist: { ...DEFAULT_MODEL_ASSIST },
-  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
-  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
-}
-
-/** Fresh install defaults: recoverable-first with opaque/unparseable fail-closed. */
-export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
-  unknownLocalEffect: 'allow_flagged',
-  unparseableShell: 'deny',
-  codexUnmappedTool: 'allow',
-  confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
-  modelAssist: { ...DEFAULT_MODEL_ASSIST },
-  transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
-  fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
-}
-
-export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
-  allow: [],
-  external: [],
-}
-
-export const DEFAULT_REDACTION_V3: BelayRedactionConfig = {
-  maskApprovalIds: true,
-  maskBearerTokens: true,
-  maskAuthHeaders: true,
-  maskKeyValueSecrets: true,
-  maskHighEntropyStrings: true,
-}
-
-export const DEFAULT_CONTROL_PLANE_ISOLATION_V3: BelayControlPlaneIsolationConfig = {
-  mode: 'none',
-  verifyAgentWritable: true,
-}
-
-export const LEGACY_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
-  enabled: false,
-  configDir: null,
-  integrity: 'none',
-  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
-}
-
-export const DEFAULT_CONTROL_PLANE_V3: BelayControlPlaneConfig = {
-  enabled: true,
-  configDir: null,
-  integrity: 'hash-pinned',
-  isolation: { ...DEFAULT_CONTROL_PLANE_ISOLATION_V3 },
-}
-
-export const DEFAULT_CONTAINED_EXECUTION: BelayContainedExecutionConfig = {
-  enabled: false,
-  image: null,
-  dockerExecutable: null,
-  dockerHost: null,
-  timeoutMs: 30_000,
-  memoryMiB: 2048,
-  cpus: 2,
-  pids: 256,
-}
-
-export const DEFAULT_SANDBOX_V3: BelaySandboxConfig = {
-  enabled: false,
-  runtime: 'none',
-  denyNetworkByDefault: true,
-  containedExecution: { ...DEFAULT_CONTAINED_EXECUTION },
 }
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -717,29 +258,6 @@ function normalizeSandboxConfig(raw: Partial<BelaySandboxConfig> | undefined): B
   }
 }
 
-export const DEFAULT_NOTIFICATIONS_V3: BelayNotificationsConfig = {}
-
-export const DEFAULT_APPROVAL_SIGNING_V3: BelayApprovalSigningConfig = {
-  required: false,
-}
-
-export const DEFAULT_APPROVAL_CONFIG: BelayApprovalConfig = {
-  flow: 'one_step',
-  autoReplayScopes: {
-    shell: true,
-    tool: false,
-    subagent: false,
-  },
-  executionLeaseMs: 60_000,
-}
-
-export const DEFAULT_EGRESS_V3: BelayEgressConfig = {
-  enabled: false,
-  listenHost: '127.0.0.1',
-  listenPort: 17831,
-  demoteL3External: true,
-}
-
 const LOOPBACK_EGRESS_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 
 export function normalizeEgressListenHost(host: string): string {
@@ -750,57 +268,6 @@ export function normalizeEgressListenHost(host: string): string {
   }
   return DEFAULT_EGRESS_V3.listenHost
 }
-
-export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
-  version: 2,
-  mode: 'enforce',
-  approvalTtlMinutes: 15,
-  tokenPrefix: '/belay-approve',
-  gates: {
-    shell: true,
-    subagent: true,
-    fileMutation: true,
-    toolShell: true,
-  },
-  classifier: {
-    strictChains: true,
-    customExternalCommands: [],
-    customAllowCommands: [],
-    sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
-  },
-  audit: {
-    logPath: 'belay/audit.ndjson',
-    includeAssessment: true,
-    maxBytes: DEFAULT_AUDIT_MAX_BYTES,
-    maxFiles: DEFAULT_AUDIT_MAX_FILES,
-  },
-}
-
-export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
-  version: 4,
-  mode: DEFAULT_CONFIG_V2.mode,
-  approvalTtlMinutes: DEFAULT_CONFIG_V2.approvalTtlMinutes,
-  tokenPrefix: DEFAULT_CONFIG_V2.tokenPrefix,
-  gates: { ...DEFAULT_CONFIG_V2.gates },
-  classifier: {
-    strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
-    sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths],
-  },
-  policy: { ...DEFAULT_POLICY_V3 },
-  overrides: { ...DEFAULT_OVERRIDES_V3 },
-  redaction: { ...DEFAULT_REDACTION_V3 },
-  controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },
-  notifications: { ...DEFAULT_NOTIFICATIONS_V3 },
-  approvalSigning: { ...DEFAULT_APPROVAL_SIGNING_V3 },
-  approval: { ...DEFAULT_APPROVAL_CONFIG },
-  egress: { ...DEFAULT_EGRESS_V3 },
-  sandbox: { ...DEFAULT_SANDBOX_V3 },
-  audit: { ...DEFAULT_CONFIG_V2.audit },
-  judge: { ...DEFAULT_JUDGE_LOCAL_OLLAMA },
-}
-
-/** @deprecated Use DEFAULT_CONFIG_V4 */
-export const DEFAULT_CONFIG_V3: BelayConfigV4 = DEFAULT_CONFIG_V4
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)]
@@ -876,179 +343,6 @@ export function isConfigV4(value: unknown): value is BelayConfigV4 {
   return version === 4 || version === 5
 }
 
-export function normalizeJudgeProvider(
-  provider: string | undefined,
-): 'ollama' | 'openai-compatible' | 'anthropic' {
-  if (provider === 'anthropic') {
-    return 'anthropic'
-  }
-  if (provider === 'openai-compatible' || provider === 'cursor') {
-    return 'openai-compatible'
-  }
-  return 'ollama'
-}
-
-function defaultJudgeTemplateForProvider(
-  provider: 'ollama' | 'openai-compatible' | 'anthropic',
-): BelayJudgeConfig {
-  if (provider === 'ollama') {
-    return DEFAULT_JUDGE_LOCAL_OLLAMA
-  }
-  if (provider === 'anthropic') {
-    return {
-      mode: 'shadow',
-      provider: 'anthropic',
-      providerId: 'claude',
-      model: 'claude-sonnet-4-6',
-      timeoutMs: 8000,
-      endpoint: null,
-      keepAlive: null,
-    }
-  }
-  return DEFAULT_JUDGE_OPENAI_COMPATIBLE_TEMPLATE
-}
-
-function synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig {
-  const judge = raw.judge as (Partial<BelayJudgeConfig> & { provider?: string }) | undefined
-  if (judge?.provider) {
-    const rawProvider = String(judge.provider)
-    const provider = normalizeJudgeProvider(rawProvider)
-    const base = defaultJudgeTemplateForProvider(provider)
-    const providerId =
-      judge.providerId && normalizeLegacyProviderId(judge.providerId)
-        ? normalizeLegacyProviderId(judge.providerId)!
-        : rawProvider === 'cursor'
-          ? ('cursor' as const)
-          : undefined
-    return normalizeJudgeConfig({
-      ...base,
-      ...judge,
-      provider,
-      ...(providerId ? { providerId } : {}),
-    })
-  }
-  return { ...DEFAULT_JUDGE_LOCAL_OLLAMA }
-}
-
-export function normalizeJudgeConfig(judge: BelayJudgeConfig): BelayJudgeConfig {
-  const provider = normalizeJudgeProvider(judge.provider)
-  const base = defaultJudgeTemplateForProvider(provider)
-
-  const rawProviderId = judge.providerId ? String(judge.providerId) : undefined
-  if (rawProviderId && isRemovedProviderId(rawProviderId)) {
-    warnRemovedProviderId(rawProviderId)
-    let model =
-      typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
-    if (model === 'auto') {
-      warnDeprecatedJudgeModelAuto()
-      model = base.model
-    }
-    const timeoutMs =
-      typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
-    const endpoint: string | null =
-      typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null
-    return {
-      mode: judge.mode === 'off' ? 'off' : 'shadow',
-      provider,
-      providerId: rawProviderId as DeprecatedJudgeProviderId,
-      model,
-      timeoutMs,
-      endpoint,
-      keepAlive:
-        provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
-          ? judge.keepAlive.trim()
-          : provider === 'ollama'
-            ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
-            : null,
-      ...(judge.cloudConsent ? { cloudConsent: judge.cloudConsent } : {}),
-      ...(judge.credential ? { credential: judge.credential } : {}),
-      runtime: normalizeJudgeRuntimeConfig(judge.runtime),
-    }
-  }
-
-  let providerId: JudgeProviderId =
-    rawProviderId && normalizeLegacyProviderId(rawProviderId)
-      ? normalizeLegacyProviderId(rawProviderId)!
-      : inferProviderIdFromConfig({ ...judge, provider })
-
-  const spec = getJudgeProviderSpec(providerId)
-  if (spec && spec.driver !== provider) {
-    providerId = inferProviderIdFromConfig({ ...judge, provider })
-  }
-
-  const catalogSpec = getJudgeProviderSpec(providerId)
-  let model =
-    typeof judge.model === 'string' && judge.model.trim() ? judge.model.trim() : base.model
-  if (model === 'auto' && catalogSpec?.defaultModel) {
-    warnDeprecatedJudgeModelAuto()
-    model = catalogSpec.defaultModel
-  }
-  if (!model && catalogSpec?.defaultModel) {
-    model = catalogSpec.defaultModel
-  }
-
-  const timeoutMs =
-    typeof judge.timeoutMs === 'number' && judge.timeoutMs > 0 ? judge.timeoutMs : base.timeoutMs
-
-  let endpoint: string | null =
-    typeof judge.endpoint === 'string' && judge.endpoint.trim() ? judge.endpoint.trim() : null
-  if (!endpoint && catalogSpec?.defaultEndpoint) {
-    endpoint = catalogSpec.defaultEndpoint
-  }
-
-  const normalized: BelayJudgeConfig = {
-    mode: judge.mode === 'off' ? 'off' : 'shadow',
-    provider,
-    providerId,
-    model,
-    timeoutMs,
-    endpoint,
-    keepAlive:
-      provider === 'ollama' && typeof judge.keepAlive === 'string' && judge.keepAlive.trim()
-        ? judge.keepAlive.trim()
-        : provider === 'ollama'
-          ? DEFAULT_JUDGE_LOCAL_OLLAMA.keepAlive
-          : null,
-  }
-
-  if (judge.cloudConsent?.accepted) {
-    normalized.cloudConsent = {
-      accepted: true,
-      at: judge.cloudConsent.at,
-      providerId: judge.cloudConsent.providerId ?? providerId,
-      endpoint: judge.cloudConsent.endpoint,
-      by: judge.cloudConsent.by,
-    }
-  }
-
-  if (judge.credential?.mode === 'project' || judge.credential?.mode === 'apiKey') {
-    normalized.credential = {
-      mode: judge.credential.mode,
-      ...(judge.credential.ref ? { ref: judge.credential.ref } : {}),
-    }
-  }
-
-  normalized.runtime = normalizeJudgeRuntimeConfig(judge.runtime)
-
-  return normalized
-}
-
-export function rejectTeamLayerJudgeSecrets(
-  judge: Partial<BelayJudgeConfig> | undefined,
-  source: 'team' | 'repo',
-): void {
-  if (source !== 'team' || !judge) {
-    return
-  }
-  if (judge.credential?.mode === 'apiKey') {
-    throw new Error('team config cannot set judge.credential.mode to apiKey.')
-  }
-  const raw = judge as { credential?: { key?: string } }
-  if (raw.credential && 'key' in raw.credential && raw.credential.key) {
-    throw new Error('team config cannot contain inline judge credential keys.')
-  }
-}
-
 export function migrateV3ToV4(v3: BelayConfigV4, raw?: RawConfigInput): BelayConfigV4 {
   return normalizeConfig({
     ...v3,
@@ -1056,30 +350,6 @@ export function migrateV3ToV4(v3: BelayConfigV4, raw?: RawConfigInput): BelayCon
     judge: synthesizeJudgeFromRaw({ ...(raw ?? {}), judge: raw?.judge ?? v3.judge }),
   })
 }
-
-type RawConfigInput = Partial<{
-  version: number
-  judge: Partial<BelayJudgeConfig>
-  mode: BelayMode
-  approvalTtlMinutes: number
-  tokenPrefix: string
-  gates: Partial<BelayConfigV2['gates']>
-  classifier: Partial<BelayConfigV2['classifier']> & Partial<BelayClassifierConfig>
-  policy: Partial<BelayPolicyConfig>
-  overrides: Partial<BelayOverridesConfig>
-  redaction: Partial<BelayRedactionConfig>
-  controlPlane: Partial<BelayControlPlaneConfig>
-  notifications: Partial<BelayNotificationsConfig>
-  approvalSigning: Partial<BelayApprovalSigningConfig>
-  approval: Partial<BelayApprovalConfig> & {
-    autoReplayScopes?: Partial<BelayApprovalAutoReplayScopes>
-  }
-  egress: Partial<BelayEgressConfig>
-  sandbox: Partial<BelaySandboxConfig>
-  audit: Partial<BelayConfigV2['audit']>
-  installScope: 'project' | 'global'
-  capability: Partial<BelayCapabilityConfig>
-}>
 
 function hasV3Sections(raw: RawConfigInput): boolean {
   return (
@@ -1318,7 +588,9 @@ export function normalizeConfigV2(config: BelayConfigV2): BelayConfigV2 {
 }
 
 export function normalizeConfig(config: BelayConfigV4): BelayConfigV4
+
 export function normalizeConfig(config: BelayConfigV2): BelayConfigV2
+
 export function normalizeConfig(
   config: BelayConfigV2 | BelayConfigV4,
 ): BelayConfigV2 | BelayConfigV4 {
@@ -1567,19 +839,8 @@ export function stripForbiddenShellOverrideLists(config: BelayConfigV4): BelayCo
 
 export function configForPersistence(config: BelayConfigV4): BelayConfigV4 {
   const stripped = stripForbiddenShellOverrideLists(config)
-  const markedAudit = stripped.audit as BelayAuditConfig & AuditConfigWithLegacyMarker
-  if (!markedAudit[LEGACY_DISABLED_RETENTION] || !markedAudit.retention) {
-    return stripped
-  }
-
-  const audit = { ...markedAudit }
-  if (markedAudit.retention.maxBytes === 0) {
-    delete audit.maxBytes
-  }
-  if (markedAudit.retention.maxFiles === 0) {
-    delete audit.maxFiles
-  }
-  return { ...stripped, audit }
+  const audit = auditConfigForPersistence(stripped.audit)
+  return audit === stripped.audit ? stripped : { ...stripped, audit }
 }
 
 export function mergeConfig(
@@ -1677,46 +938,4 @@ export function classifierOptionsFromConfig(config: BelayConfigV4): ClassifierOp
     scrubOptions: scrubOptionsFromConfig(config),
     egressEnabled: config.egress.enabled,
   }
-}
-
-export function defaultControlPlaneDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homedir: () => string = () => env.HOME ?? env.USERPROFILE ?? '',
-): string {
-  if (process.platform === 'win32') {
-    const appData = env.APPDATA?.trim()
-    if (appData) {
-      return path.join(appData, 'agent-belay')
-    }
-  }
-  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
-  const base = xdgConfigHome || path.join(homedir(), '.config')
-  return path.join(base, 'agent-belay')
-}
-
-export function resolveControlPlaneDir(config: BelayConfigV4): string {
-  if (config.controlPlane.configDir) {
-    return config.controlPlane.configDir
-  }
-  return defaultControlPlaneDir()
-}
-
-/** Control-plane directory regardless of enabled flag (for orphan migration). */
-export function configuredControlPlaneDir(config: BelayConfigV4): string {
-  return resolveControlPlaneDir(config)
-}
-
-export function belayStateDir(config: BelayConfigV4, repoLocalStateDir: string): string {
-  if (config.controlPlane.enabled) {
-    return resolveControlPlaneDir(config)
-  }
-  return repoLocalStateDir
-}
-
-export function pendingApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string {
-  return path.join(belayStateDir(config, repoLocalStateDir), 'pending-approvals.json')
-}
-
-export function approvedApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string {
-  return path.join(belayStateDir(config, repoLocalStateDir), 'approved-approvals.json')
 }
