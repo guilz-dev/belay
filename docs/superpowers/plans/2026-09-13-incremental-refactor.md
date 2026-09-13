@@ -147,10 +147,10 @@ pnpm exec vitest run src/__tests__/config.test.ts src/__tests__/config-mixed-ver
 - auditの `DEFAULT_AUDIT_MAX_BYTES`、`DEFAULT_AUDIT_MAX_FILES`、`MAX_AUDIT_FILES`、`DEFAULT_AUDIT_RETENTION` は `audit.ts` が所有する。
 - 他の既存export定数は `defaults.ts` が所有する。`LOOPBACK_EGRESS_HOSTS` のような正規化専用のprivate定数はconfig.tsに残す。
 
-- [ ] 基準HEAD、既存差分、関連ADRを確認し、実装用の隔離作業領域を確保する。上記baseline検証を行う。
-- [ ] 現在のconfig.tsのexport一覧を記録する。runtime exportに加え、型・overload・deprecated aliasも移動後の比較対象にする。
-- [ ] 型とaudit定数を移し、defaultsを移す。オブジェクトのspread順、配列の複製、alias参照を変更しない。
-- [ ] config.tsでは内部利用用importと既存API用の明示的re-exportを記述する。`export *` による内部型/helperの意図しない公開を避ける。
+- [x] 基準HEAD、既存差分、関連ADRを確認し、実装用の隔離作業領域を確保する。上記baseline検証を行う。
+- [x] 現在のconfig.tsのexport一覧を記録する。runtime exportに加え、型・overload・deprecated aliasも移動後の比較対象にする。
+- [x] 型とaudit定数を移し、defaultsを移す。オブジェクトのspread順、配列の複製、alias参照を変更しない。
+- [x] config.tsでは内部利用用importと既存API用の明示的re-exportを記述する。`export *` による内部型/helperの意図しない公開を避ける。
 
 実際の接続形は以下。既存定義を移動し、定義を二重に残さない。
 
@@ -171,7 +171,7 @@ export { DEFAULT_CONFIG_V2, DEFAULT_CONFIG_V3, DEFAULT_CONFIG_V4 } from './confi
 export type { BelayConfig, BelayConfigV1, BelayConfigV2, BelayConfigV3, BelayConfigV4 } from './config/types.js'
 ```
 
-- [ ] 次を実行し、型エラー、初期化順序エラー、既定値差分がないことを確認する。
+- [x] 次を実行し、型エラー、初期化順序エラー、既定値差分がないことを確認する。
 
 ```bash
 pnpm typecheck
@@ -194,7 +194,7 @@ pnpm exec vitest run src/__tests__/config.test.ts src/__tests__/config-mixed-ver
 - 内部新設: `auditConfigForPersistence(audit: BelayAuditConfig): BelayAuditConfig`。
 - `LEGACY_DISABLED_RETENTION` と `AuditConfigWithLegacyMarker` はaudit.tsのprivateにする。Symbolを別モジュールで再生成しない。
 
-- [ ] flat/nested優先順位、上限、legacy `0`、保存round-tripについて既存テストを確認する。未カバーならconfig.test.tsの既存importへ `configForPersistence` を追加し、次を追加する。
+- [x] flat/nested優先順位、上限、legacy `0`、保存round-tripについて既存テストを確認する。未カバーならconfig.test.tsの既存importへ `configForPersistence` を追加し、次を追加する。
 
 ```ts
 it('preserves a disabled legacy bound across persistence and reload', () => {
@@ -214,8 +214,8 @@ it('preserves a disabled legacy bound across persistence and reload', () => {
 
 これは既存挙動の固定なので移動前からPASSを期待する。移動前にFAILする場合、仕様変更を混ぜず既存実装とテストの前提を調べる。
 
-- [ ] auditの既存関数・private helper・Symbolを、処理順を変えずにaudit.tsへ移す。
-- [ ] configForPersistenceにあるaudit専用の処理を、次のhelperに移す。
+- [x] auditの既存関数・private helper・Symbolを、処理順を変えずにaudit.tsへ移す。
+- [x] configForPersistenceにあるaudit専用の処理を、次のhelperに移す。
 
 ```ts
 // config/audit.ts
@@ -238,8 +238,8 @@ export function configForPersistence(config: BelayConfigV4): BelayConfigV4 {
 }
 ```
 
-- [ ] Symbol付きオブジェクトがnormalize/mergeの途中でJSON複製されないこと、既存audit定数が一つのモジュールから参照されることを確認する。
-- [ ] 次を実行する。
+- [x] Symbol付きオブジェクトがnormalize/mergeの途中でJSON複製されないこと、既存audit定数が一つのモジュールから参照されることを確認する。
+- [x] 次を実行する。
 
 ```bash
 pnpm typecheck
@@ -264,9 +264,9 @@ pnpm exec vitest run src/__tests__/config.test.ts src/__tests__/config-io.test.t
 - 内部export: `synthesizeJudgeFromRaw(raw: RawConfigInput): BelayJudgeConfig`。
 - `defaultJudgeTemplateForProvider` はjudge.ts内のprivate関数。
 
-- [ ] 上記関数を宣言・本文ごと移す。provider aliases、endpoint null、modelの補完、警告文言と呼出回数、runtime補完を変更しない。
-- [ ] `warnDeprecatedJudgeModelAuto`、judge-catalogのruntime import、`normalizeJudgeRuntimeConfig` のimportを新モジュールへ移す。
-- [ ] 設定値の取得先をdefaults/typesへ直接接続する。`src/core/judge-config.ts` はCLI profile・consent用の既存モジュールなので混ぜない。
+- [x] 上記関数を宣言・本文ごと移す。provider aliases、endpoint null、modelの補完、警告文言と呼出回数、runtime補完を変更しない。
+- [x] `warnDeprecatedJudgeModelAuto`、judge-catalogのruntime import、`normalizeJudgeRuntimeConfig` のimportを新モジュールへ移す。
+- [x] 設定値の取得先をdefaults/typesへ直接接続する。`src/core/judge-config.ts` はCLI profile・consent用の既存モジュールなので混ぜない。
 
 ```ts
 // config.tsからの利用と公開境界
@@ -278,7 +278,7 @@ export {
 } from './config/judge.js'
 ```
 
-- [ ] 次を実行する。外部LLM通信は不要。model catalogの値は更新しない。
+- [x] 次を実行する。外部LLM通信は不要。model catalogの値は更新しない。
 
 ```bash
 pnpm typecheck
@@ -307,8 +307,8 @@ pendingApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string
 approvedApprovalsFile(config: BelayConfigV4, repoLocalStateDir: string): string
 ```
 
-- [ ] パス関数の宣言・本文と `node:path` importを移す。引数のdefault式、Windows分岐、環境変数の参照タイミング、enabledによる選択を維持する。
-- [ ] `classifierOptionsFromConfig` と `scrubOptionsFromConfig` はconfig.tsに残し、前者から `resolveControlPlaneDir` を直接importする。
+- [x] パス関数の宣言・本文を移し、抽出先にも `node:path` をimportする。config.tsの既存normalizerにもpath利用があるため、そのimportは維持する。引数のdefault式、Windows分岐、環境変数の参照タイミング、enabledによる選択を維持する。
+- [x] `classifierOptionsFromConfig` と `scrubOptionsFromConfig` はconfig.tsに残し、前者から `resolveControlPlaneDir` を直接importする。
 
 ```ts
 // config.ts
@@ -323,14 +323,14 @@ export {
 } from './config/paths.js'
 ```
 
-- [ ] 次を実行し、path移動がtrustの保存場所や継承元に影響していないことを確認する。
+- [x] 次を実行し、path移動がtrustの保存場所や継承元に影響していないことを確認する。
 
 ```bash
 pnpm exec vitest run src/__tests__/config.test.ts src/__tests__/config-io.test.ts src/__tests__/repo-config-trust.test.ts src/__tests__/linked-worktree-config.test.ts src/__tests__/config-layers.test.ts
 ```
 
-- [ ] Task 1で記録した公開exportと比較する。新規内部helperがconfig.ts/core indexへ漏れていないこと、型alias・overload・既定値aliasが残っていることを確認する。
-- [ ] 最終検証を順に実行する。
+- [x] Task 1で記録した公開exportと比較する。新規内部helperがconfig.ts/core indexへ漏れていないこと、型alias・overload・既定値aliasが残っていることを確認する。
+- [x] 最終検証を順に実行する。
 
 ```bash
 pnpm lint
@@ -423,8 +423,44 @@ pnpm test:structural:run
 
 ### 実装完了時に残す記録
 
-- [ ] 実際のBASE/HEADと変更ファイル一覧。
-- [ ] focused test、lint、typecheck、build、通常suiteの実行結果。
-- [ ] export互換、audit保存round-trip、trust/継承、decision fingerprintの確認結果。
-- [ ] 初回reviewと限定再reviewの対象・blocking残件。
-- [ ] 段階B以降へ進むかを判断する材料。未実施のロードマップ項目を完了扱いにしない。
+- [x] 実際のBASE/HEADと変更ファイル一覧。
+- [x] focused test、lint、typecheck、build、通常suiteの実行結果。
+- [x] export互換、audit保存round-trip、trust/継承、decision fingerprintの確認結果。
+- [x] 初回reviewと限定再reviewの対象・blocking残件。
+- [x] 段階B以降へ進むかを判断する材料。未実施のロードマップ項目を完了扱いにしない。
+
+
+## 8. 段階Aの実装結果（2026-09-13）
+
+- Worktree: `.worktrees/config-leaf-refactor`。
+- Branch: `refactor/config-leaf-modules`。
+- BASE: `de5e7082de51c9c36c305c0e852f67bb490397d0`（着手時のorigin/main）。
+- 計画コミット: `bc2a934`。実装コードのHEAD: `15cc386`。この節の更新は検証・レビュー後の文書変更。
+- 変更: `src/core/config.ts`、新規 `src/core/config/{types,defaults,audit,judge,paths}.ts`、`src/__tests__/config.test.ts`、本計画書。
+- config.tsは1,722行から941行へ縮小。移行・正規化・マージを残し、5つの責務を抽出した。
+
+### 検証結果
+
+| 検証 | 結果 |
+| --- | --- |
+| 変更前build / focused baseline | 成功、7 files / 74 tests |
+| Task 1: 型・既定値 | typecheck成功、3 files / 42 tests |
+| Task 2: audit互換 | typecheck成功、5 files / 117 tests |
+| Task 3: judge設定 | typecheck成功、6 files / 27 tests |
+| Task 4: path・trust・継承 | 5 files / 62 tests |
+| 最終lint | exit 0、15 warnings / 1 info、errorsなし |
+| 最終typecheck / build | 成功。3 host runtimeとCursor dispatcherを生成 |
+| 最終通常suite | 198 files、2,950 passed、2 skipped |
+| Structural suite | 通常suite内で241件成功。重複実行は省略 |
+| Corpus | 96件すべて一致。must-ask miss 0/42、provably-benign over-stop 0/35 |
+| CLI version | check-cli-version成功、0.12.1 |
+
+追加した2ケースは、legacy nested retentionの一方だけが0の場合に、保存JSONから対応するflat keyが消え、再ロード後も意味が維持されることを検証する。除去処理を一時的に無効にして両ケースが失敗することを確認し、復元後に全suiteを通した。
+
+一時検証スクリプトで変更前後のASTとexportを比較した。122個の既存宣言は、保存処理をhelperに委譲した `configForPersistence` 以外同一。101個のTypeScript export、62個のruntime export、既定値、deprecated aliasの参照同一性を維持している。内部helperの公開漏れとruntimeのfacade逆importはない。
+
+### レビューと残件
+
+固定範囲 `de5e708..15cc386` に対し、親エージェントが独立レビューを1回実施した。spec・qualityともに承認、Critical/Important/Minor指摘なし。修正wave・限定再レビューは不要だった。
+
+段階B〜Eは未実施。段階Aの結果は設定の責務分割と互換維持であり、承認I/Oの統一、gateやCLIの再編は別の着手判断とする。hook再配置、dogfood再配置、release、mergeは行っていない。
