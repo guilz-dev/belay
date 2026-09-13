@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Generic audit log default** — Adapter-less fallbacks now use hidden `.belay/audit.ndjson`
+  instead of visible repo-root `belay/audit.ndjson`, which could create a top-level `belay/`
+  directory. Adapter installs continue to use `.cursor/belay/audit.ndjson` (and Claude/Codex
+  equivalents). Repos that already persisted `audit.logPath: "belay/audit.ndjson"` must update
+  config and move logs manually.
+
 ## 0.12.1 — 2026-09-11
 
 ### Added

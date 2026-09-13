@@ -126,6 +126,7 @@ describe('config migration', () => {
 
     expect(normalized.audit.maxBytes).toBe(33_554_432)
     expect(normalized.audit.maxFiles).toBe(5)
+    expect(normalized.audit.logPath).toBe('.belay/audit.ndjson')
   })
 
   it('floors positive audit bounds and defaults non-finite or non-positive values', () => {

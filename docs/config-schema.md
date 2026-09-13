@@ -195,7 +195,7 @@ enablement. Older audit records without recovery fields remain readable.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Audit directory or legacy file path (dirname used for versioned logs) |
+| `logPath` | string | adapter-specific path (e.g. `.cursor/belay/audit.ndjson`); adapter-less fallback `.belay/audit.ndjson` | Audit directory or legacy file path (dirname used for versioned logs) |
 | `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
 | `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
 | `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |

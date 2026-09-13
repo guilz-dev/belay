@@ -206,7 +206,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
     sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
   },
   audit: {
-    logPath: 'belay/audit.ndjson',
+    logPath: '.belay/audit.ndjson',
     includeAssessment: true,
     maxBytes: DEFAULT_AUDIT_MAX_BYTES,
     maxFiles: DEFAULT_AUDIT_MAX_FILES,
