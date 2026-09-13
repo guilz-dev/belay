@@ -1,3 +1,5 @@
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -334,6 +336,66 @@ describe('classifyToolUse', () => {
     )
     expect(result.verdict).toBe('allow')
     expect(result.reason).toBe('effect.search_read')
+  })
+
+  it.each([
+    '/home/operator/.cursor/plugins/example/skills/debugging/SKILL.md',
+    '/home/operator/.cursor/projects/example/terminals/1.txt',
+    '/tmp/diagnostic.log',
+  ])('allows ordinary outside-repository reads: %s', async (filePath) => {
+    const result = await classifyToolUse(
+      { tool_name: 'Read', tool_input: { file_path: filePath } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('allow')
+    expect(result.reason).toBe('effect.fs_read')
+    expect(result.capabilityRequests?.[0]?.action).toBe('fs.read')
+  })
+
+  it.each([
+    '/home/operator/.ssh/id_ed25519',
+    '/home/operator/.aws/credentials',
+    '/home/operator/.config/gh/hosts.yml',
+    '/tmp/.env',
+    '/workspace/project/.npmrc',
+  ])('keeps credential reads approval-gated: %s', async (filePath) => {
+    const result = await classifyToolUse(
+      { tool_name: 'Read', tool_input: { file_path: filePath } },
+      repoRoot,
+      cwd,
+      config,
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
+  })
+
+  it('requires approval when an ordinary read path resolves to a credential', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-read-'))
+    try {
+      await writeFile(path.join(root, '.env'), 'fixture')
+      await symlink(path.join(root, '.env'), path.join(root, 'notes.txt'))
+      const result = await classifyToolUse(
+        { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes.txt') } },
+        repoRoot,
+        cwd,
+        config,
+      )
+      expect(result.verdict).toBe('deny_pending_approval')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps configured sensitive reads gated inside a trusted workspace', async () => {
+    const result = await classifyToolUse(
+      { tool_name: 'Read', tool_input: { file_path: '/tmp/shared/private.txt' } },
+      repoRoot,
+      cwd,
+      mergeConfig({ version: 4, classifier: { sensitivePaths: ['private.txt'] } }),
+      { trustedWorkspaceRoots: [canonicalPath('/tmp/shared')] },
+    )
+    expect(result.verdict).toBe('deny_pending_approval')
   })
 
   it('denies control plane writes to the control plane directory (R8)', async () => {

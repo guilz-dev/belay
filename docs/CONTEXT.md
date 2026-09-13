@@ -80,8 +80,10 @@ authorization model. It complements
     ([dogfood audit remediation §P0-1](./dogfood-audit-remediation-2026-08-22.ja.md)).
 11. **Dogfood cohort identity** separates runtime bundle hash (`runtimeArtifactHash`),
     authorization-relevant config hash (`decisionConfigFingerprint`), and `boundaryProfile`.
-    `mode` and audit display settings do not reset the decision cohort. Readiness still uses a
-    minimum gate-event count today; stricter reviewed-benign thresholds are planned (same doc §6).
+    `mode` and audit display settings do not reset the decision cohort. Readiness uses
+    reviewed provably-benign traffic: at least 150 events across three valid session correlations,
+    a benign block rate below 2%, and zero active-cohort availability asks. Corpus hard gates also
+    apply; raw would-block rate is diagnostic only.
     When its sidecar is missing, invalid, or for another cohort, readiness is reconstructed under
     the audit writer lock from the exact retained generations before rotation and applies the
     incoming delta once. A proven complete empty snapshot may seed zero; malformed, unreadable,
@@ -189,8 +191,8 @@ Existing `GateVerdict` fields remain stable. Optional extensions:
 - Seatbelt / Landlock `BoundaryDriver` implementations (types only today)
 - Legacy sync judge transport removal (after one release of shadow observation)
 - Host `spawn(env: process.env)` removal from L3 `host-integration` driver
-- Readiness threshold revision (Phase D in
-  [dogfood audit remediation](./dogfood-audit-remediation-2026-08-22.ja.md))
+- Fresh-cohort dogfood evidence collection and enforce trial (Phase D in
+  [dogfood audit remediation](./dogfood-audit-remediation-2026-08-22.ja.md)); threshold logic is delivered.
 - Active dogfood install roster: [docs/ops/dogfood-install-targets.md](./ops/dogfood-install-targets.md)
 
 ## Layer split (L1 vs L3)
