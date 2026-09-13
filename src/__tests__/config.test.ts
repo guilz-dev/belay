@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { configPathFor, loadConfigFile } from '../config-io.js'
 import {
+  configForPersistence,
   DEFAULT_CONFIG_V3,
   defaultControlPlaneDir,
   isFreshConfigInput,
@@ -97,6 +98,27 @@ describe('config migration', () => {
       maxFiles: expected.maxFiles,
     })
     expect(normalized.audit.retention).toEqual(expected.retention)
+  })
+
+  it.each([
+    { disabled: 'maxBytes', retention: { maxBytes: 0, maxFiles: 2 }, maxFiles: 2 },
+    { disabled: 'maxFiles', retention: { maxBytes: 4_096, maxFiles: 0 }, maxBytes: 4_096 },
+  ])('preserves legacy disabled $disabled through persistence and reload', ({
+    disabled,
+    retention,
+    maxBytes,
+    maxFiles,
+  }) => {
+    const loaded = mergeConfig({ version: 4, audit: { retention } })
+    const persisted = JSON.parse(JSON.stringify(configForPersistence(loaded)))
+
+    expect(persisted.audit).not.toHaveProperty(disabled)
+    expect(persisted.audit.retention).toEqual(retention)
+
+    const reloaded = mergeConfig(persisted)
+    expect(reloaded.audit.retention).toEqual(retention)
+    if (maxBytes !== undefined) expect(reloaded.audit.maxBytes).toBe(maxBytes)
+    if (maxFiles !== undefined) expect(reloaded.audit.maxFiles).toBe(maxFiles)
   })
 
   it('normalizes missing audit bounds to 32 MiB and five retained files', () => {
