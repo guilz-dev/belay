@@ -5,7 +5,7 @@ import { joinEffectOpacity } from '../normalize.js'
 import type { ShellEffectRequirement, ShellEffectSegment } from '../shell-build.js'
 import type { EffectPlan } from '../types.js'
 import { requirement } from './requirement.js'
-import { resolvePathOperand } from './tokens.js'
+import { expandKnownVariables, resolvePathOperand } from './tokens.js'
 
 const DYNAMIC_SHELL_VALUE_PATTERN =
   /(?:\$\(|`|\$(?:\d+|[@*#?$!-]|\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*))/
@@ -55,12 +55,13 @@ export function resolveCdTransition(
   command: string,
   currentCwd: string,
   currentCwdKnown = true,
+  env: Readonly<Record<string, string | undefined>> = {},
 ): CdTransition | null {
   const tokens = tokenizeShell(command)
   if (path.basename(tokens[0] ?? '') !== 'cd') {
     return null
   }
-  const target = tokens[1] ?? ''
+  const target = expandKnownVariables(tokens[1] ?? '', env)
   if (!target || target === '-' || target.includes('$') || target.includes('`')) {
     return { cwd: currentCwd, known: false, signal: 'shell.cwd_dynamic_transition' }
   }

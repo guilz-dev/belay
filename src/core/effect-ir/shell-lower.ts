@@ -5,6 +5,7 @@ import {
   isHereStringOperator,
   lexShell,
   type ShellHeredoc,
+  tokenizeShell,
 } from '../shell-tokenizer.js'
 import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
@@ -162,13 +163,14 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
       }
     }
     lowered.push(result)
+    inferredEnv = applyPersistentEnvironmentAssignments(segment, inferredEnv)
     if (!inferredEnv.DATABASE_URL && startsLocalPostgresService(segment)) {
       inferredEnv = {
         ...inferredEnv,
         DATABASE_URL: 'postgresql://127.0.0.1:5432/local',
       }
     }
-    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown)
+    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown, inferredEnv)
     if (nextCwd) {
       cwd = nextCwd.cwd
       cwdKnown = nextCwd.known
@@ -223,6 +225,25 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
     )
   }
   return lowered
+}
+
+function applyPersistentEnvironmentAssignments(
+  segment: string,
+  inherited: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  const tokens = tokenizeShell(segment)
+  if (tokens.length === 0) {
+    return inherited
+  }
+
+  const assignmentTokens =
+    tokens[0] === 'export' && tokens.length > 1 ? tokens.slice(1) : tokens
+  const assignmentOnly = assignmentTokens.every((token) => ENV_PREFIX_PATTERN.test(token))
+  if (!assignmentOnly) {
+    return inherited
+  }
+
+  return extractEnvironment(assignmentTokens, inherited).env
 }
 
 function lowerSegment(
