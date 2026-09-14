@@ -236,8 +236,7 @@ function applyPersistentEnvironmentAssignments(
     return inherited
   }
 
-  const assignmentTokens =
-    tokens[0] === 'export' && tokens.length > 1 ? tokens.slice(1) : tokens
+  const assignmentTokens = tokens[0] === 'export' && tokens.length > 1 ? tokens.slice(1) : tokens
   const assignmentOnly = assignmentTokens.every((token) => ENV_PREFIX_PATTERN.test(token))
   if (!assignmentOnly) {
     return inherited
