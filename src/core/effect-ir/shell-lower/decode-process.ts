@@ -261,6 +261,12 @@ export function decodeProcessOrFilesystem(params: {
     return lowered
   }
 
+  if (head === 'sleep') {
+    if (args.length === 1 && /^\d+(\.\d+)?([smhd])?$/.test(args[0] ?? '')) {
+      return []
+    }
+    return unsupportedProcess(head, segment, 'process.sleep_grammar_incomplete')
+  }
   if (head === 'printf' || head === 'echo' || head === 'true' || head === 'false' || head === ':') {
     return []
   }

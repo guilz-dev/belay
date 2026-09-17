@@ -400,6 +400,32 @@ describe('structural suite', () => {
       expect(result.signals).not.toContain('git.push')
     })
 
+    it('allows git commit with a literal heredoc message substitution', async () => {
+      const command = `git commit -m "$(cat <<'EOF'
+fix: normalize heredoc commit message
+
+EOF
+)"`
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('allow')
+      expect(['local_mutation', 'repo_local_mutation']).toContain(result.reason)
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.commit')
+      expect(result.signals).not.toContain('shell.heredoc_incomplete')
+    })
+
+    it('keeps unquoted commit-message heredoc expansions approval-required', async () => {
+      const command = `git commit -m "$(cat <<EOF
+fix: $(git push origin main)
+EOF
+)"`
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('git.push')
+    })
+
     it('keeps the current make verify-parallel background/PID recipe approval-required', async () => {
       const root = process.cwd()
       const result = await verdict('make verify-parallel', {
