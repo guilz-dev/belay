@@ -6,13 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 0.12.2 — 2026-09-17
+
 ### Fixed
 
+- **Shell `sleep` lowering** — Bounded `sleep N` is treated as a no-effect builtin so compounds
+  like `sleep && gh run view` classify as read-only instead of `unknown_local_effect`.
+- **Linked git worktree boundaries** — Policy and contained-execution eligibility treat linked
+  git worktrees as same-repo for path boundaries.
 - **Generic audit log default** — Adapter-less fallbacks now use hidden `.belay/audit.ndjson`
   instead of visible repo-root `belay/audit.ndjson`, which could create a top-level `belay/`
   directory. Adapter installs continue to use `.cursor/belay/audit.ndjson` (and Claude/Codex
   equivalents). Repos that already persisted `audit.logPath: "belay/audit.ndjson"` must update
   config and move logs manually.
+
+### Added
+
+- **Freelance ULE triage** — `docs/ops/freelance-ule-triage-2026-09-17.ja.md` documents active
+  cohort `unknown_local_effect` patterns and before/after `explain` fingerprints for dogfood repos.
+- **Regression corpus** — gh read-only (`--repo`, `--log-failed`), `sleep && gh`, and commit
+  heredoc message substitution cases in corpus and structural tests.
 
 ## 0.12.1 — 2026-09-11
 
