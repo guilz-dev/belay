@@ -816,9 +816,7 @@ function isRepoLocalRoutineWrite(request: CapabilityRequestV1, sensitivePaths: s
   if (request.resource.kind !== 'path') {
     return false
   }
-  const resolved = canonicalPath(
-    resolveCapabilityPath(request.resource.path, request.context.cwd),
-  )
+  const resolved = canonicalPath(resolveCapabilityPath(request.resource.path, request.context.cwd))
   const repoRoot = canonicalPath(request.principal.repoRoot)
   const relative = sameRepoRelativePath(repoRoot, resolved)
   if (relative === null) {
