@@ -5,7 +5,13 @@ import type { BelayConfigV4 } from '../config.js'
 import { isGitMetadataPath } from '../git-resource-identity.js'
 import { matchesSensitivePath } from '../glob.js'
 import { parseNetworkEndpoint } from '../network-endpoint.js'
-import { canonicalPath, pathWithinRoot, resolveWorkspaceRootMatch } from '../path-utils.js'
+import {
+  canonicalPath,
+  isSameRepoPath,
+  pathWithinRoot,
+  resolveWorkspaceRootMatch,
+  sameRepoRelativePath,
+} from '../path-utils.js'
 import { tokenizeShell } from '../shell-tokenizer.js'
 import type { VerdictEffect, VerdictLocation, VerdictOpacity } from '../verdict/types.js'
 import {
@@ -528,7 +534,7 @@ function resourcePathForShellAnalysis(analysis: ShellCapabilityAnalysis): string
     return null
   }
   if (analysis.effect === 'local_mutation') {
-    const outside = resolved.find((candidate) => !pathWithinRoot(repoRoot, candidate))
+    const outside = resolved.find((candidate) => !isSameRepoPath(repoRoot, candidate))
     return outside ?? resolved.at(-1) ?? first
   }
   return first
@@ -797,7 +803,7 @@ function isRepoLocalPackageExec(request: CapabilityRequestV1): boolean {
     return false
   }
   const commandPath = canonicalPath(request.resource.command)
-  return path.isAbsolute(commandPath) && pathWithinRoot(request.principal.repoRoot, commandPath)
+  return path.isAbsolute(commandPath) && isSameRepoPath(request.principal.repoRoot, commandPath)
 }
 
 function isRepoLocalRoutineWrite(request: CapabilityRequestV1, sensitivePaths: string[]): boolean {
@@ -810,12 +816,12 @@ function isRepoLocalRoutineWrite(request: CapabilityRequestV1, sensitivePaths: s
   if (request.resource.kind !== 'path') {
     return false
   }
-  const resolved = resolveCapabilityPath(request.resource.path, request.context.cwd)
+  const resolved = canonicalPath(resolveCapabilityPath(request.resource.path, request.context.cwd))
   const repoRoot = canonicalPath(request.principal.repoRoot)
-  if (!pathWithinRoot(repoRoot, resolved)) {
+  const relative = sameRepoRelativePath(repoRoot, resolved)
+  if (relative === null) {
     return false
   }
-  const relative = resolved.slice(repoRoot.length).replace(/^[/\\]/, '')
   return !matchesSensitivePath(relative, sensitivePaths)
 }
 
@@ -942,24 +948,26 @@ function builtInRule(
 
   if (request.resource.kind === 'path' && sensitivePaths?.length) {
     const repoRoot = canonicalPath(request.principal.repoRoot)
-    const resolved = resolveCapabilityPath(request.resource.path, request.context.cwd)
-    if (pathWithinRoot(repoRoot, resolved)) {
-      const relative = resolved.slice(repoRoot.length).replace(/^[/\\]/, '')
-      if (matchesSensitivePath(relative, sensitivePaths)) {
-        return {
-          outcome: 'require_approval',
-          reason: 'high_stakes_path',
-          signals: [...request.evidence.signals, 'sensitive_path'],
-          matchedRule: 'builtin.sensitive_path',
-        }
+    const resolved = canonicalPath(
+      resolveCapabilityPath(request.resource.path, request.context.cwd),
+    )
+    const relative = sameRepoRelativePath(repoRoot, resolved)
+    if (relative !== null && matchesSensitivePath(relative, sensitivePaths)) {
+      return {
+        outcome: 'require_approval',
+        reason: 'high_stakes_path',
+        signals: [...request.evidence.signals, 'sensitive_path'],
+        matchedRule: 'builtin.sensitive_path',
       }
     }
   }
 
   if (request.resource.kind === 'path') {
     const repoRoot = canonicalPath(request.principal.repoRoot)
-    const resolved = resolveCapabilityPath(request.resource.path, request.context.cwd)
-    const insideRepo = pathWithinRoot(repoRoot, resolved)
+    const resolved = canonicalPath(
+      resolveCapabilityPath(request.resource.path, request.context.cwd),
+    )
+    const insideRepo = isSameRepoPath(repoRoot, resolved)
     if (!insideRepo && !isTrustedWorkspaceWrite(request, trustedWorkspaceRoots)) {
       return {
         outcome: 'require_approval',

@@ -247,6 +247,8 @@ describe('general shell dogfood behavior', () => {
 
     expect.soft(readResult.verdict).toBe('allow')
     expect.soft(linkedMutationResult.verdict).toBe('allow_flagged')
+    expect.soft(linkedMutationResult.axes?.location).toBe('repo_local')
+    expect.soft(linkedMutationResult.assessment.external).toBe(false)
     expect.soft(separateMutationResult.verdict).toBe('deny_pending_approval')
   })
 
