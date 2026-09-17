@@ -485,6 +485,31 @@
   {
     "kind": "shell",
     "category": "provably-benign",
+    "command": "gh pr view 675 --repo agency-star/freelance.admin",
+    "verdict": "allow"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "gh run view 35177312105 --repo agency-star/freelance.admin --log-failed",
+    "verdict": "allow"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
+    "command": "sleep 1500 && gh run view 35051027563 --repo agency-star/copilot-usage-reporter --json status,conclusion",
+    "verdict": "allow"
+  },
+  {
+    "kind": "shell",
+    "category": "accepted-benign",
+    "command": "git commit -m \"$(cat <<'EOF'\nfix: example message\n\nEOF\n)\"",
+    "verdict": "allow_flagged",
+    "reason": "local_mutation"
+  },
+  {
+    "kind": "shell",
+    "category": "provably-benign",
     "command": "gh pr diff 54",
     "verdict": "allow"
   },

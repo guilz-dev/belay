@@ -162,9 +162,12 @@ describe('general shell dogfood behavior', () => {
   it.each([
     'gh pr view 54',
     'gh pr diff 54',
+    'gh pr view 675 --repo agency-star/freelance.admin',
+    'gh run view 35177312105 --repo agency-star/freelance.admin --log-failed',
     'gh api repos/guilz-dev/belay/pulls/54',
     'gh search code "freeword" repo:guilz-dev/belay path:src',
     'gh api "repos/guilz-dev/belay/contents/src?ref=main" --jq ".content" | base64 -d | sed -n "1,40p"',
+    'sleep 1500 && gh run view 35051027563 --repo agency-star/copilot-usage-reporter --json status,conclusion',
   ])('allows read-only GitHub CLI calls: %s', async (command) => {
     const repoRoot = '/workspace/project'
     const result = await classify(command, repoRoot, repoRoot)

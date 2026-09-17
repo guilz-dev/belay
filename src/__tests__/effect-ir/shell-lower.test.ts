@@ -78,11 +78,42 @@ describe('general shell semantic lowering', () => {
   })
 
   it.each([
+    ['sleep 1', []],
+    ['sleep 1.5', []],
+    ['sleep 30s', []],
+    ['sleep', ['process.sleep_grammar_incomplete']],
+    ['sleep 1 2', ['process.sleep_grammar_incomplete']],
+  ])('lowers sleep as a no-effect builtin: %s', (command, signals) => {
+    const lowered = requirements(command)
+    if (signals.length === 0) {
+      expect(lowered).toEqual([])
+      return
+    }
+    expect(lowered).toContainEqual(
+      expect.objectContaining({
+        action: 'indeterminate',
+        evidence: expect.objectContaining({ signals }),
+      }),
+    )
+  })
+
+  it.each([
     ['curl https://example.com/health', 'example.com', 'https'],
     ['curl -I https://example.com/health', 'example.com', 'https'],
     ['wget https://example.com/archive.tgz', 'example.com', 'https'],
     ['gh pr view 54', 'api.github.com', 'https'],
+    ['gh pr view 675 --repo agency-star/freelance.admin', 'api.github.com', 'https'],
+    [
+      'gh run view 35177312105 --repo agency-star/freelance.admin --log-failed',
+      'api.github.com',
+      'https',
+    ],
     ['gh api repos/guilz-dev/belay/pulls/54', 'api.github.com', 'https'],
+    [
+      'sleep 1500 && gh run view 35051027563 --repo agency-star/copilot-usage-reporter --json status,conclusion',
+      'api.github.com',
+      'https',
+    ],
   ])('lowers payload-free network read: %s', (command, host, protocol) => {
     expect(resources(command)).toContainEqual(
       expect.objectContaining({
