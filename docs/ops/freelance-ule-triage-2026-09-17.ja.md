@@ -8,17 +8,17 @@
 
 | 指標 | freelance.modis.co.jp | freelance.admin |
 |---|---|---|
-| gate events | 2,967 | 2,967（同一 cohort identity） |
-| would-block 合計 | 171 | 171 |
-| **ULE** | **111** | **111** |
+| gate events | 3,037 | 3,037 |
+| would-block 合計 | 181 | 181 |
+| **ULE** | **121** | **121** |
 | external_effect | 35 | 35 |
 | outside_repo_mutation | 18 | 18 |
 | tier1_catastrophic | 7 | 7 |
 | availability asks | 0 | 0 |
 
-両 repo は同一 runtime artifact / config fingerprint の active cohort を共有している。以下の内訳は合算ベース（repo 別の差分は fingerprint 単位で同一）。
+両 repo は同一 runtime artifact（`0.12.1@61e8d5c542a5cbff`）の active cohort を共有。audit log は repo 別パスだが、2026-09-17 再計測時点で上表の数値は一致。
 
-全履歴（forensic）では ULE **161** 件（would-block 249 中）。
+全履歴（forensic, modis）では ULE **171** 件（would-block 259 中）。
 
 ## パターン別バケット
 
@@ -93,7 +93,7 @@ Phase 2 変更の回帰監視用。`allow → deny` が 1 件でもあればロ�
 
 ## 期待効果
 
-active cohort ULE 111 件に対し、sleep && gh（2 件）が削減。残り 109 件は ops（cd 分解、ctx skill 経由）と must-ask（python heredoc、bash -c）が主因。
+active cohort ULE 121 件に対し、sleep && gh（2 件）が削減。残り 119 件は ops（cd 分解、ctx skill 経由）と must-ask（python heredoc、bash -c）が主因。
 
 cutoff 後の 50% 削減目標は **Phase 1 ops 変更 + 本 PR + 1-4b source-build upgrade** の組み合わせで達成する。
 

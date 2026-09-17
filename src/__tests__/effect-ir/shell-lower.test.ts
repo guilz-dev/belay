@@ -83,6 +83,7 @@ describe('general shell semantic lowering', () => {
     ['sleep 30s', []],
     ['sleep', ['process.sleep_grammar_incomplete']],
     ['sleep 1 2', ['process.sleep_grammar_incomplete']],
+    ['sleep $(git push origin main)', ['process.sleep_grammar_incomplete']],
   ])('lowers sleep as a no-effect builtin: %s', (command, signals) => {
     const lowered = requirements(command)
     if (signals.length === 0) {
