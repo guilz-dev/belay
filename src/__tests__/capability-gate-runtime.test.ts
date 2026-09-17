@@ -17,6 +17,7 @@ import { type BelayConfigV3, DEFAULT_CONFIG_V3, scrubOptionsFromConfig } from '.
 import { canonicalPath } from '../core/path-utils.js'
 import { createCapabilityApprovalStore } from '../services/sandbox-service.js'
 import { testAuditLogPath } from './helpers/audit-test-path.js'
+import { createRealGitRepository, createRealLinkedWorktree } from './helpers/git-fixtures.js'
 import { classifyShellGated } from './helpers/shell-classify.js'
 
 const tempDirs: string[] = []
@@ -296,6 +297,32 @@ describe('capability gate runtime', () => {
 
     expect(verdict.permission).toBe('deny')
     expect(verdict.reason).toBe('outside_repo_mutation')
+  })
+
+  it('allows linked-worktree Write tool mutations when the broker is active', async () => {
+    const repoRoot = await createRealGitRepository(tempDirs, 'belay-cap-gate-linked-main-')
+    const linkedRoot = `${repoRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, repoRoot, linkedRoot, 'linked-cap-gate')
+    const targetPath = path.join(linkedRoot, 'nested', 'new-file.ts')
+    const config = sandboxBrokerConfig()
+    const ctx = {
+      layout: cursorAdapter.layout,
+      repoRoot,
+      config,
+      configPath: cursorAdapter.layout.configPath(repoRoot),
+    }
+    const deps = createDefaultGateRuntimeDeps()
+    const verdict = await evaluateGatedAction(ctx, deps, {
+      kind: 'tool',
+      cwd: repoRoot,
+      payload: {
+        tool_name: 'Write',
+        tool_input: { path: targetPath, contents: 'hi' },
+      },
+    })
+
+    expect(verdict.permission).toBe('allow')
+    expect(verdict.reason).not.toBe('outside_repo_mutation')
   })
 
   it('denies outside-repo Write tool mutations when the broker is active', async () => {

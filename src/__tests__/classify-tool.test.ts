@@ -1,20 +1,67 @@
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
 import { mergeConfig } from '../core/config.js'
 import { toolFingerprint } from '../core/fingerprint.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { classifyShell } from '../core/verdict/adapter.js'
+import {
+  createRealGitRepository,
+  createRealLinkedWorktree,
+  initializeRealGitRepository,
+} from './helpers/git-fixtures.js'
 
 const repoRoot = '/workspace/project'
 const cwd = repoRoot
 const config = mergeConfig({})
+const tempDirs: string[] = []
 
 describe('classifyToolUse', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('allows routine writes to a linked worktree sharing common-dir', async () => {
+    const mainRoot = await createRealGitRepository(tempDirs, 'belay-classify-tool-linked-main-')
+    const linkedRoot = `${mainRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, mainRoot, linkedRoot, 'linked-classify-tool')
+    const targetPath = path.join(linkedRoot, 'nested', 'new-file.ts')
+
+    const result = await classifyToolUse(
+      { tool_name: 'Write', tool_input: { path: targetPath, contents: 'hello' } },
+      mainRoot,
+      mainRoot,
+      config,
+    )
+
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).not.toBe('outside_repo_mutation')
+  })
+
+  it('asks for writes in a nested separate repository', async () => {
+    const mainRoot = await createRealGitRepository(tempDirs, 'belay-classify-tool-separate-main-')
+    const separateRoot = path.join(mainRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+
+    const result = await classifyToolUse(
+      {
+        tool_name: 'Write',
+        tool_input: { path: path.join(separateRoot, 'notes.txt'), contents: 'hello' },
+      },
+      mainRoot,
+      mainRoot,
+      config,
+    )
+
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('outside_repo_mutation')
+  })
+
   it('reuses v2 shell classification and fingerprint for Shell tool', async () => {
     const shellOnly = await classifyToolUse(
       { tool_name: 'Shell', tool_input: { command: 'git push origin main' } },

@@ -4,7 +4,7 @@ import type { BelayConfigV3 } from '../config.js'
 import { collectRequirements } from '../effect-ir/build.js'
 import type { EffectPlan, EffectRequirement } from '../effect-ir/types.js'
 import type { GatedAction } from '../gate-contract.js'
-import { resolveWorkspaceRootMatch } from '../path-utils.js'
+import { isSameRepoPath, resolveWorkspaceRootMatch } from '../path-utils.js'
 import type { ClassifyResult } from '../types.js'
 
 const FORBIDDEN_SIGNALS = new Set([
@@ -99,13 +99,13 @@ function isPermittedRequirement(requirement: EffectRequirement, repoRoot: string
     ((requirement.tag === 'fs.read' && requirement.action === 'fs.read') ||
       (requirement.tag === 'fs.write' && requirement.action === 'fs.write')) &&
     requirement.resource.kind === 'path' &&
-    isRepoLocalPath(repoRoot, requirement.resource.path)
+    isSameRepoPathSafe(repoRoot, requirement.resource.path)
   )
 }
 
-function isRepoLocalPath(repoRoot: string, targetPath: string): boolean {
+function isSameRepoPathSafe(repoRoot: string, targetPath: string): boolean {
   try {
-    return resolveWorkspaceRootMatch(repoRoot, [], targetPath)?.kind === 'repo'
+    return isSameRepoPath(repoRoot, targetPath)
   } catch {
     return false
   }

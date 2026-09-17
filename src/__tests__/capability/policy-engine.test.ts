@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { mkdir, rm } from 'node:fs/promises'
+import path from 'node:path'
+
+import { afterEach, describe, expect, it } from 'vitest'
 import type { CapabilityGrantV1 } from '../../core/capability/grant.js'
 import {
   buildFileMutationCapabilityRequest,
@@ -8,12 +11,101 @@ import {
   evaluateShellPolicy,
 } from '../../core/capability/policy-engine.js'
 import { mergeConfig } from '../../core/config.js'
+import {
+  createRealGitRepository,
+  createRealLinkedWorktree,
+  initializeRealGitRepository,
+} from '../helpers/git-fixtures.js'
 
 const config = mergeConfig({})
 const repoRoot = '/workspace/project'
+const tempDirs: string[] = []
 
 describe('TypeScript PolicyEngine', () => {
   const engine = createTypeScriptPolicyEngine()
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('allows routine writes to a linked worktree sharing common-dir', async () => {
+    const mainRoot = await createRealGitRepository(tempDirs, 'belay-policy-linked-main-')
+    const linkedRoot = `${mainRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, mainRoot, linkedRoot, 'linked-policy')
+    const targetPath = path.join(linkedRoot, 'nested', 'new-file.ts')
+
+    const { decision } = evaluateFileMutationPolicy(
+      {
+        hookKind: 'tool',
+        toolKind: 'write',
+        filePath: targetPath,
+        resolvedPath: targetPath,
+        repoRoot: mainRoot,
+        cwd: mainRoot,
+        inputFingerprint: 'fp-linked-write',
+        signals: ['file_mutation'],
+        isDelete: false,
+        locationLabel: 'repo_local',
+      },
+      config,
+    )
+
+    expect(decision.outcome).toBe('allow')
+    expect(decision.matchedRule).toBe('builtin.repo_local')
+  })
+
+  it('requires approval for sensitive paths in a linked worktree', async () => {
+    const mainRoot = await createRealGitRepository(tempDirs, 'belay-policy-linked-env-main-')
+    const linkedRoot = `${mainRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, mainRoot, linkedRoot, 'linked-policy-env')
+    const targetPath = path.join(linkedRoot, '.env')
+
+    const { decision } = evaluateFileMutationPolicy(
+      {
+        hookKind: 'tool',
+        toolKind: 'write',
+        filePath: targetPath,
+        resolvedPath: targetPath,
+        repoRoot: mainRoot,
+        cwd: mainRoot,
+        inputFingerprint: 'fp-linked-env',
+        signals: ['file_mutation'],
+        isDelete: false,
+        locationLabel: 'repo_local',
+      },
+      config,
+    )
+
+    expect(decision.outcome).toBe('require_approval')
+    expect(decision.reason).toBe('high_stakes_path')
+  })
+
+  it('requires approval for writes in a nested separate repository', async () => {
+    const mainRoot = await createRealGitRepository(tempDirs, 'belay-policy-separate-main-')
+    const separateRoot = path.join(mainRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+    const targetPath = path.join(separateRoot, 'notes.txt')
+
+    const { decision } = evaluateFileMutationPolicy(
+      {
+        hookKind: 'tool',
+        toolKind: 'write',
+        filePath: targetPath,
+        resolvedPath: targetPath,
+        repoRoot: mainRoot,
+        cwd: mainRoot,
+        inputFingerprint: 'fp-separate-write',
+        signals: ['outside_repo_path'],
+        isDelete: false,
+        locationLabel: 'outside_repo',
+      },
+      config,
+    )
+
+    expect(decision.outcome).toBe('require_approval')
+    expect(decision.reason).toBe('outside_repo_mutation')
+  })
 
   it('allows routine in-repo file writes', () => {
     const request = buildFileMutationCapabilityRequest({
