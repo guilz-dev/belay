@@ -6,6 +6,21 @@ Repositories where Belay runs in **dogfood mode** (`mode: audit` +
 
 Maintainer notes (local paths, Japanese): [dogfood-install-targets.ja.md](./dogfood-install-targets.ja.md)
 
+## Traffic readiness (two layers)
+
+Do not treat `reviewedBenignEvents: 0` as a single root cause.
+
+| Layer | Location | Meaning |
+| --- | --- | --- |
+| **A: gate** | `audit-metrics` | Counts all active-cohort gate rows matching a `provably-benign` ledger entry (not limited to gate-time `allow`; **blocked rows count too**) |
+| **B: collection** | `harvest` | Current shell-only, ask-centric candidate extraction; allowed Tool Read traffic is usually absent |
+
+Collection bias (B) is the usual operational gap. Calendar estimates without post-fix measurement
+are not policy inputs. See [ADR-012](../adr/ADR-012-traffic-readiness-workload-alignment.md).
+
+Enforce requires `readyForEnforce === true` **per target**; evidence does not transfer across
+repositories. Roll back enforce trials with `belay dogfood --target <repo>` — not `dogfood --check`.
+
 ## Active targets (2026-09-10)
 
 | GitHub | Role |
