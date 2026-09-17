@@ -262,6 +262,10 @@ export function decodeProcessOrFilesystem(params: {
   }
 
   if (head === 'sleep') {
+    // A path-qualified executable may only share sleep's name, not its no-effect semantics.
+    if (tokens[0] !== 'sleep') {
+      return unsupportedProcess(tokens[0] ?? head, segment, 'process.sleep_executable_unresolved')
+    }
     if (args.length === 1 && /^\d+(\.\d+)?([smhd])?$/.test(args[0] ?? '')) {
       return []
     }
