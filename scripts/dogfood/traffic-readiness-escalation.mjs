@@ -44,11 +44,12 @@ function evaluate(metrics, daysSinceUpgrade) {
   ) {
     escalations.push('E2')
   }
+  // Snapshot-only hints — confirm E4 (4-week trend) manually from weekly rollup history.
   if (toolBlockRate >= 0.02) {
-    escalations.push('E4-tool-block-rate')
+    escalations.push('E4-snapshot-tool-block-rate')
   }
   if (gateEvents >= 200 && shellBenign < MIN_SHELL_REVIEWED_BENIGN) {
-    escalations.push('E4-shell-evidence-below-minimum')
+    escalations.push('E4-snapshot-shell-below-minimum')
   }
 
   return {

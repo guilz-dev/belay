@@ -26,7 +26,7 @@ node dist/cli.js quality --target <absolute-repo-path> --json
 
 ## エスカレーション（Phase 2 policy review）
 
-週次 rollup 後、`scripts/dogfood/traffic-readiness-escalation.mjs` で E1–E4 を確認。該当時は 1 週間以内に policy go/no-go を記録（ADR 追記または ops メモ）。
+週次 rollup 後、`scripts/dogfood/traffic-readiness-escalation.mjs` で E1/E2 と **E4 スナップショットヒント**（`E4-snapshot-*`）を確認。E4 本判定（4 週間未改善）は週次履歴を人手で比較する。該当時は 1 週間以内に policy go/no-go を記録（ADR 追記または ops メモ）。
 
 | ID | 条件 |
 |----|------|

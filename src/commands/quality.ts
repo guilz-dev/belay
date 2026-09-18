@@ -262,7 +262,7 @@ export function formatQualityReport(report: QualityReport): string {
     `  traffic ready for enforce: ${report.trafficReadyForEnforce ? 'yes' : 'no'}`,
     `  repeated fingerprint patterns: ${report.audit.repeatedFingerprintPatterns}`,
     '',
-    'Harvest (shell only):',
+    `Harvest (${report.harvest.scope}):`,
     `  benign candidates: ${report.harvest.benignCandidates}`,
     `  availability queue: ${report.harvest.availabilityQueue}`,
   ]
