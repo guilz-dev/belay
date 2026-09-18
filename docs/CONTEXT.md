@@ -83,7 +83,13 @@ authorization model. It complements
     `mode` and audit display settings do not reset the decision cohort. Readiness uses
     reviewed provably-benign traffic: at least 150 events across three valid session correlations,
     a benign block rate below 2%, and zero active-cohort availability asks. Corpus hard gates also
-    apply; raw would-block rate is diagnostic only.
+    apply; raw would-block rate is diagnostic only. The readiness gate counts ledger-matched
+    active-cohort gate records **including blocked events**; it is not limited to gate-time `allow`.
+    A separate harvest collection bias (shell-only, ask-centric candidates) often leaves
+    `reviewedBenignEvents` at zero until reviews are recorded — see
+    [ADR-012](./adr/ADR-012-traffic-readiness-workload-alignment.md). Phase 1 adds per-kind
+    reviewed-traffic metrics and allowed-read harvest candidates; enforce migration remains
+    **per-target** (`readyForEnforce` on that repo only).
     When its sidecar is missing, invalid, or for another cohort, readiness is reconstructed under
     the audit writer lock from the exact retained generations before rotation and applies the
     incoming delta once. A proven complete empty snapshot may seed zero; malformed, unreadable,
@@ -91,7 +97,8 @@ authorization model. It complements
     the active cohort. Forensic `--all-cohorts` review preserves the candidate's source boundary,
     requires exact `(fingerprint, kind, boundaryProfile)` selection, and uses
     `harvest apply --boundary-profile <id>` when boundaries are ambiguous. Reviews and corpus
-    entries remain evidence only and cannot grant runtime authority.
+    entries remain evidence only and cannot grant runtime authority. Return from enforce trial to
+    audit with `belay dogfood --target <repo>`; `dogfood --check` does not roll back mode.
 12. **Host execution policy is a separate decision boundary**: an editor or agent host may deny an
     invocation after Belay returned `permission: allow`. A correlated host
     `permission_denied` is operational evidence, not a Belay ask and not a reason to mint a Belay
