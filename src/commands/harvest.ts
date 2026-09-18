@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import {
   auditApprovalCorrelationId,
@@ -58,14 +59,14 @@ export interface HarvestApplyOptions {
   allVersions?: boolean
 }
 
-export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
-  const records = await loadAuditRecords(repoRoot, {
-    auditVersion: options.auditVersion,
-    allVersions: options.allVersions,
-  })
-  const cohort = await resolveActiveAuditCohort(repoRoot, config)
+export async function buildHarvestListReport(
+  repoRoot: string,
+  records: AuditRecord[],
+  options: HarvestListOptions & { config?: BelayConfigV3 } = {},
+): Promise<HarvestReport> {
+  const resolvedRoot = path.resolve(repoRoot)
+  const config = options.config ?? (await loadConfigFile(resolvedRoot))
+  const cohort = await resolveActiveAuditCohort(resolvedRoot, config)
   const forensicNotes = [
     ...(options.allVersions
       ? ['Mixed-version forensic mode: do not bulk-promote candidates.']
@@ -109,16 +110,28 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
     return report
   }
   const ledger = await loadHarvestReviewLedger(
-    harvestReviewLedgerPath(repoRoot, config.audit.logPath),
+    harvestReviewLedgerPath(resolvedRoot, config.audit.logPath),
   )
   const reviewedKeys = new Set(latestHarvestReviews(ledger).keys())
   return {
     ...report,
-    candidates: report.candidates.filter(
-      (candidate) =>
-        candidate.boundaryProfile === null || !reviewedKeys.has(harvestReviewKey(candidate)),
-    ),
+    candidates: report.candidates.filter((candidate) => {
+      if (candidate.boundaryProfile === null) {
+        // Cannot bind harvest apply; keep visible for manual triage.
+        return true
+      }
+      return !reviewedKeys.has(harvestReviewKey(candidate))
+    }),
   }
+}
+
+export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const records = await loadAuditRecords(repoRoot, {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
+  })
+  return buildHarvestListReport(repoRoot, records, options)
 }
 
 function recordsForActiveCohort(
@@ -205,7 +218,7 @@ export function formatHarvestReport(report: HarvestReport): string {
           ? 'legacy/unknown (null)'
           : JSON.stringify(candidate.boundaryProfile)
       lines.push(
-        `- ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}… boundary=${boundaryProfile}`,
+        `- [${candidate.kind}] ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}… boundary=${boundaryProfile}`,
       )
     }
   }

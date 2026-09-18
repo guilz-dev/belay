@@ -14,7 +14,7 @@ import type { BelayConfigV3 } from '../core/config.js'
 import { runCorpusEvaluation } from '../corpus/evaluate.js'
 import { passesHardGates } from '../corpus/gates.js'
 import type { CorpusCategory, CorpusProvenanceCounts } from '../corpus/types.js'
-import { harvestReportFromRecords } from './harvest.js'
+import { buildHarvestListReport } from './harvest.js'
 import { evaluateMetricsSnapshot, type MetricsReport } from './metrics.js'
 
 export const QUALITY_REPORT_SCHEMA_VERSION = 1
@@ -94,7 +94,7 @@ export async function evaluateQualitySnapshot(
     config,
   )
   const { auditRecords, report: metrics } = metricsSnapshot
-  const harvest = harvestReportFromRecords(auditRecords)
+  const harvest = await buildHarvestListReport(repoRoot, auditRecords, { config })
   const cohort = metrics.currentCohort
   const traffic = cohort.reviewedTraffic
   const trafficReadyForEnforce = traffic.ready
