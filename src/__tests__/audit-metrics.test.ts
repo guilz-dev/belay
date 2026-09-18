@@ -12,12 +12,14 @@ import {
   computeWouldBlockByReason,
   isAvailabilityCausedAsk,
 } from '../core/audit-analysis.js'
+import type { ReviewedTrafficReadiness } from '../core/audit-metrics.js'
 import {
   buildApprovalRoundTrips,
   computeAuditMetrics,
   MAX_BENIGN_BLOCK_RATE,
   MIN_REVIEWED_BENIGN_EVENTS,
   MIN_REVIEWED_SESSIONS,
+  MIN_SHELL_REVIEWED_BENIGN_EVENTS,
   parseAuditNdjson,
   toAuditRecord,
 } from '../core/audit-metrics.js'
@@ -89,6 +91,47 @@ function reviewLedger(
       },
     ],
   }
+}
+
+function reviewedBenignKindMetrics(events: number, blocked: number) {
+  return {
+    reviewedBenignEvents: events,
+    reviewedBenignBlocked: blocked,
+    benignBlockRate: events > 0 ? blocked / events : 0,
+  }
+}
+
+function expectReviewedTraffic(
+  traffic: ReviewedTrafficReadiness,
+  params: {
+    reviewedBenignEvents: number
+    reviewedBenignBlocked: number
+    benignBlockRate: number
+    distinctSessions: number
+    availabilityAsks: number
+    ready: boolean
+    shellEvents?: number
+    toolEvents?: number
+    shellBlocked?: number
+    toolBlocked?: number
+  },
+) {
+  const shellEvents = params.shellEvents ?? params.reviewedBenignEvents
+  const toolEvents = params.toolEvents ?? 0
+  const shellBlocked = params.shellBlocked ?? params.reviewedBenignBlocked
+  const toolBlocked = params.toolBlocked ?? 0
+  expect(traffic).toEqual({
+    reviewedBenignEvents: params.reviewedBenignEvents,
+    reviewedBenignBlocked: params.reviewedBenignBlocked,
+    benignBlockRate: params.benignBlockRate,
+    byKind: {
+      shell: reviewedBenignKindMetrics(shellEvents, shellBlocked),
+      tool: reviewedBenignKindMetrics(toolEvents, toolBlocked),
+    },
+    distinctSessions: params.distinctSessions,
+    availabilityAsks: params.availabilityAsks,
+    ready: params.ready,
+  })
 }
 
 function reviewedBenignGateEvents(
@@ -427,7 +470,7 @@ describe('audit-metrics', () => {
   ])('$name applies every strict traffic-readiness boundary', (fixture) => {
     const report = reviewedMetrics(fixture.events)
 
-    expect(report.currentCohort.reviewedTraffic).toEqual({
+    expectReviewedTraffic(report.currentCohort.reviewedTraffic, {
       reviewedBenignEvents: fixture.expectedEvents,
       reviewedBenignBlocked: fixture.expectedBlocked,
       benignBlockRate: fixture.expectedRate,
@@ -592,6 +635,8 @@ describe('audit-metrics', () => {
     expect(formatted).toContain('- distinct valid sessions: 3')
     expect(formatted).toContain('- active-cohort availability asks: 0')
     expect(formatted).toContain('- traffic ready for enforce: yes')
+    expect(formatted).toContain('- reviewed benign by kind (shell):')
+    expect(formatted).toContain('- reviewed benign by kind (tool):')
     expect(formatted).toContain('- would-block: 2 (1.3%)')
   })
 
@@ -599,6 +644,47 @@ describe('audit-metrics', () => {
     expect(MIN_REVIEWED_BENIGN_EVENTS).toBe(150)
     expect(MIN_REVIEWED_SESSIONS).toBe(3)
     expect(MAX_BENIGN_BLOCK_RATE).toBe(0.02)
+    expect(MIN_SHELL_REVIEWED_BENIGN_EVENTS).toBe(10)
+  })
+
+  it('tracks kind-specific reviewed benign metrics when tool and shell evidence combine', () => {
+    const toolFingerprint = testFingerprint('tool-read-mix')
+    const shellFingerprint = testFingerprint('shell-read-mix')
+    const toolEvents = reviewedBenignGateEvents(140, {
+      fingerprint: toolFingerprint,
+      kind: 'tool',
+    })
+    const shellEvents = reviewedBenignGateEvents(10, {
+      fingerprint: shellFingerprint,
+      kind: 'shell',
+    })
+    const reviews: HarvestReviewLedgerV1 = {
+      version: 1,
+      reviews: [
+        ...reviewLedger('provably-benign', { fingerprint: toolFingerprint, kind: 'tool' }).reviews,
+        ...reviewLedger('provably-benign', { fingerprint: shellFingerprint, kind: 'shell' })
+          .reviews,
+      ],
+    }
+    const report = reviewedMetrics([...toolEvents, ...shellEvents], reviews)
+
+    expect(report.currentCohort.reviewedTraffic.reviewedBenignEvents).toBe(150)
+    expect(report.currentCohort.reviewedTraffic.byKind.tool.reviewedBenignEvents).toBe(140)
+    expect(report.currentCohort.reviewedTraffic.byKind.shell.reviewedBenignEvents).toBe(10)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(true)
+  })
+
+  it('fails traffic ready when shell reviewed benign events stay below the minimum gate', () => {
+    const toolFingerprint = testFingerprint('tool-only-shell-min')
+    const events = reviewedBenignGateEvents(150, { fingerprint: toolFingerprint, kind: 'tool' })
+    const report = reviewedMetrics(
+      events,
+      reviewLedger('provably-benign', { fingerprint: toolFingerprint, kind: 'tool' }),
+    )
+
+    expect(report.currentCohort.reviewedTraffic.byKind.tool.reviewedBenignEvents).toBe(150)
+    expect(report.currentCohort.reviewedTraffic.byKind.shell.reviewedBenignEvents).toBe(0)
+    expect(report.currentCohort.reviewedTraffic.ready).toBe(false)
   })
 
   it('does not reuse old clean events as active-cohort readiness evidence', () => {

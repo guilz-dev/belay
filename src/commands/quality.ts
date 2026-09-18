@@ -7,6 +7,7 @@ import {
   MAX_BENIGN_BLOCK_RATE,
   MIN_REVIEWED_BENIGN_EVENTS,
   MIN_REVIEWED_SESSIONS,
+  MIN_SHELL_REVIEWED_BENIGN_EVENTS,
 } from '../core/audit-metrics.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import type { BelayConfigV3 } from '../core/config.js'
@@ -45,12 +46,13 @@ export interface QualityReport {
     reviewedBenignEvents: number
     reviewedBenignBlocked: number
     benignBlockRate: number
+    reviewedBenignByKind: MetricsReport['currentCohort']['reviewedTraffic']['byKind']
     distinctSessions: number
     readyForEnforce: boolean
     repeatedFingerprintPatterns: number
   }
   harvest: {
-    scope: 'shell'
+    scope: 'shell+tool'
     benignCandidates: number
     availabilityQueue: number
   }
@@ -125,6 +127,11 @@ export async function evaluateQualitySnapshot(
   if (traffic.reviewedBenignEvents < MIN_REVIEWED_BENIGN_EVENTS) {
     failedGates.push(
       `Reviewed provably-benign events: ${traffic.reviewedBenignEvents} (required: at least ${MIN_REVIEWED_BENIGN_EVENTS}).`,
+    )
+  }
+  if (traffic.byKind.shell.reviewedBenignEvents < MIN_SHELL_REVIEWED_BENIGN_EVENTS) {
+    failedGates.push(
+      `Shell reviewed provably-benign events: ${traffic.byKind.shell.reviewedBenignEvents} (required: at least ${MIN_SHELL_REVIEWED_BENIGN_EVENTS}; traffic_shell_evidence_below_minimum).`,
     )
   }
   if (traffic.distinctSessions < MIN_REVIEWED_SESSIONS) {
@@ -205,12 +212,13 @@ export async function evaluateQualitySnapshot(
       reviewedBenignEvents: traffic.reviewedBenignEvents,
       reviewedBenignBlocked: traffic.reviewedBenignBlocked,
       benignBlockRate: traffic.benignBlockRate,
+      reviewedBenignByKind: traffic.byKind,
       distinctSessions: traffic.distinctSessions,
       readyForEnforce: trafficReadyForEnforce,
       repeatedFingerprintPatterns: metrics.repeatedFingerprintAsks.length,
     },
     harvest: {
-      scope: 'shell',
+      scope: 'shell+tool',
       benignCandidates: harvest.candidates.length,
       availabilityQueue: harvest.availabilityQueue.length,
     },
@@ -254,7 +262,7 @@ export function formatQualityReport(report: QualityReport): string {
     `  traffic ready for enforce: ${report.trafficReadyForEnforce ? 'yes' : 'no'}`,
     `  repeated fingerprint patterns: ${report.audit.repeatedFingerprintPatterns}`,
     '',
-    'Harvest (shell only):',
+    `Harvest (${report.harvest.scope}):`,
     `  benign candidates: ${report.harvest.benignCandidates}`,
     `  availability queue: ${report.harvest.availabilityQueue}`,
   ]

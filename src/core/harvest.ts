@@ -7,22 +7,31 @@ import {
   filterAuditRecords,
   inferWouldBlock,
   isApprovalRecorded,
+  isHarvestGateRecord,
   isShellGateRecord,
+  isToolGateRecord,
   parseTimestamp,
 } from './audit-query.js'
+import { parseAuditActionSnapshot } from './audit-replay-context.js'
 import type { AuditRecord } from './audit-types.js'
 import { type HarvestReviewOutcome, harvestReviewKey } from './harvest-review.js'
 
 export const HARVEST_REPORT_SCHEMA_VERSION = 2
 
-export type HarvestCandidateSource = 'deny_then_approve' | 'repeated_ask' | 'read_style_signal'
+export type HarvestCandidateSource =
+  | 'deny_then_approve'
+  | 'repeated_ask'
+  | 'read_style_signal'
+  | 'allowed_read'
 
 export type { HarvestReviewOutcome } from './harvest-review.js'
 
 export const HARVEST_SOURCE_BATCH_ID = 'belay-2026-09-07'
 
+export type HarvestCandidateKind = 'shell' | 'tool'
+
 export interface HarvestCandidate {
-  kind: 'shell'
+  kind: HarvestCandidateKind
   command: string
   fingerprint: string
   boundaryProfile: string | null
@@ -50,8 +59,8 @@ export interface AvailabilityQueueItem {
 
 export interface HarvestReport {
   schemaVersion: typeof HARVEST_REPORT_SCHEMA_VERSION
-  /** Initial harvest scope — shell audit traces only. */
-  scope: 'shell'
+  /** Shell and tool gate audit traces (read evidence). */
+  scope: 'shell+tool'
   cohort: AuditCohortIdentity | null
   matchingGateEvents: number
   excludedGateEvents: number
@@ -91,6 +100,29 @@ function shellRecords(records: AuditRecord[]): AuditRecord[] {
   return records.filter(isShellGateRecord)
 }
 
+function harvestGateRecords(records: AuditRecord[]): AuditRecord[] {
+  return records.filter(isHarvestGateRecord)
+}
+
+function harvestCandidateKind(record: AuditRecord): HarvestCandidateKind | null {
+  if (isToolGateRecord(record)) {
+    return 'tool'
+  }
+  if (isShellGateRecord(record)) {
+    return 'shell'
+  }
+  return null
+}
+
+function isReadDisposition(record: AuditRecord): boolean {
+  return record.effect === 'read_only'
+}
+
+function hasReplayableActionSnapshot(record: AuditRecord): boolean {
+  const parsed = parseAuditActionSnapshot(record)
+  return parsed?.replayable === true
+}
+
 function availabilitySignal(record: AuditRecord): AvailabilitySignal | null {
   if (!isAvailabilityCausedAsk(record)) {
     return null
@@ -128,6 +160,7 @@ function candidateBoundaryProfile(
 function upsertCandidate(
   map: Map<string, HarvestCandidate>,
   params: {
+    kind: HarvestCandidateKind
     fingerprint: string
     command: string
     boundaryProfile: string | null
@@ -139,7 +172,7 @@ function upsertCandidate(
 ): void {
   const key = harvestReviewKey({
     fingerprint: params.fingerprint,
-    kind: 'shell',
+    kind: params.kind,
     boundaryProfile: params.boundaryProfile,
   })
   const existing = map.get(key)
@@ -159,7 +192,7 @@ function upsertCandidate(
   }
 
   map.set(key, {
-    kind: 'shell',
+    kind: params.kind,
     command: params.command,
     fingerprint: params.fingerprint,
     boundaryProfile: params.boundaryProfile,
@@ -273,7 +306,9 @@ export function filterRecordsForHarvest(
   records: AuditRecord[],
   options: { since?: string; until?: string } = {},
 ): AuditRecord[] {
-  const scoped = records.filter((record) => isShellGateRecord(record) || isApprovalRecorded(record))
+  const scoped = records.filter(
+    (record) => isHarvestGateRecord(record) || isApprovalRecorded(record),
+  )
   if (!options.since && !options.until) {
     return scoped
   }
@@ -304,6 +339,7 @@ export function extractHarvestCandidates(
       continue
     }
     upsertCandidate(map, {
+      kind: 'shell',
       fingerprint: trip.fingerprint,
       command: trip.summary,
       boundaryProfile: trip.boundaryProfile ?? options.legacyBoundaryProfile ?? null,
@@ -323,6 +359,7 @@ export function extractHarvestCandidates(
   for (const [boundaryProfile, boundaryRecords] of asksByBoundary) {
     for (const entry of computeRepeatedFingerprintAsks(boundaryRecords, 2, 50)) {
       upsertCandidate(map, {
+        kind: 'shell',
         fingerprint: entry.fingerprint,
         command: entry.summary,
         boundaryProfile,
@@ -342,11 +379,36 @@ export function extractHarvestCandidates(
       continue
     }
     upsertCandidate(map, {
+      kind: 'shell',
       fingerprint: record.fingerprint,
       command,
       boundaryProfile: candidateBoundaryProfile(record, options.legacyBoundaryProfile),
       reason: record.reason ?? 'unknown',
       source: 'read_style_signal',
+    })
+  }
+
+  for (const record of harvestGateRecords(records)) {
+    if (inferWouldBlock(record) || !record.fingerprint) {
+      continue
+    }
+    if (!isReadDisposition(record)) {
+      continue
+    }
+    const kind = harvestCandidateKind(record)
+    if (!kind) {
+      continue
+    }
+    if (!hasReplayableActionSnapshot(record)) {
+      continue
+    }
+    upsertCandidate(map, {
+      kind,
+      fingerprint: record.fingerprint,
+      command: commandFromRecord(record),
+      boundaryProfile: candidateBoundaryProfile(record, options.legacyBoundaryProfile),
+      reason: record.reason ?? 'read_only',
+      source: 'allowed_read',
     })
   }
 
@@ -364,9 +426,9 @@ export function buildHarvestReport(
 ): HarvestReport {
   return {
     schemaVersion: HARVEST_REPORT_SCHEMA_VERSION,
-    scope: 'shell',
+    scope: 'shell+tool',
     cohort: null,
-    matchingGateEvents: shellRecords(records).length,
+    matchingGateEvents: harvestGateRecords(records).length,
     excludedGateEvents: 0,
     candidates: extractHarvestCandidates(records, options),
     availabilityQueue: extractAvailabilityQueue(records),
