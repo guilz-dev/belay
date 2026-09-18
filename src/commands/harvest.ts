@@ -1,7 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { loadConfigFile } from '../config-io.js'
-import type { BelayConfigV3 } from '../core/config.js'
 import { parseAuditNdjson } from '../core/audit-metrics.js'
 import {
   auditApprovalCorrelationId,
@@ -12,6 +11,7 @@ import {
 import { isValidAuditFingerprint } from '../core/audit-serialize.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import { harvestReviewLedgerPath } from '../core/audit-version-path.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import {
   applyHarvestReview,
   buildHarvestReport,

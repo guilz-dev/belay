@@ -37,7 +37,11 @@ import type {
 } from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 import { DEFAULT_AUDIT_LOG_PATH } from './config/audit.js'
-import { harvestReviewKey, type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-review.js'
+import {
+  type HarvestReviewLedgerV1,
+  harvestReviewKey,
+  latestHarvestReviews,
+} from './harvest-review.js'
 
 export const MIN_REVIEWED_BENIGN_EVENTS = 150
 export const MIN_REVIEWED_SESSIONS = 3
