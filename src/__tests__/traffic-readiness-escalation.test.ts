@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
 
 const script = path.resolve(
   fileURLToPath(new URL('../../scripts/dogfood/traffic-readiness-escalation.mjs', import.meta.url)),
@@ -26,7 +26,10 @@ describe('traffic-readiness-escalation', () => {
         gateEvents: 600,
         reviewedTraffic: {
           reviewedBenignEvents: 0,
-          byKind: { shell: { reviewedBenignEvents: 0, benignBlockRate: 0 }, tool: { reviewedBenignEvents: 0, benignBlockRate: 0 } },
+          byKind: {
+            shell: { reviewedBenignEvents: 0, benignBlockRate: 0 },
+            tool: { reviewedBenignEvents: 0, benignBlockRate: 0 },
+          },
         },
       },
     })
@@ -40,7 +43,10 @@ describe('traffic-readiness-escalation', () => {
           gateEvents: 250,
           reviewedTraffic: {
             reviewedBenignEvents: 5,
-            byKind: { shell: { reviewedBenignEvents: 5, benignBlockRate: 0 }, tool: { reviewedBenignEvents: 0, benignBlockRate: 0 } },
+            byKind: {
+              shell: { reviewedBenignEvents: 5, benignBlockRate: 0 },
+              tool: { reviewedBenignEvents: 0, benignBlockRate: 0 },
+            },
           },
         },
       },
