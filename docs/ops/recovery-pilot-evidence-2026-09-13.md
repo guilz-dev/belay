@@ -26,6 +26,7 @@ Main dogfood worktree config (`.cursor/belay.config.json`) was **not** modified.
 | Task 2 preflight (`doctor`, `recover status`) | PASS — checkpoint enabled, `git_worktree` backend |
 | Task 3 checkpoint via hook | PASS |
 | Task 4 signed restore | PASS |
+| Conflict rejection (applied checkpoint + post-state drift) | PASS (2026-09-18 follow-up) |
 | Task 5 evidence | this document |
 | Task 6 before snapshot | captured below (after for stage A pending) |
 
@@ -79,6 +80,25 @@ File content after restore: `recovery-pilot-before`
 
 Re-apply on restored checkpoint: rejected (`recovery_checkpoint_not_applied:restored`).
 
+## Conflict rejection (2026-09-18 follow-up)
+
+Second checkpoint on the same fixture after resetting the file to `recovery-pilot-before`:
+
+| Field | Value |
+| --- | --- |
+| checkpoint-id | `cp_24f0de8c46204ff38936ec59` |
+| state after transactional apply | `applied` |
+| deliberate drift | `echo conflict-drift > recovery-pilot-fixture.txt` (does not match recorded post-state `recovery-pilot-after`) |
+
+`belay recover apply cp_24f0de8c46204ff38936ec59`:
+
+- Exit: failed with `recovery_restore_conflict`
+- File left unchanged: `conflict-drift`
+- Checkpoint state: `conflict`
+- No restore write occurred (conflict detected before approval consumption on this path)
+
+This closes the gap noted in the initial pilot run (restored-state re-apply is a different rejection path).
+
 ## Metrics (recovery section)
 
 ```json
@@ -94,6 +114,18 @@ Re-apply on restored checkpoint: rejected (`recovery_checkpoint_not_applied:rest
     "applied": 1,
     "conflict": 0,
     "rejected": 1
+  }
+}
+```
+
+After the 2026-09-18 conflict follow-up (active cohort at that time):
+
+```json
+{
+  "restore": {
+    "applied": 0,
+    "conflict": 2,
+    "rejected": 0
   }
 }
 ```
