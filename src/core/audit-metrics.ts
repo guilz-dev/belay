@@ -37,7 +37,11 @@ import type {
 } from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
 import { DEFAULT_AUDIT_LOG_PATH } from './config/audit.js'
-import { type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-review.js'
+import {
+  type HarvestReviewLedgerV1,
+  harvestReviewKey,
+  latestHarvestReviews,
+} from './harvest-review.js'
 
 export const MIN_REVIEWED_BENIGN_EVENTS = 150
 export const MIN_REVIEWED_SESSIONS = 3
@@ -375,13 +379,13 @@ export function computeAuditMetrics(
   const reviewEvidencePresent = latestReviews.size > 0
   const reviewedBenignRecords = cohortGateRecords.filter((record) => {
     const fingerprint = auditFingerprint(record)
-    const kind = typeof record.kind === 'string' ? record.kind : undefined
+    const kind = record.kind === 'shell' || record.kind === 'tool' ? record.kind : undefined
     const boundaryProfile =
       typeof record.boundaryProfile === 'string' ? record.boundaryProfile : undefined
     if (!fingerprint || !kind || !boundaryProfile) {
       return false
     }
-    const review = latestReviews.get(`${fingerprint}\u0000${kind}\u0000${boundaryProfile}`)
+    const review = latestReviews.get(harvestReviewKey({ fingerprint, kind, boundaryProfile }))
     return review?.outcome === 'provably-benign'
   })
   const reviewedBenignEvents = reviewedBenignRecords.length
