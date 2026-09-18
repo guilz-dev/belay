@@ -50,6 +50,52 @@ function shellDeny(params: Record<string, unknown>) {
   })
 }
 
+const REPLAYABLE_SHELL_SNAPSHOT = {
+  schemaVersion: 2,
+  kind: 'shell',
+  cwd: '/repo',
+  normalizedAction: 'git status',
+} as const
+
+const REPLAYABLE_TOOL_SNAPSHOT = {
+  schemaVersion: 2,
+  kind: 'tool',
+  cwd: '/repo',
+  toolName: 'Read',
+  operation: 'read',
+  path: 'src/example.ts',
+  payloadHash: 'a'.repeat(64),
+} as const
+
+function shellAllowRead(params: Record<string, unknown> = {}) {
+  return toAuditRecord({
+    event: 'beforeShellExecution',
+    kind: 'shell',
+    verdict: 'allow',
+    wouldBlock: false,
+    effect: 'read_only',
+    reason: 'read_only',
+    actionSnapshot: REPLAYABLE_SHELL_SNAPSHOT,
+    boundaryProfile: 'l3-l4-only',
+    ...params,
+  })
+}
+
+function toolAllowRead(params: Record<string, unknown> = {}) {
+  return toAuditRecord({
+    event: 'preToolUse',
+    kind: 'tool',
+    verdict: 'allow',
+    wouldBlock: false,
+    effect: 'read_only',
+    reason: 'read_only',
+    summary: 'Read src/example.ts',
+    actionSnapshot: REPLAYABLE_TOOL_SNAPSHOT,
+    boundaryProfile: 'l3-l4-only',
+    ...params,
+  })
+}
+
 describe('harvest', () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -936,26 +982,109 @@ describe('harvest', () => {
     expect(candidates[0]?.sources).toContain('read_style_signal')
   })
 
-  it('does not mix tool audit events into shell harvest scope', () => {
+  it('includes allowed tool and shell read candidates when actionSnapshot is replayable', () => {
+    const records = [
+      toolAllowRead({
+        fingerprint: testFingerprint('tool-allowed-read'),
+        summary: 'Read src/example.ts',
+      }),
+      shellAllowRead({
+        fingerprint: testFingerprint('shell-allowed-read'),
+        summary: 'git status',
+        actionSnapshot: { ...REPLAYABLE_SHELL_SNAPSHOT, normalizedAction: 'git status' },
+      }),
+    ]
+
+    const candidates = extractHarvestCandidates(records)
+    expect(candidates).toHaveLength(2)
+    expect(candidates.map((entry) => entry.kind).sort()).toEqual(['shell', 'tool'])
+    expect(candidates.every((entry) => entry.sources.includes('allowed_read'))).toBe(true)
+  })
+
+  it('excludes allowed read candidates without a replayable actionSnapshot', () => {
+    const records = [
+      shellAllowRead({
+        fingerprint: testFingerprint('shell-no-snapshot'),
+        actionSnapshot: undefined,
+      }),
+    ]
+
+    expect(extractHarvestCandidates(records)).toEqual([])
+  })
+
+  it('keeps ask-centric shell candidates alongside allowed reads', () => {
     const records = [
       toAuditRecord({
         event: 'preToolUse',
         kind: 'tool',
         verdict: 'deny_pending_approval',
         wouldBlock: true,
-        fingerprint: 'tool-fp',
+        fingerprint: testFingerprint('tool-wb'),
         summary: 'read_file',
         reason: 'unknown_local_effect',
       }),
       shellDeny({
-        fingerprint: 'shell-fp',
+        fingerprint: testFingerprint('shell-wb'),
         summary: 'ls -la',
         reason: 'read_only',
       }),
     ]
 
-    expect(extractHarvestCandidates(records).every((entry) => entry.kind === 'shell')).toBe(true)
+    const candidates = extractHarvestCandidates(records)
+    expect(candidates.every((entry) => entry.kind === 'shell')).toBe(true)
+    expect(candidates[0]?.sources).toContain('read_style_signal')
     expect(extractAvailabilityQueue(records)).toHaveLength(0)
+  })
+
+  it('records tool harvest apply to the ledger without mutating shell corpus', async () => {
+    const repoRoot = await createHarvestFixtureRepo()
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const auditPath = testAuditLogPath(repoRoot, config.audit.logPath)
+    const corpusPath = path.join(repoRoot, 'shell-commands.json')
+    await writeFile(corpusPath, '[]\n')
+    const beforeCorpus = await readFile(corpusPath, 'utf8')
+    const fingerprint = testFingerprint('tool-ledger-only')
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        ...toolAllowRead({
+          fingerprint,
+          summary: 'Read src/example.ts',
+          ...cohort,
+          timestamp: '2026-01-02T00:00:00.000Z',
+        }),
+      })}\n`,
+      'utf8',
+    )
+
+    const report = await harvestListProject({ targetDir: repoRoot })
+    expect(report.candidates.some((entry) => entry.kind === 'tool')).toBe(true)
+
+    const result = await harvestApplyProject({
+      targetDir: repoRoot,
+      corpusPath,
+      command: 'Read src/example.ts',
+      fingerprint,
+      boundaryProfile: 'l3-l4-only',
+      outcome: 'provably-benign',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.message).toMatch(/ledger-only/i)
+    expect(await readFile(corpusPath, 'utf8')).toBe(beforeCorpus)
+
+    const ledger = await loadHarvestReviewLedger(
+      path.join(path.dirname(auditPath), 'harvest-reviews.json'),
+    )
+    expect(ledger.reviews.at(-1)).toMatchObject({
+      fingerprint,
+      kind: 'tool',
+      outcome: 'provably-benign',
+    })
   })
 
   it('persists reviewed accepted-benign and provably-benign outcomes', () => {
@@ -1025,7 +1154,7 @@ describe('harvest', () => {
     })}\n`
 
     const report = harvestReportFromNdjson(raw)
-    expect(report.scope).toBe('shell')
+    expect(report.scope).toBe('shell+tool')
     expect(report.availabilityQueue).toHaveLength(1)
     expect(report.candidates).toHaveLength(0)
   })

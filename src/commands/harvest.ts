@@ -5,7 +5,7 @@ import { parseAuditNdjson } from '../core/audit-metrics.js'
 import {
   auditApprovalCorrelationId,
   isApprovalRecorded,
-  isShellGateRecord,
+  isHarvestGateRecord,
   toAuditRecord,
 } from '../core/audit-query.js'
 import { isValidAuditFingerprint } from '../core/audit-serialize.js'
@@ -72,16 +72,16 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
       : []),
     ...(options.auditVersion ? [`Audit version scope: v${options.auditVersion}.`] : []),
   ]
-  const shellGateRecords = records.filter(isShellGateRecord)
+  const harvestGateRows = records.filter(isHarvestGateRecord)
   const matchingGateRecords = cohort
-    ? shellGateRecords.filter((record) => matchesAuditCohort(record, cohort))
+    ? harvestGateRows.filter((record) => matchesAuditCohort(record, cohort))
     : []
 
   if (!cohort && !options.allCohorts) {
     return scopedHarvestReport([], {
       cohort: null,
       matchingGateEvents: 0,
-      excludedGateEvents: shellGateRecords.length,
+      excludedGateEvents: harvestGateRows.length,
       notes: [
         'Active audit cohort is unavailable; no historical records were harvested. Use --all-cohorts only for forensic review.',
       ],
@@ -94,7 +94,7 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
   const report = scopedHarvestReport(harvestRecords, {
     cohort,
     matchingGateEvents: matchingGateRecords.length,
-    excludedGateEvents: shellGateRecords.length - matchingGateRecords.length,
+    excludedGateEvents: harvestGateRows.length - matchingGateRecords.length,
     notes: [
       ...(options.allCohorts
         ? ['Mixed-history forensic mode: do not bulk-promote candidates.']
@@ -187,7 +187,7 @@ export function harvestReportFromRecords(
 
 export function formatHarvestReport(report: HarvestReport): string {
   const lines = [
-    `belay harvest (scope: ${report.scope} audit traces only)`,
+    `belay harvest (scope: ${report.scope})`,
     `Schema: v${report.schemaVersion}`,
     `Active cohort: ${report.cohort ? report.cohort.runtimeBuildStamp : 'unavailable'}`,
     `Matching gate events: ${report.matchingGateEvents}`,
@@ -322,6 +322,14 @@ export async function harvestApplyProject(
     return {
       ok: result.ok,
       message: result.message,
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+
+  if (candidate.kind === 'tool') {
+    return {
+      ok: true,
+      message: `Recorded ${options.outcome} harvest review for tool candidate (ledger-only; corpus unchanged).`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }

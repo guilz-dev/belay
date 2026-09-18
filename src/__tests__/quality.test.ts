@@ -182,7 +182,7 @@ describe('quality loop', () => {
     expect(report.corpus.provenanceCounts.unspecified).toBeGreaterThanOrEqual(0)
     expect(report.corpus.mustAskMisses).toBe(0)
     expect(report.corpus.provablyBenignBlocks).toBe(0)
-    expect(report.harvest.scope).toBe('shell')
+    expect(report.harvest.scope).toBe('shell+tool')
     expect(report.notes.some((note) => note.includes('hard gates'))).toBe(true)
     expect(report.trafficReadyForEnforce).toBe(false)
     expect(report.readyForEnforce).toBe(false)

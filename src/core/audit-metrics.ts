@@ -29,6 +29,7 @@ import {
 } from './audit-recovery-metrics.js'
 import { isValidSessionCorrelationId } from './audit-serialize.js'
 import type {
+  AuditRecord,
   AvailabilityAskCounts,
   DecisionCohortIdentity,
   ReasonApprovalRatio,
@@ -41,6 +42,16 @@ import { type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-revi
 export const MIN_REVIEWED_BENIGN_EVENTS = 150
 export const MIN_REVIEWED_SESSIONS = 3
 export const MAX_BENIGN_BLOCK_RATE = 0.02
+/** Placeholder until Phase 2 policy sets N from dogfood measurement (ADR-012). */
+export const MIN_SHELL_REVIEWED_BENIGN_EVENTS = 10
+
+export interface ReviewedBenignKindMetrics {
+  reviewedBenignEvents: number
+  reviewedBenignBlocked: number
+  benignBlockRate: number
+}
+
+export type ReviewedBenignByKind = Record<'shell' | 'tool', ReviewedBenignKindMetrics>
 
 export interface AuditCohortIdentity extends DecisionCohortIdentity {
   /** Display / forensics metadata — not used for v3 cohort matching when artifact hash is present. */
@@ -75,9 +86,37 @@ export interface ReviewedTrafficReadiness {
   reviewedBenignEvents: number
   reviewedBenignBlocked: number
   benignBlockRate: number
+  byKind: ReviewedBenignByKind
   distinctSessions: number
   availabilityAsks: number
   ready: boolean
+}
+
+function emptyReviewedBenignByKind(): ReviewedBenignByKind {
+  const empty: ReviewedBenignKindMetrics = {
+    reviewedBenignEvents: 0,
+    reviewedBenignBlocked: 0,
+    benignBlockRate: 0,
+  }
+  return { shell: { ...empty }, tool: { ...empty } }
+}
+
+function summarizeReviewedBenignByKind(records: AuditRecord[]): ReviewedBenignByKind {
+  const byKind = emptyReviewedBenignByKind()
+  for (const record of records) {
+    const bucket = record.kind === 'tool' ? byKind.tool : byKind.shell
+    bucket.reviewedBenignEvents += 1
+    if (inferWouldBlock(record)) {
+      bucket.reviewedBenignBlocked += 1
+    }
+  }
+  for (const bucket of [byKind.shell, byKind.tool]) {
+    bucket.benignBlockRate =
+      bucket.reviewedBenignEvents > 0
+        ? bucket.reviewedBenignBlocked / bucket.reviewedBenignEvents
+        : 0
+  }
+  return byKind
 }
 
 export interface ContainedExecutionMetrics {
@@ -349,6 +388,7 @@ export function computeAuditMetrics(
   const reviewedBenignBlocked = reviewedBenignRecords.filter(inferWouldBlock).length
   const benignBlockRate =
     reviewedBenignEvents > 0 ? reviewedBenignBlocked / reviewedBenignEvents : 0
+  const reviewedBenignByKind = summarizeReviewedBenignByKind(reviewedBenignRecords)
   const reviewedSessionIds = new Set<string>()
   for (const record of reviewedBenignRecords) {
     const sessionId = record.sessionCorrelationId
@@ -360,6 +400,7 @@ export function computeAuditMetrics(
     reviewedBenignEvents,
     reviewedBenignBlocked,
     benignBlockRate,
+    byKind: reviewedBenignByKind,
     distinctSessions: reviewedSessionIds.size,
     availabilityAsks: activeCohortAvailabilityAsks,
     ready:
@@ -368,6 +409,7 @@ export function computeAuditMetrics(
       (availabilityWatermark.status === 'not-evaluated' ||
         availabilityWatermark.status === 'current') &&
       reviewedBenignEvents >= MIN_REVIEWED_BENIGN_EVENTS &&
+      reviewedBenignByKind.shell.reviewedBenignEvents >= MIN_SHELL_REVIEWED_BENIGN_EVENTS &&
       reviewedSessionIds.size >= MIN_REVIEWED_SESSIONS &&
       benignBlockRate < MAX_BENIGN_BLOCK_RATE &&
       activeCohortAvailabilityAsks === 0,
