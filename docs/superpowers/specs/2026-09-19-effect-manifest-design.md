@@ -31,6 +31,9 @@ or PolicyEngine.
   still require one-shot approval or independently verified contained execution.
 - [ADR-010](../../adr/ADR-010-repository-config-trust.md): repository-controlled files do not gain
   policy authority merely by existing or being edited.
+- [Mvdan Shell Frontend Migration Design](./2026-09-19-mvdan-shell-frontend-migration-design.md):
+  every configured shell frontend lowers through the same semantic-effect layer, and frontend
+  plans are normalized and compared before policy evaluation.
 - [`docs/CONTEXT.md`](../../CONTEXT.md): synchronous gate evaluation stays deterministic and performs
   no network I/O, LLM request, or target process spawn.
 
@@ -59,12 +62,18 @@ may allow, flag, require approval, or deny them according to their actions and r
 3. Keep candidate files non-authoritative until a human trusts an individual rule.
 4. Bind trust to the canonical checkout root, manifest schema, executable identity, fallback,
    matcher, and effect contract.
-5. Consult manifests only for the built-in decoder's `process.grammar_unknown` result.
-6. Replace only that specific unsupported-process requirement. Preserve all shell-, redirect-,
+5. Within each frontend's semantic lowering, consult manifests only for the built-in decoder's exact
+   `process.grammar_unknown` unsupported-process result: the `process.exec` spawn plus
+   `indeterminate` pair bearing only that signal.
+6. Resolve manifests independently for every complete frontend result, before EffectPlan
+   normalization, differential comparison, and canonical-plan selection.
+7. Replace only that specific unsupported-process result. Preserve all shell-, redirect-,
    substitution-, pipeline-, and sibling-command effects already present in the plan.
-7. Route the resulting requirements through the existing PolicyEngine. A manifest cannot return an
+8. Keep shadow results observational, compare manifest-resolved plans in canary, and never let a
+   manifest remove parser-, comparator-, or partial-analysis uncertainty.
+9. Route the resulting requirements through the existing PolicyEngine. A manifest cannot return an
    allow decision.
-8. Treat every missing, malformed, stale, ambiguous, unmatched, or untrusted case as the original
+10. Treat every missing, malformed, stale, ambiguous, unmatched, or untrusted case as the original
    indeterminate effect.
 
 ## Alternatives considered
@@ -108,22 +117,40 @@ CandidateInferencer -- static evidence / optional explicit LLM use
                              v
                     TrustedManifestLoader
                              |
-shell frontend --> built-in semantic decoder --> process.grammar_unknown?
-                             |                         |
-                             | no                      | yes
-                             v                         v
-                     built-in requirements      ManifestRuleMatcher
-                                                       |
-                                     trusted exact match / no match
-                                                       |
-                                                       v
-                                       EffectRequirement[] / indeterminate
-                                                       |
-                                                       v
-                                                 EffectPlan v1
-                                                       |
-                                                       v
-                                                PolicyEngine
+                             | verified manifest and trust
+                             |
+shell input --> ShellFrontendRouter                        |
+                    |                                      |
+          +---------+---------+                            |
+          |                   |                            |
+          v                   v                            |
+ LegacyShellFrontend   MvdanShellFrontend                  |
+          |                   |                            |
+          v                   v                            |
+ ParsedShellProgram    ParsedShellProgram                  |
+          |                   |                            |
+          +---- per-frontend semantic lowering ----+       |
+                                                   |       |
+                                                   v       |
+                                      built-in semantic decoder
+                                                   |
+                                      process.grammar_unknown?
+                                                   |
+                                                   v
+                                         ManifestRuleMatcher <----+
+                                                   |
+                                      trusted exact match / no match
+                                                   |
+                                                   v
+                                        frontend EffectPlan v1
+                                                   |
+                                  normalize / compare / select by mode
+                                                   |
+                                                   v
+                              canonical EffectPlan (+ disagreement marker)
+                                                   |
+                                                   v
+                                              PolicyEngine
 ```
 
 ### Component boundaries
@@ -134,9 +161,33 @@ shell frontend --> built-in semantic decoder --> process.grammar_unknown?
 | `EffectManifestCodec` | Parse, validate, canonicalize, and fingerprint schema v1 | Accept unknown fields or silently repair malformed authority data |
 | `EffectManifestTrustStore` | Atomically maintain rule trust outside the repository | Trust a whole command name or accept a changed rule |
 | `TrustedManifestLoader` | Verify repository, file, executable, and rule identity within gate limits | Perform network I/O, invoke an LLM, or use untrusted candidates |
-| `ManifestRuleMatcher` | Match a complete structured argv vector and instantiate fixed effect templates | Parse shell text, use regex, or select a permissive overlap |
-| built-in decoder integration | Offer only `process.grammar_unknown` to manifest matching | Override known or grammar-incomplete built-in semantics |
+| `ManifestRuleMatcher` | Match a complete structured argv vector inside each frontend's semantic lowering and instantiate fixed effect templates | Parse shell text, use regex, select a permissive overlap, or run after frontend-plan comparison |
+| built-in decoder integration | Offer only the exact two-requirement `process.grammar_unknown` unsupported-process result from that frontend lowering to manifest matching | Override known, grammar-incomplete, parser-incomplete, or comparator-derived semantics |
+| `ShellFrontendRouter` / comparator | Compare normalized, manifest-resolved frontend plans and apply the configured authority mode | Let a shadow candidate affect authority or let a manifest remove `parser.disagreement` |
 | `PolicyEngine` | Evaluate every resulting requirement and select the strictest disposition | Special-case a manifested command as allowed |
+
+### Shell frontend rollout integration
+
+Manifest resolution is part of the shared `SemanticEffectLowerer`, not a post-comparison rewrite of
+the selected EffectPlan. Each available frontend result is lowered independently. Only a frontend
+program marked complete whose command node has a stable executable token and complete structured
+argv may reach the built-in decoder and then the manifest fallback. A partial program, unsupported
+syntax node, invalid span, artifact failure, dynamic executable, or incomplete expansion bypasses
+manifests and keeps its indeterminate requirements.
+
+| Mode | Manifest work | Authority rule |
+| --- | --- | --- |
+| `legacy` | Resolve only while lowering the legacy program | The manifest-resolved legacy plan is canonical |
+| `shadow` | Resolve independently in legacy and mvdan lowering when the candidate is available | Legacy remains canonical; candidate matches and failures are telemetry only |
+| `canary` | Resolve independently in mvdan and legacy lowering | Compare the normalized manifest-resolved plans; any difference appends `parser.disagreement` and `indeterminate` to the mvdan plan |
+| `mvdan` | Resolve only while lowering the mvdan program | The manifest-resolved mvdan plan is canonical; frontend failure remains partial and indeterminate |
+
+The comparator observes the same authorization semantics that PolicyEngine would receive from each
+frontend. Manifest matching can replace only the exact generic unsupported-process result produced
+inside that frontend's semantic lowering. It cannot replace an `indeterminate` requirement produced
+by the parser, plan completeness, artifact availability, differential comparator, redirect,
+substitution, wrapper, or any command-specific incomplete grammar. In particular, a trusted rule can
+never remove `parser.disagreement` after canary reconciliation.
 
 ## Repository-local manifest
 
@@ -388,8 +439,10 @@ interface EffectManifestTrustRecordV1 {
 }
 ```
 
-The record is adapter-neutral because all shell adapters lower through the same canonical EffectPlan
-and PolicyEngine. Parent directories use mode `0o700`; records use `0o600`; writes are atomic.
+The record is host-adapter-neutral because Cursor, Claude, and Codex lower through the same canonical
+EffectPlan and PolicyEngine. Trust is also shared across shell frontends within the same canonical
+checkout and executable identity; frontend role affects lowering and audit attribution, not the rule
+fingerprint. Parent directories use mode `0o700`; records use `0o600`; writes are atomic.
 
 `ruleFingerprint` is SHA-256 over a domain-separated canonical encoding of schema version, command
 identity, mandatory fallback, rule ID, matcher, contract, and assertion. Inference timestamps,
@@ -423,22 +476,30 @@ Version 1 has no trust expiry. Rule or executable changes provide deterministic 
 
 ## Runtime data flow
 
-1. The shell frontend must produce a complete structured executable token and argv. Dynamic or
-   incomplete shell structure bypasses manifests and remains indeterminate.
-2. The built-in semantic decoder runs first.
-3. If it recognizes the command, its result is final for that segment. A manifest is not consulted,
+1. `ShellFrontendRouter` selects the frontend programs required by `legacy`, `shadow`, `canary`, or
+   `mvdan` mode.
+2. Each available frontend program enters the shared semantic lowerer independently. Dynamic or
+   incomplete shell structure bypasses manifests and remains indeterminate in that frontend plan.
+3. Redirect, substitution, pipe, cwd-change, wrapper, and sibling-segment requirements are derived
+   and retained for that frontend plan.
+4. The built-in semantic decoder runs first for each complete command node.
+5. If it recognizes the command, its result is final for that segment. A manifest is not consulted,
    including when the built-in decoder returns a command-specific `*_grammar_incomplete` signal.
-4. Only the generic `process.grammar_unknown` result is eligible for manifest resolution.
-5. The loader resolves and verifies the executable identity, manifest schema, rule trust, and
-   matcher uniqueness under existing synchronous gate limits.
-6. A trusted matching rule replaces only the generic unsupported-process requirement with its
-   instantiated requirements.
-7. Requirements already derived from redirects, substitutions, pipes, cwd changes, wrappers, or
-   other segments remain in the plan and are merged normally.
-8. PolicyEngine evaluates the complete plan and applies the strictest disposition.
+6. After supported transparent wrappers are lowered, only the exact generic
+   `process.grammar_unknown` unsupported-process result—the `process.exec` spawn plus
+   `indeterminate` pair bearing only that signal—is eligible for manifest resolution.
+7. The loader resolves and verifies executable identity, manifest schema, rule trust, and matcher
+   uniqueness under existing synchronous gate limits. A trusted match replaces only that generic
+   result with its instantiated requirements.
+8. Each frontend plan is completed and canonically normalized before differential comparison.
+9. `legacy` and `mvdan` use their sole canonical plan. `shadow` keeps the legacy plan authoritative
+   and records candidate results only as telemetry. `canary` compares the two manifest-resolved plans
+   and appends `parser.disagreement` plus `indeterminate` to the mvdan plan on any authorization-
+   relevant difference.
+10. PolicyEngine evaluates only the resulting canonical plan and applies the strictest disposition.
 
-If no rule matches, the original `process.grammar_unknown` requirement remains. There is no negative
-cache or basename-based fallback that can change this result.
+If no rule matches, the original two-requirement `process.grammar_unknown` result remains. There is
+no negative cache or basename-based fallback that can change this result.
 
 When a later Belay release adds a built-in decoder for the executable, that decoder automatically
 takes precedence. The dormant manifest remains inspectable and revocable but does not weaken the
@@ -465,10 +526,13 @@ an ordinary absent manifest is not a health error.
 
 ## Audit, explain, and cohort identity
 
-When a rule is considered, audit and explain output includes a bounded optional object:
+When a rule is considered, audit and explain output may include one bounded object per frontend
+consideration:
 
 ```ts
 interface EffectManifestAuditV1 {
+  frontendId: 'legacy-v1' | 'mvdan-v1'
+  role: 'canonical' | 'candidate'
   commandBasename: string
   manifestFingerprint: string
   ruleId?: string
@@ -479,14 +543,20 @@ interface EffectManifestAuditV1 {
 }
 ```
 
+Candidate entries in `shadow` and the legacy comparison entry in `canary` are observational. They
+cannot change the canonical plan, permission, approval state, contained-execution eligibility, trust
+state, or hook response. Canary's mvdan entry remains `canonical` even when reconciliation appends a
+parser-disagreement requirement afterward.
+
 Raw manifest contents, unredacted argv, documentation excerpts, script bodies, model prompts, and
 model responses are not written to gate audit records. Inference provenance remains in the local
 candidate file and explicit CLI output.
 
 The sorted set of active trusted semantic rule fingerprints is authorization-relevant input. Its
-aggregate hash is incorporated into `decisionConfigFingerprint`; adding, changing, trusting, or
-revoking a rule starts a new dogfood decision cohort. Untrusted candidate edits do not change the
-cohort.
+aggregate hash is incorporated into `decisionConfigFingerprint` alongside the configured
+`shellFrontendMode`; adding, changing, trusting, or revoking a rule or changing frontend mode starts
+a new dogfood decision cohort. Candidate match outcomes and untrusted candidate edits do not change
+the cohort.
 
 ## Security properties
 
@@ -529,8 +599,8 @@ keep the rule indeterminate and use one-shot approval or contained execution ins
 
 ### EffectPlan integration
 
-- A trusted exact `ctx status` rule replaces only `process.grammar_unknown` and produces the declared
-  canonical requirements.
+- A trusted exact `ctx status` rule replaces only the exact generic `process.grammar_unknown`
+  unsupported-process pair and produces the declared canonical requirements.
 - `ctx`, `ctx other`, additional argv, and changed casing remain indeterminate unless separately
   trusted.
 - Redirect, pipeline, substitution, wrapper, and sibling-segment effects survive manifest lowering.
@@ -538,6 +608,14 @@ keep the rule indeterminate and use one-shot approval or contained execution ins
   Belay, or other recognized grammar.
 - A command-specific built-in grammar-incomplete result remains indeterminate even if a manifest
   would otherwise match.
+- `legacy`, `shadow`, `canary`, and `mvdan` apply manifest resolution inside each available
+  frontend's semantic lowering before plan normalization and comparison.
+- A shadow candidate manifest match cannot change the canonical plan, permission, approval state,
+  contained-execution eligibility, trust state, or hook response.
+- Canary compares manifest-resolved frontend plans. A rule that matches only one frontend produces
+  an authorization-relevant difference and therefore `parser.disagreement` plus `indeterminate`.
+- Parser-, artifact-, plan-completeness-, and comparator-derived indeterminate requirements remain
+  present even when the canonical frontend's argv would otherwise match a trusted rule.
 - Dangerous manifested effects retain their ordinary PolicyEngine ask behavior.
 - No-manifest installations preserve existing decisions.
 
