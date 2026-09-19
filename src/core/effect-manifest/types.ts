@@ -59,12 +59,16 @@ export interface EffectManifestTrustRecordV1 {
 
 export type EffectManifestApplicationRole = 'canonical' | 'telemetry-only'
 
+export type EffectManifestFrontendId = 'legacy-v1' | 'mvdan-v1'
+
 export interface EffectManifestAuditV1 {
+  frontendId?: EffectManifestFrontendId
+  role?: 'canonical' | 'candidate'
   commandBasename: string
   manifestFingerprint: string
   ruleId?: string
   ruleFingerprint?: string
   trust: 'trusted' | 'missing' | 'stale' | 'invalid'
-  outcome: 'matched' | 'unmatched' | 'unavailable' | 'telemetry-only'
+  outcome: 'matched' | 'unmatched' | 'unavailable'
   reason: string
 }

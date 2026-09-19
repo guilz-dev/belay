@@ -91,7 +91,11 @@ const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
   const mode = params.shellFrontendMode ?? 'legacy'
   if (mode === 'legacy') {
-    return lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' })
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
   }
   if (mode === 'shadow') {
     try {
@@ -99,7 +103,17 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     } catch {
       // Candidate failure is telemetry only and must not replace the legacy plan.
     }
-    return lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' })
+    // Candidate-side manifest resolution is observational only (discarded plan).
+    lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'telemetry-only',
+      effectManifestFrontendId: 'mvdan-v1',
+    })
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
   if (mode === 'mvdan') {
@@ -107,7 +121,11 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
   }
   return selectCanonicalEffectPlan({
     mode,
-    legacy: lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' }),
+    legacy: lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    }),
     mvdan,
     withDisagreement: appendParserDisagreement,
   })
@@ -668,6 +686,7 @@ function lowerSegment(
               ? 'complete'
               : 'partial',
           role: context.effectManifestRole ?? 'canonical',
+          frontendId: context.effectManifestFrontendId ?? 'legacy-v1',
           trustRecord: null,
         })
         for (const signal of manifestApplied.telemetrySignals) {

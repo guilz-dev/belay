@@ -8,6 +8,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function hasOnlyKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys)
+  return Object.keys(record).every((key) => allowed.has(key))
+}
+
 function parseArgvMatcher(raw: unknown): ArgvMatcherV1 | null {
   if (!isRecord(raw) || typeof raw.kind !== 'string') {
     return null
@@ -31,12 +36,18 @@ function parseArgvMatcher(raw: unknown): ArgvMatcherV1 | null {
 }
 
 export function parseEffectManifestV1(raw: unknown): EffectManifestV1 | null {
-  if (!isRecord(raw) || raw.schemaVersion !== 1 || raw.fallback !== 'indeterminate') {
+  if (
+    !isRecord(raw) ||
+    !hasOnlyKeys(raw, ['schemaVersion', 'command', 'fallback', 'rules']) ||
+    raw.schemaVersion !== 1 ||
+    raw.fallback !== 'indeterminate'
+  ) {
     return null
   }
   const command = raw.command
   if (
     !isRecord(command) ||
+    !hasOnlyKeys(command, ['basename', 'canonicalPath', 'sha256', 'kind', 'interpreter']) ||
     typeof command.basename !== 'string' ||
     typeof command.canonicalPath !== 'string' ||
     typeof command.sha256 !== 'string' ||

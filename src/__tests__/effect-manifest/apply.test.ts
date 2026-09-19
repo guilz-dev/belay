@@ -239,4 +239,48 @@ describe('effect manifest shell frontend modes', () => {
     ).toBe(false)
     expect(plan.signals).toContain('effect_manifest.matched')
   })
+
+  it('keeps shadow candidate manifest telemetry off the canonical plan', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-shadow-'))
+    await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(manifestFixture))
+    const config = mergeConfig({})
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    const ruleFp = ruleFingerprint(manifestFixture, fixtureRule)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(
+        config,
+        stateDir,
+        repoRoot,
+        manifestFixture.command.canonicalPath,
+      ),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: 'test',
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
+      },
+    )
+
+    const legacy = lowerShellEffectPlan({
+      cwd: repoRoot,
+      repoRoot,
+      inputFingerprint: 'fp',
+      command: 'unknown-cli status',
+      shellFrontendMode: 'legacy',
+    })
+    const shadow = lowerShellEffectPlan({
+      cwd: repoRoot,
+      repoRoot,
+      inputFingerprint: 'fp',
+      command: 'unknown-cli status',
+      shellFrontendMode: 'shadow',
+    })
+    expect(shadow).toEqual(legacy)
+    expect(shadow.signals).toContain('effect_manifest.matched')
+    expect(shadow.signals).not.toContain('effect_manifest.shadow_candidate_matched')
+  })
 })

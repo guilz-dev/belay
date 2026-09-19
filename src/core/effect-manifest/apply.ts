@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 
 import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
 import { isGrammarUnknownOnly } from '../effect-ir/shell-lower/argv-delegate-gate.js'
@@ -32,6 +33,7 @@ export interface ApplyEffectManifestParams {
   requirements: ShellEffectRequirement[]
   segmentCompleteness: 'complete' | 'partial'
   role: EffectManifestApplicationRole
+  frontendId?: EffectManifestAuditV1['frontendId']
   trustRecord: EffectManifestTrustRecordV1 | null
 }
 
@@ -109,7 +111,7 @@ function loadTrustRecord(
     return null
   }
   const expectedManifestPath = manifestFilePath(repoRoot, basename)
-  if (record.manifestPath !== expectedManifestPath) {
+  if (path.resolve(record.manifestPath) !== path.resolve(expectedManifestPath)) {
     return null
   }
   return record
@@ -159,6 +161,8 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
       manifestFingerprint?: string
     },
   ): EffectManifestAuditV1 => ({
+    frontendId: params.frontendId ?? 'legacy-v1',
+    role: params.role === 'telemetry-only' ? 'candidate' : 'canonical',
     commandBasename: basename ?? params.head,
     manifestFingerprint: partial.manifestFingerprint ?? '',
     ...partial,
@@ -248,7 +252,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     ruleId: matchedRule.id,
     ruleFingerprint: ruleFp,
     trust: 'trusted',
-    outcome: params.role === 'telemetry-only' ? 'telemetry-only' : 'matched',
+    outcome: 'matched',
     reason: params.role === 'telemetry-only' ? 'shadow_candidate_match' : 'trusted_rule_match',
   })
 
