@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import {
   manifestFingerprint,
   parseEffectManifestV1,
@@ -16,6 +17,7 @@ import {
   parseStoredManifest,
 } from '../core/effect-manifest/infer.js'
 import { invocationMatchesManifestCommand } from '../core/effect-manifest/invocation-identity.js'
+import { loadEffectManifestSync } from '../core/effect-manifest/load-manifest-sync.js'
 import { loadEffectManifestTrustSync } from '../core/effect-manifest/load-trust-sync.js'
 import { manifestFilePath, normalizeManifestBasename } from '../core/effect-manifest/paths.js'
 import {
@@ -64,16 +66,8 @@ function parseInvocation(commandText: string): { head: string; argv: string[] } 
 }
 
 function loadManifestFile(repoRoot: string, basename: string): EffectManifestV1 | null {
-  const filePath = manifestFilePath(repoRoot, basename)
-  if (!existsSync(filePath)) {
-    return null
-  }
-  try {
-    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
-    return parseEffectManifestV1(raw)
-  } catch {
-    return null
-  }
+  const loaded = loadEffectManifestSync(repoRoot, basename)
+  return loaded.ok ? loaded.manifest : null
 }
 
 function identitiesMatch(
@@ -83,8 +77,12 @@ function identitiesMatch(
   return commandIdentityFingerprint(left) === commandIdentityFingerprint(right)
 }
 
-function activelyTrustedRuleIds(repoRoot: string, manifest: EffectManifestV1): Set<string> {
-  const record = loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
+function activelyTrustedRuleIds(
+  repoRoot: string,
+  manifest: EffectManifestV1,
+  config: BelayConfigV3,
+): Set<string> {
+  const record = loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath, config)
   if (!record) {
     return new Set()
   }
@@ -108,6 +106,7 @@ function activelyTrustedRuleIds(repoRoot: string, manifest: EffectManifestV1): S
 
 export async function manifestInferProject(options: ManifestCommandOptions) {
   const { repoRoot, actionCwd } = resolveRoots(options)
+  const config = await loadConfigFile(repoRoot)
   if (options.llm) {
     return {
       ok: false as const,
@@ -178,7 +177,7 @@ export async function manifestInferProject(options: ManifestCommandOptions) {
           'Existing manifest binds this basename to a different executable identity. Revoke trusted rules and archive the file before inferring again.',
       }
     }
-    const trusted = activelyTrustedRuleIds(repoRoot, existing)
+    const trusted = activelyTrustedRuleIds(repoRoot, existing, config)
     if (trusted.has(candidate.id)) {
       return {
         ok: false as const,
@@ -238,6 +237,7 @@ export async function manifestListProject(options: ManifestCommandOptions) {
 
 export async function manifestShowProject(options: ManifestCommandOptions) {
   const { repoRoot } = resolveRoots(options)
+  const config = await loadConfigFile(repoRoot)
   const invocation = options.commandText ? parseInvocation(options.commandText) : null
   if (!invocation) {
     return { ok: false as const, error: 'missing_command', message: 'Command is required.' }
@@ -258,7 +258,7 @@ export async function manifestShowProject(options: ManifestCommandOptions) {
       message: `No manifest for ${basename}.`,
     }
   }
-  const trust = loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
+  const trust = loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath, config)
   const rules = manifest.rules.map((rule) => {
     const fingerprint = ruleFingerprint(manifest, rule)
     const trusted = trust?.trustedRules.find(

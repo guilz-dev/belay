@@ -1,3 +1,4 @@
+import type { BelayConfigV3 } from '../../config.js'
 import type {
   EffectManifestApplicationRole,
   EffectManifestAuditV1,
@@ -10,6 +11,8 @@ export interface LowerShellEffectPlanParams {
   cwd: string
   repoRoot: string
   inputFingerprint: string
+  /** Repo belay config; required for manifest trust resolution at gate time. */
+  belayConfig?: BelayConfigV3
   env?: Readonly<Record<string, string | undefined>>
   /** Absent means the historical legacy frontend. */
   shellFrontendMode?: ShellFrontendMode

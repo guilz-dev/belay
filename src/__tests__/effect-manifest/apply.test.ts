@@ -89,10 +89,12 @@ function manifestGateParams(
 function lowerWithManifestGate(
   repoRoot: string,
   params: Parameters<typeof lowerShellEffectPlan>[0],
+  config = mergeConfig({}),
 ) {
   return lowerShellEffectPlan({
     ...params,
     cwd: params.cwd ?? repoRoot,
+    belayConfig: config,
     effectManifestGateConsumptionEnabled: true,
   })
 }
@@ -372,13 +374,17 @@ describe('effect manifest shell frontend modes', () => {
     )
 
     const plan = await withBinOnPath(repoRoot, () =>
-      lowerWithManifestGate(repoRoot, {
-        cwd: repoRoot,
+      lowerWithManifestGate(
         repoRoot,
-        inputFingerprint: 'fp',
-        command: 'unknown-cli status',
-        shellFrontendMode: 'legacy',
-      }),
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'unknown-cli status',
+          shellFrontendMode: 'legacy',
+        },
+        config,
+      ),
     )
     const requirements = collectRequirements(plan.root)
     expect(
@@ -408,22 +414,30 @@ describe('effect manifest shell frontend modes', () => {
     )
 
     const legacy = await withBinOnPath(repoRoot, () =>
-      lowerWithManifestGate(repoRoot, {
-        cwd: repoRoot,
+      lowerWithManifestGate(
         repoRoot,
-        inputFingerprint: 'fp',
-        command: 'unknown-cli status',
-        shellFrontendMode: 'legacy',
-      }),
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'unknown-cli status',
+          shellFrontendMode: 'legacy',
+        },
+        config,
+      ),
     )
     const shadow = await withBinOnPath(repoRoot, () =>
-      lowerWithManifestGate(repoRoot, {
-        cwd: repoRoot,
+      lowerWithManifestGate(
         repoRoot,
-        inputFingerprint: 'fp',
-        command: 'unknown-cli status',
-        shellFrontendMode: 'shadow',
-      }),
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'unknown-cli status',
+          shellFrontendMode: 'shadow',
+        },
+        config,
+      ),
     )
     expect(collectRequirements(shadow.root)).toEqual(collectRequirements(legacy.root))
     expect(shadow.signals).toContain('effect_manifest.matched')
@@ -450,22 +464,30 @@ describe('effect manifest shell frontend modes', () => {
     )
 
     const legacy = await withBinOnPath(repoRoot, () =>
-      lowerWithManifestGate(repoRoot, {
-        cwd: repoRoot,
+      lowerWithManifestGate(
         repoRoot,
-        inputFingerprint: 'fp',
-        command: 'unknown-cli status',
-        shellFrontendMode: 'legacy',
-      }),
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'unknown-cli status',
+          shellFrontendMode: 'legacy',
+        },
+        config,
+      ),
     )
     const canary = await withBinOnPath(repoRoot, () =>
-      lowerWithManifestGate(repoRoot, {
-        cwd: repoRoot,
+      lowerWithManifestGate(
         repoRoot,
-        inputFingerprint: 'fp',
-        command: 'unknown-cli status',
-        shellFrontendMode: 'canary',
-      }),
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'unknown-cli status',
+          shellFrontendMode: 'canary',
+        },
+        config,
+      ),
     )
     expect(
       collectRequirements(legacy.root).some((entry) =>

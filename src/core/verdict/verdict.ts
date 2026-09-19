@@ -20,6 +20,7 @@ export async function verdict(command: string, context: VerdictContext): Promise
     cwd: context.cwd,
     repoRoot: context.repoRoot,
     inputFingerprint: fingerprint,
+    belayConfig: context.config,
     shellFrontendMode: context.config.classifier.shellFrontendMode,
     effectManifestGateConsumptionEnabled:
       context.config.classifier.effectManifestGateConsumption === true,

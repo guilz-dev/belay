@@ -1,15 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
 
 import { repoLocalStateDirFor } from '../../config-io.js'
-import { mergeConfig } from '../config.js'
+import type { BelayConfigV3 } from '../config.js'
 import { effectManifestTrustRecordPath } from './trust-store.js'
 import type { EffectManifestTrustRecordV1 } from './types.js'
 
 export function loadEffectManifestTrustSync(
   repoRoot: string,
   canonicalExecutablePath: string,
+  config: BelayConfigV3,
 ): EffectManifestTrustRecordV1 | null {
-  const config = mergeConfig({})
   const repoLocalStateDir = repoLocalStateDirFor(repoRoot, config)
   const filePath = effectManifestTrustRecordPath(
     config,

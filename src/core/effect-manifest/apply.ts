@@ -1,6 +1,7 @@
 import path from 'node:path'
 
 import type { ProcessOperation } from '../capability/request.js'
+import { type BelayConfigV3, mergeConfig } from '../config.js'
 import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
 import { isGrammarUnknownOnly } from '../effect-ir/shell-lower/argv-delegate-gate.js'
 import { processRequirement } from '../effect-ir/shell-lower/requirement.js'
@@ -43,6 +44,7 @@ export interface ApplyEffectManifestParams {
   trustRecord: EffectManifestTrustRecordV1 | null
   /** When false, canonical lowering ignores manifests; telemetry-only may still observe. */
   gateConsumptionEnabled?: boolean
+  belayConfig?: BelayConfigV3
 }
 
 export interface ApplyEffectManifestResult {
@@ -101,9 +103,11 @@ function loadTrustRecord(
   repoRoot: string,
   basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
+  belayConfig: BelayConfigV3,
 ): EffectManifestTrustRecordV1 | null {
   const record =
-    trustRecord ?? loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
+    trustRecord ??
+    loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath, belayConfig)
   if (!record || record.repoRoot !== repoRoot) {
     return null
   }
@@ -119,9 +123,10 @@ function trustedRule(
   repoRoot: string,
   basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
+  belayConfig: BelayConfigV3,
   rule: EffectManifestV1['rules'][number],
 ): boolean {
-  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord)
+  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord, belayConfig)
   if (!record) {
     return false
   }
@@ -136,12 +141,13 @@ function resolveTrustAudit(
   repoRoot: string,
   basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
+  belayConfig: BelayConfigV3,
   matchedRule: EffectManifestV1['rules'][number] | null,
 ): EffectManifestAuditV1['trust'] {
   if (!matchedRule) {
     return 'missing'
   }
-  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord)
+  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord, belayConfig)
   if (!record) {
     return 'missing'
   }
@@ -154,6 +160,7 @@ function resolveTrustAudit(
 }
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
+  const belayConfig = params.belayConfig ?? mergeConfig({})
   const basename = normalizeManifestBasename(params.head)
   const segment = params.requirements[0]?.provenance?.segment ?? params.head
   const baseAudit = (
@@ -268,7 +275,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   const argv = params.argv.slice(1)
   const matchedRule = findUniqueMatchingRule(argv, manifest.rules)
   const trusted = matchedRule
-    ? trustedRule(manifest, params.repoRoot, basename, params.trustRecord, matchedRule)
+    ? trustedRule(manifest, params.repoRoot, basename, params.trustRecord, belayConfig, matchedRule)
     : false
   if (!matchedRule || !trusted) {
     return {
@@ -280,6 +287,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
           params.repoRoot,
           basename,
           params.trustRecord,
+          belayConfig,
           matchedRule ?? null,
         ),
         outcome: 'unmatched',
