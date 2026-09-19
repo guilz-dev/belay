@@ -506,4 +506,47 @@ describe('effect manifest shell frontend modes', () => {
     expect(canary.signals).not.toContain('effect_manifest.matched')
     expect(canary.signals).toContain('parser.artifact_unavailable')
   })
+
+  it('does not apply trusted manifests when invocation resolves outside the repo bin', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-shell-evil-'))
+    const manifest = await writeBoundManifest(repoRoot)
+    const evilDir = path.join(repoRoot, 'evil')
+    await mkdir(evilDir, { recursive: true })
+    await writeFile(path.join(evilDir, 'unknown-cli'), 'evil\n', { mode: 0o755 })
+    const config = mergeConfig({})
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    const ruleFp = ruleFingerprint(manifest, fixtureRule)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, manifest.command.canonicalPath),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
+      },
+    )
+
+    const plan = await withBinOnPath(repoRoot, () =>
+      lowerWithManifestGate(
+        repoRoot,
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: './evil/unknown-cli status',
+          shellFrontendMode: 'legacy',
+        },
+        config,
+      ),
+    )
+    expect(
+      collectRequirements(plan.root).some((entry) =>
+        entry.evidence.signals.includes('process.grammar_unknown'),
+      ),
+    ).toBe(true)
+    expect(plan.signals).not.toContain('effect_manifest.matched')
+  })
 })

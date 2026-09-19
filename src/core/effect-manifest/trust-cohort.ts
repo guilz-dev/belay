@@ -8,8 +8,10 @@ import { ruleFingerprint } from './codec.js'
 import { commandIdentityFingerprint } from './command-identity.js'
 import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import { readEffectManifestFromPath } from './load-manifest-sync.js'
+import { manifestFilePath } from './paths.js'
 import { effectManifestTrustDir } from './trust-store.js'
 import type { EffectManifestTrustRecordV1 } from './types.js'
+import { ruleIsTrustEligible } from './validate.js'
 
 export function collectActiveEffectManifestRuleFingerprints(
   repoRoot: string,
@@ -45,9 +47,13 @@ export function collectActiveEffectManifestRuleFingerprints(
       if (commandIdentityFingerprint(manifest.command) !== raw.commandIdentityFingerprint) {
         continue
       }
+      const expectedManifestPath = manifestFilePath(repoRoot, manifest.command.basename)
+      if (path.resolve(raw.manifestPath) !== path.resolve(expectedManifestPath)) {
+        continue
+      }
       for (const trusted of raw.trustedRules) {
         const rule = manifest.rules.find((candidate) => candidate.id === trusted.id)
-        if (!rule) {
+        if (!rule || !ruleIsTrustEligible(rule)) {
           continue
         }
         const fingerprint = ruleFingerprint(manifest, rule)

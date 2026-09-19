@@ -92,6 +92,9 @@ function activelyTrustedRuleIds(
   }
   const trusted = new Set<string>()
   for (const rule of manifest.rules) {
+    if (!ruleIsTrustEligible(rule)) {
+      continue
+    }
     const fingerprint = ruleFingerprint(manifest, rule)
     if (
       record.trustedRules.some(
@@ -267,7 +270,7 @@ export async function manifestShowProject(options: ManifestCommandOptions) {
     return {
       id: rule.id,
       ruleFingerprint: fingerprint,
-      trusted: Boolean(trusted),
+      trusted: Boolean(trusted) && ruleIsTrustEligible(rule),
       trustedAt: trusted?.trustedAt,
       matcher: rule.matcher,
       contract: rule.contract,
