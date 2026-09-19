@@ -91,7 +91,7 @@ const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
   const mode = params.shellFrontendMode ?? 'legacy'
   if (mode === 'legacy') {
-    return lowerLegacyShellEffectPlan(params)
+    return lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' })
   }
   if (mode === 'shadow') {
     try {
@@ -99,7 +99,7 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     } catch {
       // Candidate failure is telemetry only and must not replace the legacy plan.
     }
-    return lowerLegacyShellEffectPlan(params)
+    return lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' })
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
   if (mode === 'mvdan') {
@@ -673,7 +673,7 @@ function lowerSegment(
         for (const signal of manifestApplied.telemetrySignals) {
           signals.add(signal)
         }
-        if (manifestApplied.telemetrySignals.includes('effect_manifest.matched')) {
+        if (manifestApplied.matched) {
           requirements.push(...manifestApplied.requirements)
           loweredArgvDelegate = true
         }

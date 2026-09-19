@@ -88,6 +88,7 @@ describe('applyEffectManifest', () => {
         entry.evidence.signals.includes('process.grammar_unknown'),
       ),
     ).toBe(false)
+    expect(applied.matched).toBe(true)
     expect(applied.telemetrySignals).toContain('effect_manifest.matched')
   })
 
@@ -125,8 +126,33 @@ describe('applyEffectManifest', () => {
       role: 'telemetry-only',
       trustRecord: null,
     })
+    expect(applied.matched).toBe(false)
     expect(applied.requirements).toEqual(base)
     expect(applied.telemetrySignals).toContain('effect_manifest.shadow_candidate_matched')
+  })
+
+  it('rejects a manifest whose basename does not match the command head', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-basename-'))
+    await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
+    await writeFile(
+      manifestFilePath(repoRoot, 'unknown-cli'),
+      JSON.stringify({
+        ...manifestFixture,
+        command: { ...manifestFixture.command, basename: 'other-cli' },
+      }),
+    )
+    const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
+    const applied = applyEffectManifest({
+      repoRoot,
+      head: 'unknown-cli',
+      argv: ['unknown-cli', 'status'],
+      requirements: base,
+      segmentCompleteness: 'complete',
+      role: 'canonical',
+      trustRecord: null,
+    })
+    expect(applied.matched).toBe(false)
+    expect(applied.audit?.reason).toBe('basename_mismatch')
   })
 
   it('does not replace parser.disagreement indeterminate', () => {
@@ -151,6 +177,7 @@ describe('applyEffectManifest', () => {
       role: 'canonical',
       trustRecord: null,
     })
+    expect(applied.matched).toBe(false)
     expect(applied.requirements).toEqual(base)
   })
 })

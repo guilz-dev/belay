@@ -16,7 +16,14 @@ import type {
 
 const MANIFEST_EVIDENCE_BASIS = 'effect_manifest.trusted_complete_upper_bound'
 
-const NON_REPLACEABLE_SIGNAL_PREFIXES = ['parser.', 'shell.']
+function requirementBlocksManifest(entry: ShellEffectRequirement): boolean {
+  return entry.evidence.signals.some(
+    (signal) =>
+      signal === 'parser.disagreement' ||
+      signal.startsWith('parser.') ||
+      signal.startsWith('shell.'),
+  )
+}
 
 export interface ApplyEffectManifestParams {
   repoRoot: string
@@ -32,21 +39,12 @@ export interface ApplyEffectManifestResult {
   requirements: ShellEffectRequirement[]
   audit?: EffectManifestAuditV1
   telemetrySignals: string[]
+  /** True when a trusted rule replaced grammar_unknown on the canonical path. */
+  matched: boolean
 }
 
-function requirementsHaveNonReplaceableIndeterminate(
-  requirements: readonly ShellEffectRequirement[],
-): boolean {
-  return requirements.some((entry) => {
-    if (entry.tag !== 'indeterminate') {
-      return false
-    }
-    return entry.evidence.signals.some(
-      (signal) =>
-        signal === 'parser.disagreement' ||
-        NON_REPLACEABLE_SIGNAL_PREFIXES.some((prefix) => signal.startsWith(prefix)),
-    )
-  })
+function requirementsBlockManifest(requirements: readonly ShellEffectRequirement[]): boolean {
+  return requirements.some((entry) => requirementBlocksManifest(entry))
 }
 
 function loadManifest(repoRoot: string, basename: string): EffectManifestV1 | null {
@@ -99,21 +97,58 @@ function instantiateRequirements(
   return [process, ...effects]
 }
 
-function trustedRule(
+function loadTrustRecord(
   manifest: EffectManifestV1,
   repoRoot: string,
+  basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
-  rule: EffectManifestV1['rules'][number],
-): boolean {
+): EffectManifestTrustRecordV1 | null {
   const record =
     trustRecord ?? loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
   if (!record || record.repoRoot !== repoRoot) {
+    return null
+  }
+  const expectedManifestPath = manifestFilePath(repoRoot, basename)
+  if (record.manifestPath !== expectedManifestPath) {
+    return null
+  }
+  return record
+}
+
+function trustedRule(
+  manifest: EffectManifestV1,
+  repoRoot: string,
+  basename: string,
+  trustRecord: EffectManifestTrustRecordV1 | null,
+  rule: EffectManifestV1['rules'][number],
+): boolean {
+  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord)
+  if (!record) {
     return false
   }
   const fingerprint = ruleFingerprint(manifest, rule)
   return record.trustedRules.some(
     (entry) => entry.id === rule.id && entry.ruleFingerprint === fingerprint,
   )
+}
+
+function resolveTrustAudit(
+  manifest: EffectManifestV1,
+  repoRoot: string,
+  basename: string,
+  trustRecord: EffectManifestTrustRecordV1 | null,
+  ruleMatched: boolean,
+): EffectManifestAuditV1['trust'] {
+  if (!ruleMatched) {
+    return 'missing'
+  }
+  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord)
+  if (!record) {
+    return loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
+      ? 'stale'
+      : 'missing'
+  }
+  return 'stale'
 }
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
@@ -132,9 +167,9 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   if (
     params.segmentCompleteness !== 'complete' ||
     !isGrammarUnknownOnly(params.requirements, params.head) ||
-    requirementsHaveNonReplaceableIndeterminate(params.requirements)
+    requirementsBlockManifest(params.requirements)
   ) {
-    return { requirements: params.requirements, telemetrySignals: [] }
+    return { requirements: params.requirements, telemetrySignals: [], matched: false }
   }
 
   if (!basename) {
@@ -147,6 +182,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
         reason: 'ineligible_basename',
       }),
       telemetrySignals: [],
+      matched: false,
     }
   }
 
@@ -161,30 +197,55 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
         reason: 'no_manifest',
       }),
       telemetrySignals: [],
+      matched: false,
+    }
+  }
+
+  if (manifest.command.basename !== basename) {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: manifestFingerprint(manifest),
+        trust: 'invalid',
+        outcome: 'unavailable',
+        reason: 'basename_mismatch',
+      }),
+      telemetrySignals: [],
+      matched: false,
     }
   }
 
   const fingerprint = manifestFingerprint(manifest)
   const argv = params.argv.slice(1)
-  const matched = findUniqueMatchingRule(argv, manifest.rules)
-  if (!matched || !trustedRule(manifest, params.repoRoot, params.trustRecord, matched)) {
+  const matchedRule = findUniqueMatchingRule(argv, manifest.rules)
+  const trusted = matchedRule
+    ? trustedRule(manifest, params.repoRoot, basename, params.trustRecord, matchedRule)
+    : false
+  if (!matchedRule || !trusted) {
     return {
       requirements: params.requirements,
       audit: baseAudit({
         manifestFingerprint: fingerprint,
-        trust: params.trustRecord ? 'stale' : 'missing',
+        trust: resolveTrustAudit(
+          manifest,
+          params.repoRoot,
+          basename,
+          params.trustRecord,
+          Boolean(matchedRule),
+        ),
         outcome: 'unmatched',
-        reason: matched ? 'rule_not_trusted' : 'no_rule_match',
-        ...(matched ? { ruleId: matched.id } : {}),
+        reason: matchedRule ? 'rule_not_trusted' : 'no_rule_match',
+        ...(matchedRule ? { ruleId: matchedRule.id } : {}),
       }),
       telemetrySignals: [],
+      matched: false,
     }
   }
 
-  const ruleFp = ruleFingerprint(manifest, matched)
+  const ruleFp = ruleFingerprint(manifest, matchedRule)
   const audit: EffectManifestAuditV1 = baseAudit({
     manifestFingerprint: fingerprint,
-    ruleId: matched.id,
+    ruleId: matchedRule.id,
     ruleFingerprint: ruleFp,
     trust: 'trusted',
     outcome: params.role === 'telemetry-only' ? 'telemetry-only' : 'matched',
@@ -196,12 +257,14 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
       requirements: params.requirements,
       audit,
       telemetrySignals: ['effect_manifest.shadow_candidate_matched'],
+      matched: false,
     }
   }
 
   return {
-    requirements: instantiateRequirements(matched, params.head, segment),
+    requirements: instantiateRequirements(matchedRule, params.head, segment),
     audit,
     telemetrySignals: ['effect_manifest.matched'],
+    matched: true,
   }
 }
