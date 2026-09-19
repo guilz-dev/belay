@@ -91,7 +91,16 @@ export function validateParsedProgram(
       countWalk(child)
     }
   }
-  for (const node of program.nodes) {
+  const ordered = [...program.nodes].sort(
+    (left, right) =>
+      left.span.startByte - right.span.startByte || left.span.endByte - right.span.endByte,
+  )
+  let previousEnd = 0
+  for (const node of ordered) {
+    if (node.span.startByte < previousEnd) {
+      mark('invalid_span', node.span)
+    }
+    previousEnd = Math.max(previousEnd, node.span.endByte)
     countWalk(node)
     walk(node, 1)
   }

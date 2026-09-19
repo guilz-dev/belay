@@ -1,5 +1,5 @@
 import { collectRequirements } from '../effect-ir/build.js'
-import type { EffectPlan, EffectRequirement } from '../effect-ir/types.js'
+import type { EffectNode, EffectPlan, EffectRequirement } from '../effect-ir/types.js'
 import { canonicalStringify } from '../fingerprint.js'
 
 export interface AuthorizationProjection {
@@ -26,6 +26,17 @@ export function authorizationProjectionsEqual(left: EffectPlan, right: EffectPla
   )
 }
 
+/** Keep every requirement already on the candidate and fail closed on mismatch. */
+export function appendParserDisagreement(plan: EffectPlan): EffectPlan {
+  const signal = 'parser.disagreement'
+  return {
+    ...plan,
+    completeness: 'partial',
+    signals: [...new Set([...plan.signals, signal])].sort(),
+    root: addDisagreement(plan.root, signal),
+  }
+}
+
 function projectRequirement(requirement: EffectRequirement): string {
   return canonicalStringify({
     tag: requirement.tag,
@@ -34,4 +45,29 @@ function projectRequirement(requirement: EffectRequirement): string {
     level: requirement.evidence.level,
     signals: [...requirement.evidence.signals].sort(),
   })
+}
+
+function addDisagreement(node: EffectNode, signal: string): EffectNode {
+  const marker: EffectNode = {
+    kind: 'exec',
+    commandRedacted: '',
+    segmentHead: '',
+    requirements: [
+      {
+        tag: 'indeterminate',
+        action: 'indeterminate',
+        resource: { kind: 'unknown' },
+        evidence: {
+          level: 'indeterminate',
+          signals: [signal],
+          basis: ['shell_semantic_lowering'],
+        },
+        provenance: { segment: '' },
+      },
+    ],
+  }
+  if (node.kind === 'merge' || node.kind === 'launcher') {
+    return { ...node, children: [...node.children, marker] }
+  }
+  return { kind: 'merge', children: [node, marker] }
 }

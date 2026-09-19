@@ -1,8 +1,12 @@
-export { authorizationProjectionsEqual, projectAuthorization } from './compare.js'
+export {
+  appendParserDisagreement,
+  authorizationProjectionsEqual,
+  projectAuthorization,
+} from './compare.js'
 export { legacyShellFrontend, parseLegacyShell } from './legacy-frontend.js'
 export { normalizeShellFrontendMode } from './mode.js'
 export { mvdanShellFrontend, parseMvdanShell } from './mvdan-frontend.js'
-export { routeShellFrontend, selectCanonicalEffectPlan } from './router.js'
+export { routeShellFrontend, selectCanonicalEffectPlan, shellProgramsDisagree } from './router.js'
 export { validateParsedProgram } from './span.js'
 export {
   MAX_SHELL_AST_DEPTH,

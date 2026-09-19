@@ -1,5 +1,6 @@
 import path from 'node:path'
 
+import { appendParserDisagreement } from '../shell-frontend/compare.js'
 import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
 import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
 import {
@@ -92,8 +93,11 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     return lowerLegacyShellEffectPlan(params)
   }
   if (mode === 'shadow') {
-    // Candidate failure is not authority. Do not alter the legacy plan.
-    parseMvdanShell(params.command)
+    try {
+      parseMvdanShell(params.command)
+    } catch {
+      // Candidate failure is telemetry only and must not replace the legacy plan.
+    }
     return lowerLegacyShellEffectPlan(params)
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
@@ -104,8 +108,7 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     mode,
     legacy: lowerLegacyShellEffectPlan(params),
     mvdan,
-    withDisagreement: () =>
-      unavailableMvdanPlan(params, ['parser.artifact_unavailable', 'parser.disagreement']),
+    withDisagreement: appendParserDisagreement,
   })
 }
 

@@ -6,11 +6,13 @@ import { collectRequirements } from '../core/effect-ir/build.js'
 import { lowerShellEffectPlan } from '../core/effect-ir/shell-lower.js'
 import type { EffectPlan } from '../core/effect-ir/types.js'
 import {
+  appendParserDisagreement,
   authorizationProjectionsEqual,
   parseLegacyShell,
   parseMvdanShell,
   routeShellFrontend,
   selectCanonicalEffectPlan,
+  shellProgramsDisagree,
   validateParsedProgram,
 } from '../core/shell-frontend/index.js'
 
@@ -60,6 +62,33 @@ describe('shell frontend contract', () => {
     expect(program.diagnostics.some((diagnostic) => diagnostic.code === 'invalid_span')).toBe(true)
   })
 
+  it('marks overlapping top-level spans invalid', () => {
+    const source = 'ab'
+    const program = validateParsedProgram(
+      {
+        version: 1,
+        sourceBytes: 2,
+        completeness: 'complete',
+        nodes: [
+          {
+            kind: 'unsupported',
+            upstreamKind: 'left',
+            span: { startByte: 0, endByte: 2 },
+          },
+          {
+            kind: 'unsupported',
+            upstreamKind: 'right',
+            span: { startByte: 1, endByte: 2 },
+          },
+        ],
+        diagnostics: [],
+      },
+      source,
+    )
+    expect(program.completeness).toBe('partial')
+    expect(program.diagnostics.some((diagnostic) => diagnostic.code === 'invalid_span')).toBe(true)
+  })
+
   it('reports missing mvdan artifacts as partial and never complete', () => {
     const program = parseMvdanShell('git status')
     expect(program.completeness).toBe('partial')
@@ -81,7 +110,38 @@ describe('shell frontend router', () => {
     const route = await routeShellFrontend('git status', 'shadow')
     expect(route.canonicalId).toBe('legacy-v1')
     expect(route.candidateProgram?.diagnostics[0]?.code).toBe('artifact_unavailable')
-    expect(route.disagreement).toBe(false)
+    expect(route.disagreement).toBe(true)
+  })
+
+  it('treats a dropped node as disagreement even when diagnostic codes match', () => {
+    const span = { startByte: 0, endByte: 2 }
+    const shared = {
+      version: 1 as const,
+      sourceBytes: 2,
+      completeness: 'partial' as const,
+      diagnostics: [{ code: 'unsupported_node' as const, span }],
+    }
+    expect(
+      shellProgramsDisagree(
+        {
+          ...shared,
+          nodes: [
+            {
+              kind: 'command',
+              assignments: [],
+              words: [],
+              redirects: [],
+              span,
+            },
+            { kind: 'unsupported', upstreamKind: 'kept', span },
+          ],
+        },
+        {
+          ...shared,
+          nodes: [{ kind: 'unsupported', upstreamKind: 'kept', span }],
+        },
+      ),
+    ).toBe(true)
   })
 
   it('does not parse with the legacy frontend when mvdan is authoritative', async () => {
@@ -143,6 +203,16 @@ describe('shell frontend authority', () => {
     })
     expect(plan.signals).toContain('parser.disagreement')
     expect(plan.signals).not.toContain('git.read')
+  })
+
+  it('keeps requirements already on the candidate when recording disagreement', () => {
+    const plan = appendParserDisagreement(effectPlan(['git.read']))
+    expect(plan.completeness).toBe('partial')
+    expect(plan.signals).toContain('parser.disagreement')
+    expect(plan.signals).toContain('git.read')
+    expect(
+      collectRequirements(plan.root).some((requirement) => requirement.tag === 'process.exec'),
+    ).toBe(true)
   })
 })
 
