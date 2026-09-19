@@ -283,4 +283,53 @@ describe('effect manifest shell frontend modes', () => {
     expect(shadow.signals).toContain('effect_manifest.matched')
     expect(shadow.signals).not.toContain('effect_manifest.shadow_candidate_matched')
   })
+
+  it('records canary disagreement when legacy resolves a trusted manifest but mvdan does not', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-canary-'))
+    await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(manifestFixture))
+    const config = mergeConfig({})
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    const ruleFp = ruleFingerprint(manifestFixture, fixtureRule)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(
+        config,
+        stateDir,
+        repoRoot,
+        manifestFixture.command.canonicalPath,
+      ),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: 'test',
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
+      },
+    )
+
+    const legacy = lowerShellEffectPlan({
+      cwd: repoRoot,
+      repoRoot,
+      inputFingerprint: 'fp',
+      command: 'unknown-cli status',
+      shellFrontendMode: 'legacy',
+    })
+    const canary = lowerShellEffectPlan({
+      cwd: repoRoot,
+      repoRoot,
+      inputFingerprint: 'fp',
+      command: 'unknown-cli status',
+      shellFrontendMode: 'canary',
+    })
+    expect(
+      collectRequirements(legacy.root).some((entry) =>
+        entry.evidence.signals.includes('process.grammar_unknown'),
+      ),
+    ).toBe(false)
+    expect(canary.signals).toContain('parser.disagreement')
+    expect(canary.signals).not.toContain('effect_manifest.matched')
+    expect(canary.signals).toContain('parser.artifact_unavailable')
+  })
 })

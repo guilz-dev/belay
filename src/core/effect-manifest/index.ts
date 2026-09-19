@@ -3,6 +3,10 @@ export { manifestFingerprint, parseEffectManifestV1, ruleFingerprint } from './c
 export { argvMatchesMatcher, findUniqueMatchingRule } from './matcher.js'
 export { manifestFilePath, normalizeManifestBasename } from './paths.js'
 export {
+  collectActiveEffectManifestRuleFingerprints,
+  hashEffectManifestTrustCohort,
+} from './trust-cohort.js'
+export {
   effectManifestTrustDir,
   effectManifestTrustRecordPath,
   loadEffectManifestTrustRecord,
