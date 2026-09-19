@@ -1,10 +1,14 @@
 import { canonicalStringify } from '../fingerprint.js'
 import { parseEffectManifestV1 } from './codec.js'
+import { validateManifestEffectTemplate } from './effect-template.js'
 import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import type { EffectManifestRuleV1, EffectManifestV1 } from './types.js'
 
 export function ruleIsTrustEligible(rule: EffectManifestRuleV1): boolean {
-  return !rule.contract.effects.some((effect) => effect.tag === 'indeterminate')
+  if (rule.contract.effects.some((effect) => effect.tag === 'indeterminate')) {
+    return false
+  }
+  return rule.contract.effects.every((effect) => validateManifestEffectTemplate(effect).ok)
 }
 
 export interface ManifestValidationIssue {
@@ -51,10 +55,11 @@ function validateEffectTemplates(
   const issues: ManifestValidationIssue[] = []
   for (const rule of rules) {
     for (const effect of rule.contract.effects) {
-      if (typeof effect.tag !== 'string' || typeof effect.action !== 'string') {
+      const validated = validateManifestEffectTemplate(effect)
+      if (!validated.ok) {
         issues.push({
           code: 'invalid_effect_template',
-          message: `Rule ${rule.id} has an invalid effect template.`,
+          message: `Rule ${rule.id}: ${validated.message}`,
           ruleId: rule.id,
         })
       }

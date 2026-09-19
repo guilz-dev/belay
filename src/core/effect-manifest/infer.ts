@@ -18,8 +18,8 @@ export function buildCandidateRule(argv: readonly string[]): EffectManifestRuleV
       effects: [
         {
           tag: 'indeterminate',
-          action: 'unknown',
-          resource: { reason: 'manual_completion_required' },
+          action: 'indeterminate',
+          resource: { kind: 'unknown' },
         },
       ],
     },

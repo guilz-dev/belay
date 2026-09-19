@@ -364,7 +364,8 @@ function lowerSegment(
     stripStructuredRedirects(lexed.tokens),
     stripRedirects(parsedTokens),
   )
-  const head = path.basename(tokens[0] ?? parsed.head)
+  const invocationHead = tokens[0] ?? parsed.head
+  const head = path.basename(invocationHead)
   let opacity = segmentOpacity(command)
   const signals = new Set<string>()
   const requirements: ShellEffectRequirement[] = []
@@ -699,7 +700,8 @@ function lowerSegment(
           repoRoot: context.repoRoot,
           cwd: context.cwd,
           pathEnv: context.env?.PATH ?? process.env.PATH ?? '',
-          head,
+          invocationHead,
+          decoderHead: head,
           argv: tokens,
           requirements: processRequirements,
           segmentCompleteness:

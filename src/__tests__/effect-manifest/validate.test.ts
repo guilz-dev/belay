@@ -46,7 +46,9 @@ describe('validateEffectManifestDocument', () => {
           ...rule,
           contract: {
             processOperation: 'inspect',
-            effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }],
+            effects: [
+              { tag: 'fs.read', action: 'fs.read', resource: { kind: 'path', path: '/tmp/other' } },
+            ],
           },
         },
       ],

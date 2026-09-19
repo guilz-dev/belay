@@ -8,6 +8,7 @@ import { mergeConfig } from '../../core/config.js'
 import { unsupportedProcess } from '../../core/effect-ir/shell-lower/requirement.js'
 import { applyEffectManifest } from '../../core/effect-manifest/apply.js'
 import { ruleFingerprint } from '../../core/effect-manifest/codec.js'
+import { commandIdentityFingerprint } from '../../core/effect-manifest/command-identity.js'
 import { loadEffectManifestTrustSync } from '../../core/effect-manifest/load-trust-sync.js'
 import { manifestFilePath } from '../../core/effect-manifest/paths.js'
 import {
@@ -73,7 +74,7 @@ describe('loadEffectManifestTrustSync', () => {
       schemaVersion: 1,
       repoRoot,
       manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-      commandIdentityFingerprint: 'test',
+      commandIdentityFingerprint: commandIdentityFingerprint(bound.command),
       trustedRules: [
         { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
       ],
@@ -92,7 +93,8 @@ describe('loadEffectManifestTrustSync', () => {
       repoRoot,
       cwd: repoRoot,
       pathEnv: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-      head: 'unknown-cli',
+      invocationHead: 'unknown-cli',
+      decoderHead: 'unknown-cli',
       argv: ['unknown-cli', 'status'],
       requirements: base,
       segmentCompleteness: 'complete',
@@ -105,7 +107,8 @@ describe('loadEffectManifestTrustSync', () => {
       repoRoot,
       cwd: repoRoot,
       pathEnv: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-      head: 'unknown-cli',
+      invocationHead: 'unknown-cli',
+      decoderHead: 'unknown-cli',
       argv: ['unknown-cli', 'status'],
       requirements: base,
       segmentCompleteness: 'complete',

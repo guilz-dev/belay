@@ -5,6 +5,8 @@ import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4 } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
 import { ruleFingerprint } from './codec.js'
+import { commandIdentityFingerprint } from './command-identity.js'
+import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import { readEffectManifestFromPath } from './load-manifest-sync.js'
 import { effectManifestTrustDir } from './trust-store.js'
 import type { EffectManifestTrustRecordV1 } from './types.js'
@@ -35,6 +37,12 @@ export function collectActiveEffectManifestRuleFingerprints(
       }
       const manifest = readEffectManifestFromPath(raw.manifestPath)
       if (!manifest) {
+        continue
+      }
+      if (verifyStoredExecutableIdentity(manifest.command) !== 'ok') {
+        continue
+      }
+      if (commandIdentityFingerprint(manifest.command) !== raw.commandIdentityFingerprint) {
         continue
       }
       for (const trusted of raw.trustedRules) {

@@ -10,6 +10,7 @@ import {
   hashDecisionConfig,
 } from '../../core/decision-config-fingerprint.js'
 import { ruleFingerprint } from '../../core/effect-manifest/codec.js'
+import { commandIdentityFingerprint } from '../../core/effect-manifest/command-identity.js'
 import { manifestFilePath } from '../../core/effect-manifest/paths.js'
 import { collectActiveEffectManifestRuleFingerprints } from '../../core/effect-manifest/trust-cohort.js'
 import {
@@ -66,7 +67,7 @@ describe('effect manifest trust cohort', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(bound.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -95,7 +96,7 @@ describe('effect manifest trust cohort', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(bound.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -110,12 +111,48 @@ describe('effect manifest trust cohort', () => {
           ...rule,
           contract: {
             processOperation: 'inspect' as const,
-            effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }],
+            effects: [
+              {
+                tag: 'network.connect',
+                action: 'fs.read',
+                resource: { kind: 'network', host: 'example.com', mode: 'read' },
+              },
+            ],
           },
         },
       ],
     }
     await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(edited))
+    expect(collectActiveEffectManifestRuleFingerprints(repoRoot, config)).toEqual([])
+  })
+
+  it('drops trusted fingerprints when the executable identity on disk changes', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-exe-'))
+    const config = mergeConfig({})
+    const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
+    await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(bound))
+    const rule = bound.rules[0]
+    if (!rule) {
+      throw new Error('fixture rule missing')
+    }
+    const ruleFp = ruleFingerprint(bound, rule)
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, bound.command.canonicalPath),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(bound.command),
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
+      },
+    )
+    expect(collectActiveEffectManifestRuleFingerprints(repoRoot, config)).toEqual([ruleFp])
+
+    await writeFile(bound.command.canonicalPath, 'mutated executable\n')
     expect(collectActiveEffectManifestRuleFingerprints(repoRoot, config)).toEqual([])
   })
 
@@ -138,7 +175,7 @@ describe('effect manifest trust cohort', () => {
         schemaVersion: 1,
         repoRoot: repoA,
         manifestPath: manifestFilePath(repoA, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(boundA.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],

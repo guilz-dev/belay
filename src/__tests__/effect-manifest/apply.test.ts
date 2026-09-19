@@ -10,6 +10,7 @@ import { unsupportedProcess } from '../../core/effect-ir/shell-lower/requirement
 import { lowerShellEffectPlan } from '../../core/effect-ir/shell-lower.js'
 import { applyEffectManifest } from '../../core/effect-manifest/apply.js'
 import { ruleFingerprint } from '../../core/effect-manifest/codec.js'
+import { commandIdentityFingerprint } from '../../core/effect-manifest/command-identity.js'
 import { manifestFilePath } from '../../core/effect-manifest/paths.js'
 import {
   effectManifestTrustRecordPath,
@@ -112,7 +113,7 @@ describe('applyEffectManifest', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -122,7 +123,8 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -152,7 +154,7 @@ describe('applyEffectManifest', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -161,7 +163,8 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -187,7 +190,8 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -211,7 +215,7 @@ describe('applyEffectManifest', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -221,7 +225,8 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -245,7 +250,7 @@ describe('applyEffectManifest', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -254,7 +259,8 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -282,20 +288,21 @@ describe('applyEffectManifest', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
       },
     )
     const base = unsupportedProcess(
-      './evil/unknown-cli',
+      'unknown-cli',
       './evil/unknown-cli status',
       'process.grammar_unknown',
     )
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        head: './evil/unknown-cli',
+        invocationHead: './evil/unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['./evil/unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -322,7 +329,8 @@ describe('applyEffectManifest', () => {
     })
     const applied = applyEffectManifest(
       manifestGateParams('/repo', {
-        head: 'unknown-cli',
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
         argv: ['unknown-cli', 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
@@ -366,7 +374,7 @@ describe('effect manifest shell frontend modes', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -406,7 +414,7 @@ describe('effect manifest shell frontend modes', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],
@@ -456,7 +464,7 @@ describe('effect manifest shell frontend modes', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
-        commandIdentityFingerprint: 'test',
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
         trustedRules: [
           { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
         ],

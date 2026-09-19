@@ -4,10 +4,16 @@ import path from 'node:path'
 
 import type { EffectManifestV1 } from './types.js'
 
+/** Gate-time upper bound for hashing executables during manifest identity checks. */
+export const MAX_EXECUTABLE_IDENTITY_BYTES = 64 * 1024 * 1024
+
 function hashFileAtCanonicalPath(canonicalPath: string): string | null {
   try {
     const before = statSync(canonicalPath)
     if (!before.isFile()) {
+      return null
+    }
+    if (before.size > MAX_EXECUTABLE_IDENTITY_BYTES) {
       return null
     }
     const content = readFileSync(canonicalPath)
@@ -92,8 +98,14 @@ export function resolveNativeExecutableIdentity(
       if (!stat.isFile()) {
         continue
       }
+      if (stat.size > MAX_EXECUTABLE_IDENTITY_BYTES) {
+        return { error: 'executable_too_large' }
+      }
       const canonicalPath = realpathSync(candidate)
       const before = statSync(canonicalPath)
+      if (before.size > MAX_EXECUTABLE_IDENTITY_BYTES) {
+        return { error: 'executable_too_large' }
+      }
       const content = readFileSync(canonicalPath)
       const after = statSync(canonicalPath)
       if (

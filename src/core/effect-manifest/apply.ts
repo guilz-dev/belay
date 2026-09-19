@@ -6,6 +6,7 @@ import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
 import { isGrammarUnknownOnly } from '../effect-ir/shell-lower/argv-delegate-gate.js'
 import { processRequirement } from '../effect-ir/shell-lower/requirement.js'
 import { manifestFingerprint, ruleFingerprint } from './codec.js'
+import { validateManifestEffectTemplate } from './effect-template.js'
 import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import { invocationMatchesManifestCommand } from './invocation-identity.js'
 import { loadEffectManifestSync } from './load-manifest-sync.js'
@@ -35,7 +36,10 @@ export interface ApplyEffectManifestParams {
   repoRoot: string
   cwd: string
   pathEnv: string
-  head: string
+  /** argv[0] as invoked (may include a path prefix). */
+  invocationHead: string
+  /** Decoder basename used for grammar_unknown matching. */
+  decoderHead: string
   argv: readonly string[]
   requirements: ShellEffectRequirement[]
   segmentCompleteness: 'complete' | 'partial'
@@ -78,20 +82,24 @@ function instantiateRequirements(
     signals: [MANIFEST_EVIDENCE_BASIS],
     basis: [MANIFEST_EVIDENCE_BASIS],
   }
-  const effects = rule.contract.effects.map(
-    (template) =>
-      ({
-        tag: template.tag,
-        action: template.action,
-        resource: template.resource,
-        evidence: {
-          level: 'certain' as const,
-          signals: [MANIFEST_EVIDENCE_BASIS],
-          basis: [MANIFEST_EVIDENCE_BASIS],
-        },
-        provenance: { segment },
-      }) as unknown as ShellEffectRequirement,
-  )
+  const effects: ShellEffectRequirement[] = []
+  for (const template of rule.contract.effects) {
+    const validated = validateManifestEffectTemplate(template)
+    if (!validated.ok) {
+      return null
+    }
+    effects.push({
+      tag: template.tag as ShellEffectRequirement['tag'],
+      action: template.action as ShellEffectRequirement['action'],
+      resource: validated.resource as ShellEffectRequirement['resource'],
+      evidence: {
+        level: 'certain',
+        signals: [MANIFEST_EVIDENCE_BASIS],
+        basis: [MANIFEST_EVIDENCE_BASIS],
+      },
+      provenance: { segment },
+    })
+  }
   if (effects.length === 0) {
     return [process]
   }
@@ -161,8 +169,8 @@ function resolveTrustAudit(
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
   const belayConfig = params.belayConfig ?? mergeConfig({})
-  const basename = normalizeManifestBasename(params.head)
-  const segment = params.requirements[0]?.provenance?.segment ?? params.head
+  const basename = normalizeManifestBasename(params.invocationHead)
+  const segment = params.requirements[0]?.provenance?.segment ?? params.invocationHead
   const baseAudit = (
     partial: Omit<EffectManifestAuditV1, 'commandBasename' | 'manifestFingerprint'> & {
       manifestFingerprint?: string
@@ -170,7 +178,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   ): EffectManifestAuditV1 => ({
     frontendId: params.frontendId ?? 'legacy-v1',
     role: params.role === 'telemetry-only' ? 'candidate' : 'canonical',
-    commandBasename: basename ?? params.head,
+    commandBasename: basename ?? params.decoderHead,
     manifestFingerprint: partial.manifestFingerprint ?? '',
     ...partial,
   })
@@ -180,7 +188,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
 
   if (
     params.segmentCompleteness !== 'complete' ||
-    !isGrammarUnknownOnly(params.requirements, params.head) ||
+    !isGrammarUnknownOnly(params.requirements, params.decoderHead) ||
     requirementsBlockManifest(params.requirements)
   ) {
     return { requirements: params.requirements, telemetrySignals: [], matched: false }
@@ -256,7 +264,12 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   }
 
   if (
-    !invocationMatchesManifestCommand(params.head, params.cwd, params.pathEnv, manifest.command)
+    !invocationMatchesManifestCommand(
+      params.invocationHead,
+      params.cwd,
+      params.pathEnv,
+      manifest.command,
+    )
   ) {
     return {
       requirements: params.requirements,
@@ -318,7 +331,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
-  const instantiated = instantiateRequirements(matchedRule, params.head, segment)
+  const instantiated = instantiateRequirements(matchedRule, params.decoderHead, segment)
   if (!instantiated) {
     return {
       requirements: params.requirements,
