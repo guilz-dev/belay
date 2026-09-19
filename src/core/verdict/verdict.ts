@@ -20,6 +20,7 @@ export async function verdict(command: string, context: VerdictContext): Promise
     cwd: context.cwd,
     repoRoot: context.repoRoot,
     inputFingerprint: fingerprint,
+    shellFrontendMode: context.config.classifier.shellFrontendMode,
   })
   const policy = evaluateEffectPlanPolicy(effectPlan, context)
   const requirements = collectRequirements(effectPlan.root)
