@@ -1,5 +1,6 @@
 import path from 'node:path'
 
+import { applyEffectManifest } from '../effect-manifest/apply.js'
 import { appendParserDisagreement } from '../shell-frontend/compare.js'
 import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
 import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
@@ -106,7 +107,7 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
   }
   return selectCanonicalEffectPlan({
     mode,
-    legacy: lowerLegacyShellEffectPlan(params),
+    legacy: lowerLegacyShellEffectPlan({ ...params, effectManifestRole: 'canonical' }),
     mvdan,
     withDisagreement: appendParserDisagreement,
   })
@@ -657,6 +658,27 @@ function lowerSegment(
       })
       let loweredArgvDelegate = false
       if (isGrammarUnknownOnly(processRequirements, head)) {
+        const manifestApplied = applyEffectManifest({
+          repoRoot: context.repoRoot,
+          head,
+          argv: tokens,
+          requirements: processRequirements,
+          segmentCompleteness:
+            lexComplete && opacity !== 'unparseable' && opacity !== 'opaque'
+              ? 'complete'
+              : 'partial',
+          role: context.effectManifestRole ?? 'canonical',
+          trustRecord: null,
+        })
+        for (const signal of manifestApplied.telemetrySignals) {
+          signals.add(signal)
+        }
+        if (manifestApplied.telemetrySignals.includes('effect_manifest.matched')) {
+          requirements.push(...manifestApplied.requirements)
+          loweredArgvDelegate = true
+        }
+      }
+      if (isGrammarUnknownOnly(processRequirements, head) && !loweredArgvDelegate) {
         const argvDelegate = peelArgvDelegateArgv(tokens)
         if (
           argvDelegate &&

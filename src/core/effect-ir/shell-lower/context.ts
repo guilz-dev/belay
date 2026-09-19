@@ -1,3 +1,4 @@
+import type { EffectManifestApplicationRole } from '../../effect-manifest/types.js'
 import type { ShellFrontendMode } from '../../shell-frontend/types.js'
 
 export interface LowerShellEffectPlanParams {
@@ -8,6 +9,8 @@ export interface LowerShellEffectPlanParams {
   env?: Readonly<Record<string, string | undefined>>
   /** Absent means the historical legacy frontend. */
   shellFrontendMode?: ShellFrontendMode
+  /** Per-frontend manifest authority; default canonical. */
+  effectManifestRole?: EffectManifestApplicationRole
 }
 
 export interface LowerContext extends LowerShellEffectPlanParams {
