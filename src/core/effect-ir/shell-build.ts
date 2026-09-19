@@ -1,4 +1,5 @@
 import type { CapabilityResource } from '../capability/request.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import { collectRequirements } from './build.js'
 import { joinEffectOpacity, mergeRequirements } from './normalize.js'
 import type {
@@ -41,6 +42,7 @@ export interface BuildShellEffectPlanParams {
   inputFingerprint: string
   segments: readonly ShellEffectSegment[]
   signals?: readonly string[]
+  effectManifestAudits?: readonly EffectManifestAuditV1[]
 }
 
 /**
@@ -70,6 +72,9 @@ export function buildShellEffectPlan(params: BuildShellEffectPlanParams): Effect
         ...requirements.flatMap((requirement) => [...requirement.evidence.signals]),
       ]),
     ].sort(),
+    ...(params.effectManifestAudits?.length
+      ? { effectManifestAudits: params.effectManifestAudits }
+      : {}),
   }
 }
 

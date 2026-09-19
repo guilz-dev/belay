@@ -305,6 +305,7 @@ export function migrateV2ToV3(
       strictChains: v2.classifier.strictChains,
       sensitivePaths: v2.classifier.sensitivePaths,
       shellFrontendMode: 'legacy',
+      effectManifestGateConsumption: false,
     },
     policy: { ...LEGACY_POLICY_V3 },
     overrides: {
@@ -625,6 +626,7 @@ export function normalizeConfig(
         ? v4.classifier.sensitivePaths
         : DEFAULT_CONFIG_V4.classifier.sensitivePaths,
       shellFrontendMode: normalizeShellFrontendMode(v4.classifier?.shellFrontendMode),
+      effectManifestGateConsumption: v4.classifier?.effectManifestGateConsumption === true,
     },
     policy: {
       unknownLocalEffect:
