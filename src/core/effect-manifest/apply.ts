@@ -150,7 +150,7 @@ function resolveTrustAudit(
   if (!entry) {
     return 'missing'
   }
-  return entry.ruleFingerprint === fingerprint ? 'missing' : 'stale'
+  return entry.ruleFingerprint !== fingerprint ? 'stale' : 'missing'
 }
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
@@ -228,22 +228,6 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
-  if (
-    !invocationMatchesManifestCommand(params.head, params.cwd, params.pathEnv, manifest.command)
-  ) {
-    return {
-      requirements: params.requirements,
-      audit: baseAudit({
-        manifestFingerprint: manifestFingerprint(manifest),
-        trust: 'invalid',
-        outcome: 'unavailable',
-        reason: 'invocation_identity_mismatch',
-      }),
-      telemetrySignals: [],
-      matched: false,
-    }
-  }
-
   const identityStatus = verifyStoredExecutableIdentity(manifest.command)
   if (identityStatus !== 'ok') {
     return {
@@ -258,6 +242,22 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
             : identityStatus === 'not_regular'
               ? 'executable_not_regular'
               : 'executable_identity_mismatch',
+      }),
+      telemetrySignals: [],
+      matched: false,
+    }
+  }
+
+  if (
+    !invocationMatchesManifestCommand(params.head, params.cwd, params.pathEnv, manifest.command)
+  ) {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: manifestFingerprint(manifest),
+        trust: 'invalid',
+        outcome: 'unavailable',
+        reason: 'invocation_identity_mismatch',
       }),
       telemetrySignals: [],
       matched: false,

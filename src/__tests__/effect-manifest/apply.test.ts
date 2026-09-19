@@ -228,7 +228,7 @@ describe('applyEffectManifest', () => {
       }),
     )
     expect(applied.matched).toBe(false)
-    expect(applied.audit?.reason).toBe('invocation_identity_mismatch')
+    expect(applied.audit?.reason).toBe('executable_identity_mismatch')
   })
 
   it('does not apply trusted rules when gate consumption is disabled', async () => {

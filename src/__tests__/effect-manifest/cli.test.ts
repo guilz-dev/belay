@@ -53,6 +53,7 @@ describe('manifest CLI', () => {
 
     const blocked = await manifestTrustProject({
       targetDir: repoRoot,
+      actionCwd: binDir,
       commandText: './demo-tool status',
       ruleId,
     })
@@ -63,6 +64,7 @@ describe('manifest CLI', () => {
 
     const trusted = await manifestTrustProject({
       targetDir: repoRoot,
+      actionCwd: binDir,
       commandText: './demo-tool status',
       ruleId,
     })
@@ -70,6 +72,7 @@ describe('manifest CLI', () => {
 
     const revoked = await manifestRevokeProject({
       targetDir: repoRoot,
+      actionCwd: binDir,
       commandText: './demo-tool status',
       ruleId,
     })

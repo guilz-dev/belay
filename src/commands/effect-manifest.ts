@@ -15,6 +15,7 @@ import {
   buildCandidateRule,
   parseStoredManifest,
 } from '../core/effect-manifest/infer.js'
+import { invocationMatchesManifestCommand } from '../core/effect-manifest/invocation-identity.js'
 import { loadEffectManifestTrustSync } from '../core/effect-manifest/load-trust-sync.js'
 import { manifestFilePath, normalizeManifestBasename } from '../core/effect-manifest/paths.js'
 import {
@@ -318,7 +319,7 @@ export async function manifestValidateProject(options: ManifestCommandOptions) {
 }
 
 export async function manifestTrustProject(options: ManifestCommandOptions) {
-  const { repoRoot } = resolveRoots(options)
+  const { repoRoot, actionCwd } = resolveRoots(options)
   if (!options.ruleId) {
     return { ok: false as const, error: 'missing_rule', message: '--rule is required.' }
   }
@@ -340,6 +341,21 @@ export async function manifestTrustProject(options: ManifestCommandOptions) {
       ok: false as const,
       error: 'no_manifest',
       message: `No manifest for ${basename}.`,
+    }
+  }
+  if (
+    !invocationMatchesManifestCommand(
+      invocation.head,
+      actionCwd,
+      process.env.PATH ?? '',
+      manifest.command,
+    )
+  ) {
+    return {
+      ok: false as const,
+      error: 'invocation_identity_mismatch',
+      message:
+        'Command invocation does not resolve to the executable identity bound in the manifest.',
     }
   }
   const validation = validateEffectManifestDocument(
