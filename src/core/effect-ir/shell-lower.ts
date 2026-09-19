@@ -1,5 +1,7 @@
 import path from 'node:path'
 
+import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
+import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
 import {
   isHeredocOperator,
   isHereStringOperator,
@@ -85,6 +87,29 @@ const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
  * permission/verdict.
  */
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
+  const mode = params.shellFrontendMode ?? 'legacy'
+  if (mode === 'legacy') {
+    return lowerLegacyShellEffectPlan(params)
+  }
+  if (mode === 'shadow') {
+    // Candidate failure is not authority. Do not alter the legacy plan.
+    parseMvdanShell(params.command)
+    return lowerLegacyShellEffectPlan(params)
+  }
+  const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
+  if (mode === 'mvdan') {
+    return mvdan
+  }
+  return selectCanonicalEffectPlan({
+    mode,
+    legacy: lowerLegacyShellEffectPlan(params),
+    mvdan,
+    withDisagreement: () =>
+      unavailableMvdanPlan(params, ['parser.artifact_unavailable', 'parser.disagreement']),
+  })
+}
+
+function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
   const context: LowerContext = { ...params, depth: 0 }
   const segments = lowerTopLevelSegments(params.command, context)
   const lexed = lexShell(params.command)
@@ -93,6 +118,31 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     inputFingerprint: params.inputFingerprint,
     segments,
     signals: pipeToShell(structuralCommand) ? ['pipe_to_shell'] : [],
+  })
+}
+
+function unavailableMvdanPlan(
+  params: LowerShellEffectPlanParams,
+  signals: readonly string[],
+): EffectPlan {
+  const commandRedacted = redactCommand(params.command)
+  return buildShellEffectPlan({
+    inputFingerprint: params.inputFingerprint,
+    signals,
+    segments: [
+      {
+        commandRedacted,
+        segmentHead: '',
+        requirements: [
+          requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+            ...signals,
+          ]),
+        ],
+        completeness: 'partial',
+        opacity: 'unparseable',
+        signals,
+      },
+    ],
   })
 }
 

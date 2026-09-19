@@ -15,7 +15,7 @@ exhaustive field defaults).
 | `approvalTtlMinutes` | number | `15` | One-shot approval TTL |
 | `tokenPrefix` | string | `"/belay-approve"` | |
 | `gates` | object | all enabled | `shell`, `subagent`, `fileMutation`, `toolShell` |
-| `classifier` | object | | `strictChains`, `sensitivePaths` |
+| `classifier` | object | | `strictChains`, `sensitivePaths`, `shellFrontendMode` (`legacy` until the mvdan probe passes) |
 | `policy` | object | fail-closed | See below |
 | `overrides` | object | empty | Legacy `allow` / `external` lists are accepted only for config compatibility; deprecated and ignored by shell authorization |
 | `redaction` | object | masks on | Audit scrubbing |
