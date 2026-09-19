@@ -69,7 +69,9 @@ describe('effect manifest trust cohort', () => {
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
         commandIdentityFingerprint: 'test',
-        trustedRules: [{ id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' }],
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
       },
     )
 
@@ -94,7 +96,9 @@ describe('effect manifest trust cohort', () => {
         repoRoot: repoA,
         manifestPath: manifestFilePath(repoA, 'unknown-cli'),
         commandIdentityFingerprint: 'test',
-        trustedRules: [{ id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' }],
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
       },
     )
 

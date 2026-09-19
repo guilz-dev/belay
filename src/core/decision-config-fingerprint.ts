@@ -28,7 +28,10 @@ export function composeDecisionConfigFingerprint(config: BelayConfigV3, repoRoot
   if (!repoRoot) {
     return configOnly
   }
-  const fingerprints = collectActiveEffectManifestRuleFingerprints(repoRoot, config as BelayConfigV4)
+  const fingerprints = collectActiveEffectManifestRuleFingerprints(
+    repoRoot,
+    config as BelayConfigV4,
+  )
   if (fingerprints.length === 0) {
     return configOnly
   }

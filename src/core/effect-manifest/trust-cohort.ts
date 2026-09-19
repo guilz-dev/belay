@@ -44,5 +44,7 @@ export function collectActiveEffectManifestRuleFingerprints(
 }
 
 export function hashEffectManifestTrustCohort(repoRoot: string, config: BelayConfigV4): string {
-  return hashValue(canonicalStringify(collectActiveEffectManifestRuleFingerprints(repoRoot, config)))
+  return hashValue(
+    canonicalStringify(collectActiveEffectManifestRuleFingerprints(repoRoot, config)),
+  )
 }
