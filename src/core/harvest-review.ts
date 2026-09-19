@@ -8,7 +8,7 @@ export type HarvestReviewOutcome = 'provably-benign' | 'accepted-benign' | 'must
 
 export interface HarvestReviewRecordV1 {
   fingerprint: string
-  kind: 'shell'
+  kind: 'shell' | 'tool'
   boundaryProfile: string
   outcome: HarvestReviewOutcome
   reason?: string
@@ -70,8 +70,8 @@ function parseReview(value: unknown, index: number): HarvestReviewRecordV1 {
   if (typeof value.fingerprint !== 'string' || !isValidAuditFingerprint(value.fingerprint)) {
     throw new HarvestReviewLedgerError(`harvest review[${index}].fingerprint is invalid`)
   }
-  if (value.kind !== 'shell') {
-    throw new HarvestReviewLedgerError(`harvest review[${index}].kind must be shell`)
+  if (value.kind !== 'shell' && value.kind !== 'tool') {
+    throw new HarvestReviewLedgerError(`harvest review[${index}].kind must be shell or tool`)
   }
   if (typeof value.boundaryProfile !== 'string' || !isValidBoundaryProfile(value.boundaryProfile)) {
     throw new HarvestReviewLedgerError(`harvest review[${index}].boundaryProfile is invalid`)
@@ -89,7 +89,7 @@ function parseReview(value: unknown, index: number): HarvestReviewRecordV1 {
   const reason = typeof value.reason === 'string' ? value.reason.trim() : ''
   return {
     fingerprint: value.fingerprint,
-    kind: 'shell',
+    kind: value.kind,
     boundaryProfile: value.boundaryProfile,
     outcome: value.outcome,
     ...(reason ? { reason } : {}),

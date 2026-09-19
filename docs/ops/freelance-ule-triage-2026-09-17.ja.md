@@ -97,6 +97,13 @@ active cohort ULE 121 件に対し、sleep && gh（2 件）が削減。残り 11
 
 cutoff 後の 50% 削減目標は **Phase 1 ops 変更 + 本 PR + 1-4b source-build upgrade** の組み合わせで達成する。
 
+## sleep lowering の実行ファイル境界（PR #134 後続修正）
+
+ADR-004 の不明な効果を承認対象に残す原則に従い、no-effect lowering はパス指定のない `sleep` に限定する。
+`./sleep`、`/tmp/sleep` など、実行ファイル名だけが一致する任意のプログラムには通常の sleep の意味を適用しない。
+パス付き呼び出しは `process.exec` と `indeterminate` を残して ask とし、標準コマンドへの絶対パス指定もこの限定 decoder の対象外とする。
+`sleep N && gh run view ...` の read-only allow と、リダイレクト・コマンド置換で生じる効果の保持は継続する。
+
 ## 検証コマンド
 
 ```bash

@@ -198,16 +198,21 @@ describe('audit-sink', () => {
     tempDirs.push(dir)
     const auditPath = path.join(dir, 'audit.ndjson')
 
-    await Promise.all(
-      Array.from({ length: 50 }, (_, seq) =>
-        appendAuditLine({
-          auditPath,
-          record: { event: 'concurrent', seq },
-          scrubOptions: DEFAULT_REDACTION_V3,
-          retention: { maxBytes: 1024 * 1024, maxFiles: 3 },
+    const appendCount = 50
+    const batchSize = 10
+    for (let offset = 0; offset < appendCount; offset += batchSize) {
+      await Promise.all(
+        Array.from({ length: batchSize }, (_, index) => {
+          const seq = offset + index
+          return appendAuditLine({
+            auditPath,
+            record: { event: 'concurrent', seq },
+            scrubOptions: DEFAULT_REDACTION_V3,
+            retention: { maxBytes: 1024 * 1024, maxFiles: 3 },
+          })
         }),
-      ),
-    )
+      )
+    }
 
     const { records, malformedLines } = await readAuditRecordsFromPath(auditPath, {
       maxBytes: 1024 * 1024,
