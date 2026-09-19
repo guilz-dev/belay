@@ -24,7 +24,9 @@ function matcherKey(rule: EffectManifestRuleV1): string {
   return canonicalStringify(rule.matcher.argv)
 }
 
-function detectOverlappingMatchers(rules: readonly EffectManifestRuleV1[]): ManifestValidationIssue[] {
+function detectOverlappingMatchers(
+  rules: readonly EffectManifestRuleV1[],
+): ManifestValidationIssue[] {
   const issues: ManifestValidationIssue[] = []
   const seen = new Map<string, string>()
   for (const rule of rules) {
@@ -43,7 +45,9 @@ function detectOverlappingMatchers(rules: readonly EffectManifestRuleV1[]): Mani
   return issues
 }
 
-function validateEffectTemplates(rules: readonly EffectManifestRuleV1[]): ManifestValidationIssue[] {
+function validateEffectTemplates(
+  rules: readonly EffectManifestRuleV1[],
+): ManifestValidationIssue[] {
   const issues: ManifestValidationIssue[] = []
   for (const rule of rules) {
     for (const effect of rule.contract.effects) {
@@ -61,7 +65,7 @@ function validateEffectTemplates(rules: readonly EffectManifestRuleV1[]): Manife
 
 export function validateEffectManifestDocument(
   raw: unknown,
-  repoRoot: string,
+  _repoRoot: string,
 ): ManifestValidationReport {
   const manifest = parseEffectManifestV1(raw)
   if (!manifest) {

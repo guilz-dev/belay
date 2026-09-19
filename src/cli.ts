@@ -14,7 +14,6 @@ import {
   formatDogfoodCheckResult,
   formatDogfoodResult,
 } from './commands/dogfood.js'
-import { explainCommand, formatExplainReport } from './commands/explain.js'
 import {
   formatManifestInferResult,
   formatManifestListResult,
@@ -29,6 +28,7 @@ import {
   manifestTrustProject,
   manifestValidateProject,
 } from './commands/effect-manifest.js'
+import { explainCommand, formatExplainReport } from './commands/explain.js'
 import { formatHarvestReport, harvestApplyProject, harvestListProject } from './commands/harvest.js'
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
 import { formatQualityReport, qualityCheck } from './commands/quality.js'
@@ -791,7 +791,11 @@ export function parseArgs(argv: string[]) {
     throw new Error('--all-cohorts is only valid for harvest list or apply.')
   }
 
-  if (command === 'manifest' && options.manifestSubcommand === 'infer' && !options.manifestInferArgv) {
+  if (
+    command === 'manifest' &&
+    options.manifestSubcommand === 'infer' &&
+    !options.manifestInferArgv
+  ) {
     throw new Error('manifest infer requires `--` before the target command.')
   }
   if (

@@ -286,7 +286,11 @@ describe('applyEffectManifest', () => {
         ],
       },
     )
-    const base = unsupportedProcess('./evil/unknown-cli', './evil/unknown-cli status', 'process.grammar_unknown')
+    const base = unsupportedProcess(
+      './evil/unknown-cli',
+      './evil/unknown-cli status',
+      'process.grammar_unknown',
+    )
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
         head: './evil/unknown-cli',

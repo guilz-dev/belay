@@ -73,7 +73,9 @@ export function diagnoseEffectManifestHealth(
         const manifestRaw = JSON.parse(readFileSync(raw.manifestPath, 'utf8')) as unknown
         const manifest = parseEffectManifestV1(manifestRaw)
         if (!manifest) {
-          issues.push(`Effect manifest trust record references invalid manifest: ${raw.manifestPath}`)
+          issues.push(
+            `Effect manifest trust record references invalid manifest: ${raw.manifestPath}`,
+          )
           continue
         }
         const expectedPath = manifestFilePath(repoRoot, manifest.command.basename)

@@ -10,8 +10,8 @@ import {
   manifestTrustProject,
   manifestValidateProject,
 } from '../../commands/effect-manifest.js'
-import { manifestFilePath } from '../../core/effect-manifest/paths.js'
 import { parseEffectManifestV1 } from '../../core/effect-manifest/codec.js'
+import { manifestFilePath } from '../../core/effect-manifest/paths.js'
 
 describe('manifest CLI', () => {
   it('infers, lists, validates, trusts, and revokes a candidate rule', async () => {

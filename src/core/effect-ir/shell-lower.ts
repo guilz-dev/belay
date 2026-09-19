@@ -134,7 +134,9 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
 }
 
 function mergeEffectManifestTelemetry(canonical: EffectPlan, candidate: EffectPlan): EffectPlan {
-  const candidateSignals = candidate.signals.filter((signal) => signal.startsWith('effect_manifest.'))
+  const candidateSignals = candidate.signals.filter((signal) =>
+    signal.startsWith('effect_manifest.'),
+  )
   const candidateAudits = candidate.effectManifestAudits ?? []
   if (candidateSignals.length === 0 && candidateAudits.length === 0) {
     return canonical

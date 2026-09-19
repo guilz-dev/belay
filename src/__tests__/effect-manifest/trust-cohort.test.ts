@@ -61,12 +61,7 @@ describe('effect manifest trust cohort', () => {
     const ruleFp = ruleFingerprint(bound, rule)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     await saveEffectManifestTrustRecord(
-      effectManifestTrustRecordPath(
-        config,
-        stateDir,
-        repoRoot,
-        bound.command.canonicalPath,
-      ),
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, bound.command.canonicalPath),
       {
         schemaVersion: 1,
         repoRoot,

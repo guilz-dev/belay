@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { appendCandidateRule, buildCandidateRule, deriveRuleIdFromArgv } from '../../core/effect-manifest/infer.js'
+import {
+  appendCandidateRule,
+  buildCandidateRule,
+  deriveRuleIdFromArgv,
+} from '../../core/effect-manifest/infer.js'
 
 describe('manifest infer helpers', () => {
   it('derives stable rule ids from argv', () => {
@@ -25,6 +29,9 @@ describe('manifest infer helpers', () => {
     }
     const duplicate = buildCandidateRule(['status'])
     duplicate.id = 'other-id'
-    expect(appendCandidateRule(manifest, duplicate)).toEqual({ ok: false, reason: 'matcher_exists' })
+    expect(appendCandidateRule(manifest, duplicate)).toEqual({
+      ok: false,
+      reason: 'matcher_exists',
+    })
   })
 })

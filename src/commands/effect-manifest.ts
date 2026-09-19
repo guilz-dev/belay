@@ -3,8 +3,12 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
+import {
+  manifestFingerprint,
+  parseEffectManifestV1,
+  ruleFingerprint,
+} from '../core/effect-manifest/codec.js'
 import { commandIdentityFingerprint } from '../core/effect-manifest/command-identity.js'
-import { manifestFingerprint, parseEffectManifestV1, ruleFingerprint } from '../core/effect-manifest/codec.js'
 import { resolveNativeExecutableIdentity } from '../core/effect-manifest/executable-identity.js'
 import {
   appendCandidateRule,
@@ -18,9 +22,12 @@ import {
   loadEffectManifestTrustRecord,
   saveEffectManifestTrustRecord,
 } from '../core/effect-manifest/trust-store.js'
-import { ruleIsTrustEligible, validateEffectManifestDocument } from '../core/effect-manifest/validate.js'
-import { writeEffectManifestAtomic } from '../core/effect-manifest/write-manifest.js'
 import type { EffectManifestV1 } from '../core/effect-manifest/types.js'
+import {
+  ruleIsTrustEligible,
+  validateEffectManifestDocument,
+} from '../core/effect-manifest/validate.js'
+import { writeEffectManifestAtomic } from '../core/effect-manifest/write-manifest.js'
 import { tokenizeShell } from '../core/shell-tokenizer.js'
 import { PACKAGE_VERSION } from '../version.js'
 
@@ -131,11 +138,7 @@ export async function manifestInferProject(options: ManifestCommandOptions) {
       message: 'Command basename is not eligible for effect manifests.',
     }
   }
-  const identity = resolveNativeExecutableIdentity(
-    head,
-    actionCwd,
-    process.env.PATH ?? '',
-  )
+  const identity = resolveNativeExecutableIdentity(head, actionCwd, process.env.PATH ?? '')
   if ('error' in identity) {
     return {
       ok: false as const,
@@ -147,7 +150,7 @@ export async function manifestInferProject(options: ManifestCommandOptions) {
   const candidate = buildCandidateRule(tailArgv)
   const filePath = manifestFilePath(repoRoot, basename)
   const existingRaw = existsSync(filePath)
-    ? JSON.parse(await readFile(filePath, 'utf8')) as unknown
+    ? (JSON.parse(await readFile(filePath, 'utf8')) as unknown)
     : null
   const existing = existingRaw ? parseStoredManifest(existingRaw) : null
   if (existingRaw && !existing) {

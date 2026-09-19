@@ -1,7 +1,7 @@
 import type { CapabilityResource } from '../capability/request.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import { collectRequirements } from './build.js'
 import { joinEffectOpacity, mergeRequirements } from './normalize.js'
-import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import type {
   AnalysisCompleteness,
   EffectNode,

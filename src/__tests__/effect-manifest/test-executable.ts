@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
+import { readFileSync, realpathSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { realpathSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { EffectManifestV1 } from '../../core/effect-manifest/types.js'

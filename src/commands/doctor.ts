@@ -50,8 +50,8 @@ import {
   hasForbiddenShellOverrideLists,
   stripForbiddenShellOverrideLists,
 } from '../core/config.js'
-import { diagnoseEffectManifestHealth } from '../core/effect-manifest/doctor-health.js'
 import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js'
+import { diagnoseEffectManifestHealth } from '../core/effect-manifest/doctor-health.js'
 import { runtimeIntegrityFiles, verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'

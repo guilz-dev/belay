@@ -11,13 +11,13 @@ import { loadEffectManifestSync } from './load-manifest-sync.js'
 import { loadEffectManifestTrustSync } from './load-trust-sync.js'
 import { findUniqueMatchingRule } from './matcher.js'
 import { manifestFilePath, normalizeManifestBasename } from './paths.js'
-import { ruleIsTrustEligible } from './validate.js'
 import type {
   EffectManifestApplicationRole,
   EffectManifestAuditV1,
   EffectManifestTrustRecordV1,
   EffectManifestV1,
 } from './types.js'
+import { ruleIsTrustEligible } from './validate.js'
 
 const MANIFEST_EVIDENCE_BASIS = 'effect_manifest.trusted_complete_upper_bound'
 
@@ -229,12 +229,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   }
 
   if (
-    !invocationMatchesManifestCommand(
-      params.head,
-      params.cwd,
-      params.pathEnv,
-      manifest.command,
-    )
+    !invocationMatchesManifestCommand(params.head, params.cwd, params.pathEnv, manifest.command)
   ) {
     return {
       requirements: params.requirements,
@@ -310,9 +305,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     return {
       requirements: params.requirements,
       audit,
-      telemetrySignals: observabilityOnly
-        ? ['effect_manifest.shadow_candidate_matched']
-        : [],
+      telemetrySignals: observabilityOnly ? ['effect_manifest.shadow_candidate_matched'] : [],
       matched: false,
     }
   }

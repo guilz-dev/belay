@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import path from 'node:path'
 
 import { parseEffectManifestV1 } from './codec.js'
 import { manifestFilePath } from './paths.js'

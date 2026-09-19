@@ -43,7 +43,10 @@ describe('validateEffectManifestDocument', () => {
       rules: [
         {
           ...rule,
-          contract: { processOperation: 'inspect' as const, effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }] },
+          contract: {
+            processOperation: 'inspect' as const,
+            effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }],
+          },
         },
       ],
     }
