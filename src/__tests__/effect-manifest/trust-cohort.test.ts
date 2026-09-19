@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -16,6 +16,7 @@ import {
   effectManifestTrustRecordPath,
   saveEffectManifestTrustRecord,
 } from '../../core/effect-manifest/trust-store.js'
+import { bindManifestExecutableIdentity } from './test-executable.js'
 
 const manifestFixture = {
   schemaVersion: 1 as const,
@@ -50,19 +51,21 @@ describe('effect manifest trust cohort', () => {
     const baseline = composeDecisionConfigFingerprint(config, repoRoot)
     expect(baseline).toBe(hashDecisionConfig(config))
 
+    const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
-    const rule = manifestFixture.rules[0]
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(bound))
+    const rule = bound.rules[0]
     if (!rule) {
       throw new Error('fixture rule missing')
     }
-    const ruleFp = ruleFingerprint(manifestFixture, rule)
+    const ruleFp = ruleFingerprint(bound, rule)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     await saveEffectManifestTrustRecord(
       effectManifestTrustRecordPath(
         config,
         stateDir,
         repoRoot,
-        manifestFixture.command.canonicalPath,
+        bound.command.canonicalPath,
       ),
       {
         schemaVersion: 1,
@@ -79,18 +82,63 @@ describe('effect manifest trust cohort', () => {
     expect(composeDecisionConfigFingerprint(config, repoRoot)).not.toBe(baseline)
   })
 
+  it('drops stale trusted fingerprints after manifest edits', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-stale-'))
+    const config = mergeConfig({})
+    const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
+    await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(bound))
+    const rule = bound.rules[0]
+    if (!rule) {
+      throw new Error('fixture rule missing')
+    }
+    const ruleFp = ruleFingerprint(bound, rule)
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, bound.command.canonicalPath),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: 'test',
+        trustedRules: [
+          { id: 'argv-test', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' },
+        ],
+      },
+    )
+    expect(collectActiveEffectManifestRuleFingerprints(repoRoot, config)).toEqual([ruleFp])
+
+    const edited = {
+      ...bound,
+      rules: [
+        {
+          ...rule,
+          contract: {
+            processOperation: 'inspect' as const,
+            effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }],
+          },
+        },
+      ],
+    }
+    await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(edited))
+    expect(collectActiveEffectManifestRuleFingerprints(repoRoot, config)).toEqual([])
+  })
+
   it('does not read trust records from another checkout root', async () => {
     const repoA = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-a-'))
     const repoB = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-b-'))
     const config = mergeConfig({})
-    const rule = manifestFixture.rules[0]
+    const boundA = await bindManifestExecutableIdentity(repoA, manifestFixture)
+    await mkdir(path.dirname(manifestFilePath(repoA, 'unknown-cli')), { recursive: true })
+    await writeFile(manifestFilePath(repoA, 'unknown-cli'), JSON.stringify(boundA))
+    const rule = boundA.rules[0]
     if (!rule) {
       throw new Error('fixture rule missing')
     }
-    const ruleFp = ruleFingerprint(manifestFixture, rule)
+    const ruleFp = ruleFingerprint(boundA, rule)
     const stateDir = repoLocalStateDirFor(repoA, config)
     await saveEffectManifestTrustRecord(
-      effectManifestTrustRecordPath(config, stateDir, repoA, manifestFixture.command.canonicalPath),
+      effectManifestTrustRecordPath(config, stateDir, repoA, boundA.command.canonicalPath),
       {
         schemaVersion: 1,
         repoRoot: repoA,

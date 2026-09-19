@@ -1,13 +1,17 @@
-import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
+import type { ProcessOperation } from '../capability/request.js'
 import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
 import { isGrammarUnknownOnly } from '../effect-ir/shell-lower/argv-delegate-gate.js'
 import { processRequirement } from '../effect-ir/shell-lower/requirement.js'
-import { manifestFingerprint, parseEffectManifestV1, ruleFingerprint } from './codec.js'
+import { manifestFingerprint, ruleFingerprint } from './codec.js'
+import { verifyStoredExecutableIdentity } from './executable-identity.js'
+import { invocationMatchesManifestCommand } from './invocation-identity.js'
+import { loadEffectManifestSync } from './load-manifest-sync.js'
 import { loadEffectManifestTrustSync } from './load-trust-sync.js'
 import { findUniqueMatchingRule } from './matcher.js'
 import { manifestFilePath, normalizeManifestBasename } from './paths.js'
+import { ruleIsTrustEligible } from './validate.js'
 import type {
   EffectManifestApplicationRole,
   EffectManifestAuditV1,
@@ -28,6 +32,8 @@ function requirementBlocksManifest(entry: ShellEffectRequirement): boolean {
 
 export interface ApplyEffectManifestParams {
   repoRoot: string
+  cwd: string
+  pathEnv: string
   head: string
   argv: readonly string[]
   requirements: ShellEffectRequirement[]
@@ -35,6 +41,8 @@ export interface ApplyEffectManifestParams {
   role: EffectManifestApplicationRole
   frontendId?: EffectManifestAuditV1['frontendId']
   trustRecord: EffectManifestTrustRecordV1 | null
+  /** When false, canonical lowering ignores manifests; telemetry-only may still observe. */
+  gateConsumptionEnabled?: boolean
 }
 
 export interface ApplyEffectManifestResult {
@@ -49,38 +57,28 @@ function requirementsBlockManifest(requirements: readonly ShellEffectRequirement
   return requirements.some((entry) => requirementBlocksManifest(entry))
 }
 
-function loadManifest(repoRoot: string, basename: string): EffectManifestV1 | null {
-  const filePath = manifestFilePath(repoRoot, basename)
-  if (!existsSync(filePath)) {
-    return null
-  }
-  try {
-    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
-    return parseEffectManifestV1(raw)
-  } catch {
-    return null
-  }
+function ruleContractIsRuntimeAuthoritative(rule: EffectManifestV1['rules'][number]): boolean {
+  return ruleIsTrustEligible(rule)
 }
 
 function instantiateRequirements(
   rule: EffectManifestV1['rules'][number],
   head: string,
   segment: string,
-): ShellEffectRequirement[] {
-  const operation =
-    rule.contract.processOperation === 'signal' ? 'spawn' : rule.contract.processOperation
+): ShellEffectRequirement[] | null {
+  if (!ruleContractIsRuntimeAuthoritative(rule)) {
+    return null
+  }
+  const operation: ProcessOperation = rule.contract.processOperation
   const process = processRequirement(head, operation, segment, [MANIFEST_EVIDENCE_BASIS])
   process.evidence = {
     level: 'certain',
     signals: [MANIFEST_EVIDENCE_BASIS],
     basis: [MANIFEST_EVIDENCE_BASIS],
   }
-  const effects = rule.contract.effects.flatMap((template) => {
-    if (template.tag === 'indeterminate') {
-      return []
-    }
-    return [
-      {
+  const effects = rule.contract.effects.map(
+    (template) =>
+      ({
         tag: template.tag,
         action: template.action,
         resource: template.resource,
@@ -90,10 +88,9 @@ function instantiateRequirements(
           basis: [MANIFEST_EVIDENCE_BASIS],
         },
         provenance: { segment },
-      } as unknown as ShellEffectRequirement,
-    ]
-  })
-  if (effects.length === 0 && rule.contract.effects.length === 0) {
+      }) as unknown as ShellEffectRequirement,
+  )
+  if (effects.length === 0) {
     return [process]
   }
   return [process, ...effects]
@@ -139,18 +136,21 @@ function resolveTrustAudit(
   repoRoot: string,
   basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
-  ruleMatched: boolean,
+  matchedRule: EffectManifestV1['rules'][number] | null,
 ): EffectManifestAuditV1['trust'] {
-  if (!ruleMatched) {
+  if (!matchedRule) {
     return 'missing'
   }
   const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord)
   if (!record) {
-    return loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath)
-      ? 'stale'
-      : 'missing'
+    return 'missing'
   }
-  return 'stale'
+  const fingerprint = ruleFingerprint(manifest, matchedRule)
+  const entry = record.trustedRules.find((item) => item.id === matchedRule.id)
+  if (!entry) {
+    return 'missing'
+  }
+  return entry.ruleFingerprint === fingerprint ? 'missing' : 'stale'
 }
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
@@ -168,11 +168,18 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     ...partial,
   })
 
+  const gateConsumptionEnabled = params.gateConsumptionEnabled === true
+  const observabilityOnly = params.role === 'telemetry-only'
+
   if (
     params.segmentCompleteness !== 'complete' ||
     !isGrammarUnknownOnly(params.requirements, params.head) ||
     requirementsBlockManifest(params.requirements)
   ) {
+    return { requirements: params.requirements, telemetrySignals: [], matched: false }
+  }
+
+  if (!gateConsumptionEnabled && !observabilityOnly) {
     return { requirements: params.requirements, telemetrySignals: [], matched: false }
   }
 
@@ -190,20 +197,22 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
-  const manifest = loadManifest(params.repoRoot, basename)
-  if (!manifest) {
+  const loaded = loadEffectManifestSync(params.repoRoot, basename)
+  if (!loaded.ok) {
+    const unavailable = loaded.reason !== 'no_manifest'
     return {
       requirements: params.requirements,
       audit: baseAudit({
         manifestFingerprint: '',
-        trust: 'missing',
-        outcome: 'unmatched',
-        reason: 'no_manifest',
+        trust: unavailable ? 'invalid' : 'missing',
+        outcome: unavailable ? 'unavailable' : 'unmatched',
+        reason: loaded.reason,
       }),
       telemetrySignals: [],
       matched: false,
     }
   }
+  const manifest = loaded.manifest
 
   if (manifest.command.basename !== basename) {
     return {
@@ -213,6 +222,47 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
         trust: 'invalid',
         outcome: 'unavailable',
         reason: 'basename_mismatch',
+      }),
+      telemetrySignals: [],
+      matched: false,
+    }
+  }
+
+  if (
+    !invocationMatchesManifestCommand(
+      params.head,
+      params.cwd,
+      params.pathEnv,
+      manifest.command,
+    )
+  ) {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: manifestFingerprint(manifest),
+        trust: 'invalid',
+        outcome: 'unavailable',
+        reason: 'invocation_identity_mismatch',
+      }),
+      telemetrySignals: [],
+      matched: false,
+    }
+  }
+
+  const identityStatus = verifyStoredExecutableIdentity(manifest.command)
+  if (identityStatus !== 'ok') {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: manifestFingerprint(manifest),
+        trust: 'invalid',
+        outcome: 'unavailable',
+        reason:
+          identityStatus === 'missing'
+            ? 'executable_missing'
+            : identityStatus === 'not_regular'
+              ? 'executable_not_regular'
+              : 'executable_identity_mismatch',
       }),
       telemetrySignals: [],
       matched: false,
@@ -235,7 +285,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
           params.repoRoot,
           basename,
           params.trustRecord,
-          Boolean(matchedRule),
+          matchedRule ?? null,
         ),
         outcome: 'unmatched',
         reason: matchedRule ? 'rule_not_trusted' : 'no_rule_match',
@@ -256,17 +306,35 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     reason: params.role === 'telemetry-only' ? 'shadow_candidate_match' : 'trusted_rule_match',
   })
 
-  if (params.role === 'telemetry-only') {
+  if (!gateConsumptionEnabled || params.role === 'telemetry-only') {
     return {
       requirements: params.requirements,
       audit,
-      telemetrySignals: ['effect_manifest.shadow_candidate_matched'],
+      telemetrySignals: observabilityOnly
+        ? ['effect_manifest.shadow_candidate_matched']
+        : [],
+      matched: false,
+    }
+  }
+
+  const instantiated = instantiateRequirements(matchedRule, params.head, segment)
+  if (!instantiated) {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: fingerprint,
+        ruleId: matchedRule.id,
+        trust: 'trusted',
+        outcome: 'unavailable',
+        reason: 'contract_not_runtime_authoritative',
+      }),
+      telemetrySignals: [],
       matched: false,
     }
   }
 
   return {
-    requirements: instantiateRequirements(matchedRule, params.head, segment),
+    requirements: instantiated,
     audit,
     telemetrySignals: ['effect_manifest.matched'],
     matched: true,

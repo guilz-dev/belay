@@ -218,6 +218,11 @@ export interface BelayClassifierConfig {
   sensitivePaths: string[]
   /** Rollout authority for the shell syntax frontend. Default remains legacy. */
   shellFrontendMode: ShellFrontendMode
+  /**
+   * When true, trusted effect manifests may replace grammar_unknown at the gate.
+   * Defaults to false until rollout prerequisites are satisfied.
+   */
+  effectManifestGateConsumption: boolean
 }
 
 export interface BelayNotificationsConfig {

@@ -625,6 +625,7 @@ export function normalizeConfig(
         ? v4.classifier.sensitivePaths
         : DEFAULT_CONFIG_V4.classifier.sensitivePaths,
       shellFrontendMode: normalizeShellFrontendMode(v4.classifier?.shellFrontendMode),
+      effectManifestGateConsumption: v4.classifier?.effectManifestGateConsumption === true,
     },
     policy: {
       unknownLocalEffect:

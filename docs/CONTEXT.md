@@ -9,7 +9,8 @@ authorization model. It complements
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md),
 [ADR-009](./adr/ADR-009-single-cursor-shell-gate.md), and
 [ADR-010](./adr/ADR-010-repository-config-trust.md),
-[ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md).
+[ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md), and
+[ADR-013](./adr/ADR-013-trusted-effect-manifests.md).
 
 ## Core objects
 
@@ -43,7 +44,10 @@ authorization model. It complements
    canonical effects. Legacy command lists, overrides, corpus entries, and standing-allow
    state (shell, tool, subagent) are inert at runtime. Command allowlists are
    product-incompatible
-   ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)).
+   ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)). **Trusted effect manifests**
+   declare complete upper bounds for explicit argv patterns and executable identity; they are not
+   command allowlists
+   ([ADR-013](./adr/ADR-013-trusted-effect-manifests.md)).
 3. **Network**: payload-free reads allow. External mutation, explicit payload/file/secret
    sends, and ambiguous network effects require approval.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.

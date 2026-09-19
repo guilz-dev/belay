@@ -21,6 +21,8 @@ export async function verdict(command: string, context: VerdictContext): Promise
     repoRoot: context.repoRoot,
     inputFingerprint: fingerprint,
     shellFrontendMode: context.config.classifier.shellFrontendMode,
+    effectManifestGateConsumptionEnabled:
+      context.config.classifier.effectManifestGateConsumption === true,
   })
   const policy = evaluateEffectPlanPolicy(effectPlan, context)
   const requirements = collectRequirements(effectPlan.root)

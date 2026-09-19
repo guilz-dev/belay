@@ -71,6 +71,9 @@ export function effectPlanAuditFields(
     effectPlanOpacity: plan.opacity,
     effectPlanDisposition: plan.disposition,
     effectPlanCompleteness: plan.completeness,
+    ...(plan.effectManifestAudits?.length
+      ? { effectManifestAudits: plan.effectManifestAudits }
+      : {}),
     effectPlanRequirements: collectRequirements(plan.root).map((requirement) => ({
       tag: requirement.tag,
       action: requirement.action,

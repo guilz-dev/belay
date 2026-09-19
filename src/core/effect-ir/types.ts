@@ -3,6 +3,7 @@ import type {
   CapabilityEvidenceLevel,
   CapabilityResource,
 } from '../capability/request.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import type { VerdictOpacity } from '../verdict/types.js'
 
 export const EFFECT_PLAN_VERSION = 1 as const
@@ -94,4 +95,6 @@ export interface EffectPlan {
   disposition: EffectPlanDisposition
   completeness: AnalysisCompleteness
   signals: readonly string[]
+  /** Bounded per-frontend manifest consideration records for audit/explain. */
+  effectManifestAudits?: readonly EffectManifestAuditV1[]
 }

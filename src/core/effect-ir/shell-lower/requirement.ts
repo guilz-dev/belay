@@ -1,3 +1,4 @@
+import type { ProcessOperation } from '../../capability/request.js'
 import type { ShellEffectRequirement } from '../shell-build.js'
 import type { EffectProvenance } from '../types.js'
 
@@ -28,7 +29,7 @@ export function requirement(
 
 export function processRequirement(
   command: string,
-  operation: 'inspect' | 'spawn',
+  operation: ProcessOperation,
   segment: string,
   signals: string[],
 ): ShellEffectRequirement {

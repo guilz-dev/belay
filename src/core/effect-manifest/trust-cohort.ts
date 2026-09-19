@@ -4,6 +4,8 @@ import path from 'node:path'
 import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4 } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
+import { ruleFingerprint } from './codec.js'
+import { readEffectManifestFromPath } from './load-manifest-sync.js'
 import { effectManifestTrustDir } from './trust-store.js'
 import type { EffectManifestTrustRecordV1 } from './types.js'
 
@@ -31,9 +33,18 @@ export function collectActiveEffectManifestRuleFingerprints(
       ) {
         continue
       }
-      for (const rule of raw.trustedRules) {
-        if (typeof rule.ruleFingerprint === 'string' && rule.ruleFingerprint.length > 0) {
-          fingerprints.add(rule.ruleFingerprint)
+      const manifest = readEffectManifestFromPath(raw.manifestPath)
+      if (!manifest) {
+        continue
+      }
+      for (const trusted of raw.trustedRules) {
+        const rule = manifest.rules.find((candidate) => candidate.id === trusted.id)
+        if (!rule) {
+          continue
+        }
+        const fingerprint = ruleFingerprint(manifest, rule)
+        if (fingerprint === trusted.ruleFingerprint) {
+          fingerprints.add(fingerprint)
         }
       }
     } catch {

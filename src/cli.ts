@@ -15,6 +15,20 @@ import {
   formatDogfoodResult,
 } from './commands/dogfood.js'
 import { explainCommand, formatExplainReport } from './commands/explain.js'
+import {
+  formatManifestInferResult,
+  formatManifestListResult,
+  formatManifestRevokeResult,
+  formatManifestShowResult,
+  formatManifestTrustResult,
+  formatManifestValidateResult,
+  manifestInferProject,
+  manifestListProject,
+  manifestRevokeProject,
+  manifestShowProject,
+  manifestTrustProject,
+  manifestValidateProject,
+} from './commands/effect-manifest.js'
 import { formatHarvestReport, harvestApplyProject, harvestListProject } from './commands/harvest.js'
 import { formatMetricsReport, metricsProject } from './commands/metrics.js'
 import { formatQualityReport, qualityCheck } from './commands/quality.js'
@@ -62,6 +76,7 @@ export function parseArgs(argv: string[]) {
     recoverSubcommand?: 'advice' | RecoveryCheckpointSubcommand
     recoverCheckpointId?: string
     explainCwd?: string
+    actionCwd?: string
     explainKind?: 'shell' | 'tool' | 'subagent'
     explainToolName?: string
     explainPayload?: Record<string, unknown>
@@ -125,6 +140,11 @@ export function parseArgs(argv: string[]) {
     includeReviewed?: boolean
     corpusPath?: string
     boundaryProfile?: string
+    manifestSubcommand?: 'infer' | 'list' | 'show' | 'validate' | 'trust' | 'revoke'
+    manifestLlm?: boolean
+    manifestCommand?: string
+    manifestRuleId?: string
+    manifestInferArgv?: string[]
   } = {}
 
   if (!command || command === '--help' || command === '-h') {
@@ -510,7 +530,21 @@ export function parseArgs(argv: string[]) {
         throw new Error('--cwd requires a path value.')
       }
       options.explainCwd = next
+      options.actionCwd = next
       index += 1
+      continue
+    }
+    if (token === '--rule') {
+      const next = rest[index + 1]
+      if (!next) {
+        throw new Error('--rule requires a rule id.')
+      }
+      options.manifestRuleId = next
+      index += 1
+      continue
+    }
+    if (token === '--llm') {
+      options.manifestLlm = true
       continue
     }
     if (token === '--command') {
@@ -550,6 +584,10 @@ export function parseArgs(argv: string[]) {
       return { command: 'help', options }
     }
     if (token === '--') {
+      if (command === 'manifest' && options.manifestSubcommand === 'infer') {
+        options.manifestInferArgv = rest.slice(index + 1)
+        break
+      }
       const remainder = rest.slice(index + 1).join(' ')
       if (command === 'session' && options.sessionSubcommand === 'start') {
         options.sessionAgentCommand = remainder
@@ -604,6 +642,34 @@ export function parseArgs(argv: string[]) {
         continue
       }
       throw new Error('harvest requires subcommand: list or apply')
+    }
+    if (command === 'manifest' && !options.manifestSubcommand) {
+      if (
+        token === 'infer' ||
+        token === 'list' ||
+        token === 'show' ||
+        token === 'validate' ||
+        token === 'trust' ||
+        token === 'revoke'
+      ) {
+        options.manifestSubcommand = token
+        continue
+      }
+      throw new Error('manifest requires subcommand: infer, list, show, validate, trust, or revoke')
+    }
+    if (
+      command === 'manifest' &&
+      options.manifestSubcommand &&
+      (options.manifestSubcommand === 'show' ||
+        options.manifestSubcommand === 'validate' ||
+        options.manifestSubcommand === 'trust' ||
+        options.manifestSubcommand === 'revoke') &&
+      !token.startsWith('-')
+    ) {
+      options.manifestCommand = options.manifestCommand
+        ? `${options.manifestCommand} ${token}`
+        : token
+      continue
     }
     if (command === 'recover' && !options.recoverSubcommand) {
       if (
@@ -725,6 +791,20 @@ export function parseArgs(argv: string[]) {
     throw new Error('--all-cohorts is only valid for harvest list or apply.')
   }
 
+  if (command === 'manifest' && options.manifestSubcommand === 'infer' && !options.manifestInferArgv) {
+    throw new Error('manifest infer requires `--` before the target command.')
+  }
+  if (
+    command === 'manifest' &&
+    (options.manifestSubcommand === 'show' ||
+      options.manifestSubcommand === 'validate' ||
+      options.manifestSubcommand === 'trust' ||
+      options.manifestSubcommand === 'revoke') &&
+    !options.manifestCommand
+  ) {
+    throw new Error(`manifest ${options.manifestSubcommand} requires a command argument.`)
+  }
+
   return { command: command ?? 'help', options }
 }
 
@@ -776,6 +856,12 @@ Usage:
   ${c} standing-allow revoke --fingerprint <fp> [--kind shell|tool|subagent] [--target <dir>]
   ${c} harvest list [--target <dir>] [--since <iso>] [--until <iso>] [--audit-version <semver>] [--all-versions] [--all-cohorts] [--include-reviewed] [--json]
   ${c} harvest apply --command "<text>" [--fingerprint <64-hex>] [--boundary-profile <id>] --outcome provably-benign|accepted-benign|must-ask|reject [--reason <r>] [--corpus <path>] [--audit-version <semver>] [--all-versions] [--all-cohorts] [--target <dir>]
+  ${c} manifest infer [--llm] [--target <dir>] [--cwd <dir>] [--json] -- <command> [args...]
+  ${c} manifest list [--target <dir>] [--json]
+  ${c} manifest show <command> [--target <dir>] [--json]
+  ${c} manifest validate <command> [--target <dir>] [--json]
+  ${c} manifest trust <command> --rule <id> [--target <dir>] [--json]
+  ${c} manifest revoke <command> --rule <id> [--target <dir>] [--json]
 `
 }
 
@@ -1090,6 +1176,78 @@ async function main() {
         process.stdout.write(formatReport(report))
       }
       return
+    }
+
+    if (command === 'manifest') {
+      const manifestOptions = {
+        targetDir: options.targetDir,
+        actionCwd: options.actionCwd ?? options.explainCwd,
+        json: options.json,
+        llm: options.manifestLlm,
+        ruleId: options.manifestRuleId,
+        inferArgv: options.manifestInferArgv,
+        commandText: options.manifestCommand,
+      }
+      if (options.manifestSubcommand === 'infer') {
+        const result = await manifestInferProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestInferResult(result)}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.manifestSubcommand === 'list') {
+        const result = await manifestListProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestListResult(result)}\n`)
+        }
+        return
+      }
+      if (options.manifestSubcommand === 'show') {
+        const result = await manifestShowProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestShowResult(result)}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.manifestSubcommand === 'validate') {
+        const result = await manifestValidateProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestValidateResult(result)}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.manifestSubcommand === 'trust') {
+        const result = await manifestTrustProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestTrustResult(result)}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      if (options.manifestSubcommand === 'revoke') {
+        const result = await manifestRevokeProject(manifestOptions)
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+        } else {
+          process.stdout.write(`${formatManifestRevokeResult(result)}\n`)
+        }
+        process.exitCode = result.ok ? 0 : 1
+        return
+      }
+      throw new Error('manifest requires subcommand: infer, list, show, validate, trust, or revoke')
     }
 
     if (command === 'harvest') {

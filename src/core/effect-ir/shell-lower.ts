@@ -1,6 +1,7 @@
 import path from 'node:path'
 
 import { applyEffectManifest } from '../effect-manifest/apply.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import { appendParserDisagreement } from '../shell-frontend/compare.js'
 import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
 import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
@@ -103,17 +104,18 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     } catch {
       // Candidate failure is telemetry only and must not replace the legacy plan.
     }
-    // Candidate-side manifest resolution is observational only (discarded plan).
-    lowerLegacyShellEffectPlan({
+    const candidatePlan = lowerLegacyShellEffectPlan({
       ...params,
       effectManifestRole: 'telemetry-only',
       effectManifestFrontendId: 'mvdan-v1',
+      effectManifestGateConsumptionEnabled: true,
     })
-    return lowerLegacyShellEffectPlan({
+    const canonicalPlan = lowerLegacyShellEffectPlan({
       ...params,
       effectManifestRole: 'canonical',
       effectManifestFrontendId: 'legacy-v1',
     })
+    return mergeEffectManifestTelemetry(canonicalPlan, candidatePlan)
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
   if (mode === 'mvdan') {
@@ -131,8 +133,22 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
   })
 }
 
+function mergeEffectManifestTelemetry(canonical: EffectPlan, candidate: EffectPlan): EffectPlan {
+  const candidateSignals = candidate.signals.filter((signal) => signal.startsWith('effect_manifest.'))
+  const candidateAudits = candidate.effectManifestAudits ?? []
+  if (candidateSignals.length === 0 && candidateAudits.length === 0) {
+    return canonical
+  }
+  return {
+    ...canonical,
+    signals: [...new Set([...canonical.signals, ...candidateSignals])].sort(),
+    effectManifestAudits: [...candidateAudits, ...(canonical.effectManifestAudits ?? [])],
+  }
+}
+
 function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
-  const context: LowerContext = { ...params, depth: 0 }
+  const effectManifestAudits: EffectManifestAuditV1[] = []
+  const context: LowerContext = { ...params, depth: 0, effectManifestAudits }
   const segments = lowerTopLevelSegments(params.command, context)
   const lexed = lexShell(params.command)
   const structuralCommand = maskHeredocBodies(params.command, lexed.heredocs)
@@ -140,6 +156,7 @@ function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectP
     inputFingerprint: params.inputFingerprint,
     segments,
     signals: pipeToShell(structuralCommand) ? ['pipe_to_shell'] : [],
+    effectManifestAudits,
   })
 }
 
@@ -678,6 +695,8 @@ function lowerSegment(
       if (isGrammarUnknownOnly(processRequirements, head)) {
         const manifestApplied = applyEffectManifest({
           repoRoot: context.repoRoot,
+          cwd: context.cwd,
+          pathEnv: context.env?.PATH ?? process.env.PATH ?? '',
           head,
           argv: tokens,
           requirements: processRequirements,
@@ -688,9 +707,16 @@ function lowerSegment(
           role: context.effectManifestRole ?? 'canonical',
           frontendId: context.effectManifestFrontendId ?? 'legacy-v1',
           trustRecord: null,
+          gateConsumptionEnabled: context.effectManifestGateConsumptionEnabled === true,
         })
         for (const signal of manifestApplied.telemetrySignals) {
           signals.add(signal)
+        }
+        if (
+          manifestApplied.audit &&
+          (manifestApplied.matched || manifestApplied.telemetrySignals.length > 0)
+        ) {
+          context.effectManifestAudits?.push(manifestApplied.audit)
         }
         if (manifestApplied.matched) {
           requirements.push(...manifestApplied.requirements)
