@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { ruleFingerprint } from '../../core/effect-manifest/codec.js'
+import type { EffectManifestV1 } from '../../core/effect-manifest/types.js'
 import { validateEffectManifestDocument } from '../../core/effect-manifest/validate.js'
 
-const manifest = {
+const manifest: EffectManifestV1 = {
   schemaVersion: 1,
   command: {
     basename: 'tool',
@@ -38,13 +39,13 @@ describe('validateEffectManifestDocument', () => {
     const report = validateEffectManifestDocument(manifest, '/repo')
     expect(report.trustEligibleRuleIds).toContain('r1')
 
-    const edited = {
+    const edited: EffectManifestV1 = {
       ...manifest,
       rules: [
         {
           ...rule,
           contract: {
-            processOperation: 'inspect' as const,
+            processOperation: 'inspect',
             effects: [{ tag: 'read_only', action: 'read', resource: { kind: 'unknown' } }],
           },
         },
