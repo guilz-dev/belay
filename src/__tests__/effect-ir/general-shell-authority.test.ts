@@ -176,6 +176,21 @@ describe('general shell dogfood behavior', () => {
     expect.soft(effectActions(result)).toContain('network.connect')
   })
 
+  it.each([
+    './sleep 1',
+    '/tmp/sleep 1',
+    '/usr/bin/sleep 1',
+    './sleep 1 && gh pr view 54',
+    'env /tmp/sleep 1 && gh run view 54 --json status,conclusion',
+  ])('requires approval for path-qualified sleep executables: %s', async (command) => {
+    const repoRoot = '/workspace/project'
+    const result = await classify(command, repoRoot, repoRoot)
+
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('unknown_local_effect')
+    expect(effectActions(result)).toContain('indeterminate')
+  })
+
   it('keeps gh api fields behind approval when no explicit read method is present', async () => {
     const repoRoot = '/workspace/project'
     const result = await classify(

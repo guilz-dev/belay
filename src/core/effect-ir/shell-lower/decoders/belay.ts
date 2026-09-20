@@ -29,6 +29,11 @@ export function decodeBelay(
     'standing-allow',
   ].includes(section ?? '')
   const configTrustMutation = section === 'config' && operation === 'trust'
+  // The CLI accepts flags before the manifest subcommand. Treat any trust/revoke
+  // token in a manifest invocation as authority-changing so unusual or future
+  // option placement fails closed instead of bypassing approval.
+  const manifestTrustMutation =
+    section === 'manifest' && args.slice(1).some((token) => token === 'trust' || token === 'revoke')
   if (judgeCommand || configRead || configJudgeMutation) {
     return [
       processRequirement('belay', 'inspect', segment, [
@@ -37,14 +42,20 @@ export function decodeBelay(
       ]),
     ]
   }
-  if (approvalAuthorityCommand || configTrustMutation) {
+  if (approvalAuthorityCommand || configTrustMutation || manifestTrustMutation) {
     return [
       requirement(
         'control_plane.write',
         'control_plane.write',
         { kind: 'path', path: path.join(repoRoot, '.belay-control-plane') },
         segment,
-        [approvalAuthorityCommand ? 'belay.approval_authority' : 'belay.config_trust'],
+        [
+          approvalAuthorityCommand
+            ? 'belay.approval_authority'
+            : manifestTrustMutation
+              ? 'belay.effect_manifest_trust'
+              : 'belay.config_trust',
+        ],
       ),
     ]
   }

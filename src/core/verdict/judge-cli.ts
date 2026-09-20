@@ -260,7 +260,7 @@ async function runCliJson(invocation: CliInvocation, timeoutMs: number): Promise
 
 export async function runCliJsonWithTimeouts(
   invocation: CliInvocation,
-  budgets: { connectTimeoutMs?: number; evalTimeoutMs: number },
+  budgets: { connectTimeoutMs?: number; evalTimeoutMs: number; maxOutputBytes?: number },
 ): Promise<string> {
   const { binary, args, stdin } = invocation
   const connectTimeoutMs = budgets.connectTimeoutMs ?? 0
@@ -278,6 +278,7 @@ export async function runCliJsonWithTimeouts(
     let settled = false
     let timer: NodeJS.Timeout | null = null
     let forceKillTimer: NodeJS.Timeout | null = null
+    let outputBytes = 0
 
     const cleanup = () => {
       if (timer) {
@@ -326,9 +327,29 @@ export async function runCliJsonWithTimeouts(
       }, FORCE_KILL_GRACE_MS)
     }, budgets.evalTimeoutMs)
     child.stdout.on('data', (chunk) => {
+      outputBytes += Buffer.byteLength(chunk)
+      if (budgets.maxOutputBytes !== undefined && outputBytes > budgets.maxOutputBytes) {
+        rejectOnce(
+          new CliRunError('exit_nonzero', 'CLI output exceeded the configured byte limit.', {
+            command,
+          }),
+        )
+        child.kill('SIGTERM')
+        return
+      }
       stdout += String(chunk)
     })
     child.stderr.on('data', (chunk) => {
+      outputBytes += Buffer.byteLength(chunk)
+      if (budgets.maxOutputBytes !== undefined && outputBytes > budgets.maxOutputBytes) {
+        rejectOnce(
+          new CliRunError('exit_nonzero', 'CLI output exceeded the configured byte limit.', {
+            command,
+          }),
+        )
+        child.kill('SIGTERM')
+        return
+      }
       stderr += String(chunk)
     })
     if (stdin !== undefined) {

@@ -51,4 +51,16 @@ describe('belay judge self-command gate', () => {
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('control_plane_mutation')
   })
+
+  it.each([
+    'belay manifest trust demo --rule r1',
+    'belay manifest revoke demo --rule r1',
+    'belay manifest --json trust demo --rule r1',
+    'belay manifest --target /tmp trust demo --rule r1',
+    'belay manifest --json revoke demo --rule r1',
+  ])('requires human approval for effect-manifest authority mutation: %s', async (command) => {
+    const result = await verdict(command, context)
+    expect(result.permission).toBe('ask')
+    expect(result.reason).toBe('control_plane_mutation')
+  })
 })

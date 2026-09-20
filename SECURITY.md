@@ -72,6 +72,14 @@ commands (`approval-token`, `approve`, `revoke`, `standing-allow`, and `config t
 as control-plane writes when invoked through an agent shell, so they require separate human
 approval. Operators may run them directly from their own terminal outside the hook path.
 
+Trusted effect-manifest candidates are repository-local, but their rule trust is always kept in the
+configured user control plane, outside repository state. Trust binds the checkout, executable (and
+script interpreter), matcher, and complete effect contract. Editing a candidate file cannot create
+authority; stale or malformed data fails back to `indeterminate`. `belay manifest trust` and
+`belay manifest revoke` are also control-plane writes through an agent shell. Trust asserts a
+reusable complete upper bound, not approval of one execution. See
+[the operator guide](docs/effect-manifests.md).
+
 ### Audit advice and Recovery v1
 
 - **`belay report`** — read-only aggregation of hook audit logs (ask/flag/allow counts,

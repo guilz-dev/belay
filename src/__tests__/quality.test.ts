@@ -182,7 +182,7 @@ describe('quality loop', () => {
     expect(report.corpus.provenanceCounts.unspecified).toBeGreaterThanOrEqual(0)
     expect(report.corpus.mustAskMisses).toBe(0)
     expect(report.corpus.provablyBenignBlocks).toBe(0)
-    expect(report.harvest.scope).toBe('shell')
+    expect(report.harvest.scope).toBe('shell+tool')
     expect(report.notes.some((note) => note.includes('hard gates'))).toBe(true)
     expect(report.trafficReadyForEnforce).toBe(false)
     expect(report.readyForEnforce).toBe(false)
@@ -270,6 +270,43 @@ describe('quality loop', () => {
     expect(report.readyForEnforce).toBe(true)
     expect(report.failedGates).toEqual([])
     expect(report.ok).toBe(true)
+  })
+
+  it('scopes harvest benign candidate counts to the active audit cohort', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-quality-harvest-cohort-'))
+    tempDirs.push(repoRoot)
+    await initProject({ targetDir: repoRoot })
+    const config = await loadConfigFile(repoRoot)
+    const cohort = await resolveActiveAuditCohort(repoRoot, config)
+    expect(cohort).not.toBeNull()
+    if (!cohort) {
+      throw new Error('fixture active cohort unavailable')
+    }
+    const oldCohort = {
+      ...cohort,
+      runtimeArtifactHash: createHash('sha256').update('quality-old-runtime').digest('hex'),
+    }
+    const fingerprint = createHash('sha256').update('quality-stale-harvest').digest('hex')
+    const records = [1, 2].map((index) => ({
+      event: 'beforeShellExecution',
+      kind: 'shell',
+      verdict: 'deny_pending_approval',
+      wouldBlock: true,
+      fingerprint,
+      summary: 'git status',
+      reason: 'unknown_local_effect',
+      ...oldCohort,
+      timestamp: `2026-01-01T00:00:0${index}.000Z`,
+    }))
+    await writeFile(
+      testAuditLogPath(repoRoot, config.audit.logPath),
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    )
+
+    const report = await qualityCheck({ targetDir: repoRoot })
+
+    expect(report.harvest.benignCandidates).toBe(0)
+    expect(report.harvest.availabilityQueue).toBe(0)
   })
 
   it('seeds a missing watermark from retained availability evidence before rotation', async () => {

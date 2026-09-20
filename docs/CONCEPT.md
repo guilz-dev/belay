@@ -81,6 +81,12 @@ Command names select grammar decoders only; they do not decide allow/ask. `git f
 `allow_flagged`; `git push` is remote mutation and asks. Linked worktrees are local only
 when their canonical Git common directory matches.
 
+For an executable without a built-in decoder, an operator may add a
+[trusted effect manifest](./effect-manifests.md). Its executable-bound, exact argv rule supplies a
+reviewed complete upper bound to semantic lowering; it never supplies an allow decision. Untrusted,
+stale, overlapping, partial, or unmatched rules retain `indeterminate`, and built-in decoders keep
+precedence.
+
 **Layer note (ADR-001):** L3+L4 is a cooperative policy/approval layer. **L1-full**
 adds a separate OS boundary. Boundary resource scopes and exact grants are not shell
 allowlists and do not replace the EffectPlan projection. See

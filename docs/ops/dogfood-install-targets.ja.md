@@ -20,11 +20,13 @@ Belay を **dogfood モード**（`mode: audit` + `policy.unknownLocalEffect: de
 | 層 | 場所 | 意味 |
 | --- | --- | --- |
 | **A: ゲート定義** | `audit-metrics` | ledger の `provably-benign` と fingerprint 一致した **全 active-cohort gate 行**を数える（gate 時点の allow に限定しない。**blocked も分母・分子に含む**） |
-| **B: 証跡収集** | `harvest` | 現行は **shell 限定・ask 中心**の候補抽出。正常に allow された Tool Read は候補に乗らない |
+| **B: 証跡収集** | `harvest` | `shell+tool` scope。`allowed_read`（replay 可能な `actionSnapshot` 付き allow read）と ask 中心 source を併用 |
 
-→ 主因は多くの場合 **B（review 可能な候補が収集されていない）**。「1 年回しても 150 に届かない」等の日程見積も、Phase 1 修正前の数値だけでは断定しない（[設計 spec](../superpowers/specs/2026-09-17-traffic-readiness-workload-alignment-design.md)）。
+→ 主因は多くの場合 **B（review 可能な候補が収集されていない）**。「1 年回しても 150 に届かない」等の日程見積も、修正前の数値だけでは断定しない（[設計 spec](../superpowers/specs/2026-09-17-traffic-readiness-workload-alignment-design.md)）。
 
-Phase 1（実装予定）: allow 済み read の harvest 候補、tool ledger-only apply、kind 別 block rate、shell 最低証跡ゲート。閾値 150→100 や limited enforce trial は **Phase 1 実測後**に判断。
+**blocked read（would-block または gate 時 deny）**は `harvest-review-batch` の自動 `provably-benign` 対象外。手動で `harvest apply` するか、別途 review キューを運用する。kind 別 `reviewedBenignBlocked` で metrics に残る。
+
+Phase 1 実装: tool harvest apply は **ledger-only**（shell corpus は変更しない）。閾値 150→100 や limited enforce trial は **実測後**に判断。
 
 enforce から audit へ戻す: `belay dogfood --target <repo>`。`dogfood --check` は rollback ではなく enforce 時 `dogfood_inactive` を報告するだけ。
 

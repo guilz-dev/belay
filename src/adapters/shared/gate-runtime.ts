@@ -174,11 +174,11 @@ interface RuntimeBuildProvenance {
   runtimeArtifactHash?: unknown
 }
 
-function auditProvenance(config: BelayConfigV3): Record<string, string> {
+function auditProvenance(config: BelayConfigV3, repoRoot?: string): Record<string, string> {
   const runtime = (globalThis as Record<PropertyKey, unknown>)[RUNTIME_PROVENANCE_KEY] as
     | RuntimeBuildProvenance
     | undefined
-  return buildAuditProvenanceFields(config, runtime)
+  return buildAuditProvenanceFields(config, runtime, repoRoot)
 }
 
 function adapterIdFromContext(ctx: GateRuntimeContext): ReplayAdapterId | undefined {
@@ -315,7 +315,7 @@ export function createDefaultGateRuntimeDeps(): GateRuntimeDeps {
       }
     },
     async appendAudit(ctx, event) {
-      const provenance = auditProvenance(ctx.config)
+      const provenance = auditProvenance(ctx.config, ctx.repoRoot)
       const auditPath = resolveVersionedAuditLogPath(
         ctx.repoRoot,
         ctx.config.audit.logPath,
