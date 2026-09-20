@@ -177,6 +177,27 @@ describe('applyEffectManifest', () => {
     expect(applied.telemetrySignals).toContain('effect_manifest.shadow_candidate_matched')
   })
 
+  it('skips manifest work when the shell analysis deadline has passed', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-deadline-'))
+    await writeBoundManifest(repoRoot)
+    const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
+    const applied = applyEffectManifest(
+      manifestGateParams(repoRoot, {
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
+        argv: ['unknown-cli', 'status'],
+        requirements: base,
+        segmentCompleteness: 'complete',
+        role: 'canonical',
+        trustRecord: null,
+        effectManifestAnalysisDeadlineMs: Date.now() - 1,
+      }),
+    )
+    expect(applied.matched).toBe(false)
+    expect(applied.requirements).toEqual(base)
+    expect(applied.telemetrySignals).toEqual([])
+  })
+
   it('rejects a manifest whose basename does not match the command head', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-basename-'))
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })

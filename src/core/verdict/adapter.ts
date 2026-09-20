@@ -2,6 +2,7 @@ import {
   BOUNDARY_PROFILE_L3_L4_ONLY,
   resolveBoundaryProfile,
 } from '../capability/boundary-profile.js'
+import { GATE_LATENCY_BUDGET } from '../../corpus/gate-latency-budget.js'
 import type { BelayConfigV4 } from '../config.js'
 import { effectPlanAuditFields } from '../effect-ir/audit.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'
@@ -27,6 +28,7 @@ export function buildVerdictContext(params: {
   config: BelayConfigV4
   options?: ClassifierOptions
   trustedCwd?: boolean
+  shellAnalysisDeadlineMs?: number
 }): VerdictContext {
   const protectedArtifactRoots = [
     ...(params.options?.protectedArtifactRoots ?? []),
@@ -49,6 +51,7 @@ export function buildVerdictContext(params: {
     grants: params.options?.grants,
     attestation: params.options?.attestation,
     egressProxyActive: params.options?.egressProxyActive,
+    shellAnalysisDeadlineMs: params.shellAnalysisDeadlineMs,
   }
 }
 
@@ -59,8 +62,14 @@ export async function classifyShell(
   config: BelayConfigV4,
   options: ClassifierOptions = {},
 ): Promise<ClassifyResult> {
-  const context = buildVerdictContext({ cwd, repoRoot, config, options })
   const started = Date.now()
+  const context = buildVerdictContext({
+    cwd,
+    repoRoot,
+    config,
+    options,
+    shellAnalysisDeadlineMs: started + GATE_LATENCY_BUDGET.shell.maxMs,
+  })
   const result = await verdict(command, context)
   recordJudgeLatency('gate', Date.now() - started)
   return verdictToClassifyResult(result, config, options)

@@ -20,6 +20,8 @@ export interface LowerShellEffectPlanParams {
   effectManifestRole?: EffectManifestApplicationRole
   effectManifestFrontendId?: EffectManifestFrontendId
   effectManifestGateConsumptionEnabled?: boolean
+  /** When elapsed, manifest gate work is skipped (fail-closed). */
+  effectManifestAnalysisDeadlineMs?: number
 }
 
 export interface LowerContext extends LowerShellEffectPlanParams {

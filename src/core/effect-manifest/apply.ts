@@ -49,6 +49,8 @@ export interface ApplyEffectManifestParams {
   /** When false, canonical lowering ignores manifests; telemetry-only may still observe. */
   gateConsumptionEnabled?: boolean
   belayConfig?: BelayConfigV3
+  /** Wall-clock deadline; manifest work is skipped after this instant (fail-closed). */
+  effectManifestAnalysisDeadlineMs?: number
 }
 
 export interface ApplyEffectManifestResult {
@@ -195,6 +197,13 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   }
 
   if (!gateConsumptionEnabled && !observabilityOnly) {
+    return { requirements: params.requirements, telemetrySignals: [], matched: false }
+  }
+
+  if (
+    params.effectManifestAnalysisDeadlineMs !== undefined &&
+    Date.now() >= params.effectManifestAnalysisDeadlineMs
+  ) {
     return { requirements: params.requirements, telemetrySignals: [], matched: false }
   }
 

@@ -713,6 +713,7 @@ function lowerSegment(
           trustRecord: null,
           gateConsumptionEnabled: context.effectManifestGateConsumptionEnabled === true,
           belayConfig: context.belayConfig,
+          effectManifestAnalysisDeadlineMs: context.effectManifestAnalysisDeadlineMs,
         })
         for (const signal of manifestApplied.telemetrySignals) {
           signals.add(signal)
