@@ -1,7 +1,8 @@
 import path from 'node:path'
 
+import { applyEffectManifest } from '../effect-manifest/apply.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import { appendParserDisagreement } from '../shell-frontend/compare.js'
-import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
 import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
 import {
   isHeredocOperator,
@@ -90,15 +91,20 @@ const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
   const mode = params.shellFrontendMode ?? 'legacy'
   if (mode === 'legacy') {
-    return lowerLegacyShellEffectPlan(params)
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
   }
   if (mode === 'shadow') {
-    try {
-      parseMvdanShell(params.command)
-    } catch {
-      // Candidate failure is telemetry only and must not replace the legacy plan.
-    }
-    return lowerLegacyShellEffectPlan(params)
+    // The mvdan artifact is not shipped yet. Never relabel a second legacy lowering as mvdan:
+    // shadow work must remain observational and must not consume the canonical deadline first.
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
   if (mode === 'mvdan') {
@@ -106,14 +112,19 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
   }
   return selectCanonicalEffectPlan({
     mode,
-    legacy: lowerLegacyShellEffectPlan(params),
+    legacy: lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    }),
     mvdan,
     withDisagreement: appendParserDisagreement,
   })
 }
 
 function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
-  const context: LowerContext = { ...params, depth: 0 }
+  const effectManifestAudits: EffectManifestAuditV1[] = []
+  const context: LowerContext = { ...params, depth: 0, effectManifestAudits }
   const segments = lowerTopLevelSegments(params.command, context)
   const lexed = lexShell(params.command)
   const structuralCommand = maskHeredocBodies(params.command, lexed.heredocs)
@@ -121,6 +132,7 @@ function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectP
     inputFingerprint: params.inputFingerprint,
     segments,
     signals: pipeToShell(structuralCommand) ? ['pipe_to_shell'] : [],
+    effectManifestAudits,
   })
 }
 
@@ -326,7 +338,8 @@ function lowerSegment(
     stripStructuredRedirects(lexed.tokens),
     stripRedirects(parsedTokens),
   )
-  const head = path.basename(tokens[0] ?? parsed.head)
+  const invocationHead = tokens[0] ?? parsed.head
+  const head = path.basename(invocationHead)
   let opacity = segmentOpacity(command)
   const signals = new Set<string>()
   const requirements: ShellEffectRequirement[] = []
@@ -657,6 +670,36 @@ function lowerSegment(
       })
       let loweredArgvDelegate = false
       if (isGrammarUnknownOnly(processRequirements, head)) {
+        const manifestApplied = applyEffectManifest({
+          repoRoot: context.repoRoot,
+          cwd: context.cwd,
+          pathEnv: env.PATH ?? process.env.PATH ?? '',
+          invocationHead,
+          decoderHead: head,
+          argv: tokens,
+          requirements: processRequirements,
+          segmentCompleteness:
+            lexComplete && opacity !== 'unparseable' && opacity !== 'opaque'
+              ? 'complete'
+              : 'partial',
+          role: context.effectManifestRole ?? 'canonical',
+          frontendId: context.effectManifestFrontendId ?? 'legacy-v1',
+          trustRecord: null,
+          belayConfig: context.belayConfig,
+          effectManifestAnalysisDeadlineMs: context.effectManifestAnalysisDeadlineMs,
+        })
+        for (const signal of manifestApplied.telemetrySignals) {
+          signals.add(signal)
+        }
+        if (manifestApplied.audit) {
+          context.effectManifestAudits?.push(manifestApplied.audit)
+        }
+        if (manifestApplied.matched) {
+          requirements.push(...manifestApplied.requirements)
+          loweredArgvDelegate = true
+        }
+      }
+      if (isGrammarUnknownOnly(processRequirements, head) && !loweredArgvDelegate) {
         const argvDelegate = peelArgvDelegateArgv(tokens)
         if (
           argvDelegate &&

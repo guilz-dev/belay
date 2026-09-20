@@ -2,9 +2,9 @@
 
 ## Status
 
-Approved for design documentation on 2026-09-19. This document defines the architecture and
-security contract only. It does not authorize implementation, dependency installation, release,
-or rollout.
+Approved on 2026-09-19 and implemented for the legacy frontend in PR #144. This document defines
+the architecture and security contract. Mvdan authority remains fail-closed until its separately
+pinned parser artifact is shipped; shadow mode must not relabel legacy output as an mvdan result.
 
 ## Goal
 
@@ -397,7 +397,8 @@ Without `--llm`, the inferencer writes an exact matcher and either a statically 
 an `indeterminate` contract requiring manual completion. With `--llm`, it may use an already
 configured provider only for this explicit CLI operation. The request uses existing secret
 scrubbing, bounded inputs, and an output JSON schema. No provider configuration or network access is
-created implicitly.
+created implicitly. The transport must be text-only: configured HTTP endpoints are supported, while
+native agent CLIs are rejected because they cannot enforce the inferencer's static-source boundary.
 
 Model output is always a candidate. The decoder rejects invented actions, resource kinds, matcher
 forms, or unknown fields. A model cannot set `assertion`, create trust, or upgrade evidence to
