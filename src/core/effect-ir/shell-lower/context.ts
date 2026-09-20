@@ -19,7 +19,6 @@ export interface LowerShellEffectPlanParams {
   /** Per-frontend manifest authority; default canonical. */
   effectManifestRole?: EffectManifestApplicationRole
   effectManifestFrontendId?: EffectManifestFrontendId
-  effectManifestGateConsumptionEnabled?: boolean
   /** When elapsed, manifest gate work is skipped (fail-closed). */
   effectManifestAnalysisDeadlineMs?: number
 }

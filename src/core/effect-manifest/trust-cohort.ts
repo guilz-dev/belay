@@ -1,23 +1,29 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 import { repoLocalStateDirFor } from '../../config-io.js'
 import type { BelayConfigV4 } from '../config.js'
 import { canonicalStringify, hashValue } from '../fingerprint.js'
+import { canonicalPath } from '../path-utils.js'
 import { ruleFingerprint } from './codec.js'
 import { commandIdentityFingerprint } from './command-identity.js'
 import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import { readEffectManifestFromPath } from './load-manifest-sync.js'
+import { readEffectManifestTrustFromPathSync } from './load-trust-sync.js'
 import { manifestFilePath } from './paths.js'
 import { effectManifestTrustDir } from './trust-store.js'
-import type { EffectManifestTrustRecordV1 } from './types.js'
-import { ruleIsTrustEligible } from './validate.js'
+import { manifestAuthorityIssues, ruleIsTrustEligible } from './validate.js'
 
 export function collectActiveEffectManifestRuleFingerprints(
   repoRoot: string,
   config: BelayConfigV4,
 ): string[] {
-  const trustDir = effectManifestTrustDir(config, repoLocalStateDirFor(repoRoot, config))
+  const canonicalRepoRoot = canonicalPath(repoRoot)
+  const trustDir = effectManifestTrustDir(
+    config,
+    repoLocalStateDirFor(canonicalRepoRoot, config),
+    canonicalRepoRoot,
+  )
   if (!existsSync(trustDir)) {
     return []
   }
@@ -27,18 +33,15 @@ export function collectActiveEffectManifestRuleFingerprints(
       continue
     }
     try {
-      const raw = JSON.parse(
-        readFileSync(path.join(trustDir, entry), 'utf8'),
-      ) as EffectManifestTrustRecordV1
-      if (
-        raw.schemaVersion !== 1 ||
-        raw.repoRoot !== repoRoot ||
-        !Array.isArray(raw.trustedRules)
-      ) {
+      const raw = readEffectManifestTrustFromPathSync(path.join(trustDir, entry))
+      if (!raw || raw.repoRoot !== canonicalRepoRoot) {
         continue
       }
       const manifest = readEffectManifestFromPath(raw.manifestPath)
       if (!manifest) {
+        continue
+      }
+      if (manifestAuthorityIssues(manifest).length > 0) {
         continue
       }
       if (verifyStoredExecutableIdentity(manifest.command) !== 'ok') {
@@ -47,7 +50,7 @@ export function collectActiveEffectManifestRuleFingerprints(
       if (commandIdentityFingerprint(manifest.command) !== raw.commandIdentityFingerprint) {
         continue
       }
-      const expectedManifestPath = manifestFilePath(repoRoot, manifest.command.basename)
+      const expectedManifestPath = manifestFilePath(canonicalRepoRoot, manifest.command.basename)
       if (path.resolve(raw.manifestPath) !== path.resolve(expectedManifestPath)) {
         continue
       }

@@ -45,13 +45,22 @@ if (!fixtureRule) {
   throw new Error('fixture rule missing')
 }
 
+function manifestConfig(repoRoot: string) {
+  return mergeConfig({
+    controlPlane: {
+      enabled: false,
+      configDir: path.join(os.tmpdir(), 'belay-test-control-plane', path.basename(repoRoot)),
+    },
+  })
+}
+
 describe('diagnoseEffectManifestHealth', () => {
   it('flags stale executable identity on disk', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-doctor-'))
     const bound = await bindManifestExecutableIdentity(repoRoot, manifestTemplate)
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'demo-tool')), { recursive: true })
     await writeFile(manifestFilePath(repoRoot, 'demo-tool'), JSON.stringify(bound))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const healthy = diagnoseEffectManifestHealth(repoRoot, config)
     expect(healthy.issues).toHaveLength(0)
 
@@ -65,7 +74,7 @@ describe('diagnoseEffectManifestHealth', () => {
     const bound = await bindManifestExecutableIdentity(repoRoot, manifestTemplate)
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'demo-tool')), { recursive: true })
     await writeFile(manifestFilePath(repoRoot, 'demo-tool'), JSON.stringify(bound))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(bound, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -74,7 +83,7 @@ describe('diagnoseEffectManifestHealth', () => {
         schemaVersion: 1,
         repoRoot,
         manifestPath: manifestFilePath(repoRoot, 'demo-tool'),
-        commandIdentityFingerprint: 'stale-fingerprint',
+        commandIdentityFingerprint: 'b'.repeat(64),
         trustedRules: [{ id: 'r1', ruleFingerprint: ruleFp, trustedAt: '2026-09-19T00:00:00Z' }],
       },
     )

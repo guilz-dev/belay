@@ -36,6 +36,11 @@ authorization model. It complements
 - **Benign probe core** — A test-only command fixture used to generate false-positive probes and
   structural availability expectations. It never grants runtime authority; only the resulting
   `EffectPlan` and PolicyEngine projection can authorize a shell action.
+- **Trusted effect-manifest rule** — An operator assertion, bound to one checkout, executable (and
+  script interpreter), exact typed argv language, and fixed effect contract, that the declared
+  effects are a reusable complete upper bound. It supplies semantic requirements to `EffectPlan`;
+  it never supplies an allow disposition. Candidate files are repository-local, while rule trust
+  is stored in the user control plane. See [the operator guide](./effect-manifests.md).
 
 ## Invariants
 

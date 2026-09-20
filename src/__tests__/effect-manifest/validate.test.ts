@@ -62,4 +62,85 @@ describe('validateEffectManifestDocument', () => {
     expect(staleReport.trustEligibleRuleIds).toContain('r1')
     expect(fingerprint).not.toBe(ruleFingerprint(manifest, rule))
   })
+
+  it('rejects overlapping matcher languages, not just identical syntax', () => {
+    const rule = manifest.rules[0]
+    if (!rule) {
+      throw new Error('rule missing')
+    }
+    const report = validateEffectManifestDocument(
+      {
+        ...manifest,
+        rules: [
+          rule,
+          {
+            ...rule,
+            id: 'r2',
+            matcher: { argv: [{ kind: 'enum', name: 'command', values: ['status', 'show'] }] },
+            contract: {
+              processOperation: 'inspect',
+              effects: [
+                {
+                  tag: 'process.exec',
+                  action: 'process.exec',
+                  resource: {
+                    kind: 'executable',
+                    command: `\${command}`,
+                    operation: 'inspect',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      '/repo',
+    )
+    expect(report.ok).toBe(false)
+    expect(report.issues.some((issue) => issue.code === 'matcher_overlap')).toBe(true)
+    expect(report.trustEligibleRuleIds).toEqual([])
+  })
+
+  it('rejects unused captures and broad leading token captures', () => {
+    const rule = manifest.rules[0]
+    if (!rule) {
+      throw new Error('rule missing')
+    }
+    const unused = validateEffectManifestDocument(
+      {
+        ...manifest,
+        rules: [{ ...rule, matcher: { argv: [{ kind: 'path', name: 'target' }] } }],
+      },
+      '/repo',
+    )
+    expect(unused.issues.some((issue) => issue.code === 'unused_capture')).toBe(true)
+
+    const broad = validateEffectManifestDocument(
+      {
+        ...manifest,
+        rules: [
+          {
+            ...rule,
+            matcher: { argv: [{ kind: 'token', name: 'anything' }] },
+            contract: {
+              processOperation: 'inspect',
+              effects: [
+                {
+                  tag: 'process.exec',
+                  action: 'process.exec',
+                  resource: {
+                    kind: 'executable',
+                    command: `\${anything}`,
+                    operation: 'inspect',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      '/repo',
+    )
+    expect(broad.issues.some((issue) => issue.code === 'broad_token_capture')).toBe(true)
+  })
 })

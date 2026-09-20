@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { repoLocalStateDirFor } from '../../config-io.js'
 import { mergeConfig } from '../../core/config.js'
@@ -16,6 +16,7 @@ import {
   effectManifestTrustRecordPath,
   saveEffectManifestTrustRecord,
 } from '../../core/effect-manifest/trust-store.js'
+import type { EffectManifestV1 } from '../../core/effect-manifest/types.js'
 import { bindManifestExecutableIdentity } from './test-executable.js'
 
 const manifestFixture = {
@@ -49,10 +50,7 @@ if (!fixtureRule) {
   throw new Error('manifest fixture rule missing')
 }
 
-async function writeBoundManifest(
-  repoRoot: string,
-  manifest: typeof manifestFixture = manifestFixture,
-) {
+async function writeBoundManifest(repoRoot: string, manifest: EffectManifestV1 = manifestFixture) {
   const bound = await bindManifestExecutableIdentity(repoRoot, manifest)
   await mkdir(path.dirname(manifestFilePath(repoRoot, bound.command.basename)), { recursive: true })
   await writeFile(manifestFilePath(repoRoot, bound.command.basename), JSON.stringify(bound))
@@ -72,17 +70,14 @@ async function withBinOnPath<T>(repoRoot: string, run: () => Promise<T> | T): Pr
 
 function manifestGateParams(
   repoRoot: string,
-  params: Omit<
-    Parameters<typeof applyEffectManifest>[0],
-    'repoRoot' | 'cwd' | 'pathEnv' | 'gateConsumptionEnabled'
-  > & { gateConsumptionEnabled?: boolean },
+  params: Omit<Parameters<typeof applyEffectManifest>[0], 'repoRoot' | 'cwd' | 'pathEnv'>,
 ) {
   const binDir = path.join(repoRoot, 'bin')
   return {
     repoRoot,
     cwd: repoRoot,
     pathEnv: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-    gateConsumptionEnabled: params.gateConsumptionEnabled ?? true,
+    belayConfig: manifestConfig(repoRoot),
     ...params,
   }
 }
@@ -96,15 +91,26 @@ function lowerWithManifestGate(
     ...params,
     cwd: params.cwd ?? repoRoot,
     belayConfig: config,
-    effectManifestGateConsumptionEnabled: true,
+  })
+}
+
+function manifestConfig(repoRoot: string) {
+  return mergeConfig({
+    controlPlane: {
+      enabled: false,
+      configDir: path.join(os.tmpdir(), 'belay-test-control-plane', path.basename(repoRoot)),
+    },
   })
 }
 
 describe('applyEffectManifest', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
   it('replaces grammar_unknown only for trusted rules on canonical role', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -142,10 +148,92 @@ describe('applyEffectManifest', () => {
     expect(applied.audit?.outcome).toBe('matched')
   })
 
+  it('instantiates typed captures and resolves relative paths against the segment cwd', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-capture-'))
+    const actionCwd = path.join(repoRoot, 'nested')
+    await mkdir(actionCwd)
+    const capturedManifest: EffectManifestV1 = {
+      ...manifestFixture,
+      rules: [
+        {
+          ...fixtureRule,
+          id: 'captured-path',
+          matcher: {
+            argv: [
+              { kind: 'literal', value: 'write' },
+              { kind: 'path', name: 'target' },
+            ],
+          },
+          contract: {
+            processOperation: 'inspect',
+            effects: [
+              {
+                tag: 'fs.write',
+                action: 'fs.write',
+                resource: { kind: 'path', path: `\${target}` },
+              },
+            ],
+          },
+        },
+      ],
+    }
+    const manifest = await writeBoundManifest(repoRoot, capturedManifest)
+    const rule = manifest.rules[0]
+    if (!rule) {
+      throw new Error('rule missing')
+    }
+    const config = manifestConfig(repoRoot)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(
+        config,
+        repoLocalStateDirFor(repoRoot, config),
+        repoRoot,
+        manifest.command.canonicalPath,
+      ),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
+        trustedRules: [
+          {
+            id: rule.id,
+            ruleFingerprint: ruleFingerprint(manifest, rule),
+            trustedAt: '2026-09-19T00:00:00Z',
+          },
+        ],
+      },
+    )
+    const base = unsupportedProcess(
+      'unknown-cli',
+      'unknown-cli write output.txt',
+      'process.grammar_unknown',
+    )
+    const applied = applyEffectManifest({
+      ...manifestGateParams(repoRoot, {
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
+        argv: ['unknown-cli', 'write', 'output.txt'],
+        requirements: base,
+        segmentCompleteness: 'complete',
+        role: 'canonical',
+        trustRecord: null,
+      }),
+      cwd: actionCwd,
+    })
+    expect(applied.matched).toBe(true)
+    expect(applied.requirements).toContainEqual(
+      expect.objectContaining({
+        action: 'fs.write',
+        resource: { kind: 'path', path: path.join(actionCwd, 'output.txt') },
+      }),
+    )
+  })
+
   it('does not replace requirements in telemetry-only role', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-telemetry-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -227,7 +315,7 @@ describe('applyEffectManifest', () => {
   it('refuses trusted rules when executable identity no longer matches', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-identity-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -259,10 +347,10 @@ describe('applyEffectManifest', () => {
     expect(applied.audit?.reason).toBe('executable_identity_mismatch')
   })
 
-  it('does not apply trusted rules when gate consumption is disabled', async () => {
+  it('uses trusted rules without a separate configuration switch', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-gate-off-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -287,11 +375,50 @@ describe('applyEffectManifest', () => {
         segmentCompleteness: 'complete',
         role: 'canonical',
         trustRecord: null,
-        gateConsumptionEnabled: false,
+      }),
+    )
+    expect(applied.matched).toBe(true)
+    expect(applied.requirements).not.toEqual(base)
+  })
+
+  it('fails closed when the deadline expires during identity work', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-mid-deadline-'))
+    const manifest = await writeBoundManifest(repoRoot)
+    const config = manifestConfig(repoRoot)
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, manifest.command.canonicalPath),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
+        trustedRules: [
+          {
+            id: 'argv-test',
+            ruleFingerprint: ruleFingerprint(manifest, fixtureRule),
+            trustedAt: '2026-09-19T00:00:00Z',
+          },
+        ],
+      },
+    )
+    vi.spyOn(Date, 'now').mockReturnValueOnce(99).mockReturnValue(101)
+    const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
+    const applied = applyEffectManifest(
+      manifestGateParams(repoRoot, {
+        invocationHead: 'unknown-cli',
+        decoderHead: 'unknown-cli',
+        argv: ['unknown-cli', 'status'],
+        requirements: base,
+        segmentCompleteness: 'complete',
+        role: 'canonical',
+        trustRecord: null,
+        effectManifestAnalysisDeadlineMs: 100,
       }),
     )
     expect(applied.matched).toBe(false)
     expect(applied.requirements).toEqual(base)
+    expect(applied.audit?.reason).toBe('deadline_exceeded')
   })
 
   it('rejects trusted rules when invocation resolves to a different executable', async () => {
@@ -300,7 +427,7 @@ describe('applyEffectManifest', () => {
     const evilDir = path.join(repoRoot, 'evil')
     await mkdir(evilDir, { recursive: true })
     await writeFile(path.join(evilDir, 'unknown-cli'), 'evil\n', { mode: 0o755 })
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -381,12 +508,13 @@ describe('effect manifest shell frontend modes', () => {
       shellFrontendMode: 'shadow',
     })
     expect(collectRequirements(shadow.root)).toEqual(collectRequirements(legacy.root))
+    expect(legacy.effectManifestAudits?.[0]?.reason).toBe('no_manifest')
   })
 
   it('applies manifest in legacy mode lowering', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-legacy-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -423,10 +551,126 @@ describe('effect manifest shell frontend modes', () => {
     expect(plan.effectManifestAudits?.[0]?.outcome).toBe('matched')
   })
 
-  it('keeps shadow candidate manifest telemetry off the canonical plan', async () => {
+  it('uses the command-local PATH when resolving executable identity', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-local-path-'))
+    const manifest = await writeBoundManifest(repoRoot)
+    const evilDir = path.join(repoRoot, 'evil-bin')
+    await mkdir(evilDir)
+    await writeFile(path.join(evilDir, 'unknown-cli'), 'evil\n', { mode: 0o755 })
+    const config = manifestConfig(repoRoot)
+    const stateDir = repoLocalStateDirFor(repoRoot, config)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(config, stateDir, repoRoot, manifest.command.canonicalPath),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
+        trustedRules: [
+          {
+            id: 'argv-test',
+            ruleFingerprint: ruleFingerprint(manifest, fixtureRule),
+            trustedAt: '2026-09-19T00:00:00Z',
+          },
+        ],
+      },
+    )
+
+    const plan = lowerWithManifestGate(
+      repoRoot,
+      {
+        cwd: repoRoot,
+        repoRoot,
+        inputFingerprint: 'fp',
+        command: `PATH=${evilDir} unknown-cli status`,
+        shellFrontendMode: 'legacy',
+        env: { PATH: `${path.join(repoRoot, 'bin')}${path.delimiter}${process.env.PATH ?? ''}` },
+      },
+      config,
+    )
+    expect(
+      collectRequirements(plan.root).some((entry) =>
+        entry.evidence.signals.includes('process.grammar_unknown'),
+      ),
+    ).toBe(true)
+    expect(plan.effectManifestAudits?.[0]?.reason).toBe('invocation_identity_mismatch')
+  })
+
+  it('resolves relative effect paths against a cwd changed by an earlier segment', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-segment-cwd-'))
+    const nested = path.join(repoRoot, 'nested')
+    await mkdir(nested)
+    const withWrite: EffectManifestV1 = {
+      ...manifestFixture,
+      rules: [
+        {
+          ...fixtureRule,
+          contract: {
+            processOperation: 'inspect',
+            effects: [
+              {
+                tag: 'fs.write',
+                action: 'fs.write',
+                resource: { kind: 'path', path: 'output.txt' },
+              },
+            ],
+          },
+        },
+      ],
+    }
+    const manifest = await writeBoundManifest(repoRoot, withWrite)
+    const rule = manifest.rules[0]
+    if (!rule) {
+      throw new Error('rule missing')
+    }
+    const config = manifestConfig(repoRoot)
+    await saveEffectManifestTrustRecord(
+      effectManifestTrustRecordPath(
+        config,
+        repoLocalStateDirFor(repoRoot, config),
+        repoRoot,
+        manifest.command.canonicalPath,
+      ),
+      {
+        schemaVersion: 1,
+        repoRoot,
+        manifestPath: manifestFilePath(repoRoot, 'unknown-cli'),
+        commandIdentityFingerprint: commandIdentityFingerprint(manifest.command),
+        trustedRules: [
+          {
+            id: rule.id,
+            ruleFingerprint: ruleFingerprint(manifest, rule),
+            trustedAt: '2026-09-19T00:00:00Z',
+          },
+        ],
+      },
+    )
+
+    const plan = await withBinOnPath(repoRoot, () =>
+      lowerWithManifestGate(
+        repoRoot,
+        {
+          cwd: repoRoot,
+          repoRoot,
+          inputFingerprint: 'fp',
+          command: 'cd nested && unknown-cli status',
+          shellFrontendMode: 'legacy',
+        },
+        config,
+      ),
+    )
+    expect(collectRequirements(plan.root)).toContainEqual(
+      expect.objectContaining({
+        action: 'fs.write',
+        resource: { kind: 'path', path: path.join(nested, 'output.txt') },
+      }),
+    )
+  })
+
+  it('does not relabel legacy manifest work as an unavailable mvdan shadow candidate', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-shadow-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -470,13 +714,16 @@ describe('effect manifest shell frontend modes', () => {
     )
     expect(collectRequirements(shadow.root)).toEqual(collectRequirements(legacy.root))
     expect(shadow.signals).toContain('effect_manifest.matched')
-    expect(shadow.signals).toContain('effect_manifest.shadow_candidate_matched')
+    expect(shadow.signals).not.toContain('effect_manifest.shadow_candidate_matched')
+    expect(shadow.effectManifestAudits?.every((audit) => audit.frontendId === 'legacy-v1')).toBe(
+      true,
+    )
   })
 
   it('records canary disagreement when legacy resolves a trusted manifest but mvdan does not', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-canary-'))
     const manifest = await writeBoundManifest(repoRoot)
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(
@@ -534,7 +781,7 @@ describe('effect manifest shell frontend modes', () => {
     const evilDir = path.join(repoRoot, 'evil')
     await mkdir(evilDir, { recursive: true })
     await writeFile(path.join(evilDir, 'unknown-cli'), 'evil\n', { mode: 0o755 })
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const stateDir = repoLocalStateDirFor(repoRoot, config)
     const ruleFp = ruleFingerprint(manifest, fixtureRule)
     await saveEffectManifestTrustRecord(

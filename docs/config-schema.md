@@ -67,6 +67,15 @@ events and repeated deliveries to the effective owner remain separate hook proce
 When dogfood is active, the blocking release check applies Cursor routing-health diagnostics to the
 current repository and initialized linked worktrees and reports `hook_routing_skew` on failure.
 
+## Trusted effect-manifest state
+
+Trusted effect manifests add no config flag or migration. A repository-local candidate at
+`.belay/manifests/<basename>.json` becomes decoder authority only after an operator trusts an
+individual rule. The corresponding trust record is stored under
+`<configuredControlPlaneDir>/effect-manifest-trust/` regardless of `controlPlane.enabled`; it is
+never moved into repository-local adapter state. Active trusted-rule fingerprints participate in
+the decision cohort. See [Trusted effect manifests](./effect-manifests.md).
+
 ## `judge` (Tier1 provider)
 
 Terminology: **provider** = 社名・サービス名 (judge.providerId); **driver** = API

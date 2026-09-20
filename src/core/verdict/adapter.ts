@@ -1,8 +1,8 @@
+import { GATE_LATENCY_BUDGET } from '../../corpus/gate-latency-budget.js'
 import {
   BOUNDARY_PROFILE_L3_L4_ONLY,
   resolveBoundaryProfile,
 } from '../capability/boundary-profile.js'
-import { GATE_LATENCY_BUDGET } from '../../corpus/gate-latency-budget.js'
 import type { BelayConfigV4 } from '../config.js'
 import { effectPlanAuditFields } from '../effect-ir/audit.js'
 import type { ClassifierOptions, ClassifyResult } from '../types.js'

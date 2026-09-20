@@ -1,23 +1,24 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 import { loadConfigFile, repoLocalStateDirFor } from '../config-io.js'
 import type { BelayConfigV3 } from '../core/config.js'
-import {
-  manifestFingerprint,
-  parseEffectManifestV1,
-  ruleFingerprint,
-} from '../core/effect-manifest/codec.js'
+import { manifestFingerprint, ruleFingerprint } from '../core/effect-manifest/codec.js'
 import { commandIdentityFingerprint } from '../core/effect-manifest/command-identity.js'
-import { resolveNativeExecutableIdentity } from '../core/effect-manifest/executable-identity.js'
 import {
-  appendCandidateRule,
-  buildCandidateRule,
-  parseStoredManifest,
-} from '../core/effect-manifest/infer.js'
+  resolveNativeExecutableIdentity,
+  verifyStoredExecutableIdentity,
+} from '../core/effect-manifest/executable-identity.js'
+import { appendCandidateRule, buildCandidateRule } from '../core/effect-manifest/infer.js'
 import { invocationMatchesManifestCommand } from '../core/effect-manifest/invocation-identity.js'
-import { loadEffectManifestSync } from '../core/effect-manifest/load-manifest-sync.js'
+import {
+  inferManifestContractWithLlm,
+  type ManifestLlmDependencies,
+} from '../core/effect-manifest/llm-infer.js'
+import {
+  loadEffectManifestSync,
+  readEffectManifestFromPath,
+} from '../core/effect-manifest/load-manifest-sync.js'
 import { loadEffectManifestTrustSync } from '../core/effect-manifest/load-trust-sync.js'
 import { manifestFilePath, normalizeManifestBasename } from '../core/effect-manifest/paths.js'
 import {
@@ -27,10 +28,12 @@ import {
 } from '../core/effect-manifest/trust-store.js'
 import type { EffectManifestV1 } from '../core/effect-manifest/types.js'
 import {
+  manifestAuthorityIssues,
   ruleIsTrustEligible,
   validateEffectManifestDocument,
 } from '../core/effect-manifest/validate.js'
 import { writeEffectManifestAtomic } from '../core/effect-manifest/write-manifest.js'
+import { canonicalPath } from '../core/path-utils.js'
 import { tokenizeShell } from '../core/shell-tokenizer.js'
 import { PACKAGE_VERSION } from '../version.js'
 
@@ -42,14 +45,16 @@ export interface ManifestCommandOptions {
   ruleId?: string
   inferArgv?: string[]
   commandText?: string
+  /** Test seam; production uses the already configured judge provider. */
+  llmDependencies?: ManifestLlmDependencies
 }
 
 function resolveRoots(options: ManifestCommandOptions): {
   repoRoot: string
   actionCwd: string
 } {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const actionCwd = path.resolve(options.actionCwd ?? repoRoot)
+  const repoRoot = canonicalPath(options.targetDir ?? process.cwd())
+  const actionCwd = canonicalPath(options.actionCwd ?? repoRoot)
   return { repoRoot, actionCwd }
 }
 
@@ -63,11 +68,6 @@ function parseInvocation(commandText: string): { head: string; argv: string[] } 
     return null
   }
   return { head, argv }
-}
-
-function loadManifestFile(repoRoot: string, basename: string): EffectManifestV1 | null {
-  const loaded = loadEffectManifestSync(repoRoot, basename)
-  return loaded.ok ? loaded.manifest : null
 }
 
 function identitiesMatch(
@@ -90,6 +90,13 @@ function activelyTrustedRuleIds(
   if (path.resolve(record.manifestPath) !== path.resolve(expectedPath)) {
     return new Set()
   }
+  if (
+    record.commandIdentityFingerprint !== commandIdentityFingerprint(manifest.command) ||
+    verifyStoredExecutableIdentity(manifest.command) !== 'ok' ||
+    manifestAuthorityIssues(manifest).length > 0
+  ) {
+    return new Set()
+  }
   const trusted = new Set<string>()
   for (const rule of manifest.rules) {
     if (!ruleIsTrustEligible(rule)) {
@@ -110,13 +117,6 @@ function activelyTrustedRuleIds(
 export async function manifestInferProject(options: ManifestCommandOptions) {
   const { repoRoot, actionCwd } = resolveRoots(options)
   const config = await loadConfigFile(repoRoot)
-  if (options.llm) {
-    return {
-      ok: false as const,
-      error: 'llm_assisted_inference_unavailable',
-      message: 'LLM-assisted manifest inference is not available in this build.',
-    }
-  }
   const argv = options.inferArgv ?? []
   if (argv.length === 0) {
     return {
@@ -150,13 +150,42 @@ export async function manifestInferProject(options: ManifestCommandOptions) {
     }
   }
   const tailArgv = argv.slice(1)
-  const candidate = buildCandidateRule(tailArgv)
+  let candidate = buildCandidateRule(tailArgv)
+  if (options.llm) {
+    const assisted = await inferManifestContractWithLlm(
+      {
+        commandBasename: identity.basename,
+        canonicalPath: identity.canonicalPath,
+        argv: tailArgv,
+      },
+      repoRoot,
+      config,
+      options.llmDependencies,
+    )
+    if (!assisted.ok) {
+      return {
+        ok: false as const,
+        error: assisted.error,
+        message: `LLM-assisted inference failed closed: ${assisted.error}.`,
+      }
+    }
+    candidate = {
+      ...candidate,
+      contract: assisted.contract,
+      inference: {
+        ...candidate.inference,
+        method: 'llm-assisted',
+        model: assisted.model,
+        warnings: [
+          'Model output is an untrusted candidate. Verify the complete upper bound before trusting.',
+        ],
+      },
+    }
+  }
   const filePath = manifestFilePath(repoRoot, basename)
-  const existingRaw = existsSync(filePath)
-    ? (JSON.parse(await readFile(filePath, 'utf8')) as unknown)
-    : null
-  const existing = existingRaw ? parseStoredManifest(existingRaw) : null
-  if (existingRaw && !existing) {
+  const hasExisting = existsSync(filePath)
+  const existing = hasExisting ? readEffectManifestFromPath(filePath) : null
+  if (hasExisting && !existing) {
     return {
       ok: false as const,
       error: 'schema_invalid',
@@ -222,8 +251,7 @@ export async function manifestListProject(options: ManifestCommandOptions) {
         continue
       }
       const filePath = path.join(dir, name)
-      const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
-      const manifest = parseEffectManifestV1(raw)
+      const manifest = readEffectManifestFromPath(filePath)
       if (!manifest) {
         continue
       }
@@ -253,25 +281,46 @@ export async function manifestShowProject(options: ManifestCommandOptions) {
       message: 'Command basename is not eligible for effect manifests.',
     }
   }
-  const manifest = loadManifestFile(repoRoot, basename)
-  if (!manifest) {
+  const loaded = loadEffectManifestSync(repoRoot, basename)
+  if (!loaded.ok) {
     return {
       ok: false as const,
-      error: 'no_manifest',
-      message: `No manifest for ${basename}.`,
+      error: loaded.reason,
+      message:
+        loaded.reason === 'no_manifest'
+          ? `No manifest for ${basename}.`
+          : `Manifest for ${basename} is unavailable: ${loaded.reason}.`,
     }
   }
+  const manifest = loaded.manifest
   const trust = loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath, config)
+  const identityStatus = verifyStoredExecutableIdentity(manifest.command)
+  const authorityValid = manifestAuthorityIssues(manifest).length === 0
+  const trustRecordCurrent =
+    trust !== null &&
+    trust.commandIdentityFingerprint === commandIdentityFingerprint(manifest.command) &&
+    path.resolve(trust.manifestPath) ===
+      path.resolve(manifestFilePath(repoRoot, manifest.command.basename))
   const rules = manifest.rules.map((rule) => {
     const fingerprint = ruleFingerprint(manifest, rule)
-    const trusted = trust?.trustedRules.find(
-      (entry) => entry.id === rule.id && entry.ruleFingerprint === fingerprint,
-    )
+    const trustEntry = trust?.trustedRules.find((entry) => entry.id === rule.id)
+    const trustStatus = !trustEntry
+      ? ('missing' as const)
+      : !authorityValid
+        ? ('invalid' as const)
+        : identityStatus !== 'ok' ||
+            !trustRecordCurrent ||
+            trustEntry.ruleFingerprint !== fingerprint
+          ? ('stale' as const)
+          : ruleIsTrustEligible(rule)
+            ? ('trusted' as const)
+            : ('invalid' as const)
     return {
       id: rule.id,
       ruleFingerprint: fingerprint,
-      trusted: Boolean(trusted) && ruleIsTrustEligible(rule),
-      trustedAt: trusted?.trustedAt,
+      trusted: trustStatus === 'trusted',
+      trust: trustStatus,
+      trustedAt: trustEntry?.trustedAt,
       matcher: rule.matcher,
       contract: rule.contract,
     }
@@ -282,6 +331,7 @@ export async function manifestShowProject(options: ManifestCommandOptions) {
     manifestPath: manifestFilePath(repoRoot, basename),
     manifestFingerprint: manifestFingerprint(manifest),
     command: manifest.command,
+    identityStatus,
     fallback: manifest.fallback,
     rules,
   }
@@ -309,8 +359,18 @@ export async function manifestValidateProject(options: ManifestCommandOptions) {
       message: `No manifest for ${basename}.`,
     }
   }
-  const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
-  const report = validateEffectManifestDocument(raw, repoRoot)
+  const loaded = loadEffectManifestSync(repoRoot, basename)
+  if (!loaded.ok) {
+    return {
+      ok: false as const,
+      repoRoot,
+      manifestPath: filePath,
+      issues: [{ code: loaded.reason, message: `Manifest could not be loaded: ${loaded.reason}.` }],
+      trustEligibleRuleIds: [],
+      manifestFingerprint: undefined,
+    }
+  }
+  const report = validateEffectManifestDocument(loaded.manifest, repoRoot)
   return {
     ok: report.ok,
     repoRoot,
@@ -338,14 +398,18 @@ export async function manifestTrustProject(options: ManifestCommandOptions) {
       message: 'Command basename is not eligible for effect manifests.',
     }
   }
-  const manifest = loadManifestFile(repoRoot, basename)
-  if (!manifest) {
+  const loaded = loadEffectManifestSync(repoRoot, basename)
+  if (!loaded.ok) {
     return {
       ok: false as const,
-      error: 'no_manifest',
-      message: `No manifest for ${basename}.`,
+      error: loaded.reason,
+      message:
+        loaded.reason === 'no_manifest'
+          ? `No manifest for ${basename}.`
+          : `Manifest for ${basename} is unavailable: ${loaded.reason}.`,
     }
   }
+  const manifest = loaded.manifest
   if (
     !invocationMatchesManifestCommand(
       invocation.head,
@@ -361,10 +425,7 @@ export async function manifestTrustProject(options: ManifestCommandOptions) {
         'Command invocation does not resolve to the executable identity bound in the manifest.',
     }
   }
-  const validation = validateEffectManifestDocument(
-    JSON.parse(readFileSync(manifestFilePath(repoRoot, basename), 'utf8')) as unknown,
-    repoRoot,
-  )
+  const validation = validateEffectManifestDocument(manifest, repoRoot)
   if (!validation.ok || !validation.manifest) {
     return {
       ok: false as const,
@@ -408,7 +469,13 @@ export async function manifestTrustProject(options: ManifestCommandOptions) {
   const existing = await loadEffectManifestTrustRecord(recordPath)
   const fingerprint = ruleFingerprint(manifest, rule)
   const trustedAt = new Date().toISOString()
-  const trustedRules = (existing?.trustedRules ?? []).filter((entry) => entry.id !== rule.id)
+  const currentExisting =
+    existing?.repoRoot === repoRoot &&
+    path.resolve(existing.manifestPath) === path.resolve(manifestPath) &&
+    existing.commandIdentityFingerprint === commandIdentityFingerprint(manifest.command)
+      ? existing
+      : null
+  const trustedRules = (currentExisting?.trustedRules ?? []).filter((entry) => entry.id !== rule.id)
   trustedRules.push({ id: rule.id, ruleFingerprint: fingerprint, trustedAt })
   await saveEffectManifestTrustRecord(recordPath, {
     schemaVersion: 1,
@@ -448,14 +515,18 @@ export async function manifestRevokeProject(options: ManifestCommandOptions) {
       message: 'Command basename is not eligible for effect manifests.',
     }
   }
-  const manifest = loadManifestFile(repoRoot, basename)
-  if (!manifest) {
+  const loaded = loadEffectManifestSync(repoRoot, basename)
+  if (!loaded.ok) {
     return {
       ok: false as const,
-      error: 'no_manifest',
-      message: `No manifest for ${basename}.`,
+      error: loaded.reason,
+      message:
+        loaded.reason === 'no_manifest'
+          ? `No manifest for ${basename}.`
+          : `Manifest for ${basename} is unavailable: ${loaded.reason}.`,
     }
   }
+  const manifest = loaded.manifest
   const config = await loadConfigFile(repoRoot)
   const stateDir = repoLocalStateDirFor(repoRoot, config)
   const recordPath = effectManifestTrustRecordPath(
@@ -465,7 +536,12 @@ export async function manifestRevokeProject(options: ManifestCommandOptions) {
     manifest.command.canonicalPath,
   )
   const existing = await loadEffectManifestTrustRecord(recordPath)
-  if (!existing) {
+  if (
+    !existing ||
+    existing.repoRoot !== repoRoot ||
+    path.resolve(existing.manifestPath) !==
+      path.resolve(manifestFilePath(repoRoot, manifest.command.basename))
+  ) {
     return {
       ok: false as const,
       error: 'no_trust',
@@ -521,13 +597,11 @@ export function formatManifestShowResult(
   const lines = [
     `Manifest: ${result.manifestPath}`,
     `Fingerprint: ${result.manifestFingerprint}`,
-    `Executable: ${result.command.canonicalPath}`,
+    `Executable: ${result.command.canonicalPath} (${result.identityStatus})`,
     '',
   ]
   for (const rule of result.rules) {
-    lines.push(
-      `${rule.id}\t${rule.trusted ? 'trusted' : 'candidate'}\t${rule.ruleFingerprint.slice(0, 12)}…`,
-    )
+    lines.push(`${rule.id}\t${rule.trust}\t${rule.ruleFingerprint.slice(0, 12)}…`)
   }
   return lines.join('\n')
 }
@@ -550,7 +624,12 @@ export function formatManifestTrustResult(
   if (!result.ok) {
     return result.message
   }
-  return `${result.assertion}\nTrusted rule ${result.ruleId} (${result.ruleFingerprint.slice(0, 12)}…).`
+  return [
+    result.assertion,
+    `Matcher: ${JSON.stringify(result.matcher)}`,
+    `Effect contract: ${JSON.stringify(result.contract)}`,
+    `Trusted rule ${result.ruleId} (${result.ruleFingerprint.slice(0, 12)}…).`,
+  ].join('\n')
 }
 
 export function formatManifestRevokeResult(

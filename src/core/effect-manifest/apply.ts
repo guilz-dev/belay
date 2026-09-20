@@ -5,13 +5,15 @@ import { type BelayConfigV3, mergeConfig } from '../config.js'
 import type { ShellEffectRequirement } from '../effect-ir/shell-build.js'
 import { isGrammarUnknownOnly } from '../effect-ir/shell-lower/argv-delegate-gate.js'
 import { processRequirement } from '../effect-ir/shell-lower/requirement.js'
+import { canonicalPath } from '../path-utils.js'
 import { manifestFingerprint, ruleFingerprint } from './codec.js'
-import { validateManifestEffectTemplate } from './effect-template.js'
+import { commandIdentityFingerprint } from './command-identity.js'
+import { instantiateManifestEffectTemplate } from './effect-template.js'
 import { verifyStoredExecutableIdentity } from './executable-identity.js'
 import { invocationMatchesManifestCommand } from './invocation-identity.js'
 import { loadEffectManifestSync } from './load-manifest-sync.js'
 import { loadEffectManifestTrustSync } from './load-trust-sync.js'
-import { findUniqueMatchingRule } from './matcher.js'
+import { findUniqueMatchingRule, type ManifestCaptures } from './matcher.js'
 import { manifestFilePath, normalizeManifestBasename } from './paths.js'
 import type {
   EffectManifestApplicationRole,
@@ -19,7 +21,7 @@ import type {
   EffectManifestTrustRecordV1,
   EffectManifestV1,
 } from './types.js'
-import { ruleIsTrustEligible } from './validate.js'
+import { manifestAuthorityIssues, ruleIsTrustEligible } from './validate.js'
 
 const MANIFEST_EVIDENCE_BASIS = 'effect_manifest.trusted_complete_upper_bound'
 
@@ -46,8 +48,6 @@ export interface ApplyEffectManifestParams {
   role: EffectManifestApplicationRole
   frontendId?: EffectManifestAuditV1['frontendId']
   trustRecord: EffectManifestTrustRecordV1 | null
-  /** When false, canonical lowering ignores manifests; telemetry-only may still observe. */
-  gateConsumptionEnabled?: boolean
   belayConfig?: BelayConfigV3
   /** Wall-clock deadline; manifest work is skipped after this instant (fail-closed). */
   effectManifestAnalysisDeadlineMs?: number
@@ -71,8 +71,10 @@ function ruleContractIsRuntimeAuthoritative(rule: EffectManifestV1['rules'][numb
 
 function instantiateRequirements(
   rule: EffectManifestV1['rules'][number],
+  captures: ManifestCaptures,
   head: string,
   segment: string,
+  cwd: string,
 ): ShellEffectRequirement[] | null {
   if (!ruleContractIsRuntimeAuthoritative(rule)) {
     return null
@@ -86,14 +88,14 @@ function instantiateRequirements(
   }
   const effects: ShellEffectRequirement[] = []
   for (const template of rule.contract.effects) {
-    const validated = validateManifestEffectTemplate(template)
-    if (!validated.ok) {
+    const instantiated = instantiateManifestEffectTemplate(template, captures, cwd)
+    if (!instantiated.ok) {
       return null
     }
     effects.push({
       tag: template.tag as ShellEffectRequirement['tag'],
       action: template.action as ShellEffectRequirement['action'],
-      resource: validated.resource as ShellEffectRequirement['resource'],
+      resource: instantiated.resource as ShellEffectRequirement['resource'],
       evidence: {
         level: 'certain',
         signals: [MANIFEST_EVIDENCE_BASIS],
@@ -108,69 +110,44 @@ function instantiateRequirements(
   return [process, ...effects]
 }
 
-function loadTrustRecord(
+function ruleTrustStatus(
   manifest: EffectManifestV1,
   repoRoot: string,
   basename: string,
   trustRecord: EffectManifestTrustRecordV1 | null,
   belayConfig: BelayConfigV3,
-): EffectManifestTrustRecordV1 | null {
+  rule: EffectManifestV1['rules'][number] | null,
+): EffectManifestAuditV1['trust'] {
+  if (!rule) {
+    return 'missing'
+  }
   const record =
     trustRecord ??
     loadEffectManifestTrustSync(repoRoot, manifest.command.canonicalPath, belayConfig)
-  if (!record || record.repoRoot !== repoRoot) {
-    return null
+  if (!record) {
+    return 'missing'
+  }
+  if (record.repoRoot !== repoRoot) {
+    return 'invalid'
   }
   const expectedManifestPath = manifestFilePath(repoRoot, basename)
   if (path.resolve(record.manifestPath) !== path.resolve(expectedManifestPath)) {
-    return null
+    return 'invalid'
   }
-  return record
-}
-
-function trustedRule(
-  manifest: EffectManifestV1,
-  repoRoot: string,
-  basename: string,
-  trustRecord: EffectManifestTrustRecordV1 | null,
-  belayConfig: BelayConfigV3,
-  rule: EffectManifestV1['rules'][number],
-): boolean {
-  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord, belayConfig)
-  if (!record) {
-    return false
+  if (record.commandIdentityFingerprint !== commandIdentityFingerprint(manifest.command)) {
+    return 'stale'
   }
   const fingerprint = ruleFingerprint(manifest, rule)
-  return record.trustedRules.some(
-    (entry) => entry.id === rule.id && entry.ruleFingerprint === fingerprint,
-  )
-}
-
-function resolveTrustAudit(
-  manifest: EffectManifestV1,
-  repoRoot: string,
-  basename: string,
-  trustRecord: EffectManifestTrustRecordV1 | null,
-  belayConfig: BelayConfigV3,
-  matchedRule: EffectManifestV1['rules'][number] | null,
-): EffectManifestAuditV1['trust'] {
-  if (!matchedRule) {
-    return 'missing'
-  }
-  const record = loadTrustRecord(manifest, repoRoot, basename, trustRecord, belayConfig)
-  if (!record) {
-    return 'missing'
-  }
-  const fingerprint = ruleFingerprint(manifest, matchedRule)
-  const entry = record.trustedRules.find((item) => item.id === matchedRule.id)
+  const entry = record.trustedRules.find((item) => item.id === rule.id)
   if (!entry) {
     return 'missing'
   }
-  return entry.ruleFingerprint !== fingerprint ? 'stale' : 'missing'
+  return entry.ruleFingerprint !== fingerprint ? 'stale' : 'trusted'
 }
 
 export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEffectManifestResult {
   const belayConfig = params.belayConfig ?? mergeConfig({})
+  const repoRoot = canonicalPath(params.repoRoot)
   const basename = normalizeManifestBasename(params.invocationHead)
   const segment = params.requirements[0]?.provenance?.segment ?? params.invocationHead
   const baseAudit = (
@@ -185,8 +162,22 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     ...partial,
   })
 
-  const gateConsumptionEnabled = params.gateConsumptionEnabled === true
   const observabilityOnly = params.role === 'telemetry-only'
+
+  const deadlineExceeded = (): boolean =>
+    params.effectManifestAnalysisDeadlineMs !== undefined &&
+    Date.now() >= params.effectManifestAnalysisDeadlineMs
+
+  const deadlineResult = (): ApplyEffectManifestResult => ({
+    requirements: params.requirements,
+    audit: baseAudit({
+      trust: 'invalid',
+      outcome: 'unavailable',
+      reason: 'deadline_exceeded',
+    }),
+    telemetrySignals: [],
+    matched: false,
+  })
 
   if (
     params.segmentCompleteness !== 'complete' ||
@@ -196,15 +187,8 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     return { requirements: params.requirements, telemetrySignals: [], matched: false }
   }
 
-  if (!gateConsumptionEnabled && !observabilityOnly) {
-    return { requirements: params.requirements, telemetrySignals: [], matched: false }
-  }
-
-  if (
-    params.effectManifestAnalysisDeadlineMs !== undefined &&
-    Date.now() >= params.effectManifestAnalysisDeadlineMs
-  ) {
-    return { requirements: params.requirements, telemetrySignals: [], matched: false }
+  if (deadlineExceeded()) {
+    return deadlineResult()
   }
 
   if (!basename) {
@@ -221,7 +205,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
-  const loaded = loadEffectManifestSync(params.repoRoot, basename)
+  const loaded = loadEffectManifestSync(repoRoot, basename)
   if (!loaded.ok) {
     const unavailable = loaded.reason !== 'no_manifest'
     return {
@@ -238,6 +222,24 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   }
   const manifest = loaded.manifest
 
+  if (deadlineExceeded()) {
+    return deadlineResult()
+  }
+
+  if (manifestAuthorityIssues(manifest).length > 0) {
+    return {
+      requirements: params.requirements,
+      audit: baseAudit({
+        manifestFingerprint: manifestFingerprint(manifest),
+        trust: 'invalid',
+        outcome: 'unavailable',
+        reason: 'manifest_invalid',
+      }),
+      telemetrySignals: [],
+      matched: false,
+    }
+  }
+
   if (manifest.command.basename !== basename) {
     return {
       requirements: params.requirements,
@@ -253,6 +255,9 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
   }
 
   const identityStatus = verifyStoredExecutableIdentity(manifest.command)
+  if (deadlineExceeded()) {
+    return deadlineResult()
+  }
   if (identityStatus !== 'ok') {
     return {
       requirements: params.requirements,
@@ -265,7 +270,9 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
             ? 'executable_missing'
             : identityStatus === 'not_regular'
               ? 'executable_not_regular'
-              : 'executable_identity_mismatch',
+              : identityStatus === 'not_executable'
+                ? 'executable_not_executable'
+                : 'executable_identity_mismatch',
       }),
       telemetrySignals: [],
       matched: false,
@@ -293,33 +300,41 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
+  if (deadlineExceeded()) {
+    return deadlineResult()
+  }
+
   const fingerprint = manifestFingerprint(manifest)
   const argv = params.argv.slice(1)
-  const matchedRule = findUniqueMatchingRule(argv, manifest.rules)
-  const trusted = matchedRule
-    ? trustedRule(manifest, params.repoRoot, basename, params.trustRecord, belayConfig, matchedRule)
-    : false
-  if (!matchedRule || !trusted) {
+  const matched = findUniqueMatchingRule(argv, manifest.rules)
+  const trust = ruleTrustStatus(
+    manifest,
+    repoRoot,
+    basename,
+    params.trustRecord,
+    belayConfig,
+    matched?.rule ?? null,
+  )
+  if (deadlineExceeded()) {
+    return deadlineResult()
+  }
+  if (!matched || trust !== 'trusted') {
+    const unmatchedRule = matched?.rule ?? null
     return {
       requirements: params.requirements,
       audit: baseAudit({
         manifestFingerprint: fingerprint,
-        trust: resolveTrustAudit(
-          manifest,
-          params.repoRoot,
-          basename,
-          params.trustRecord,
-          belayConfig,
-          matchedRule ?? null,
-        ),
+        trust,
         outcome: 'unmatched',
-        reason: matchedRule ? 'rule_not_trusted' : 'no_rule_match',
-        ...(matchedRule ? { ruleId: matchedRule.id } : {}),
+        reason: unmatchedRule ? 'rule_not_trusted' : 'no_rule_match',
+        ...(unmatchedRule ? { ruleId: unmatchedRule.id } : {}),
       }),
       telemetrySignals: [],
       matched: false,
     }
   }
+
+  const matchedRule = matched.rule
 
   const ruleFp = ruleFingerprint(manifest, matchedRule)
   const audit: EffectManifestAuditV1 = baseAudit({
@@ -331,7 +346,7 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     reason: params.role === 'telemetry-only' ? 'shadow_candidate_match' : 'trusted_rule_match',
   })
 
-  if (!gateConsumptionEnabled || params.role === 'telemetry-only') {
+  if (params.role === 'telemetry-only') {
     return {
       requirements: params.requirements,
       audit,
@@ -340,7 +355,16 @@ export function applyEffectManifest(params: ApplyEffectManifestParams): ApplyEff
     }
   }
 
-  const instantiated = instantiateRequirements(matchedRule, params.decoderHead, segment)
+  const instantiated = instantiateRequirements(
+    matchedRule,
+    matched.captures,
+    params.decoderHead,
+    segment,
+    params.cwd,
+  )
+  if (deadlineExceeded()) {
+    return deadlineResult()
+  }
   if (!instantiated) {
     return {
       requirements: params.requirements,

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -15,6 +15,7 @@ import {
   effectManifestTrustRecordPath,
   saveEffectManifestTrustRecord,
 } from '../../core/effect-manifest/trust-store.js'
+import { canonicalPath } from '../../core/path-utils.js'
 import { bindManifestExecutableIdentity } from './test-executable.js'
 
 const manifestFixture = {
@@ -49,11 +50,26 @@ if (!fixtureRule) {
 }
 
 describe('loadEffectManifestTrustSync', () => {
-  it('reads trust from the control-plane dir when enabled in repo config', async () => {
+  it('never places trust in a repository-local configured control-plane directory', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-trust-local-'))
+    const config = mergeConfig({
+      controlPlane: { enabled: false, configDir: path.join(repoRoot, '.belay-control') },
+    })
+    const recordPath = effectManifestTrustRecordPath(
+      config,
+      repoLocalStateDirFor(repoRoot, config),
+      repoRoot,
+      path.join(repoRoot, 'bin', 'unknown-cli'),
+    )
+
+    expect(recordPath.startsWith(`${canonicalPath(repoRoot)}${path.sep}`)).toBe(false)
+  })
+
+  it('reads trust only from the out-of-repo control-plane dir even when disabled', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-trust-cp-'))
     const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cp-state-'))
     const repoConfig = mergeConfig({
-      controlPlane: { enabled: true, configDir: controlPlaneDir },
+      controlPlane: { enabled: false, configDir: controlPlaneDir },
     })
     const defaultConfig = mergeConfig({})
 
@@ -70,6 +86,8 @@ describe('loadEffectManifestTrustSync', () => {
       repoRoot,
       bound.command.canonicalPath,
     )
+    expect(recordPath.startsWith(canonicalPath(controlPlaneDir))).toBe(true)
+    expect(recordPath.startsWith(canonicalPath(repoRoot))).toBe(false)
     await saveEffectManifestTrustRecord(recordPath, {
       schemaVersion: 1,
       repoRoot,
@@ -100,7 +118,6 @@ describe('loadEffectManifestTrustSync', () => {
       segmentCompleteness: 'complete',
       role: 'canonical',
       trustRecord: null,
-      gateConsumptionEnabled: true,
       belayConfig: repoConfig,
     })
     const withDefaultConfig = applyEffectManifest({
@@ -114,11 +131,59 @@ describe('loadEffectManifestTrustSync', () => {
       segmentCompleteness: 'complete',
       role: 'canonical',
       trustRecord: null,
-      gateConsumptionEnabled: true,
       belayConfig: defaultConfig,
     })
 
     expect(withRepoConfig.matched).toBe(true)
     expect(withDefaultConfig.matched).toBe(false)
+  })
+
+  it('rejects duplicate keys and unknown fields in trust records', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-trust-invalid-'))
+    const controlPlaneDir = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-trust-state-'))
+    const config = mergeConfig({ controlPlane: { enabled: false, configDir: controlPlaneDir } })
+    const executable = path.join(repoRoot, 'tool')
+    const recordPath = effectManifestTrustRecordPath(
+      config,
+      repoLocalStateDirFor(repoRoot, config),
+      repoRoot,
+      executable,
+    )
+    await mkdir(path.dirname(recordPath), { recursive: true })
+    await writeFile(
+      recordPath,
+      `{"schemaVersion":1,"schemaVersion":1,"repoRoot":${JSON.stringify(repoRoot)},"manifestPath":${JSON.stringify(path.join(repoRoot, '.belay/manifests/tool.json'))},"commandIdentityFingerprint":"${'a'.repeat(64)}","trustedRules":[]}`,
+    )
+    expect(loadEffectManifestTrustSync(repoRoot, executable, config)).toBeNull()
+  })
+
+  it('binds trust to canonical checkout identity across a symlinked path', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-canonical-root-'))
+    const repoRoot = path.join(root, 'repo')
+    const linkedRoot = path.join(root, 'linked-repo')
+    const controlPlaneDir = path.join(root, 'control')
+    await mkdir(repoRoot)
+    await symlink(repoRoot, linkedRoot, 'dir')
+    const config = mergeConfig({ controlPlane: { enabled: false, configDir: controlPlaneDir } })
+    const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
+    const recordPath = effectManifestTrustRecordPath(
+      config,
+      repoLocalStateDirFor(linkedRoot, config),
+      linkedRoot,
+      bound.command.canonicalPath,
+    )
+    await saveEffectManifestTrustRecord(recordPath, {
+      schemaVersion: 1,
+      repoRoot: linkedRoot,
+      manifestPath: manifestFilePath(linkedRoot, 'unknown-cli'),
+      commandIdentityFingerprint: commandIdentityFingerprint(bound.command),
+      trustedRules: [],
+    })
+
+    expect(
+      loadEffectManifestTrustSync(repoRoot, bound.command.canonicalPath, config),
+    ).toMatchObject({
+      repoRoot: canonicalPath(repoRoot),
+    })
   })
 })

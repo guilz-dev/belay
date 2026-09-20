@@ -297,6 +297,12 @@ npx @guilz-dev/belay dogfood --enforce
 `belay.config.json` uses `version: 4`. v1/v2/v3 configs migrate automatically on
 load.
 
+Trusted effect manifests are opt-in by the presence of individually trusted rules; there is no
+configuration flag. Candidates live under `.belay/manifests/`, while trust lives outside the
+repository under the user control plane even when general control-plane approval storage is
+disabled. See [Trusted effect manifests](docs/effect-manifests.md) for the operator workflow and
+security contract.
+
 ### Linked-worktree configuration
 
 Configuration layers apply in this order: built-in adapter defaults, optional team config,
@@ -437,6 +443,12 @@ belay judge use <ollama|codex|claude|cursor> [--model <id>] [--endpoint <url>]
            [--credential project|apiKey] [--key-stdin] [--key-env <NAME>]
 belay judge test
 belay judge consent <provider-id> [--endpoint <url>]
+belay manifest infer [--llm] -- <command> [args...]
+belay manifest list
+belay manifest show <command>
+belay manifest validate <command>
+belay manifest trust <command> --rule <id>    # reusable complete-upper-bound assertion
+belay manifest revoke <command> --rule <id>
 ```
 
 ### Review harvest evidence

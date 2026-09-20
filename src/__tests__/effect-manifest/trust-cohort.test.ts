@@ -45,10 +45,19 @@ const manifestFixture = {
   ],
 }
 
+function manifestConfig(repoRoot: string) {
+  return mergeConfig({
+    controlPlane: {
+      enabled: false,
+      configDir: path.join(os.tmpdir(), 'belay-test-control-plane', path.basename(repoRoot)),
+    },
+  })
+}
+
 describe('effect manifest trust cohort', () => {
   it('changes decision cohort fingerprint when trusted rules are present', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-'))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const baseline = composeDecisionConfigFingerprint(config, repoRoot)
     expect(baseline).toBe(hashDecisionConfig(config))
 
@@ -80,7 +89,7 @@ describe('effect manifest trust cohort', () => {
 
   it('drops stale trusted fingerprints after manifest edits', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-stale-'))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
     await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(bound))
@@ -128,7 +137,7 @@ describe('effect manifest trust cohort', () => {
 
   it('drops trusted fingerprints when the executable identity on disk changes', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-exe-'))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoRoot)
     const bound = await bindManifestExecutableIdentity(repoRoot, manifestFixture)
     await mkdir(path.dirname(manifestFilePath(repoRoot, 'unknown-cli')), { recursive: true })
     await writeFile(manifestFilePath(repoRoot, 'unknown-cli'), JSON.stringify(bound))
@@ -159,7 +168,7 @@ describe('effect manifest trust cohort', () => {
   it('does not read trust records from another checkout root', async () => {
     const repoA = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-a-'))
     const repoB = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-cohort-b-'))
-    const config = mergeConfig({})
+    const config = manifestConfig(repoA)
     const boundA = await bindManifestExecutableIdentity(repoA, manifestFixture)
     await mkdir(path.dirname(manifestFilePath(repoA, 'unknown-cli')), { recursive: true })
     await writeFile(manifestFilePath(repoA, 'unknown-cli'), JSON.stringify(boundA))

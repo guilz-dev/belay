@@ -3,7 +3,6 @@ import path from 'node:path'
 import { applyEffectManifest } from '../effect-manifest/apply.js'
 import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
 import { appendParserDisagreement } from '../shell-frontend/compare.js'
-import { parseMvdanShell } from '../shell-frontend/mvdan-frontend.js'
 import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
 import {
   isHeredocOperator,
@@ -99,23 +98,13 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     })
   }
   if (mode === 'shadow') {
-    try {
-      parseMvdanShell(params.command)
-    } catch {
-      // Candidate failure is telemetry only and must not replace the legacy plan.
-    }
-    const candidatePlan = lowerLegacyShellEffectPlan({
-      ...params,
-      effectManifestRole: 'telemetry-only',
-      effectManifestFrontendId: 'mvdan-v1',
-      effectManifestGateConsumptionEnabled: true,
-    })
-    const canonicalPlan = lowerLegacyShellEffectPlan({
+    // The mvdan artifact is not shipped yet. Never relabel a second legacy lowering as mvdan:
+    // shadow work must remain observational and must not consume the canonical deadline first.
+    return lowerLegacyShellEffectPlan({
       ...params,
       effectManifestRole: 'canonical',
       effectManifestFrontendId: 'legacy-v1',
     })
-    return mergeEffectManifestTelemetry(canonicalPlan, candidatePlan)
   }
   const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
   if (mode === 'mvdan') {
@@ -131,21 +120,6 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     mvdan,
     withDisagreement: appendParserDisagreement,
   })
-}
-
-function mergeEffectManifestTelemetry(canonical: EffectPlan, candidate: EffectPlan): EffectPlan {
-  const candidateSignals = candidate.signals.filter((signal) =>
-    signal.startsWith('effect_manifest.'),
-  )
-  const candidateAudits = candidate.effectManifestAudits ?? []
-  if (candidateSignals.length === 0 && candidateAudits.length === 0) {
-    return canonical
-  }
-  return {
-    ...canonical,
-    signals: [...new Set([...canonical.signals, ...candidateSignals])].sort(),
-    effectManifestAudits: [...candidateAudits, ...(canonical.effectManifestAudits ?? [])],
-  }
 }
 
 function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
@@ -699,7 +673,7 @@ function lowerSegment(
         const manifestApplied = applyEffectManifest({
           repoRoot: context.repoRoot,
           cwd: context.cwd,
-          pathEnv: context.env?.PATH ?? process.env.PATH ?? '',
+          pathEnv: env.PATH ?? process.env.PATH ?? '',
           invocationHead,
           decoderHead: head,
           argv: tokens,
@@ -711,17 +685,13 @@ function lowerSegment(
           role: context.effectManifestRole ?? 'canonical',
           frontendId: context.effectManifestFrontendId ?? 'legacy-v1',
           trustRecord: null,
-          gateConsumptionEnabled: context.effectManifestGateConsumptionEnabled === true,
           belayConfig: context.belayConfig,
           effectManifestAnalysisDeadlineMs: context.effectManifestAnalysisDeadlineMs,
         })
         for (const signal of manifestApplied.telemetrySignals) {
           signals.add(signal)
         }
-        if (
-          manifestApplied.audit &&
-          (manifestApplied.matched || manifestApplied.telemetrySignals.length > 0)
-        ) {
+        if (manifestApplied.audit) {
           context.effectManifestAudits?.push(manifestApplied.audit)
         }
         if (manifestApplied.matched) {

@@ -24,4 +24,13 @@ describe('loadEffectManifestSync', () => {
     }
     expect(loaded.reason).toBe('oversized')
   })
+
+  it('rejects invalid UTF-8 before authority parsing', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-utf8-'))
+    const filePath = manifestFilePath(repoRoot, 'bad-cli')
+    await mkdir(path.dirname(filePath), { recursive: true })
+    await writeFile(filePath, Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d]))
+    const loaded = loadEffectManifestSync(repoRoot, 'bad-cli')
+    expect(loaded.ok).toBe(false)
+  })
 })

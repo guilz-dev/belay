@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 
-import { parseEffectManifestV1 } from './codec.js'
+import { parseEffectManifestJsonV1 } from './codec.js'
 import { manifestFilePath } from './paths.js'
 import type { EffectManifestV1 } from './types.js'
 
@@ -27,11 +27,12 @@ export function loadEffectManifestSync(
     if (stat.size > MAX_EFFECT_MANIFEST_BYTES) {
       return { ok: false, reason: 'oversized' }
     }
-    const raw = readFileSync(filePath, 'utf8')
-    if (Buffer.byteLength(raw, 'utf8') > MAX_EFFECT_MANIFEST_BYTES) {
+    const bytes = readFileSync(filePath)
+    if (bytes.byteLength > MAX_EFFECT_MANIFEST_BYTES) {
       return { ok: false, reason: 'oversized' }
     }
-    const manifest = parseEffectManifestV1(JSON.parse(raw) as unknown)
+    const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    const manifest = parseEffectManifestJsonV1(raw)
     if (!manifest) {
       return { ok: false, reason: 'schema_invalid' }
     }
@@ -50,8 +51,11 @@ export function readEffectManifestFromPath(filePath: string): EffectManifestV1 |
     if (!stat.isFile() || stat.size > MAX_EFFECT_MANIFEST_BYTES) {
       return null
     }
-    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
-    return parseEffectManifestV1(raw)
+    const bytes = readFileSync(filePath)
+    if (bytes.byteLength > MAX_EFFECT_MANIFEST_BYTES) {
+      return null
+    }
+    return parseEffectManifestJsonV1(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   } catch {
     return null
   }

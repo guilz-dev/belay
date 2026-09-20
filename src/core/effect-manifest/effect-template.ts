@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import type { CapabilityAction, CapabilityResource } from '../capability/request.js'
 import type { EffectTag } from '../effect-ir/types.js'
 import type { ManifestEffectTemplateV1 } from './types.js'
@@ -18,95 +20,86 @@ const EFFECT_TAGS = new Set<EffectTag>([
   'fs.write',
   'process.exec',
   'network.connect',
-  'network.acquire',
   'git.ref.write',
   'secret.read',
   'control_plane.write',
-  'read_only',
   'indeterminate',
 ])
 
+const TEMPLATE_REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+
 function effectTagForAction(action: CapabilityAction): EffectTag {
-  switch (action) {
-    case 'fs.read':
-      return 'fs.read'
-    case 'fs.write':
-      return 'fs.write'
-    case 'process.exec':
-      return 'process.exec'
-    case 'network.connect':
-      return 'network.connect'
-    case 'secret.read':
-      return 'secret.read'
-    case 'git.ref.write':
-      return 'git.ref.write'
-    case 'control_plane.write':
-      return 'control_plane.write'
-    case 'indeterminate':
-      return 'indeterminate'
-    default:
-      return 'indeterminate'
-  }
+  return action as EffectTag
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function hasOnlyKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys)
+  return Object.keys(record).every((key) => allowed.has(key))
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !value.includes('\0')
+}
+
+function isPortTemplate(value: unknown): boolean {
+  return (
+    (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65_535) ||
+    (typeof value === 'string' && /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value))
+  )
+}
+
 function parseManifestResource(raw: Record<string, unknown>): CapabilityResource | null {
   const kind = raw.kind
   if (kind === 'path') {
-    return typeof raw.path === 'string' ? { kind: 'path', path: raw.path } : null
-  }
-  if (kind === 'unknown') {
-    return { kind: 'unknown' }
-  }
-  if (kind === 'package-cache') {
-    return raw.manager === 'npm' || raw.manager === 'pnpm'
-      ? { kind: 'package-cache', manager: raw.manager }
+    return hasOnlyKeys(raw, ['kind', 'path']) && isString(raw.path)
+      ? ({ kind: 'path', path: raw.path } as CapabilityResource)
       : null
   }
+  if (kind === 'unknown') {
+    return hasOnlyKeys(raw, ['kind']) ? { kind: 'unknown' } : null
+  }
   if (kind === 'executable') {
-    return typeof raw.command === 'string'
-      ? {
-          kind: 'executable',
-          command: raw.command,
-          operation:
-            raw.operation === 'inspect' || raw.operation === 'spawn' || raw.operation === 'signal'
-              ? raw.operation
-              : undefined,
-        }
+    return hasOnlyKeys(raw, ['kind', 'command', 'operation']) &&
+      isString(raw.command) &&
+      (raw.operation === 'inspect' || raw.operation === 'spawn' || raw.operation === 'signal')
+      ? { kind: 'executable', command: raw.command, operation: raw.operation }
       : null
   }
   if (kind === 'git-ref') {
-    return typeof raw.ref === 'string'
+    return hasOnlyKeys(raw, ['kind', 'ref', 'scope', 'repoPath']) &&
+      isString(raw.ref) &&
+      (raw.scope === 'local' || raw.scope === 'remote') &&
+      (raw.repoPath === undefined || isString(raw.repoPath))
       ? {
           kind: 'git-ref',
           ref: raw.ref,
-          scope: raw.scope === 'local' || raw.scope === 'remote' ? raw.scope : undefined,
-          repoPath: typeof raw.repoPath === 'string' ? raw.repoPath : undefined,
+          scope: raw.scope,
+          ...(typeof raw.repoPath === 'string' ? { repoPath: raw.repoPath } : {}),
         }
       : null
   }
   if (kind === 'network') {
-    if (typeof raw.host !== 'string') {
+    if (
+      !hasOnlyKeys(raw, ['kind', 'host', 'port', 'protocol', 'mode', 'payload']) ||
+      !isString(raw.host) ||
+      !isString(raw.protocol) ||
+      (raw.mode !== 'read' && raw.mode !== 'mutate' && raw.mode !== 'ambiguous') ||
+      (raw.payload !== 'none' && raw.payload !== 'present' && raw.payload !== 'secret') ||
+      (raw.port !== undefined && !isPortTemplate(raw.port))
+    ) {
       return null
     }
-    const mode =
-      raw.mode === 'read' || raw.mode === 'mutate' || raw.mode === 'ambiguous'
-        ? raw.mode
-        : undefined
-    const payload =
-      raw.payload === 'none' || raw.payload === 'present' || raw.payload === 'secret'
-        ? raw.payload
-        : undefined
     return {
       kind: 'network',
       host: raw.host,
-      port: typeof raw.port === 'number' ? raw.port : undefined,
-      protocol: typeof raw.protocol === 'string' ? raw.protocol : undefined,
-      mode,
-      payload,
+      protocol: raw.protocol,
+      mode: raw.mode,
+      payload: raw.payload,
+      ...(typeof raw.port === 'number' ? { port: raw.port } : {}),
     }
   }
   return null
@@ -115,23 +108,17 @@ function parseManifestResource(raw: Record<string, unknown>): CapabilityResource
 function resourceMatchesAction(action: CapabilityAction, resource: CapabilityResource): boolean {
   switch (action) {
     case 'fs.read':
+    case 'secret.read':
+    case 'control_plane.write':
       return resource.kind === 'path'
     case 'fs.write':
-      return resource.kind === 'path' || resource.kind === 'package-cache'
+      return resource.kind === 'path'
     case 'process.exec':
       return resource.kind === 'executable'
     case 'network.connect':
-      return (
-        resource.kind === 'network' &&
-        typeof resource.host === 'string' &&
-        resource.mode !== undefined
-      )
-    case 'secret.read':
-      return resource.kind === 'path'
+      return resource.kind === 'network'
     case 'git.ref.write':
       return resource.kind === 'git-ref'
-    case 'control_plane.write':
-      return resource.kind === 'path'
     case 'indeterminate':
       return resource.kind === 'unknown'
     default:
@@ -149,8 +136,7 @@ export function validateManifestEffectTemplate(
     return { ok: false, message: `Unknown effect action ${template.action}.` }
   }
   const action = template.action as CapabilityAction
-  const expectedTag = effectTagForAction(action)
-  if (template.tag !== expectedTag) {
+  if (template.tag !== effectTagForAction(action)) {
     return {
       ok: false,
       message: `Effect tag ${template.tag} does not match action ${action}.`,
@@ -170,4 +156,67 @@ export function validateManifestEffectTemplate(
     }
   }
   return { ok: true, resource }
+}
+
+export function captureReferencesInTemplate(template: ManifestEffectTemplateV1): Set<string> {
+  const references = new Set<string>()
+  for (const value of Object.values(template.resource)) {
+    if (typeof value !== 'string') {
+      continue
+    }
+    for (const match of value.matchAll(TEMPLATE_REFERENCE)) {
+      const name = match[1]
+      if (name) {
+        references.add(name)
+      }
+    }
+  }
+  return references
+}
+
+function substitute(
+  value: unknown,
+  captures: Readonly<Record<string, string>>,
+  numeric: boolean,
+): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+  const exact = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value)
+  if (numeric && exact?.[1] && /^-?(?:0|[1-9]\d*)$/.test(captures[exact[1]] ?? '')) {
+    return Number(captures[exact[1]])
+  }
+  let unresolved = false
+  const result = value.replace(TEMPLATE_REFERENCE, (_whole, name: string) => {
+    const capture = captures[name]
+    if (capture === undefined) {
+      unresolved = true
+      return ''
+    }
+    return capture
+  })
+  return unresolved ? null : result
+}
+
+export function instantiateManifestEffectTemplate(
+  template: ManifestEffectTemplateV1,
+  captures: Readonly<Record<string, string>>,
+  cwd: string,
+): { ok: true; resource: CapabilityResource } | { ok: false } {
+  const resource: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(template.resource)) {
+    const instantiated = substitute(value, captures, key === 'port')
+    if (instantiated === null) {
+      return { ok: false }
+    }
+    resource[key] = instantiated
+  }
+  if (resource.kind === 'path' && typeof resource.path === 'string') {
+    resource.path = path.resolve(cwd, resource.path)
+  }
+  if (resource.kind === 'git-ref' && typeof resource.repoPath === 'string') {
+    resource.repoPath = path.resolve(cwd, resource.repoPath)
+  }
+  const validated = validateManifestEffectTemplate({ ...template, resource })
+  return validated.ok ? validated : { ok: false }
 }

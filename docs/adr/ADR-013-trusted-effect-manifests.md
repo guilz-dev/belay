@@ -1,7 +1,7 @@
 # ADR-013 — Trusted effect manifests
 
-Status: Accepted  
-Date: 2026-09-19  
+Status: Accepted
+Date: 2026-09-19
 Related: [ADR-005](./ADR-005-command-allowlist-prohibition.md), [ADR-004](./ADR-004-effectplan-shell-authority.md), [ADR-010](./ADR-010-repository-config-trust.md)
 
 ## Context
@@ -34,7 +34,7 @@ EffectPlan and PolicyEngine.
 - False positives from unknown local effects may be addressed with reviewed manifests instead of
   command lists, but PolicyEngine still evaluates every resulting requirement.
 - Executable or rule semantic changes invalidate trust deterministically via fingerprints.
-- Doctor and explain gain manifest audit surfaces incrementally; gate cohort fingerprints may
+- Show, validate, explain, and doctor expose bounded manifest status; gate cohort fingerprints
   include active trusted rule hashes.
 
 ## One line
