@@ -1,6 +1,7 @@
 import process from 'node:process'
 
 import { type CursorHookKind, type CursorHookOrigin, routeCursorHook } from './hook-router.js'
+import { shouldFailOpenRoutingInAudit } from './routing-audit-failopen.js'
 
 export interface DispatchCursorHookParams {
   origin: CursorHookOrigin
@@ -57,6 +58,18 @@ function failClosedResponse(kind: CursorHookKind, message: string): CursorRespon
     return { continue: false, user_message: message }
   }
   return { permission: 'deny', user_message: message }
+}
+
+function respondToRoutingFailure(
+  origin: CursorHookOrigin,
+  kind: CursorHookKind,
+  message: string,
+): CursorResponse {
+  if (shouldFailOpenRoutingInAudit(origin, kind)) {
+    console.error(`belay routing fail-open in audit mode: ${message}`)
+    return neutralResponse(kind)
+  }
+  return failClosedResponse(kind, message)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,7 +181,7 @@ async function dispatchCursorHookResponse(
       return neutralResponse(params.kind)
     }
     if (route.decision === 'fail_closed') {
-      return failClosedResponse(params.kind, route.message)
+      return respondToRoutingFailure(params.origin, params.kind, route.message)
     }
     return await executeCoreHandler(params, input.payload)
   } catch (error) {
