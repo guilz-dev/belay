@@ -1,7 +1,7 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { PassThrough } from 'node:stream'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 
 import { afterEach, describe, expect, it } from 'vitest'
 

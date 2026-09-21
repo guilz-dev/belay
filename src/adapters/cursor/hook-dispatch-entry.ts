@@ -1,7 +1,7 @@
 import process from 'node:process'
 
-import { shouldFailOpenRoutingInAudit } from './routing-audit-failopen.js'
 import { type CursorHookKind, type CursorHookOrigin, routeCursorHook } from './hook-router.js'
+import { shouldFailOpenRoutingInAudit } from './routing-audit-failopen.js'
 
 export interface DispatchCursorHookParams {
   origin: CursorHookOrigin
