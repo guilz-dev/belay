@@ -269,6 +269,39 @@ describe('installer scope (T29)', () => {
     },
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'removes stale project hooks when only hooks.json is shared with global scope',
+    async () => {
+      const homeDir = await createTempHome()
+      const repoRoot = await createTempRepo()
+      await initProject({ targetDir: repoRoot, scope: 'project' })
+
+      const globalCursor = path.join(homeDir, '.cursor')
+      await mkdir(globalCursor, { recursive: true })
+      await symlink(
+        path.join(repoRoot, '.cursor', 'hooks.json'),
+        path.join(globalCursor, 'hooks.json'),
+      )
+
+      await upgradeProject({ targetDir: repoRoot, scope: 'global' })
+
+      const hooks = JSON.parse(await readFile(path.join(globalCursor, 'hooks.json'), 'utf8')) as {
+        hooks: { beforeSubmitPrompt?: Array<{ command: string }> }
+      }
+      expect(hooks.hooks.beforeSubmitPrompt).toEqual([
+        expect.objectContaining({
+          command: buildAbsoluteRunnerInvocation(
+            process.platform,
+            path.join(globalCursor, 'hooks'),
+            'belay-before-submit',
+          ),
+        }),
+      ])
+      expect(existsSync(path.join(globalCursor, 'hooks', 'belay-runner'))).toBe(true)
+      expect(existsSync(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    },
+  )
+
   it('upgrade without --scope reuses persisted global scope', async () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()

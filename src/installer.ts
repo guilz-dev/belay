@@ -206,8 +206,8 @@ async function cleanupStaleProjectCursorInstall(repoRoot: string): Promise<void>
   }
   const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
   if (
-    (await realpath(projectPaths.hooksSettingsPath)) ===
-    (await realpath(globalPaths.hooksSettingsPath))
+    (await realpath(path.dirname(projectPaths.hooksSettingsPath))) ===
+    (await realpath(path.dirname(globalPaths.hooksSettingsPath)))
   ) {
     return
   }
