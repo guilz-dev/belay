@@ -19,6 +19,8 @@ EffectPlan and PolicyEngine.
 
 1. **Repository-local manifests** live at `.belay/manifests/<basename>.json` and bind to executable
    identity (canonical path + SHA-256), not to a bare command name.
+   Gate-time application additionally requires a literal path-qualified invocation so a shell
+   function or alias cannot shadow the verified executable.
 2. **Trust is out-of-repo** in the control-plane `effect-manifest-trust/` store, keyed by checkout
    root and canonical executable path ([spec](../superpowers/specs/2026-09-19-effect-manifest-design.md)).
 3. **Gate lowering** consults manifests only after the built-in decoder yields exact

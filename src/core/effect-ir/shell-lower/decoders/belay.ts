@@ -3,6 +3,77 @@ import path from 'node:path'
 import type { ShellEffectRequirement } from '../../shell-build.js'
 import { processRequirement, requirement } from '../requirement.js'
 
+const MANIFEST_SUBCOMMANDS = new Set(['infer', 'list', 'show', 'validate', 'trust', 'revoke'])
+// Keep aligned with the one-value options consumed by cli.ts parseArgs before
+// it dispatches a manifest subcommand. Exact arity prevents option values such
+// as "infer" from being mistaken for the actual subcommand.
+const CLI_OPTIONS_WITH_ONE_VALUE = new Set([
+  '--adapter',
+  '--preset',
+  '--judge-profile',
+  '--judge-provider',
+  '--judge-endpoint',
+  '--judge-model',
+  '--cloud-consent-approval-id',
+  '--credential',
+  '--key-env',
+  '--timeout',
+  '--audit-version',
+  '--boundary-profile',
+  '--since',
+  '--until',
+  '--verdict',
+  '--reason',
+  '--outcome',
+  '--corpus',
+  '--kind',
+  '--fingerprint',
+  '--event',
+  '--location',
+  '--opacity',
+  '--effect',
+  '--confidence',
+  '--limit',
+  '--config',
+  '--token',
+  '--scope',
+  '--path',
+  '--target',
+  '--cwd',
+  '--rule',
+  '--command',
+  '--tool',
+  '--payload-json',
+])
+
+function manifestSubcommand(args: readonly string[]): string | undefined {
+  if (args[0] !== 'manifest') {
+    return undefined
+  }
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index]
+    if (!token) {
+      return undefined
+    }
+    if (MANIFEST_SUBCOMMANDS.has(token)) {
+      return token
+    }
+    if (token === '--') {
+      return undefined
+    }
+    if (!token.startsWith('-')) {
+      return undefined
+    }
+    if (CLI_OPTIONS_WITH_ONE_VALUE.has(token)) {
+      if (args[index + 1] === undefined) {
+        return undefined
+      }
+      index += 1
+    }
+  }
+  return undefined
+}
+
 export function decodeBelay(
   args: string[],
   repoRoot: string,
@@ -29,11 +100,8 @@ export function decodeBelay(
     'standing-allow',
   ].includes(section ?? '')
   const configTrustMutation = section === 'config' && operation === 'trust'
-  // The CLI accepts flags before the manifest subcommand. Treat any trust/revoke
-  // token in a manifest invocation as authority-changing so unusual or future
-  // option placement fails closed instead of bypassing approval.
-  const manifestTrustMutation =
-    section === 'manifest' && args.slice(1).some((token) => token === 'trust' || token === 'revoke')
+  const manifestOperation = manifestSubcommand(args)
+  const manifestTrustMutation = manifestOperation === 'trust' || manifestOperation === 'revoke'
   if (judgeCommand || configRead || configJudgeMutation) {
     return [
       processRequirement('belay', 'inspect', segment, [

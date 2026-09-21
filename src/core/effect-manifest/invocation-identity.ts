@@ -8,6 +8,11 @@ export function invocationMatchesManifestCommand(
   pathEnv: string,
   command: EffectManifestV1['command'],
 ): boolean {
+  // A bare command name may resolve to a shell function or alias before PATH.
+  // Only path-qualified invocations have an identity we can verify on disk.
+  if (!/[\\/]/.test(head)) {
+    return false
+  }
   const resolved = resolveNativeExecutableIdentity(head, cwd, pathEnv)
   if ('error' in resolved) {
     return false

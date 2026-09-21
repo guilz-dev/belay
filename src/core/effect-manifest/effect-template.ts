@@ -198,6 +198,22 @@ function substitute(
   return unresolved ? null : result
 }
 
+function resolveManifestPathOperand(operand: string, cwd: string): string | null {
+  if (!operand.startsWith('~')) {
+    return path.resolve(cwd, operand)
+  }
+  if (operand !== '~' && !operand.startsWith('~/')) {
+    return null
+  }
+  const configuredHome =
+    process.platform === 'win32' ? (process.env.USERPROFILE ?? process.env.HOME) : process.env.HOME
+  const home = configuredHome?.trim()
+  if (!home || !path.isAbsolute(home)) {
+    return null
+  }
+  return operand === '~' ? path.resolve(home) : path.resolve(home, operand.slice(2))
+}
+
 export function instantiateManifestEffectTemplate(
   template: ManifestEffectTemplateV1,
   captures: Readonly<Record<string, string>>,
@@ -212,10 +228,18 @@ export function instantiateManifestEffectTemplate(
     resource[key] = instantiated
   }
   if (resource.kind === 'path' && typeof resource.path === 'string') {
-    resource.path = path.resolve(cwd, resource.path)
+    const resolved = resolveManifestPathOperand(resource.path, cwd)
+    if (!resolved) {
+      return { ok: false }
+    }
+    resource.path = resolved
   }
   if (resource.kind === 'git-ref' && typeof resource.repoPath === 'string') {
-    resource.repoPath = path.resolve(cwd, resource.repoPath)
+    const resolved = resolveManifestPathOperand(resource.repoPath, cwd)
+    if (!resolved) {
+      return { ok: false }
+    }
+    resource.repoPath = resolved
   }
   const validated = validateManifestEffectTemplate({ ...template, resource })
   return validated.ok ? validated : { ok: false }

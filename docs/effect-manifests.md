@@ -8,7 +8,7 @@ effect still goes through the normal `EffectPlan` and `PolicyEngine` rules.
 
 ```bash
 # Candidate generation is offline and never executes the target.
-belay manifest infer -- ctx status
+belay manifest infer -- /absolute/path/to/ctx status
 
 # Inspect and validate the exact executable, matcher, and effect contract.
 belay manifest show ctx
@@ -18,10 +18,10 @@ belay manifest validate ctx
 # Keep an indeterminate effect when completeness cannot be established.
 
 # Trust one reviewed rule. This is a reusable completeness assertion, not approval of one run.
-belay manifest trust ctx --rule argv-92a1c4e09b35
+belay manifest trust /absolute/path/to/ctx --rule argv-92a1c4e09b35
 
 # Remove only that rule's authority.
-belay manifest revoke ctx --rule argv-92a1c4e09b35
+belay manifest revoke /absolute/path/to/ctx --rule argv-92a1c4e09b35
 ```
 
 `infer --llm -- …` may ask the already configured judge provider to draft an effect contract. It
@@ -38,6 +38,10 @@ cannot satisfy the inferencer's static-source boundary.
   `effect-manifest-trust/`, even when general control-plane approval storage is disabled.
 - Trust binds the canonical checkout root, canonical executable path and SHA-256, script
   interpreter path and SHA-256 when applicable, fallback, matcher, contract, and assertion.
+- Gate application requires a literal path-qualified executable head. A bare command name remains
+  ineligible because a shell function or alias can shadow the executable found through `PATH`.
+  `infer` may resolve a bare name to draft a candidate, but that does not make bare runtime
+  invocations eligible.
 - A changed executable, interpreter, matcher, or contract is stale and stays indeterminate until
   it is reviewed and trusted again.
 - Agent-shell `manifest trust` and `manifest revoke` are `control_plane.write` operations and
@@ -58,8 +62,9 @@ Overlapping rules invalidate the complete manifest rather than selecting by orde
 Resource captures use `${name}`. Typed fields must use the corresponding capture type: `path` and
 `repoPath` use `path`, `host` uses `host`, `port` uses `integer`, and ref fields use a bounded
 `token` or `enum`. Nested executables and control-plane paths must remain static. Relative path
-results are resolved against that shell segment's action
-working directory before ordinary workspace, secret, outside-path, and high-stakes policy runs.
+results are resolved against that shell segment's action working directory; `~` and `~/...`
+results are resolved against the user home directory. Ordinary workspace, secret, outside-path,
+and high-stakes policy runs afterward.
 
 Example:
 

@@ -240,4 +240,50 @@ describe('recordCapabilityApproval', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain('high-stakes')
   })
+
+  it('rejects the effect-manifest trust directory while the control plane is disabled', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-manifest-trust-'))
+    tempDirs.push(stateDir)
+    const configDir = path.join(stateDir, 'control-plane')
+    const trustDir = path.join(configDir, 'effect-manifest-trust')
+    await mkdir(trustDir, { recursive: true })
+    const pending: ApprovalStateFile = {
+      version: 2,
+      approvals: [
+        {
+          approvalId: 'belay_manifest_trust_root',
+          kind: 'tool',
+          fingerprint: 'fp',
+          repoRoot: '/repo',
+          reason: 'outside_repo_mutation',
+          summary: 'write manifest trust record',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          scopeHint: { scope: 'workspace-root', path: trustDir },
+        },
+      ],
+    }
+    const approved: ApprovalStateFile = { version: 1, approvals: [] }
+    const allowlistPath = path.join(stateDir, 'fs-scope-allowlist.json')
+    const trustedRootsPath = path.join(stateDir, 'trusted-workspace-roots.json')
+    const config = {
+      ...DEFAULT_CONFIG_V3,
+      controlPlane: {
+        ...DEFAULT_CONFIG_V3.controlPlane,
+        enabled: false,
+        configDir,
+      },
+    }
+
+    const result = await recordCapabilityApproval({
+      approvalId: 'belay_manifest_trust_root',
+      config,
+      store: memoryStore(pending, approved, allowlistPath, trustedRootsPath),
+      scope: 'workspace-root',
+      scopePath: trustDir,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('trusted-root policy')
+  })
 })

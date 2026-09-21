@@ -7,6 +7,7 @@ import {
   appendObservedAudit,
   createDefaultGateRuntimeDeps,
   evaluateGatedAction,
+  repoShellClassifierOptions,
 } from '../adapters/shared/gate-runtime.js'
 import { createApprovalRecord } from '../core/approval.js'
 import { approvalCorrelationId, serializeAuditRecordV3 } from '../core/audit-serialize.js'
@@ -68,6 +69,38 @@ describe('capability gate runtime', () => {
   afterEach(async () => {
     delete process.env.BELAY_DETERMINISTIC_JUDGE
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('protects the effect-manifest trust directory when the control plane is disabled', async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), 'belay-cap-manifest-protection-'))
+    tempDirs.push(stateDir)
+    const repoRoot = path.join(stateDir, 'repo')
+    const configDir = path.join(stateDir, 'control-plane')
+    const trustDir = path.join(configDir, 'effect-manifest-trust')
+    await mkdir(repoRoot)
+    await mkdir(trustDir, { recursive: true })
+    const config: BelayConfigV3 = {
+      ...brokerInactiveConfig(),
+      controlPlane: {
+        ...brokerInactiveConfig().controlPlane,
+        configDir,
+      },
+    }
+
+    const options = repoShellClassifierOptions(config, repoRoot, cursorAdapter.layout, {
+      brokerFsScope: true,
+      trustedWorkspaceRoots: [trustDir],
+    })
+    const result = await classifyShellGated(
+      `printf forged > ${JSON.stringify(path.join(trustDir, 'record.json'))}`,
+      repoRoot,
+      repoRoot,
+      config,
+      options,
+    )
+
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('control_plane_mutation')
   })
 
   it('canonicalizes host gate event names while preserving the source event', async () => {

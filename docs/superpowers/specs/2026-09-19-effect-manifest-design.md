@@ -14,7 +14,7 @@ local candidate manifest for an exact command invocation, lets the operator revi
 individually, and uses only trusted matching rules to lower the unknown process into canonical
 `EffectRequirement` values.
 
-The first target is an invocation such as `ctx status`: after its exact rule and executable identity
+The first target is an invocation such as `/absolute/path/to/ctx status`: after its exact rule and executable identity
 are trusted, Belay can classify its declared effects. Other `ctx` invocations, modified rules, and a
 different `ctx` binary remain indeterminate and therefore require approval.
 
@@ -310,7 +310,9 @@ ineligible for trust. A gate-time mismatch in the command or interpreter path/ha
 in that manifest unavailable. File version strings are diagnostic only and never establish identity.
 
 Shell builtins, functions, aliases, non-regular files, and dynamically resolved executable tokens
-are not eligible for effect manifests.
+are not eligible for effect manifests. Gate-time application therefore requires a literal
+path-qualified executable head; resolving a bare name through `PATH` is insufficient because the
+calling shell can select an alias or function first.
 
 ## Argv matcher language
 
@@ -600,10 +602,10 @@ keep the rule indeterminate and use one-shot approval or contained execution ins
 
 ### EffectPlan integration
 
-- A trusted exact `ctx status` rule replaces only the exact generic `process.grammar_unknown`
+- A trusted exact `/absolute/path/to/ctx status` rule replaces only the exact generic `process.grammar_unknown`
   unsupported-process pair and produces the declared canonical requirements.
-- `ctx`, `ctx other`, additional argv, and changed casing remain indeterminate unless separately
-  trusted.
+- Bare `ctx`, `/absolute/path/to/ctx other`, additional argv, and changed casing remain
+  indeterminate unless separately eligible and trusted.
 - Redirect, pipeline, substitution, wrapper, and sibling-segment effects survive manifest lowering.
 - A known built-in decoder always wins; a manifest cannot weaken Git, GitHub CLI, filesystem, Docker,
   Belay, or other recognized grammar.
