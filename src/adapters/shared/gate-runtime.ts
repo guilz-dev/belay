@@ -89,6 +89,7 @@ import {
 } from '../../core/contained-execution/policy.js'
 import { effectPlanAuditFields, hashEffectPlan } from '../../core/effect-ir/audit.js'
 import { buildCapabilityEffectPlan } from '../../core/effect-ir/build.js'
+import { effectManifestTrustDir } from '../../core/effect-manifest/trust-store.js'
 import {
   classifyResultToGateVerdict,
   type GatedAction,
@@ -401,11 +402,24 @@ export function repoShellClassifierOptions(
   extras: ClassifierOptions = {},
 ): ClassifierOptions {
   const controlPlaneDir = config.controlPlane.enabled ? resolveControlPlaneDir(config) : null
+  const manifestTrustDir = effectManifestTrustDir(
+    config,
+    layout.repoLocalStateDir(repoRoot),
+    repoRoot,
+  )
+  const manifestTrustControlPlaneDir = path.dirname(manifestTrustDir)
+  const classifierProtectedRoots = protectedArtifactRoots(layout, repoRoot, controlPlaneDir)
   return {
     ...classifierOptionsFromConfig(config),
     controlPlaneDir,
-    protectedArtifactRoots: protectedArtifactRoots(layout, repoRoot, controlPlaneDir),
     ...extras,
+    protectedArtifactRoots: [
+      ...new Set([
+        ...classifierProtectedRoots,
+        manifestTrustControlPlaneDir,
+        ...(extras.protectedArtifactRoots ?? []),
+      ]),
+    ],
   }
 }
 

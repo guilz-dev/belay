@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { recordApproval } from './approval-service.js'
 import {
   addPathToAllowlist,
@@ -15,6 +17,7 @@ import {
 } from './capability/trusted-workspace-roots.js'
 import type { CapabilityApprovalScope } from './capability/types.js'
 import { type BelayConfigV3, resolveControlPlaneDir } from './config.js'
+import { effectManifestTrustDir } from './effect-manifest/trust-store.js'
 import type { ApprovalStateFile } from './types.js'
 
 export interface CapabilityApprovalStore {
@@ -92,6 +95,7 @@ export async function recordCapabilityApproval(params: {
       controlPlaneDir: params.config.controlPlane.enabled
         ? resolveControlPlaneDir(params.config)
         : undefined,
+      protectedRoots: [path.dirname(effectManifestTrustDir(params.config, '', match.repoRoot))],
       requireExistingDirectory: true,
       requireNonGit: true,
     })

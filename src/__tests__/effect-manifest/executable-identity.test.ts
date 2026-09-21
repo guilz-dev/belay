@@ -9,8 +9,25 @@ import {
   resolveNativeExecutableIdentity,
   verifyStoredExecutableIdentity,
 } from '../../core/effect-manifest/executable-identity.js'
+import { invocationMatchesManifestCommand } from '../../core/effect-manifest/invocation-identity.js'
 
 describe('executable identity hashing limits', () => {
+  it('refuses bare command heads that a shell alias or function can shadow', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-bare-head-'))
+    const binDir = path.join(repoRoot, 'bin')
+    await mkdir(binDir)
+    const toolPath = path.join(binDir, 'demo')
+    await writeFile(toolPath, 'native fixture\n', { mode: 0o755 })
+    const pathEnv = `${binDir}${path.delimiter}${process.env.PATH ?? ''}`
+    const identity = resolveNativeExecutableIdentity(toolPath, repoRoot, pathEnv)
+    if ('error' in identity) {
+      throw new Error(identity.error)
+    }
+
+    expect(invocationMatchesManifestCommand('demo', repoRoot, pathEnv, identity)).toBe(false)
+    expect(invocationMatchesManifestCommand(toolPath, repoRoot, pathEnv, identity)).toBe(true)
+  })
+
   it('refuses executables larger than the gate hash budget', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-manifest-exe-limit-'))
     const binDir = path.join(repoRoot, 'bin')

@@ -57,10 +57,22 @@ describe('belay judge self-command gate', () => {
     'belay manifest revoke demo --rule r1',
     'belay manifest --json trust demo --rule r1',
     'belay manifest --target /tmp trust demo --rule r1',
+    'belay manifest --cwd infer trust /absolute/tool --rule r1',
     'belay manifest --json revoke demo --rule r1',
   ])('requires human approval for effect-manifest authority mutation: %s', async (command) => {
     const result = await verdict(command, context)
     expect(result.permission).toBe('ask')
     expect(result.reason).toBe('control_plane_mutation')
+  })
+
+  it.each([
+    'belay manifest show trust',
+    'belay manifest validate revoke',
+    'belay manifest infer -- tool trust',
+    'belay manifest --cwd trust show revoke',
+  ])('does not mistake manifest operands for authority mutations: %s', async (command) => {
+    const result = await verdict(command, context)
+    expect(result.permission).toBe('allow')
+    expect(result.reason).not.toBe('control_plane_mutation')
   })
 })

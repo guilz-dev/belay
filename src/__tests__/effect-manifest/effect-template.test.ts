@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import path from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { validateManifestEffectTemplate } from '../../core/effect-manifest/effect-template.js'
+import {
+  instantiateManifestEffectTemplate,
+  validateManifestEffectTemplate,
+} from '../../core/effect-manifest/effect-template.js'
 
 describe('validateManifestEffectTemplate', () => {
   it('rejects tag and action mismatches', () => {
@@ -53,5 +57,51 @@ describe('validateManifestEffectTemplate', () => {
         resource: { kind: 'git-ref', ref: 'refs/heads/main' },
       }).ok,
     ).toBe(false)
+  })
+})
+
+describe('instantiateManifestEffectTemplate', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('resolves home-relative path captures against the user home directory', () => {
+    const home = process.env.HOME
+    expect(home).toBeTruthy()
+    if (!home) {
+      return
+    }
+
+    const result = instantiateManifestEffectTemplate(
+      {
+        tag: 'fs.write',
+        action: 'fs.write',
+        resource: { kind: 'path', path: `\${target}` },
+      },
+      { target: '~/.ssh/authorized_keys' },
+      '/tmp/repository',
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      resource: { kind: 'path', path: path.join(home, '.ssh', 'authorized_keys') },
+    })
+  })
+
+  it('fails closed on home-relative paths when no home directory is available', () => {
+    vi.stubEnv('HOME', '')
+    vi.stubEnv('USERPROFILE', '')
+
+    const result = instantiateManifestEffectTemplate(
+      {
+        tag: 'fs.write',
+        action: 'fs.write',
+        resource: { kind: 'path', path: `\${target}` },
+      },
+      { target: '~/.ssh/authorized_keys' },
+      '/tmp/repository',
+    )
+
+    expect(result).toEqual({ ok: false })
   })
 })

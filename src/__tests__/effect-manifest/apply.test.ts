@@ -129,9 +129,9 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        invocationHead: 'unknown-cli',
+        invocationHead: manifest.command.canonicalPath,
         decoderHead: 'unknown-cli',
-        argv: ['unknown-cli', 'status'],
+        argv: [manifest.command.canonicalPath, 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
         role: 'canonical',
@@ -211,9 +211,9 @@ describe('applyEffectManifest', () => {
     )
     const applied = applyEffectManifest({
       ...manifestGateParams(repoRoot, {
-        invocationHead: 'unknown-cli',
+        invocationHead: manifest.command.canonicalPath,
         decoderHead: 'unknown-cli',
-        argv: ['unknown-cli', 'write', 'output.txt'],
+        argv: [manifest.command.canonicalPath, 'write', 'output.txt'],
         requirements: base,
         segmentCompleteness: 'complete',
         role: 'canonical',
@@ -251,9 +251,9 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        invocationHead: 'unknown-cli',
+        invocationHead: manifest.command.canonicalPath,
         decoderHead: 'unknown-cli',
-        argv: ['unknown-cli', 'status'],
+        argv: [manifest.command.canonicalPath, 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
         role: 'telemetry-only',
@@ -368,9 +368,9 @@ describe('applyEffectManifest', () => {
     const base = unsupportedProcess('unknown-cli', 'unknown-cli status', 'process.grammar_unknown')
     const applied = applyEffectManifest(
       manifestGateParams(repoRoot, {
-        invocationHead: 'unknown-cli',
+        invocationHead: manifest.command.canonicalPath,
         decoderHead: 'unknown-cli',
-        argv: ['unknown-cli', 'status'],
+        argv: [manifest.command.canonicalPath, 'status'],
         requirements: base,
         segmentCompleteness: 'complete',
         role: 'canonical',
@@ -537,7 +537,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'unknown-cli status',
+          command: `${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'legacy',
         },
         config,
@@ -653,7 +653,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'cd nested && unknown-cli status',
+          command: `cd nested && ${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'legacy',
         },
         config,
@@ -693,7 +693,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'unknown-cli status',
+          command: `${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'legacy',
         },
         config,
@@ -706,7 +706,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'unknown-cli status',
+          command: `${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'shadow',
         },
         config,
@@ -746,7 +746,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'unknown-cli status',
+          command: `${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'legacy',
         },
         config,
@@ -759,7 +759,7 @@ describe('effect manifest shell frontend modes', () => {
           cwd: repoRoot,
           repoRoot,
           inputFingerprint: 'fp',
-          command: 'unknown-cli status',
+          command: `${manifest.command.canonicalPath} status`,
           shellFrontendMode: 'canary',
         },
         config,
