@@ -38,6 +38,16 @@ export interface AuditVisibilitySummary {
   hostDeniedAfterAllowCount: number
   recentHostDenials: RecentHostDenialEntry[]
   unrecognizedHostFailureCount: number
+  knownHostNoiseCount: number
+}
+
+const KNOWN_HOST_NOISE_SUBSTRINGS = [
+  'development-surface hook error',
+  'fatal: not a git repository',
+] as const
+
+function isKnownHostNoiseMessage(errorMessage: string): boolean {
+  return KNOWN_HOST_NOISE_SUBSTRINGS.some((fragment) => errorMessage.includes(fragment))
 }
 
 export const DEFAULT_SILENT_PASS_THRESHOLD = 0.5
@@ -113,6 +123,7 @@ export function summarizeAuditVisibility(
   const allowedByInvocation = new Map<string, AuditRecord>()
   const recentHostDenials: RecentHostDenialEntry[] = []
   let unrecognizedHostFailureCount = 0
+  let knownHostNoiseCount = 0
   const matchedHostDenials = new Set<string>()
 
   for (const record of allGateRecords) {
@@ -159,6 +170,7 @@ export function summarizeAuditVisibility(
     if (record.event !== 'postToolUseFailure') {
       continue
     }
+    const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage : ''
     if (record.failureType !== 'permission_denied') {
       unrecognizedHostFailureCount += 1
       continue
@@ -166,6 +178,9 @@ export function summarizeAuditVisibility(
     const invocationId = auditToolInvocationCorrelationId(record)
     const gate = invocationId ? allowedByInvocation.get(invocationId) : undefined
     if (!gate) {
+      if (isKnownHostNoiseMessage(errorMessage)) {
+        knownHostNoiseCount += 1
+      }
       continue
     }
     const gateMs = parseTimestamp(gate.timestamp)
@@ -183,7 +198,7 @@ export function summarizeAuditVisibility(
       gateTimestamp: gate.timestamp,
       failureTimestamp: record.timestamp,
       summary: typeof gate.summary === 'string' ? gate.summary : '',
-      errorMessage: typeof record.errorMessage === 'string' ? record.errorMessage : '',
+      errorMessage,
     })
   }
 
@@ -214,6 +229,7 @@ export function summarizeAuditVisibility(
     hostDeniedAfterAllowCount: recentHostDenials.length,
     recentHostDenials: recentHostDenials.slice(0, recentAskLimit),
     unrecognizedHostFailureCount,
+    knownHostNoiseCount,
   }
 }
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import { resolveScopedPaths } from '../adapters/layouts/scope.js'
 import type { AdapterName } from '../adapters/layouts/types.js'
-import { detectAdapterName } from '../config-io.js'
+import { detectAdapterName, resolveCommandTarget } from '../config-io.js'
 import { resolveOperationScope } from '../installer/scope-config.js'
 import type { WhereOptions, WhereReport } from '../types.js'
 
@@ -15,15 +15,18 @@ export function resolveCliPackageRoot(): string {
 
 export async function whereProject(options: WhereOptions = {}): Promise<WhereReport> {
   const cwd = process.cwd()
-  const repoRoot = path.resolve(options.targetDir ?? cwd)
-  const adapter: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
+  const requestedTarget = path.resolve(options.targetDir ?? cwd)
+  const adapter: AdapterName = options.adapter ?? detectAdapterName(requestedTarget)
+  const { effectiveRepoRoot: repoRoot } = resolveCommandTarget(requestedTarget, adapter)
   const scope = await resolveOperationScope(repoRoot, adapter, options)
   const paths = resolveScopedPaths(getAdapterLayout(adapter), scope, repoRoot)
   const configPresent = existsSync(paths.configPath)
 
   return {
     cwd,
+    requestedTarget,
     repoRoot,
+    effectiveRepoRoot: repoRoot,
     adapter,
     installScope: scope,
     configPresent,
@@ -41,7 +44,8 @@ export async function whereProject(options: WhereOptions = {}): Promise<WhereRep
 export function formatWhereReport(report: WhereReport): string {
   const lines = [
     `cwd: ${report.cwd}`,
-    `target dir: ${report.repoRoot}`,
+    `requested target: ${report.requestedTarget}`,
+    `config anchor (repoRoot): ${report.repoRoot}`,
     `adapter: ${report.adapter} (scope=${report.installScope})`,
     `config present: ${report.configPresent ? 'yes' : 'no'}`,
     `cli executable: ${report.cliExecutable ?? '(unknown)'}`,

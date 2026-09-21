@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigForCommand } from '../config-io.js'
 import { detectBypassAttempts, detectNoisyRules } from '../core/audit-analysis.js'
 import {
   type AuditReadScopeOptions,
@@ -30,6 +30,7 @@ export type { AuditReadScopeOptions }
 
 export interface AuditOptions {
   targetDir?: string
+  adapter?: AdapterName
   subcommand: AuditSubcommand
   json?: boolean
   since?: string
@@ -91,8 +92,10 @@ export type AuditProjectReport =
 export async function auditVersionsProject(
   options: { targetDir?: string; adapter?: AdapterName } = {},
 ): Promise<AuditVersionsReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot, options.adapter)
+  const { effectiveRepoRoot: repoRoot, config } = await loadConfigForCommand(
+    options.targetDir,
+    options.adapter,
+  )
   const directory = resolveAuditLogDirectory(repoRoot, config.audit.logPath)
   const activePath = await resolveActiveAuditLogPath(repoRoot, config)
   const versions = listVersionedAuditLogRoots(directory).map((filePath) => ({
@@ -109,17 +112,20 @@ export async function auditVersionsProject(
 }
 
 export async function auditProject(options: AuditOptions): Promise<AuditProjectReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const commandTarget = path.resolve(options.targetDir ?? process.cwd())
 
   if (options.subcommand === 'versions') {
-    return auditVersionsProject({ targetDir: repoRoot })
+    return auditVersionsProject({ targetDir: commandTarget, adapter: options.adapter })
   }
 
   const readScope: AuditReadScopeOptions = {
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,
   }
-  const records = await loadAuditRecords(repoRoot, readScope)
+  const records = await loadAuditRecords(commandTarget, {
+    ...readScope,
+    adapter: options.adapter,
+  })
   const filter: AuditFilter = {
     since: options.since,
     until: options.until,
@@ -154,7 +160,10 @@ export async function auditProject(options: AuditOptions): Promise<AuditProjectR
     }
   }
 
-  const config = await loadConfigFile(repoRoot)
+  const { effectiveRepoRoot: repoRoot, config } = await loadConfigForCommand(
+    commandTarget,
+    options.adapter,
+  )
   let candidateConfig: BelayConfigV3 = config
   let configWarning: string | undefined
   if (options.configPath) {

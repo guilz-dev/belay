@@ -54,7 +54,7 @@ describe('where command', () => {
     expect(report.runtimeDir).toBe(path.join(repoRoot, '.cursor', 'belay', 'runtime'))
     expect(report.configPath).toBe(path.join(repoRoot, '.cursor', 'belay.config.json'))
     expect(existsSync(report.cliPackageRoot)).toBe(true)
-    expect(formatWhereReport(report)).toContain(`target dir: ${repoRoot}`)
+    expect(formatWhereReport(report)).toContain(`config anchor (repoRoot): ${repoRoot}`)
   })
 
   it('reports global install paths when scope is global', async () => {

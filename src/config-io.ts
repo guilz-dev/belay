@@ -19,11 +19,38 @@ import {
   resolveLayeredConfig,
   teamConfigPath,
 } from './core/config-layers.js'
+import { findCursorRoutingRepoRoot } from './adapters/cursor/routing-layout.js'
 import { type LinkedWorktreeGitOptions, resolveRepoConfig } from './core/linked-worktree-config.js'
 import { trustRepoConfig } from './core/repo-config-trust.js'
 import type { ApprovalStateFile } from './core/types.js'
 
 export type { LayeredConfigResult }
+
+export interface CommandTargetResolution {
+  requestedTarget: string
+  effectiveRepoRoot: string
+}
+
+/** Align CLI `--target` / cwd with Cursor hook routing repo discovery. */
+export function resolveCommandTarget(
+  targetDir: string | undefined,
+  adapter: AdapterName = detectAdapterName(path.resolve(targetDir ?? process.cwd())),
+): CommandTargetResolution {
+  const requestedTarget = path.resolve(targetDir ?? process.cwd())
+  const effectiveRepoRoot =
+    adapter === 'cursor' ? findCursorRoutingRepoRoot(requestedTarget) : requestedTarget
+  return { requestedTarget, effectiveRepoRoot }
+}
+
+export async function loadConfigForCommand(
+  targetDir: string | undefined,
+  adapter?: AdapterName,
+): Promise<CommandTargetResolution & { config: BelayConfigV3 }> {
+  const detected = adapter ?? detectAdapterName(path.resolve(targetDir ?? process.cwd()))
+  const resolution = resolveCommandTarget(targetDir, detected)
+  const config = await loadConfigFile(resolution.effectiveRepoRoot, detected)
+  return { ...resolution, config }
+}
 export function resolveAdapterName(config: BelayConfigV3): AdapterName {
   if (config.adapter === 'claude') {
     return 'claude'

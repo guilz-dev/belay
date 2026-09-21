@@ -1,21 +1,24 @@
-import path from 'node:path'
-
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigForCommand } from '../config-io.js'
 import {
   detectFenceDrift,
   formatAskBreakdown,
   summarizeAuditVisibility,
 } from '../core/audit-summary.js'
 import type { AuditFilter } from '../core/audit-types.js'
-import { resolveActiveAuditLogPath } from '../core/audit-version-path.js'
+import {
+  listVersionedAuditLogRoots,
+  resolveActiveAuditLogPath,
+  resolveAuditLogDirectory,
+} from '../core/audit-version-path.js'
 import type { AuditVisibilityReport, ReportOptions } from '../types.js'
 import { loadAuditRecords } from './audit.js'
 
 export async function reportProject(options: ReportOptions = {}): Promise<AuditVisibilityReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
+  const { effectiveRepoRoot: repoRoot, requestedTarget, config } = await loadConfigForCommand(
+    options.targetDir,
+  )
   const auditLogPath = await resolveActiveAuditLogPath(repoRoot, config)
-  const records = await loadAuditRecords(repoRoot, {
+  const records = await loadAuditRecords(requestedTarget, {
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,
   })
@@ -31,13 +34,24 @@ export async function reportProject(options: ReportOptions = {}): Promise<AuditV
   const drift = detectFenceDrift(summary, {
     threshold: config.policy.fenceWarnThreshold,
   })
+  const notes = [...drift.notes]
+  notes.push(`Readiness: ${auditLogPath}.readiness.json`)
+  const auditDirectory = resolveAuditLogDirectory(repoRoot, config.audit.logPath)
+  const versionedLogs = listVersionedAuditLogRoots(auditDirectory)
+  if (versionedLogs.length > 1) {
+    notes.push(
+      `Versioned audit logs (${versionedLogs.length}): use \`belay audit versions\` or --all-versions for forensic reads.`,
+    )
+  }
 
   return {
     repoRoot,
+    requestedTarget: requestedTarget !== repoRoot ? requestedTarget : undefined,
     auditLogPath,
+    auditReadinessPath: `${auditLogPath}.readiness.json`,
     ...summary,
     warnings: drift.warnings,
-    notes: drift.notes,
+    notes,
   }
 }
 
@@ -45,6 +59,9 @@ export function formatReport(report: AuditVisibilityReport): string {
   const recentHostDenials = report.recentHostDenials ?? []
   const lines = [
     `belay report for ${report.repoRoot}`,
+    ...(report.requestedTarget
+      ? [`CLI target: ${report.requestedTarget} (config anchor: ${report.repoRoot})`]
+      : []),
     `Audit log: ${report.auditLogPath}`,
     '',
     `Gate events: ${report.gateEvents}`,
@@ -52,6 +69,9 @@ export function formatReport(report: AuditVisibilityReport): string {
     `Flag (allow_flagged): ${report.flagCount}`,
     `Allow (silent pass): ${report.allowCount}`,
     `Host denied after Belay allow: ${report.hostDeniedAfterAllowCount ?? 0}`,
+    ...(report.knownHostNoiseCount && report.knownHostNoiseCount > 0
+      ? [`Known host hook noise (non-Belay): ${report.knownHostNoiseCount}`]
+      : []),
     ...(report.unrecognizedHostFailureCount && report.unrecognizedHostFailureCount > 0
       ? [`Unrecognized host tool failures: ${report.unrecognizedHostFailureCount}`]
       : []),
