@@ -6,7 +6,7 @@
 
 - [PR #141](https://github.com/guilz-dev/belay/pull/141) で設計書をマージ済み。CI は成功している。
 - [PR #143](https://github.com/guilz-dev/belay/pull/143) で parser-neutral interface、rollout mode、比較器、span validation、および fail-closed の足場を実装済み。CI は成功している。
-- 互換性 probe、Go/Wasm bridge、production parser artifact、shadow 計測、および各 promotion gate は未完了。
+- 互換性 probe は 2026-09-21 に実施し、[`FAIL`](./mvdan-shell-probe-result.md) で終了した。Go/Wasm bridge、production parser artifact、shadow 計測、および各 promotion gate は未着手のままブロックされている。
 - 2026-09-21 時点の最新リリース `v0.12.3` は上記変更より前であり、本移行は未リリースである。
 
 正本の設計は
@@ -38,6 +38,16 @@
 ## 残件の実装順
 
 ### 1. Disposable compatibility probe
+
+**2026-09-21 結果: FAIL**
+
+[`docs/ops/mvdan-shell-probe-result.md`](./mvdan-shell-probe-result.md) に証跡を記録した。
+`sh-syntax@0.6.0` の公開 DTO は concrete command kind、child structure、word-part kind を
+保持せず、310 unique inputs のすべてが `partial` となった。fresh-process cold max と
+supported-platform offline coverage も gate を満たしていない。
+
+この FAIL により、現設計の production migration は停止する。新しい設計判断と再 probe の
+PASS なしに stage 2 以降へ進んではならない。
 
 本番依存関係を追加する前に、`sh-syntax` を一時的な adapter として使用し、移行可能性を測定する。
 
@@ -218,7 +228,7 @@ implementation authorization
 | --- | --- | --- |
 | 設計 | 完了 | PR #141 の設計を正本として維持 |
 | Interface / fail-closed scaffold | 完了 | PR #143 の回帰テストを維持 |
-| Compatibility probe | 未着手 | probe exit criteria 全合格 |
+| Compatibility probe | 実施済み（FAIL） | 新しい設計判断に基づく再 probe の exit criteria 全合格 |
 | Production Wasm artifact | 未着手 | pinning、再現ビルド、integrity、offline load |
 | Shared lowering integration | 一部基盤のみ | differential suite と semantic parity |
 | Shadow | 未着手 | candidate-looser / unavailable 0、latency gate 合格 |
@@ -229,4 +239,4 @@ implementation authorization
 
 ## 次の一手
 
-実装を開始する場合は、まず明示的な実装承認を得たうえで compatibility probe だけを独立した最初の tracer bullet とする。probe が合格するまで Go/Wasm の production dependency や runtime artifact を追加しない。
+現 probe は FAIL で終了したため、production implementation は開始しない。次の作業は、lossless な AST DTO を得る方法または disposable adapter 戦略を見直す新しい設計判断である。再 probe が合格するまで Go/Wasm の production dependency や runtime artifact を追加しない。
