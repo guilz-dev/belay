@@ -106,6 +106,8 @@ export interface VerdictContext {
   grants?: import('../capability/grant.js').CapabilityGrantV1[]
   attestation?: import('../capability/attestation.js').BoundaryAttestation | null
   egressProxyActive?: boolean
+  /** Wall-clock deadline for shell lowering (manifest gate work must fail closed after this). */
+  shellAnalysisDeadlineMs?: number
 }
 
 export interface InternalSegmentVerdict {

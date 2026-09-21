@@ -162,15 +162,33 @@ describe('general shell dogfood behavior', () => {
   it.each([
     'gh pr view 54',
     'gh pr diff 54',
+    'gh pr view 675 --repo agency-star/freelance.admin',
+    'gh run view 35177312105 --repo agency-star/freelance.admin --log-failed',
     'gh api repos/guilz-dev/belay/pulls/54',
     'gh search code "freeword" repo:guilz-dev/belay path:src',
     'gh api "repos/guilz-dev/belay/contents/src?ref=main" --jq ".content" | base64 -d | sed -n "1,40p"',
+    'sleep 1500 && gh run view 35051027563 --repo agency-star/copilot-usage-reporter --json status,conclusion',
   ])('allows read-only GitHub CLI calls: %s', async (command) => {
     const repoRoot = '/workspace/project'
     const result = await classify(command, repoRoot, repoRoot)
 
     expect.soft(result.verdict).toBe('allow')
     expect.soft(effectActions(result)).toContain('network.connect')
+  })
+
+  it.each([
+    './sleep 1',
+    '/tmp/sleep 1',
+    '/usr/bin/sleep 1',
+    './sleep 1 && gh pr view 54',
+    'env /tmp/sleep 1 && gh run view 54 --json status,conclusion',
+  ])('requires approval for path-qualified sleep executables: %s', async (command) => {
+    const repoRoot = '/workspace/project'
+    const result = await classify(command, repoRoot, repoRoot)
+
+    expect(result.verdict).toBe('deny_pending_approval')
+    expect(result.reason).toBe('unknown_local_effect')
+    expect(effectActions(result)).toContain('indeterminate')
   })
 
   it('keeps gh api fields behind approval when no explicit read method is present', async () => {
@@ -244,6 +262,8 @@ describe('general shell dogfood behavior', () => {
 
     expect.soft(readResult.verdict).toBe('allow')
     expect.soft(linkedMutationResult.verdict).toBe('allow_flagged')
+    expect.soft(linkedMutationResult.axes?.location).toBe('repo_local')
+    expect.soft(linkedMutationResult.assessment.external).toBe(false)
     expect.soft(separateMutationResult.verdict).toBe('deny_pending_approval')
   })
 

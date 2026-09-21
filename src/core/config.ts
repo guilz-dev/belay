@@ -43,6 +43,7 @@ import type {
   RawConfigInput,
   SandboxRuntime,
 } from './config/types.js'
+import { normalizeShellFrontendMode } from './shell-frontend/mode.js'
 import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
 
 export {
@@ -303,6 +304,7 @@ export function migrateV2ToV3(
     classifier: {
       strictChains: v2.classifier.strictChains,
       sensitivePaths: v2.classifier.sensitivePaths,
+      shellFrontendMode: 'legacy',
     },
     policy: { ...LEGACY_POLICY_V3 },
     overrides: {
@@ -622,6 +624,7 @@ export function normalizeConfig(
       sensitivePaths: Array.isArray(v4.classifier?.sensitivePaths)
         ? v4.classifier.sensitivePaths
         : DEFAULT_CONFIG_V4.classifier.sensitivePaths,
+      shellFrontendMode: normalizeShellFrontendMode(v4.classifier?.shellFrontendMode),
     },
     policy: {
       unknownLocalEffect:

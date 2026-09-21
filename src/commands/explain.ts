@@ -152,6 +152,18 @@ export function formatExplainReport(report: ExplainReport): string {
     `  blastRadius: ${result.assessment.blastRadius}`,
     `  confidence: ${result.assessment.confidence}`,
     `  signals: ${result.assessment.signals.join(', ') || '(none)'}`,
+    ...(report.result.effectPlan?.effectManifestAudits?.length
+      ? [
+          '',
+          'Effect manifest:',
+          ...report.result.effectPlan.effectManifestAudits.map(
+            (audit) =>
+              `  [${audit.frontendId ?? 'legacy-v1'}/${audit.role ?? 'canonical'}] ${audit.commandBasename} outcome=${audit.outcome} trust=${audit.trust} reason=${audit.reason}${
+                audit.ruleId ? ` rule=${audit.ruleId}` : ''
+              }`,
+          ),
+        ]
+      : []),
     report.transactionalEligible
       ? 'Observed assessment: measured in an isolated git worktree at gate time. Observed-safe commands are applied once and the hook denies re-execution (transactional_already_applied).'
       : 'Observed assessment: not applicable (transactional path not eligible).',

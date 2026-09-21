@@ -11,7 +11,24 @@ Belay を **dogfood モード**（`mode: audit` + `policy.unknownLocalEffect: de
 | --- | --- |
 | dogfood | `mode: "audit"` かつ `unknownLocalEffect: "deny"` |
 | 確認 | `belay doctor` が `Dogfood: active` を示すこと |
-| enforce 移行 | 各リポの **active cohort** が readiness を満たすまで不可（[監査 remediation §1](../dogfood-audit-remediation-2026-08-22.ja.md)） |
+| enforce 移行 | 各リポの **active cohort** で `readyForEnforce === true` が必要（[ADR-012](../adr/ADR-012-traffic-readiness-workload-alignment.md)）。他 repo の evidence は移行根拠にならない |
+
+## Traffic readiness の二層（2026-09-17）
+
+`reviewedBenignEvents: 0` を単一原因にしない。
+
+| 層 | 場所 | 意味 |
+| --- | --- | --- |
+| **A: ゲート定義** | `audit-metrics` | ledger の `provably-benign` と fingerprint 一致した **全 active-cohort gate 行**を数える（gate 時点の allow に限定しない。**blocked も分母・分子に含む**） |
+| **B: 証跡収集** | `harvest` | `shell+tool` scope。`allowed_read`（replay 可能な `actionSnapshot` 付き allow read）と ask 中心 source を併用 |
+
+→ 主因は多くの場合 **B（review 可能な候補が収集されていない）**。「1 年回しても 150 に届かない」等の日程見積も、修正前の数値だけでは断定しない（[設計 spec](../superpowers/specs/2026-09-17-traffic-readiness-workload-alignment-design.md)）。
+
+**blocked read（would-block または gate 時 deny）**は `harvest-review-batch` の自動 `provably-benign` 対象外。手動で `harvest apply` するか、別途 review キューを運用する。kind 別 `reviewedBenignBlocked` で metrics に残る。
+
+Phase 1 実装: tool harvest apply は **ledger-only**（shell corpus は変更しない）。閾値 150→100 や limited enforce trial は **実測後**に判断。
+
+enforce から audit へ戻す: `belay dogfood --target <repo>`。`dogfood --check` は rollback ではなく enforce 時 `dogfood_inactive` を報告するだけ。
 
 ## アクティブ導入先（2026-09-10 時点）
 
@@ -77,13 +94,17 @@ action で実行し、リテラルの `working_directory` とリテラルの `--
   skip した malformed line 数・oversized line 数）;
 - cutoff 以降の active cohort availability-caused ask が 0;
 - 少なくとも 150 件の reviewed `provably-benign` active-cohort event が、少なくとも 3 個の
-  distinct かつ valid な session correlation にまたがること;
-- reviewed benign block rate が 2% 未満; および
+  distinct かつ valid な session correlation にまたがること（**Phase 1 実測後に見直し可。事前に
+  150→100 へ下げない**）;
+- reviewed benign block rate が 2% 未満（**kind 別**の rate も Phase 1 以降に記録。tool 大量
+  allow が shell 誤ブロックを薄めないよう shell 最低件数ゲートを追加予定）;
 - must-ask corpus miss が 0、provably-benign corpus block が 0、
-  `readyForEnforce: true`。
+  `readyForEnforce: true`（**当該 target の active cohort のみ**）。
 
 active cohort の raw/classifier would-block rate は診断には有用だが、移行判定基準ではない。
 移行には、reviewed benign の denominator と上記 availability/corpus hard gate だけを使う。
+`dogfood --enforce --force` は reviewed-traffic **件数**のみ override 可。**corpus hard gate
+pass と availability asks = 0 は必須**。
 
 `quality --target <target>` は、実行している Belay package に同梱された canonical corpus を
 既定で使う。target-local corpus は `--corpus <path>` を明示した場合だけ使われる。意図的に

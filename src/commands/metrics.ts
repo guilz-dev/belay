@@ -191,6 +191,13 @@ export function formatMetricsReport(
   lines.push(
     `- reviewed benign blocked: ${report.currentCohort.reviewedTraffic.reviewedBenignBlocked} (${(report.currentCohort.reviewedTraffic.benignBlockRate * 100).toFixed(2)}%)`,
   )
+  const byKind = report.currentCohort.reviewedTraffic.byKind
+  lines.push(
+    `- reviewed benign by kind (shell): ${byKind.shell.reviewedBenignEvents} events, ${byKind.shell.reviewedBenignBlocked} blocked (${(byKind.shell.benignBlockRate * 100).toFixed(2)}%)`,
+  )
+  lines.push(
+    `- reviewed benign by kind (tool): ${byKind.tool.reviewedBenignEvents} events, ${byKind.tool.reviewedBenignBlocked} blocked (${(byKind.tool.benignBlockRate * 100).toFixed(2)}%)`,
+  )
   lines.push(`- distinct valid sessions: ${report.currentCohort.reviewedTraffic.distinctSessions}`)
   lines.push(
     `- active-cohort availability asks: ${report.currentCohort.reviewedTraffic.availabilityAsks}`,

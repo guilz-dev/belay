@@ -14,8 +14,11 @@ Read-only `harvest list`, `metrics`, and `quality` inspections of the Belay targ
 - 23 would-block events: 19 `unknown_local_effect`, 4 `outside_repo_mutation`.
 - Availability asks: 0; malformed/oversized records: 0.
 - Shell harvest: no unreviewed candidates, no availability queue. This does not mean
-  all-channel precision is perfect: harvest is shell-scoped.
+  all-channel precision is perfect: harvest is shell-scoped and ask-centric; allowed Tool Read
+  traffic is not harvested today ([ADR-012](../adr/ADR-012-traffic-readiness-workload-alignment.md)).
 - Reviewed provably-benign events: 0; reviewed sessions: 0; ready for enforce: false.
+  Zero reviewed events here reflects missing ledger reviews / harvest collection bias, not proof
+  that the readiness gate cannot count traffic once reviews exist.
 - The pre-change corpus passed 96 cases, including 42 must-ask and 35 provably-benign cases,
   with no hard-gate misses or blocks.
 
@@ -40,6 +43,11 @@ Issue #72's original 20-event / 5% raw would-block criterion is historical. The 
 criterion is at least 150 reviewed provably-benign events across three valid session correlations,
 benign block rate below 2%, zero active-cohort availability asks, and passing corpus hard gates.
 See [per-target evidence](./dogfood-install-targets.md#per-target-readiness-evidence).
+
+**2026-09-17 alignment note:** Phase 1 will add per-kind metrics, allowed-read harvest candidates,
+and tool ledger-only reviews before threshold or enforce policy changes. Do not infer calendar
+sunsets or 150→100 cuts without post-Phase-1 per-target metrics. `rtk vitest` remains
+`accepted-benign` / mutation — not a read-only argv-delegate success target.
 
 Collect normal development traffic after the corrected runtime is installed and review actual
 effects. Preserve separate runtime/config/boundary cohorts and per-target evidence. Neither old

@@ -29,17 +29,33 @@ import {
 } from './audit-recovery-metrics.js'
 import { isValidSessionCorrelationId } from './audit-serialize.js'
 import type {
+  AuditRecord,
   AvailabilityAskCounts,
   DecisionCohortIdentity,
   ReasonApprovalRatio,
   RepeatedFingerprintAsk,
 } from './audit-types.js'
 import { AUDIT_METRICS_SCHEMA_VERSION, GATE_EVENTS } from './audit-types.js'
-import { type HarvestReviewLedgerV1, latestHarvestReviews } from './harvest-review.js'
+import { DEFAULT_AUDIT_LOG_PATH } from './config/audit.js'
+import {
+  type HarvestReviewLedgerV1,
+  harvestReviewKey,
+  latestHarvestReviews,
+} from './harvest-review.js'
 
 export const MIN_REVIEWED_BENIGN_EVENTS = 150
 export const MIN_REVIEWED_SESSIONS = 3
 export const MAX_BENIGN_BLOCK_RATE = 0.02
+/** Placeholder until Phase 2 policy sets N from dogfood measurement (ADR-012). */
+export const MIN_SHELL_REVIEWED_BENIGN_EVENTS = 10
+
+export interface ReviewedBenignKindMetrics {
+  reviewedBenignEvents: number
+  reviewedBenignBlocked: number
+  benignBlockRate: number
+}
+
+export type ReviewedBenignByKind = Record<'shell' | 'tool', ReviewedBenignKindMetrics>
 
 export interface AuditCohortIdentity extends DecisionCohortIdentity {
   /** Display / forensics metadata — not used for v3 cohort matching when artifact hash is present. */
@@ -74,9 +90,37 @@ export interface ReviewedTrafficReadiness {
   reviewedBenignEvents: number
   reviewedBenignBlocked: number
   benignBlockRate: number
+  byKind: ReviewedBenignByKind
   distinctSessions: number
   availabilityAsks: number
   ready: boolean
+}
+
+function emptyReviewedBenignByKind(): ReviewedBenignByKind {
+  const empty: ReviewedBenignKindMetrics = {
+    reviewedBenignEvents: 0,
+    reviewedBenignBlocked: 0,
+    benignBlockRate: 0,
+  }
+  return { shell: { ...empty }, tool: { ...empty } }
+}
+
+function summarizeReviewedBenignByKind(records: AuditRecord[]): ReviewedBenignByKind {
+  const byKind = emptyReviewedBenignByKind()
+  for (const record of records) {
+    const bucket = record.kind === 'tool' ? byKind.tool : byKind.shell
+    bucket.reviewedBenignEvents += 1
+    if (inferWouldBlock(record)) {
+      bucket.reviewedBenignBlocked += 1
+    }
+  }
+  for (const bucket of [byKind.shell, byKind.tool]) {
+    bucket.benignBlockRate =
+      bucket.reviewedBenignEvents > 0
+        ? bucket.reviewedBenignBlocked / bucket.reviewedBenignEvents
+        : 0
+  }
+  return byKind
 }
 
 export interface ContainedExecutionMetrics {
@@ -335,19 +379,20 @@ export function computeAuditMetrics(
   const reviewEvidencePresent = latestReviews.size > 0
   const reviewedBenignRecords = cohortGateRecords.filter((record) => {
     const fingerprint = auditFingerprint(record)
-    const kind = typeof record.kind === 'string' ? record.kind : undefined
+    const kind = record.kind === 'shell' || record.kind === 'tool' ? record.kind : undefined
     const boundaryProfile =
       typeof record.boundaryProfile === 'string' ? record.boundaryProfile : undefined
     if (!fingerprint || !kind || !boundaryProfile) {
       return false
     }
-    const review = latestReviews.get(`${fingerprint}\u0000${kind}\u0000${boundaryProfile}`)
+    const review = latestReviews.get(harvestReviewKey({ fingerprint, kind, boundaryProfile }))
     return review?.outcome === 'provably-benign'
   })
   const reviewedBenignEvents = reviewedBenignRecords.length
   const reviewedBenignBlocked = reviewedBenignRecords.filter(inferWouldBlock).length
   const benignBlockRate =
     reviewedBenignEvents > 0 ? reviewedBenignBlocked / reviewedBenignEvents : 0
+  const reviewedBenignByKind = summarizeReviewedBenignByKind(reviewedBenignRecords)
   const reviewedSessionIds = new Set<string>()
   for (const record of reviewedBenignRecords) {
     const sessionId = record.sessionCorrelationId
@@ -359,6 +404,7 @@ export function computeAuditMetrics(
     reviewedBenignEvents,
     reviewedBenignBlocked,
     benignBlockRate,
+    byKind: reviewedBenignByKind,
     distinctSessions: reviewedSessionIds.size,
     availabilityAsks: activeCohortAvailabilityAsks,
     ready:
@@ -367,6 +413,7 @@ export function computeAuditMetrics(
       (availabilityWatermark.status === 'not-evaluated' ||
         availabilityWatermark.status === 'current') &&
       reviewedBenignEvents >= MIN_REVIEWED_BENIGN_EVENTS &&
+      reviewedBenignByKind.shell.reviewedBenignEvents >= MIN_SHELL_REVIEWED_BENIGN_EVENTS &&
       reviewedSessionIds.size >= MIN_REVIEWED_SESSIONS &&
       benignBlockRate < MAX_BENIGN_BLOCK_RATE &&
       activeCohortAvailabilityAsks === 0,
@@ -476,7 +523,7 @@ export function computeAuditMetrics(
 
   return {
     schemaVersion: AUDIT_METRICS_SCHEMA_VERSION,
-    auditLogPath: options.auditLogPath ?? 'belay/audit.ndjson',
+    auditLogPath: options.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH,
     totalLines: records.length,
     parsedRecords: records.length,
     gateEvents,

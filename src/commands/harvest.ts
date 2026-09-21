@@ -5,12 +5,13 @@ import { parseAuditNdjson } from '../core/audit-metrics.js'
 import {
   auditApprovalCorrelationId,
   isApprovalRecorded,
-  isShellGateRecord,
+  isHarvestGateRecord,
   toAuditRecord,
 } from '../core/audit-query.js'
 import { isValidAuditFingerprint } from '../core/audit-serialize.js'
 import type { AuditRecord } from '../core/audit-types.js'
 import { harvestReviewLedgerPath } from '../core/audit-version-path.js'
+import type { BelayConfigV3 } from '../core/config.js'
 import {
   applyHarvestReview,
   buildHarvestReport,
@@ -58,30 +59,30 @@ export interface HarvestApplyOptions {
   allVersions?: boolean
 }
 
-export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
-  const records = await loadAuditRecords(repoRoot, {
-    auditVersion: options.auditVersion,
-    allVersions: options.allVersions,
-  })
-  const cohort = await resolveActiveAuditCohort(repoRoot, config)
+export async function buildHarvestListReport(
+  repoRoot: string,
+  records: AuditRecord[],
+  options: HarvestListOptions & { config?: BelayConfigV3 } = {},
+): Promise<HarvestReport> {
+  const resolvedRoot = path.resolve(repoRoot)
+  const config = options.config ?? (await loadConfigFile(resolvedRoot))
+  const cohort = await resolveActiveAuditCohort(resolvedRoot, config)
   const forensicNotes = [
     ...(options.allVersions
       ? ['Mixed-version forensic mode: do not bulk-promote candidates.']
       : []),
     ...(options.auditVersion ? [`Audit version scope: v${options.auditVersion}.`] : []),
   ]
-  const shellGateRecords = records.filter(isShellGateRecord)
+  const harvestGateRows = records.filter(isHarvestGateRecord)
   const matchingGateRecords = cohort
-    ? shellGateRecords.filter((record) => matchesAuditCohort(record, cohort))
+    ? harvestGateRows.filter((record) => matchesAuditCohort(record, cohort))
     : []
 
   if (!cohort && !options.allCohorts) {
     return scopedHarvestReport([], {
       cohort: null,
       matchingGateEvents: 0,
-      excludedGateEvents: shellGateRecords.length,
+      excludedGateEvents: harvestGateRows.length,
       notes: [
         'Active audit cohort is unavailable; no historical records were harvested. Use --all-cohorts only for forensic review.',
       ],
@@ -94,7 +95,7 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
   const report = scopedHarvestReport(harvestRecords, {
     cohort,
     matchingGateEvents: matchingGateRecords.length,
-    excludedGateEvents: shellGateRecords.length - matchingGateRecords.length,
+    excludedGateEvents: harvestGateRows.length - matchingGateRecords.length,
     notes: [
       ...(options.allCohorts
         ? ['Mixed-history forensic mode: do not bulk-promote candidates.']
@@ -109,16 +110,28 @@ export async function harvestListProject(options: HarvestListOptions = {}): Prom
     return report
   }
   const ledger = await loadHarvestReviewLedger(
-    harvestReviewLedgerPath(repoRoot, config.audit.logPath),
+    harvestReviewLedgerPath(resolvedRoot, config.audit.logPath),
   )
   const reviewedKeys = new Set(latestHarvestReviews(ledger).keys())
   return {
     ...report,
-    candidates: report.candidates.filter(
-      (candidate) =>
-        candidate.boundaryProfile === null || !reviewedKeys.has(harvestReviewKey(candidate)),
-    ),
+    candidates: report.candidates.filter((candidate) => {
+      if (candidate.boundaryProfile === null) {
+        // Cannot bind harvest apply; keep visible for manual triage.
+        return true
+      }
+      return !reviewedKeys.has(harvestReviewKey(candidate))
+    }),
   }
+}
+
+export async function harvestListProject(options: HarvestListOptions = {}): Promise<HarvestReport> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const records = await loadAuditRecords(repoRoot, {
+    auditVersion: options.auditVersion,
+    allVersions: options.allVersions,
+  })
+  return buildHarvestListReport(repoRoot, records, options)
 }
 
 function recordsForActiveCohort(
@@ -187,7 +200,7 @@ export function harvestReportFromRecords(
 
 export function formatHarvestReport(report: HarvestReport): string {
   const lines = [
-    `belay harvest (scope: ${report.scope} audit traces only)`,
+    `belay harvest (scope: ${report.scope})`,
     `Schema: v${report.schemaVersion}`,
     `Active cohort: ${report.cohort ? report.cohort.runtimeBuildStamp : 'unavailable'}`,
     `Matching gate events: ${report.matchingGateEvents}`,
@@ -205,7 +218,7 @@ export function formatHarvestReport(report: HarvestReport): string {
           ? 'legacy/unknown (null)'
           : JSON.stringify(candidate.boundaryProfile)
       lines.push(
-        `- ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}… boundary=${boundaryProfile}`,
+        `- [${candidate.kind}] ${JSON.stringify(candidate.command)} [${candidate.sources.join(', ')}] asks=${candidate.askCount} approved=${candidate.approvedAfterDeny ? 'yes' : 'no'} fp=${candidate.fingerprint.slice(0, 12)}… boundary=${boundaryProfile}`,
       )
     }
   }
@@ -322,6 +335,14 @@ export async function harvestApplyProject(
     return {
       ok: result.ok,
       message: result.message,
+      corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
+    }
+  }
+
+  if (candidate.kind === 'tool') {
+    return {
+      ok: true,
+      message: `Recorded ${options.outcome} harvest review for tool candidate (ledger-only; corpus unchanged).`,
       corpusPath: path.relative(repoRoot, corpusPath) || corpusPath,
     }
   }

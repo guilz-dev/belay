@@ -136,6 +136,15 @@ export function resolveWorkspaceRootMatch(
   return null
 }
 
+export function isSameRepoPath(repoRoot: string, targetPath: string): boolean {
+  return resolveWorkspaceRootMatch(repoRoot, [], targetPath)?.kind === 'repo'
+}
+
+export function sameRepoRelativePath(repoRoot: string, targetPath: string): string | null {
+  const match = resolveWorkspaceRootMatch(repoRoot, [], targetPath)
+  return match?.kind === 'repo' ? match.relativePath : null
+}
+
 export function normalizeToken(token: string, repoRoot: string): string {
   if (!path.isAbsolute(token)) {
     return token

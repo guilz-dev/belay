@@ -162,7 +162,7 @@ describe('v0.2 operational commands', () => {
   it('warns that all-cohorts harvest output is forensic evidence only', () => {
     const output = formatHarvestReport({
       schemaVersion: 2,
-      scope: 'shell',
+      scope: 'shell+tool',
       cohort: null,
       matchingGateEvents: 0,
       excludedGateEvents: 0,

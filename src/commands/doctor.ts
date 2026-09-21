@@ -51,6 +51,7 @@ import {
   stripForbiddenShellOverrideLists,
 } from '../core/config.js'
 import { detectUndogfoodedLinkedWorktrees } from '../core/dogfood-environment.js'
+import { diagnoseEffectManifestHealth } from '../core/effect-manifest/doctor-health.js'
 import { runtimeIntegrityFiles, verifyIntegrityManifest } from '../core/integrity.js'
 import { diagnoseJudge, stopJudgeSessionBrokers } from '../core/judge-doctor.js'
 import { resolveJudgeTransport } from '../core/judge-runtime-detection.js'
@@ -250,6 +251,9 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
       loadedConfig = layered.config
       configProvenance = layered.provenance
       issues.push(...notificationConfigIssues(loadedConfig.notifications, repoRoot))
+      const manifestHealth = diagnoseEffectManifestHealth(repoRoot, loadedConfig)
+      issues.push(...manifestHealth.issues)
+      notes.push(...manifestHealth.notes)
       for (const entry of layered.provenance) {
         notes.push(`Config layer [${entry.source}]: ${entry.path}`)
       }

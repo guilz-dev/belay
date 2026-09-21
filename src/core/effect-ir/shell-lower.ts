@@ -1,10 +1,15 @@
 import path from 'node:path'
 
+import { applyEffectManifest } from '../effect-manifest/apply.js'
+import type { EffectManifestAuditV1 } from '../effect-manifest/types.js'
+import { appendParserDisagreement } from '../shell-frontend/compare.js'
+import { selectCanonicalEffectPlan } from '../shell-frontend/router.js'
 import {
   isHeredocOperator,
   isHereStringOperator,
   lexShell,
   type ShellHeredoc,
+  tokenizeShell,
 } from '../shell-tokenizer.js'
 import { decodeDockerComposeRun as decodeStructuredDockerComposeRun } from '../verdict/docker-compose-run.js'
 import { decodeEgressEffects } from '../verdict/egress-classify.js'
@@ -84,7 +89,42 @@ const HEREDOC_EXECUTABLE_INTERPRETERS = new Set([
  * permission/verdict.
  */
 export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
-  const context: LowerContext = { ...params, depth: 0 }
+  const mode = params.shellFrontendMode ?? 'legacy'
+  if (mode === 'legacy') {
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
+  }
+  if (mode === 'shadow') {
+    // The mvdan artifact is not shipped yet. Never relabel a second legacy lowering as mvdan:
+    // shadow work must remain observational and must not consume the canonical deadline first.
+    return lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    })
+  }
+  const mvdan = unavailableMvdanPlan(params, ['parser.artifact_unavailable'])
+  if (mode === 'mvdan') {
+    return mvdan
+  }
+  return selectCanonicalEffectPlan({
+    mode,
+    legacy: lowerLegacyShellEffectPlan({
+      ...params,
+      effectManifestRole: 'canonical',
+      effectManifestFrontendId: 'legacy-v1',
+    }),
+    mvdan,
+    withDisagreement: appendParserDisagreement,
+  })
+}
+
+function lowerLegacyShellEffectPlan(params: LowerShellEffectPlanParams): EffectPlan {
+  const effectManifestAudits: EffectManifestAuditV1[] = []
+  const context: LowerContext = { ...params, depth: 0, effectManifestAudits }
   const segments = lowerTopLevelSegments(params.command, context)
   const lexed = lexShell(params.command)
   const structuralCommand = maskHeredocBodies(params.command, lexed.heredocs)
@@ -92,6 +132,32 @@ export function lowerShellEffectPlan(params: LowerShellEffectPlanParams): Effect
     inputFingerprint: params.inputFingerprint,
     segments,
     signals: pipeToShell(structuralCommand) ? ['pipe_to_shell'] : [],
+    effectManifestAudits,
+  })
+}
+
+function unavailableMvdanPlan(
+  params: LowerShellEffectPlanParams,
+  signals: readonly string[],
+): EffectPlan {
+  const commandRedacted = redactCommand(params.command)
+  return buildShellEffectPlan({
+    inputFingerprint: params.inputFingerprint,
+    signals,
+    segments: [
+      {
+        commandRedacted,
+        segmentHead: '',
+        requirements: [
+          requirement('indeterminate', 'indeterminate', { kind: 'unknown' }, commandRedacted, [
+            ...signals,
+          ]),
+        ],
+        completeness: 'partial',
+        opacity: 'unparseable',
+        signals,
+      },
+    ],
   })
 }
 
@@ -162,13 +228,14 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
       }
     }
     lowered.push(result)
+    inferredEnv = applyPersistentEnvironmentAssignments(segment, inferredEnv)
     if (!inferredEnv.DATABASE_URL && startsLocalPostgresService(segment)) {
       inferredEnv = {
         ...inferredEnv,
         DATABASE_URL: 'postgresql://127.0.0.1:5432/local',
       }
     }
-    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown)
+    const nextCwd = resolveCdTransition(segment, cwd, cwdKnown, inferredEnv)
     if (nextCwd) {
       cwd = nextCwd.cwd
       cwdKnown = nextCwd.known
@@ -225,6 +292,24 @@ function lowerTopLevelSegments(command: string, context: LowerContext): ShellEff
   return lowered
 }
 
+function applyPersistentEnvironmentAssignments(
+  segment: string,
+  inherited: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  const tokens = tokenizeShell(segment)
+  if (tokens.length === 0) {
+    return inherited
+  }
+
+  const assignmentTokens = tokens[0] === 'export' && tokens.length > 1 ? tokens.slice(1) : tokens
+  const assignmentOnly = assignmentTokens.every((token) => ENV_PREFIX_PATTERN.test(token))
+  if (!assignmentOnly) {
+    return inherited
+  }
+
+  return extractEnvironment(assignmentTokens, inherited).env
+}
+
 function lowerSegment(
   command: string,
   context: LowerContext & { pipeToShellSegment?: boolean },
@@ -253,7 +338,8 @@ function lowerSegment(
     stripStructuredRedirects(lexed.tokens),
     stripRedirects(parsedTokens),
   )
-  const head = path.basename(tokens[0] ?? parsed.head)
+  const invocationHead = tokens[0] ?? parsed.head
+  const head = path.basename(invocationHead)
   let opacity = segmentOpacity(command)
   const signals = new Set<string>()
   const requirements: ShellEffectRequirement[] = []
@@ -584,6 +670,36 @@ function lowerSegment(
       })
       let loweredArgvDelegate = false
       if (isGrammarUnknownOnly(processRequirements, head)) {
+        const manifestApplied = applyEffectManifest({
+          repoRoot: context.repoRoot,
+          cwd: context.cwd,
+          pathEnv: env.PATH ?? process.env.PATH ?? '',
+          invocationHead,
+          decoderHead: head,
+          argv: tokens,
+          requirements: processRequirements,
+          segmentCompleteness:
+            lexComplete && opacity !== 'unparseable' && opacity !== 'opaque'
+              ? 'complete'
+              : 'partial',
+          role: context.effectManifestRole ?? 'canonical',
+          frontendId: context.effectManifestFrontendId ?? 'legacy-v1',
+          trustRecord: null,
+          belayConfig: context.belayConfig,
+          effectManifestAnalysisDeadlineMs: context.effectManifestAnalysisDeadlineMs,
+        })
+        for (const signal of manifestApplied.telemetrySignals) {
+          signals.add(signal)
+        }
+        if (manifestApplied.audit) {
+          context.effectManifestAudits?.push(manifestApplied.audit)
+        }
+        if (manifestApplied.matched) {
+          requirements.push(...manifestApplied.requirements)
+          loweredArgvDelegate = true
+        }
+      }
+      if (isGrammarUnknownOnly(processRequirements, head) && !loweredArgvDelegate) {
         const argvDelegate = peelArgvDelegateArgv(tokens)
         if (
           argvDelegate &&

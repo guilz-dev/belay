@@ -59,6 +59,14 @@ export function isShellGateRecord(record: AuditRecord): boolean {
   )
 }
 
+export function isToolGateRecord(record: AuditRecord): boolean {
+  return isGateRecord(record) && record.kind === 'tool'
+}
+
+export function isHarvestGateRecord(record: AuditRecord): boolean {
+  return isShellGateRecord(record) || isToolGateRecord(record)
+}
+
 export function isApprovalRecorded(record: AuditRecord): boolean {
   return (
     (record.event === 'approval' ||

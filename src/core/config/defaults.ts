@@ -206,7 +206,7 @@ export const DEFAULT_CONFIG_V2: BelayConfigV2 = {
     sensitivePaths: ['.env', '.env.*', '**/credentials/**'],
   },
   audit: {
-    logPath: 'belay/audit.ndjson',
+    logPath: '.belay/audit.ndjson',
     includeAssessment: true,
     maxBytes: DEFAULT_AUDIT_MAX_BYTES,
     maxFiles: DEFAULT_AUDIT_MAX_FILES,
@@ -222,6 +222,7 @@ export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
   classifier: {
     strictChains: DEFAULT_CONFIG_V2.classifier.strictChains,
     sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths],
+    shellFrontendMode: 'legacy',
   },
   policy: { ...DEFAULT_POLICY_V3 },
   overrides: { ...DEFAULT_OVERRIDES_V3 },

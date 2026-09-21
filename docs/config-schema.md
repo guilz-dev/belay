@@ -15,7 +15,7 @@ exhaustive field defaults).
 | `approvalTtlMinutes` | number | `15` | One-shot approval TTL |
 | `tokenPrefix` | string | `"/belay-approve"` | |
 | `gates` | object | all enabled | `shell`, `subagent`, `fileMutation`, `toolShell` |
-| `classifier` | object | | `strictChains`, `sensitivePaths` |
+| `classifier` | object | | `strictChains`, `sensitivePaths`, `shellFrontendMode` (`legacy` until the mvdan probe passes) |
 | `policy` | object | fail-closed | See below |
 | `overrides` | object | empty | Legacy `allow` / `external` lists are accepted only for config compatibility; deprecated and ignored by shell authorization |
 | `redaction` | object | masks on | Audit scrubbing |
@@ -66,6 +66,15 @@ events and repeated deliveries to the effective owner remain separate hook proce
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
 When dogfood is active, the blocking release check applies Cursor routing-health diagnostics to the
 current repository and initialized linked worktrees and reports `hook_routing_skew` on failure.
+
+## Trusted effect-manifest state
+
+Trusted effect manifests add no config flag or migration. A repository-local candidate at
+`.belay/manifests/<basename>.json` becomes decoder authority only after an operator trusts an
+individual rule. The corresponding trust record is stored under
+`<configuredControlPlaneDir>/effect-manifest-trust/` regardless of `controlPlane.enabled`; it is
+never moved into repository-local adapter state. Active trusted-rule fingerprints participate in
+the decision cohort. See [Trusted effect manifests](./effect-manifests.md).
 
 ## `judge` (Tier1 provider)
 
@@ -195,7 +204,7 @@ enablement. Older audit records without recovery fields remain readable.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `logPath` | string | adapter-specific `belay/audit.ndjson` path | Audit directory or legacy file path (dirname used for versioned logs) |
+| `logPath` | string | adapter-specific path (e.g. `.cursor/belay/audit.ndjson`); adapter-less fallback `.belay/audit.ndjson` | Audit directory or legacy file path (dirname used for versioned logs) |
 | `includeAssessment` | boolean | `true` | Include the scrubbed assessment projection |
 | `maxBytes` | positive integer | `33554432` | Rotate before an append would exceed 32 MiB |
 | `maxFiles` | integer from 1 through 100 | `5` | Total retained files, including the active file |

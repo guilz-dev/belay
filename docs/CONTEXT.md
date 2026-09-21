@@ -9,7 +9,8 @@ authorization model. It complements
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md),
 [ADR-009](./adr/ADR-009-single-cursor-shell-gate.md), and
 [ADR-010](./adr/ADR-010-repository-config-trust.md),
-[ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md).
+[ADR-011](./adr/ADR-011-linked-worktree-config-inheritance.md), and
+[ADR-013](./adr/ADR-013-trusted-effect-manifests.md).
 
 ## Core objects
 
@@ -35,6 +36,11 @@ authorization model. It complements
 - **Benign probe core** — A test-only command fixture used to generate false-positive probes and
   structural availability expectations. It never grants runtime authority; only the resulting
   `EffectPlan` and PolicyEngine projection can authorize a shell action.
+- **Trusted effect-manifest rule** — An operator assertion, bound to one checkout, executable (and
+  script interpreter), exact typed argv language, and fixed effect contract, that the declared
+  effects are a reusable complete upper bound. It supplies semantic requirements to `EffectPlan`;
+  it never supplies an allow disposition. Candidate files are repository-local, while rule trust
+  is stored in the user control plane. See [the operator guide](./effect-manifests.md).
 
 ## Invariants
 
@@ -43,7 +49,10 @@ authorization model. It complements
    canonical effects. Legacy command lists, overrides, corpus entries, and standing-allow
    state (shell, tool, subagent) are inert at runtime. Command allowlists are
    product-incompatible
-   ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)).
+   ([ADR-005](./adr/ADR-005-command-allowlist-prohibition.md)). **Trusted effect manifests**
+   declare complete upper bounds for explicit argv patterns and executable identity; they are not
+   command allowlists
+   ([ADR-013](./adr/ADR-013-trusted-effect-manifests.md)).
 3. **Network**: payload-free reads allow. External mutation, explicit payload/file/secret
    sends, and ambiguous network effects require approval.
 4. **agentAssessment** is audit evidence only; it cannot mint grants or attestations.
@@ -83,7 +92,13 @@ authorization model. It complements
     `mode` and audit display settings do not reset the decision cohort. Readiness uses
     reviewed provably-benign traffic: at least 150 events across three valid session correlations,
     a benign block rate below 2%, and zero active-cohort availability asks. Corpus hard gates also
-    apply; raw would-block rate is diagnostic only.
+    apply; raw would-block rate is diagnostic only. The readiness gate counts ledger-matched
+    active-cohort gate records **including blocked events**; it is not limited to gate-time `allow`.
+    A separate harvest collection bias (shell-only, ask-centric candidates) often leaves
+    `reviewedBenignEvents` at zero until reviews are recorded — see
+    [ADR-012](./adr/ADR-012-traffic-readiness-workload-alignment.md). Phase 1 adds per-kind
+    reviewed-traffic metrics and allowed-read harvest candidates; enforce migration remains
+    **per-target** (`readyForEnforce` on that repo only).
     When its sidecar is missing, invalid, or for another cohort, readiness is reconstructed under
     the audit writer lock from the exact retained generations before rotation and applies the
     incoming delta once. A proven complete empty snapshot may seed zero; malformed, unreadable,
@@ -91,7 +106,8 @@ authorization model. It complements
     the active cohort. Forensic `--all-cohorts` review preserves the candidate's source boundary,
     requires exact `(fingerprint, kind, boundaryProfile)` selection, and uses
     `harvest apply --boundary-profile <id>` when boundaries are ambiguous. Reviews and corpus
-    entries remain evidence only and cannot grant runtime authority.
+    entries remain evidence only and cannot grant runtime authority. Return from enforce trial to
+    audit with `belay dogfood --target <repo>`; `dogfood --check` does not roll back mode.
 12. **Host execution policy is a separate decision boundary**: an editor or agent host may deny an
     invocation after Belay returned `permission: allow`. A correlated host
     `permission_denied` is operational evidence, not a Belay ask and not a reason to mint a Belay

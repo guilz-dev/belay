@@ -9,9 +9,11 @@ import {
   containingGitRoot,
   hasOutsideRepoPath,
   isPathOutsideRoot,
+  isSameRepoPath,
   pathWithinRoot,
   relativeWithinRepo,
   resolveWorkspaceRootMatch,
+  sameRepoRelativePath,
 } from '../core/path-utils.js'
 import {
   createRealBareRepository,
@@ -224,6 +226,32 @@ describe('resolveWorkspaceRootMatch', () => {
       root: canonicalPath(bareRoot),
       relativePath: path.join('refs', 'heads', 'new-ref'),
     })
+  })
+})
+
+describe('isSameRepoPath', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('treats a linked worktree as same-repo', async () => {
+    const repositoryRoot = await createRealGitRepository(tempDirs, 'belay-same-repo-linked-main-')
+    const linkedRoot = `${repositoryRoot}-linked`
+    await createRealLinkedWorktree(tempDirs, repositoryRoot, linkedRoot, 'linked-same-repo')
+    const target = path.join(linkedRoot, 'nested', 'new-file.ts')
+
+    expect(isSameRepoPath(repositoryRoot, target)).toBe(true)
+    expect(sameRepoRelativePath(repositoryRoot, target)).toBe(path.join('nested', 'new-file.ts'))
+  })
+
+  it('rejects a nested separate repository', async () => {
+    const repositoryRoot = await createRealGitRepository(tempDirs, 'belay-same-repo-separate-main-')
+    const separateRoot = path.join(repositoryRoot, 'vendor', 'separate')
+    await mkdir(separateRoot, { recursive: true })
+    await initializeRealGitRepository(separateRoot)
+
+    expect(isSameRepoPath(repositoryRoot, path.join(separateRoot, 'notes.txt'))).toBe(false)
+    expect(sameRepoRelativePath(repositoryRoot, path.join(separateRoot, 'notes.txt'))).toBeNull()
   })
 })
 

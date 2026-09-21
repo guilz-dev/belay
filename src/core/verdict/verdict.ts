@@ -2,7 +2,7 @@ import { collectRequirements } from '../effect-ir/build.js'
 import { evaluateEffectPlanPolicy } from '../effect-ir/policy.js'
 import { lowerShellEffectPlan } from '../effect-ir/shell-lower.js'
 import type { EffectRequirement } from '../effect-ir/types.js'
-import { canonicalPath, pathWithinRoot } from '../path-utils.js'
+import { canonicalPath, isSameRepoPath } from '../path-utils.js'
 import { cwdRelative } from './containment.js'
 import { verdictFingerprint } from './fingerprint.js'
 import { redactCommand } from './parser.js'
@@ -20,6 +20,9 @@ export async function verdict(command: string, context: VerdictContext): Promise
     cwd: context.cwd,
     repoRoot: context.repoRoot,
     inputFingerprint: fingerprint,
+    belayConfig: context.config,
+    shellFrontendMode: context.config.classifier.shellFrontendMode,
+    effectManifestAnalysisDeadlineMs: context.shellAnalysisDeadlineMs,
   })
   const policy = evaluateEffectPlanPolicy(effectPlan, context)
   const requirements = collectRequirements(effectPlan.root)
@@ -86,7 +89,7 @@ function effectPresentation(
     }
     if (requirement.resource.kind === 'path') {
       const resolved = canonicalPath(requirement.resource.path)
-      if (pathWithinRoot(repoRoot, resolved)) {
+      if (isSameRepoPath(repoRoot, resolved)) {
         local = true
       } else {
         outside = true

@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 import { collectRequirements } from '../../core/effect-ir/build.js'
 import { verdict } from '../../core/verdict/verdict.js'
@@ -398,6 +400,32 @@ describe('structural suite', () => {
       expect(result.signals).not.toContain('git.push')
     })
 
+    it('allows git commit with a literal heredoc message substitution', async () => {
+      const command = `git commit -m "$(cat <<'EOF'
+fix: normalize heredoc commit message
+
+EOF
+)"`
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('allow')
+      expect(['local_mutation', 'repo_local_mutation']).toContain(result.reason)
+      expect(result.effectPlan?.completeness).toBe('complete')
+      expect(result.signals).toContain('git.commit')
+      expect(result.signals).not.toContain('shell.heredoc_incomplete')
+    })
+
+    it('keeps unquoted commit-message heredoc expansions approval-required', async () => {
+      const command = `git commit -m "$(cat <<EOF
+fix: $(git push origin main)
+EOF
+)"`
+      const result = await verdict(command, context)
+
+      expect(result.permission).toBe('ask')
+      expect(result.signals).toContain('git.push')
+    })
+
     it('keeps the current make verify-parallel background/PID recipe approval-required', async () => {
       const root = process.cwd()
       const result = await verdict('make verify-parallel', {
@@ -549,6 +577,24 @@ describe('structural suite', () => {
       expect(result.permission).toBe('ask')
       expect(result.reason).toBe('outside_repo_mutation')
       expect(result.signals).not.toContain('shell.cwd_dynamic_transition')
+    })
+
+    it('resolves cd through a preceding literal shell assignment', async () => {
+      const worktree = path.join(context.repoRoot, '.worktrees', 'example')
+      const command = `WT="${worktree}"\ncd "$WT"\nrm -rf build`
+      const result = await verdict(command, context)
+      expect(result.reason).not.toBe('dynamic_cwd_transition')
+      expect(result.signals).not.toContain('shell.cwd_dynamic_transition')
+      expect(result.signals).not.toContain('missing_action_cwd')
+    })
+
+    it('does not leak command-scoped env assignments into later cd segments', async () => {
+      const worktree = path.join(context.repoRoot, '.worktrees', 'example')
+      const command = `WT="${worktree}" env | rg '^WT=' >/dev/null\ncd "$WT"\nrm -rf build`
+      const result = await verdict(command, context)
+      expect(result.permission).toBe('ask')
+      expect(result.reason).toBe('dynamic_cwd_transition')
+      expect(result.signals).toContain('shell.cwd_dynamic_transition')
     })
 
     it('does not report cwd availability failure for an explicit target without dynamic cd', async () => {

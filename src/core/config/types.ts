@@ -1,4 +1,5 @@
 import type { BoundaryDriverId } from '../capability/attestation.js'
+import type { ShellFrontendMode } from '../shell-frontend/types.js'
 import type {
   BelayMode,
   ControlPlaneIntegrity,
@@ -6,6 +7,8 @@ import type {
   UnparseableShellPolicy,
 } from '../types.js'
 import type { BelayJudgeRuntimeConfig } from '../verdict/judge-runtime-config.js'
+
+export type { ShellFrontendMode }
 
 /** Compatibility shape for the current-main audit sink/reader adapters. */
 export interface AuditRetentionConfig {
@@ -213,6 +216,8 @@ export interface BelayContainedExecutionConfig {
 export interface BelayClassifierConfig {
   strictChains: boolean
   sensitivePaths: string[]
+  /** Rollout authority for the shell syntax frontend. Default remains legacy. */
+  shellFrontendMode: ShellFrontendMode
 }
 
 export interface BelayNotificationsConfig {

@@ -8,7 +8,7 @@ import type { AuditCohortIdentity } from './core/audit-metrics.js'
 import { isValidAuditFingerprint } from './core/audit-serialize.js'
 import { resolveBoundaryProfile } from './core/capability/boundary-profile.js'
 import type { BelayConfigV3 } from './core/config.js'
-import { hashDecisionConfig } from './core/decision-config-fingerprint.js'
+import { composeDecisionConfigFingerprint } from './core/decision-config-fingerprint.js'
 import { canonicalStringify, hashValue } from './core/fingerprint.js'
 import { PACKAGE_VERSION } from './version.js'
 
@@ -24,7 +24,10 @@ export interface RuntimeBuildProvenanceInput {
   runtimeArtifactHash?: unknown
 }
 
-export { hashDecisionConfig } from './core/decision-config-fingerprint.js'
+export {
+  composeDecisionConfigFingerprint,
+  hashDecisionConfig,
+} from './core/decision-config-fingerprint.js'
 
 export function resolveRuntimeArtifactHash(artifactHash?: string): string | undefined {
   if (typeof artifactHash === 'string' && isValidAuditFingerprint(artifactHash)) {
@@ -36,6 +39,7 @@ export function resolveRuntimeArtifactHash(artifactHash?: string): string | unde
 export function buildAuditProvenanceFields(
   config: BelayConfigV3,
   runtime?: RuntimeBuildProvenanceInput,
+  repoRoot?: string,
 ): Record<string, string> {
   const runtimeVersion =
     typeof runtime?.runtimeVersion === 'string' ? runtime.runtimeVersion : PACKAGE_VERSION
@@ -46,7 +50,7 @@ export function buildAuditProvenanceFields(
   const fields: Record<string, string> = {
     runtimeVersion,
     runtimeBuildStamp,
-    decisionConfigFingerprint: hashDecisionConfig(config),
+    decisionConfigFingerprint: composeDecisionConfigFingerprint(config, repoRoot),
     boundaryProfile: resolveBoundaryProfile({ config }),
     configFingerprint: hashValue(canonicalStringify(config)),
   }
@@ -134,7 +138,7 @@ export async function resolveActiveAuditCohort(
     return null
   }
   const boundaryProfile = resolveBoundaryProfile({ config })
-  const decisionConfigFingerprint = hashDecisionConfig(config)
+  const decisionConfigFingerprint = composeDecisionConfigFingerprint(config, repoRoot)
   const runtimeArtifactHash = resolveRuntimeArtifactHash(runtime.artifactHash) ?? ''
   return {
     runtimeArtifactHash,
