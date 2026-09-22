@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { detectAdapterName, loadConfigFile, resolveCommandTarget } from '../config-io.js'
+import { loadConfigFile } from '../config-io.js'
 import type { AdapterName } from '../types.js'
 import { toAuditRecord } from './audit-metrics.js'
 import type { AuditReadinessStateSnapshot } from './audit-readiness-state.js'
@@ -52,14 +52,12 @@ function sortAuditRecords(stampedRecords: StampedAuditRecord[]): AuditRecord[] {
 }
 
 export async function loadScopedAuditRecords(
-  commandTarget: string,
+  repoRoot: string,
   options: AuditReadScopeOptions & { adapter?: AdapterName } = {},
 ): Promise<LoadedAuditRecords> {
-  const adapter = options.adapter ?? detectAdapterName(path.resolve(commandTarget))
-  const { effectiveRepoRoot } = resolveCommandTarget(commandTarget, adapter)
-  const config = await loadConfigFile(effectiveRepoRoot, adapter)
+  const config = await loadConfigFile(repoRoot, options.adapter)
   const audit = normalizeAuditConfig(config.audit)
-  const scope = await resolveAuditLogReadScope(effectiveRepoRoot, config, options)
+  const scope = await resolveAuditLogReadScope(repoRoot, config, options)
   const stampedRecords: StampedAuditRecord[] = []
   let diagnostics: AuditLoadDiagnostics = {
     filesRead: 0,

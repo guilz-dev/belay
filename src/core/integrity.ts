@@ -4,7 +4,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getAdapterLayout } from '../adapters/layouts/index.js'
 import type { ScopedPaths } from '../adapters/layouts/scope.js'
-import { isPathInside, resolveScopedPaths } from '../adapters/layouts/scope.js'
+import {
+  canonicalizePotentialPath,
+  isPathInside,
+  resolveScopedPaths,
+} from '../adapters/layouts/scope.js'
 import type { AdapterLayout } from '../adapters/layouts/types.js'
 import { resolveAdapterName } from '../config-io.js'
 import type { BelayConfigV4 } from './config.js'
@@ -27,13 +31,21 @@ function integrityManifestFileKey(
   filePath: string,
 ): string {
   const absolutePath = path.resolve(filePath)
-  if (isPathInside(absolutePath, repoRoot)) {
-    return portableRelativePath(repoRoot, absolutePath)
-  }
+  const resolvedRepoRoot = path.resolve(repoRoot)
+  const canonicalRepoRoot = canonicalizePotentialPath(repoRoot)
   const globalPaths = resolveScopedPaths(layout, 'global', repoRoot)
   const globalAgentDir = path.dirname(globalPaths.hooksSettingsPath)
-  if (isPathInside(absolutePath, globalAgentDir)) {
-    return `${GLOBAL_INTEGRITY_PREFIX}${portableRelativePath(globalAgentDir, absolutePath)}`
+  const canonicalGlobalAgentDir = canonicalizePotentialPath(globalAgentDir)
+  const normalizedPath = isPathInside(absolutePath, resolvedRepoRoot)
+    ? path.resolve(canonicalRepoRoot, path.relative(resolvedRepoRoot, absolutePath))
+    : isPathInside(absolutePath, globalAgentDir)
+      ? path.resolve(canonicalGlobalAgentDir, path.relative(globalAgentDir, absolutePath))
+      : absolutePath
+  if (isPathInside(normalizedPath, canonicalRepoRoot)) {
+    return portableRelativePath(canonicalRepoRoot, normalizedPath)
+  }
+  if (isPathInside(normalizedPath, canonicalGlobalAgentDir)) {
+    return `${GLOBAL_INTEGRITY_PREFIX}${portableRelativePath(canonicalGlobalAgentDir, normalizedPath)}`
   }
   throw new Error(`Integrity file is outside the repository and global adapter root: ${filePath}`)
 }

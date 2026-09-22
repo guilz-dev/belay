@@ -23,16 +23,20 @@ import { collectHealthSnapshot } from './health-snapshot.js'
 import { reportProject } from './report.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
-  const { effectiveRepoRoot: repoRoot, config } = await loadConfigForCommand(options.targetDir)
+  const {
+    effectiveRepoRoot: repoRoot,
+    adapter,
+    config,
+  } = await loadConfigForCommand(options.targetDir)
   const pendingRaw = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
   const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config)
   const expiredPendingCount = countExpiredPending(pendingRaw)
   const operational = await loadOperationalInsights({
     targetDir: repoRoot,
-    adapter: config.adapter,
+    adapter,
   })
-  const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter: config.adapter })
-  const visibility = await reportProject({ targetDir: repoRoot })
+  const health = await collectHealthSnapshot({ targetDir: repoRoot, adapter })
+  const visibility = await reportProject({ targetDir: options.targetDir, adapter })
   const auditLogPath = await resolveActiveAuditLogPath(repoRoot, config)
   const auditDirectory = resolveAuditLogDirectory(repoRoot, config.audit.logPath)
   const versionedLogs = listVersionedAuditLogRoots(auditDirectory)

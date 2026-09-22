@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +28,9 @@ const originalPath = process.env.PATH
 const originalSystemRoot = process.env.SystemRoot
 const exec = promisify(execCallback)
 const execFile = promisify(execFileCallback)
+const smokeInstalledCursorHookPath = fileURLToPath(
+  new URL('../../scripts/smoke-installed-cursor-hook.mjs', import.meta.url),
+)
 
 async function createTempRepo() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-belay-scope-'))
@@ -229,7 +233,8 @@ describe('installer scope (T29)', () => {
   })
 
   it('keeps global Cursor hooks when upgrade targets HOME itself', async () => {
-    const homeDir = await createTempHome()
+    const homeDir = realpathSync(await createTempHome())
+    process.env.HOME = homeDir
     await initProject({ targetDir: homeDir, scope: 'project' })
 
     await upgradeProject({ targetDir: homeDir, scope: 'global' })
@@ -248,12 +253,22 @@ describe('installer scope (T29)', () => {
     })
     expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
     expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
+
+    const smoke = spawnSync(process.execPath, [smokeInstalledCursorHookPath], {
+      cwd: homeDir,
+      env: { ...process.env, BELAY_DETERMINISTIC_JUDGE: '1' },
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    expect(smoke.status, smoke.stderr).toBe(0)
+    expect(smoke.stdout).toContain('Cursor beforeSubmitPrompt hook: OK')
   })
 
   it.skipIf(process.platform === 'win32')(
     'keeps global Cursor hooks when the target is a symlink to HOME',
     async () => {
-      const homeDir = await createTempHome()
+      const homeDir = realpathSync(await createTempHome())
+      process.env.HOME = homeDir
       const aliasRoot = path.join(homeDir, 'home-alias')
       await symlink(homeDir, aliasRoot, 'dir')
 
@@ -266,6 +281,30 @@ describe('installer scope (T29)', () => {
         hooks: { beforeSubmitPrompt?: Array<{ command: string }> }
       }
       expect(hooks.hooks.beforeSubmitPrompt?.[0]?.command).toContain('belay-before-submit')
+
+      const smoke = spawnSync(process.execPath, [smokeInstalledCursorHookPath], {
+        cwd: aliasRoot,
+        env: { ...process.env, BELAY_DETERMINISTIC_JUDGE: '1' },
+        encoding: 'utf8',
+        timeout: 30_000,
+      })
+      expect(smoke.status, smoke.stderr).toBe(0)
+      expect(smoke.stdout).toContain('Cursor beforeSubmitPrompt hook: OK')
+    },
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps a project install healthy when its .cursor directory is a symlink outside the repo',
+    async () => {
+      const repoRoot = await createTempRepo()
+      const sharedCursorDir = await createTempRepo()
+      await symlink(sharedCursorDir, path.join(repoRoot, '.cursor'), 'dir')
+
+      await initProject({ targetDir: repoRoot, scope: 'project' })
+
+      expect(existsSync(path.join(sharedCursorDir, 'hooks', 'belay-runner'))).toBe(true)
+      const doctor = await doctorProject({ targetDir: repoRoot })
+      expect(doctor.issues).toEqual([])
     },
   )
 

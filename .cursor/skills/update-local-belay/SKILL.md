@@ -63,14 +63,10 @@ pnpm build
 
 ### 4. ローカル belay を upgrade
 
-CLI の解決（PATH に `belay` が無ければビルド成果物を使う）:
+直前にビルドした CLI を使用する:
 
 ```bash
-if command -v belay >/dev/null 2>&1; then
-  BELAY=belay
-else
-  BELAY="node dist/cli.js"
-fi
+BELAY="node dist/cli.js"
 ```
 
 リポジトリルートで upgrade（hooks / runtime / config マイグレーション。`--with-skill` で `skills/belay/` も同期）:
@@ -87,6 +83,7 @@ $BELAY upgrade --with-skill
 ```bash
 $BELAY doctor
 $BELAY --version
+node scripts/smoke-installed-cursor-hook.mjs
 ```
 
 `doctor` が `ok: false` なら報告に失敗理由を含める。コード変更も検証する場合は [verify-parallel](../verify-parallel/SKILL.md) を続けて実行してよい（ユーザー依頼時）。
@@ -122,6 +119,7 @@ pnpm dogfood
 - **package 版**: `vX.Y.Z`（`node dist/cli.js --version` または `belay --version`）
 - **upgrade**: OK | FAILED
 - **doctor**: OK | FAILED
+- **Cursor prompt / audit hook 実行確認**: OK | FAILED | 対象外
 
 ### 失敗・注意（あれば）
 - ...

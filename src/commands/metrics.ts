@@ -42,13 +42,14 @@ export async function evaluateMetricsSnapshot(
   evaluatedConfig?: BelayConfigV3,
 ): Promise<MetricsEvaluationSnapshot> {
   const commandTarget = path.resolve(options.targetDir ?? process.cwd())
-  const { effectiveRepoRoot: repoRoot, config: loadedConfig } = await loadConfigForCommand(
-    commandTarget,
-    options.adapter,
-  )
+  const {
+    effectiveRepoRoot: repoRoot,
+    adapter,
+    config: loadedConfig,
+  } = await loadConfigForCommand(commandTarget, options.adapter)
   const config = evaluatedConfig ?? loadedConfig
-  const loaded = await loadScopedAuditRecords(commandTarget, {
-    adapter: options.adapter,
+  const loaded = await loadScopedAuditRecords(repoRoot, {
+    adapter,
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,
   })

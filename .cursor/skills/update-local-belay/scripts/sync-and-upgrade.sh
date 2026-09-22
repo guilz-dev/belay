@@ -32,15 +32,12 @@ fi
 pnpm install
 pnpm build
 
-if command -v belay >/dev/null 2>&1; then
-  BELAY=(belay)
-else
-  BELAY=(node dist/cli.js)
-fi
+BELAY=(node dist/cli.js)
 
 "${BELAY[@]}" upgrade --with-skill
 "${BELAY[@]}" doctor
 "${BELAY[@]}" --version
+node scripts/smoke-installed-cursor-hook.mjs
 
 echo "sync-and-upgrade: done"
 echo "  dogfood:  make dogfood      # audit mode (build + node dist/cli.js dogfood)"

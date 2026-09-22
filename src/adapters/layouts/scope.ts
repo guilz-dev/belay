@@ -20,7 +20,7 @@ export interface ScopedPaths {
   commandsDir?: string
 }
 
-function canonicalizePotentialPath(inputPath: string): string {
+export function canonicalizePotentialPath(inputPath: string): string {
   const unresolvedSegments: string[] = []
   let existingAncestor = path.resolve(inputPath)
   while (!existsSync(existingAncestor)) {

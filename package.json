@@ -64,7 +64,7 @@
     "test:llm": "pnpm build && vitest run --config vitest.live.config.ts src/__tests__/verdict/llm/judge-accuracy.test.ts",
     "test:stable": "pnpm build && vitest run && vitest run && vitest run",
     "test:stable:run": "vitest run && vitest run && vitest run",
-    "test:macos": "vitest run src/__tests__/native-seatbelt-boundary-probe.test.ts src/__tests__/git-resource-identity.test.ts src/__tests__/installer-scope.test.ts src/__tests__/cursor-hook-precedence.integration.test.ts src/__tests__/cursor-hooks.test.ts",
+    "test:macos": "vitest run src/__tests__/native-seatbelt-boundary-probe.test.ts src/__tests__/git-resource-identity.test.ts src/__tests__/installer-scope.test.ts src/__tests__/cursor-hook-precedence.integration.test.ts src/__tests__/cursor-hooks.test.ts src/__tests__/update-local-belay-script.test.ts",
     "corpus": "pnpm build && node scripts/corpus.mjs",
     "probe:adversarial": "pnpm build && node scripts/adversarial-probe.mjs",
     "probe:cursor-shell-rewrite": "node scripts/cursor-shell-rewrite-probe.mjs",

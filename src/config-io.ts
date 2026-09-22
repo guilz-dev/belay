@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { findCursorRoutingRepoRoot } from './adapters/cursor/routing-layout.js'
 import { type AdapterName, getAdapterLayout } from './adapters/layouts/index.js'
 import { compactApprovals, isExpired, mergeApprovalStates } from './core/approval.js'
 import { mutateApprovalStateWithRetry } from './core/capability/approval-state-mutation.js'
@@ -19,7 +20,6 @@ import {
   resolveLayeredConfig,
   teamConfigPath,
 } from './core/config-layers.js'
-import { findCursorRoutingRepoRoot } from './adapters/cursor/routing-layout.js'
 import { type LinkedWorktreeGitOptions, resolveRepoConfig } from './core/linked-worktree-config.js'
 import { trustRepoConfig } from './core/repo-config-trust.js'
 import type { ApprovalStateFile } from './core/types.js'
@@ -45,11 +45,11 @@ export function resolveCommandTarget(
 export async function loadConfigForCommand(
   targetDir: string | undefined,
   adapter?: AdapterName,
-): Promise<CommandTargetResolution & { config: BelayConfigV3 }> {
+): Promise<CommandTargetResolution & { adapter: AdapterName; config: BelayConfigV3 }> {
   const detected = adapter ?? detectAdapterName(path.resolve(targetDir ?? process.cwd()))
   const resolution = resolveCommandTarget(targetDir, detected)
   const config = await loadConfigFile(resolution.effectiveRepoRoot, detected)
-  return { ...resolution, config }
+  return { ...resolution, adapter: detected, config }
 }
 export function resolveAdapterName(config: BelayConfigV3): AdapterName {
   if (config.adapter === 'claude') {
