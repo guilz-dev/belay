@@ -208,6 +208,100 @@ describe('installer scope (T29)', () => {
     )
   })
 
+  it('keeps global Cursor hooks when init targets HOME itself', async () => {
+    const homeDir = await createTempHome()
+    await initProject({ targetDir: homeDir, scope: 'global' })
+
+    const cursorDir = path.join(homeDir, '.cursor')
+    const hooks = JSON.parse(await readFile(path.join(cursorDir, 'hooks.json'), 'utf8')) as {
+      hooks: { beforeSubmitPrompt?: Array<{ command: string; failClosed?: boolean }> }
+    }
+    expect(hooks.hooks.beforeSubmitPrompt?.[0]).toMatchObject({
+      command: buildAbsoluteRunnerInvocation(
+        process.platform,
+        path.join(cursorDir, 'hooks'),
+        'belay-before-submit',
+      ),
+      failClosed: true,
+    })
+    expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
+    expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
+  })
+
+  it('keeps global Cursor hooks when upgrade targets HOME itself', async () => {
+    const homeDir = await createTempHome()
+    await initProject({ targetDir: homeDir, scope: 'project' })
+
+    await upgradeProject({ targetDir: homeDir, scope: 'global' })
+
+    const cursorDir = path.join(homeDir, '.cursor')
+    const hooks = JSON.parse(await readFile(path.join(cursorDir, 'hooks.json'), 'utf8')) as {
+      hooks: { beforeSubmitPrompt?: Array<{ command: string; failClosed?: boolean }> }
+    }
+    expect(hooks.hooks.beforeSubmitPrompt?.[0]).toMatchObject({
+      command: buildAbsoluteRunnerInvocation(
+        process.platform,
+        path.join(cursorDir, 'hooks'),
+        'belay-before-submit',
+      ),
+      failClosed: true,
+    })
+    expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
+    expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps global Cursor hooks when the target is a symlink to HOME',
+    async () => {
+      const homeDir = await createTempHome()
+      const aliasRoot = path.join(homeDir, 'home-alias')
+      await symlink(homeDir, aliasRoot, 'dir')
+
+      await upgradeProject({ targetDir: aliasRoot, scope: 'global' })
+
+      const cursorDir = path.join(homeDir, '.cursor')
+      expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
+      expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
+      const hooks = JSON.parse(await readFile(path.join(cursorDir, 'hooks.json'), 'utf8')) as {
+        hooks: { beforeSubmitPrompt?: Array<{ command: string }> }
+      }
+      expect(hooks.hooks.beforeSubmitPrompt?.[0]?.command).toContain('belay-before-submit')
+    },
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'removes stale project hooks when only hooks.json is shared with global scope',
+    async () => {
+      const homeDir = await createTempHome()
+      const repoRoot = await createTempRepo()
+      await initProject({ targetDir: repoRoot, scope: 'project' })
+
+      const globalCursor = path.join(homeDir, '.cursor')
+      await mkdir(globalCursor, { recursive: true })
+      await symlink(
+        path.join(repoRoot, '.cursor', 'hooks.json'),
+        path.join(globalCursor, 'hooks.json'),
+      )
+
+      await upgradeProject({ targetDir: repoRoot, scope: 'global' })
+
+      const hooks = JSON.parse(await readFile(path.join(globalCursor, 'hooks.json'), 'utf8')) as {
+        hooks: { beforeSubmitPrompt?: Array<{ command: string }> }
+      }
+      expect(hooks.hooks.beforeSubmitPrompt).toEqual([
+        expect.objectContaining({
+          command: buildAbsoluteRunnerInvocation(
+            process.platform,
+            path.join(globalCursor, 'hooks'),
+            'belay-before-submit',
+          ),
+        }),
+      ])
+      expect(existsSync(path.join(globalCursor, 'hooks', 'belay-runner'))).toBe(true)
+      expect(existsSync(path.join(repoRoot, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    },
+  )
+
   it('upgrade without --scope reuses persisted global scope', async () => {
     const homeDir = await createTempHome()
     const repoRoot = await createTempRepo()

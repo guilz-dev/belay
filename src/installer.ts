@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import {
@@ -202,6 +202,13 @@ async function removeBelayHookArtifacts(paths: ScopedPaths): Promise<void> {
 async function cleanupStaleProjectCursorInstall(repoRoot: string): Promise<void> {
   const projectPaths = resolveScopedPaths(cursorLayout, 'project', repoRoot)
   if (!existsSync(projectPaths.hooksSettingsPath)) {
+    return
+  }
+  const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
+  if (
+    (await realpath(path.dirname(projectPaths.hooksSettingsPath))) ===
+    (await realpath(path.dirname(globalPaths.hooksSettingsPath)))
+  ) {
     return
   }
   const projectHooks = await loadHooksFile(projectPaths.hooksSettingsPath)
