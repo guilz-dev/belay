@@ -4,7 +4,7 @@ import {
   belayStateDir,
   countExpiredPending,
   loadApprovalState,
-  loadConfigFile,
+  loadConfigForCommand,
   pendingApprovalsPath,
   repoLocalStateDirFor,
 } from '../config-io.js'
@@ -23,8 +23,7 @@ import { collectHealthSnapshot } from './health-snapshot.js'
 import { reportProject } from './report.js'
 
 export async function statusProject(options: StatusOptions = {}): Promise<StatusReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = await loadConfigFile(repoRoot)
+  const { effectiveRepoRoot: repoRoot, config } = await loadConfigForCommand(options.targetDir)
   const pendingRaw = await loadApprovalState(repoRoot, 'pending-approvals.json', config)
   const approvedRaw = await loadApprovalState(repoRoot, 'approved-approvals.json', config)
   const expiredPendingCount = countExpiredPending(pendingRaw)

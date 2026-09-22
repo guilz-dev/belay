@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Changed
+
+- **CLI audit reads** — Cursor commands (`report`, `metrics`, `quality`, `audit`, `doctor`,
+  `status`, `where`) normalize `--target` / cwd to the same routing repo root as hooks before
+  resolving versioned audit logs.
+
+### Added
+
+- **`belay where`** — shows requested target and config anchor when they differ.
+- **`belay report`** — readiness path note, versioned log hint, and known host hook noise count.
+- **Ops doc** — `docs/ops/audit-log-versioning.ja.md`.
+
 ## 0.12.3 — 2026-09-19
 
 ### Added

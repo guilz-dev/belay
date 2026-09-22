@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import type { AdapterName } from '../adapters/layouts/index.js'
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigForCommand } from '../config-io.js'
 import { loadScopedAuditRecords, resolveHarvestReviewLedgerPath } from '../core/audit-load.js'
 import type { AuditMetricsReport } from '../core/audit-metrics.js'
 import { computeAuditMetrics } from '../core/audit-metrics.js'
@@ -41,9 +41,13 @@ export async function evaluateMetricsSnapshot(
   options: MetricsOptions = {},
   evaluatedConfig?: BelayConfigV3,
 ): Promise<MetricsEvaluationSnapshot> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
-  const loaded = await loadScopedAuditRecords(repoRoot, {
+  const commandTarget = path.resolve(options.targetDir ?? process.cwd())
+  const { effectiveRepoRoot: repoRoot, config: loadedConfig } = await loadConfigForCommand(
+    commandTarget,
+    options.adapter,
+  )
+  const config = evaluatedConfig ?? loadedConfig
+  const loaded = await loadScopedAuditRecords(commandTarget, {
     adapter: options.adapter,
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,

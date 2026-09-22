@@ -28,6 +28,7 @@ import {
   loadLayeredConfig,
   pendingApprovalsPath,
   repoLocalStateDirFor,
+  resolveCommandTarget,
   writeTrustedConfigFile,
 } from '../config-io.js'
 import { approvalSigningKeyPath } from '../core/approval-token.js'
@@ -175,10 +176,17 @@ async function cursorOriginIssues(
 }
 
 export async function doctorProject(options: DoctorOptions = {}): Promise<DoctorProjectReport> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const requestedTarget = path.resolve(options.targetDir ?? process.cwd())
+  const adapterForTarget: AdapterName = options.adapter ?? detectAdapterName(requestedTarget)
+  const { effectiveRepoRoot: repoRoot } = resolveCommandTarget(requestedTarget, adapterForTarget)
   const issues: string[] = []
   const notes: string[] = []
   const warnings: string[] = []
+  if (repoRoot !== requestedTarget) {
+    notes.push(
+      `CLI target ${requestedTarget} resolved to config anchor ${repoRoot} (Cursor routing root).`,
+    )
+  }
   let auditStorage: AuditLoadDiagnostics | null = null
 
   let loadedConfig = null
@@ -387,6 +395,21 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     if (existsSync(legacyAuditPath) && versionedLogs.length === 0) {
       warnings.push(
         `Legacy audit log ${legacyAuditPath} exists but no versioned audit logs were found. Default metrics read the installed runtime version file only.`,
+      )
+    }
+    if (existsSync(legacyAuditPath) && versionedLogs.length > 0) {
+      warnings.push(
+        `Legacy audit log ${legacyAuditPath} is not updated by current gate writers; active logs are versioned files in ${auditDirectory}.`,
+      )
+    }
+    const orphanWorkspaceLog = path.join(requestedTarget, 'audit.ndjson')
+    if (
+      requestedTarget !== repoRoot &&
+      existsSync(orphanWorkspaceLog) &&
+      versionedLogs.length > 0
+    ) {
+      warnings.push(
+        `Found ${orphanWorkspaceLog} outside the config anchor; it is not the active audit log.`,
       )
     }
   }

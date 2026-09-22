@@ -91,7 +91,11 @@ export interface WhereOptions {
 
 export interface WhereReport {
   cwd: string
+  /** User `--target` or cwd before routing discovery. */
+  requestedTarget: string
   repoRoot: string
+  /** Same as repoRoot; explicit alias for config anchor. */
+  effectiveRepoRoot: string
   adapter: AdapterName
   installScope: 'project' | 'global'
   configPresent: boolean
@@ -264,7 +268,9 @@ export interface ReportOptions {
 
 export interface AuditVisibilityReport {
   repoRoot: string
+  requestedTarget?: string
   auditLogPath: string
+  auditReadinessPath?: string
   gateEvents: number
   askCount: number
   enforceAskCount: number
@@ -277,6 +283,7 @@ export interface AuditVisibilityReport {
   hostDeniedAfterAllowCount?: number
   recentHostDenials?: RecentHostDenialEntry[]
   unrecognizedHostFailureCount?: number
+  knownHostNoiseCount?: number
   warnings: string[]
   notes: string[]
 }

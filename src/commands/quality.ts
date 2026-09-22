@@ -2,7 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { AdapterName } from '../adapters/layouts/index.js'
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigForCommand } from '../config-io.js'
 import {
   MAX_BENIGN_BLOCK_RATE,
   MIN_REVIEWED_BENIGN_EVENTS,
@@ -81,8 +81,12 @@ export async function evaluateQualitySnapshot(
   options: QualityOptions = {},
   evaluatedConfig?: BelayConfigV3,
 ): Promise<QualityEvaluationSnapshot> {
-  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
-  const config = evaluatedConfig ?? (await loadConfigFile(repoRoot, options.adapter))
+  const commandTarget = path.resolve(options.targetDir ?? process.cwd())
+  const { effectiveRepoRoot: repoRoot, config: loadedConfig } = await loadConfigForCommand(
+    commandTarget,
+    options.adapter,
+  )
+  const config = evaluatedConfig ?? loadedConfig
   const corpusDir = options.corpusDir
     ? path.resolve(repoRoot, options.corpusDir)
     : resolveDefaultQualityCorpusDir()
@@ -90,7 +94,7 @@ export async function evaluateQualitySnapshot(
   const corpusMetrics = await runCorpusEvaluation(corpusDir)
   const hardGatesOk = corpusMetrics.total > 0 && passesHardGates(corpusMetrics.gates)
   const metricsSnapshot = await evaluateMetricsSnapshot(
-    { targetDir: repoRoot, adapter: options.adapter },
+    { targetDir: commandTarget, adapter: options.adapter },
     config,
   )
   const { auditRecords, report: metrics } = metricsSnapshot
