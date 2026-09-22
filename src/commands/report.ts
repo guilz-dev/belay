@@ -14,11 +14,15 @@ import type { AuditVisibilityReport, ReportOptions } from '../types.js'
 import { loadAuditRecords } from './audit.js'
 
 export async function reportProject(options: ReportOptions = {}): Promise<AuditVisibilityReport> {
-  const { effectiveRepoRoot: repoRoot, requestedTarget, config } = await loadConfigForCommand(
-    options.targetDir,
-  )
+  const {
+    effectiveRepoRoot: repoRoot,
+    requestedTarget,
+    adapter,
+    config,
+  } = await loadConfigForCommand(options.targetDir, options.adapter)
   const auditLogPath = await resolveActiveAuditLogPath(repoRoot, config)
-  const records = await loadAuditRecords(requestedTarget, {
+  const records = await loadAuditRecords(repoRoot, {
+    adapter,
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,
   })

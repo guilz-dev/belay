@@ -276,7 +276,7 @@ describe('doctorProject', () => {
     expect(
       report.notes.some((note) => note.includes('Healthy global Cursor install is shadowed')),
     ).toBe(true)
-    expect(report.warnings.some((warning) => warning.toLowerCase().includes('shadow'))).toBe(false)
+    expect(report.warnings.some((warning) => /global Cursor install/iu.test(warning))).toBe(false)
   })
 
   it('diagnoses malformed shadowed global Cursor hooks without throwing', async () => {

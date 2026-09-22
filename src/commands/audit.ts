@@ -122,9 +122,14 @@ export async function auditProject(options: AuditOptions): Promise<AuditProjectR
     auditVersion: options.auditVersion,
     allVersions: options.allVersions,
   }
-  const records = await loadAuditRecords(commandTarget, {
+  const {
+    effectiveRepoRoot: repoRoot,
+    adapter,
+    config,
+  } = await loadConfigForCommand(commandTarget, options.adapter)
+  const records = await loadAuditRecords(repoRoot, {
     ...readScope,
-    adapter: options.adapter,
+    adapter,
   })
   const filter: AuditFilter = {
     since: options.since,
@@ -160,10 +165,6 @@ export async function auditProject(options: AuditOptions): Promise<AuditProjectR
     }
   }
 
-  const { effectiveRepoRoot: repoRoot, config } = await loadConfigForCommand(
-    commandTarget,
-    options.adapter,
-  )
   let candidateConfig: BelayConfigV3 = config
   let configWarning: string | undefined
   if (options.configPath) {

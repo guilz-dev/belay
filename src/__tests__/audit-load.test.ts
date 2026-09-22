@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { auditProject } from '../commands/audit.js'
+import { harvestListProject } from '../commands/harvest.js'
 import { loadScopedAuditRecords } from '../core/audit-load.js'
 import { resolveVersionedAuditLogPath } from '../core/audit-version-path.js'
 import { DEFAULT_CONFIG_V4 } from '../core/config.js'
@@ -79,5 +81,40 @@ describe('audit-load', () => {
       '2026-09-02T00:00:00.000Z',
       '2026-09-03T00:00:00.000Z',
     ])
+  })
+
+  it('keeps harvest reads at the requested target while audit query follows the Cursor anchor', async () => {
+    const repoRoot = await createTempDir()
+    const child = path.join(repoRoot, 'child')
+    const config = {
+      ...DEFAULT_CONFIG_V4,
+      audit: { ...DEFAULT_CONFIG_V4.audit, logPath: '.cursor/belay/audit.ndjson' },
+    }
+    await mkdir(path.join(repoRoot, '.cursor', 'belay'), { recursive: true })
+    await mkdir(child)
+    await writeFile(
+      path.join(repoRoot, '.cursor', 'belay.config.json'),
+      `${JSON.stringify(config)}\n`,
+    )
+    await writeFile(
+      resolveVersionedAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson', PACKAGE_VERSION),
+      '{"timestamp":"2026-09-03T00:00:00.000Z","event":"beforeShellExecution","kind":"shell","verdict":"deny_pending_approval","summary":"parent command"}\n',
+    )
+
+    const parentRecords = await loadScopedAuditRecords(repoRoot)
+    expect(parentRecords.scope.primaryPath).toBe(
+      resolveVersionedAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson', PACKAGE_VERSION),
+    )
+    expect(parentRecords.records).toHaveLength(1)
+
+    const harvest = await harvestListProject({ targetDir: child })
+    expect(harvest.excludedGateEvents).toBe(0)
+
+    const audit = await auditProject({ targetDir: child, subcommand: 'query' })
+    expect(audit.subcommand).toBe('query')
+    if (audit.subcommand === 'query') {
+      expect(audit.count).toBe(1)
+      expect(audit.records[0]?.summary).toBe('parent command')
+    }
   })
 })

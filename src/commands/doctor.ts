@@ -191,7 +191,7 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
 
   let loadedConfig = null
   let configProvenance: DoctorReport['configProvenance'] = []
-  let adapterName: AdapterName = options.adapter ?? detectAdapterName(repoRoot)
+  let adapterName: AdapterName = adapterForTarget
   let activeLayout = getAdapterLayout(adapterName)
   let configPath = activeLayout.configPath(repoRoot)
   let hooksPath = activeLayout.hooksSettingsPath(repoRoot)

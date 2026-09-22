@@ -258,6 +258,7 @@ export interface StatusReport {
 
 export interface ReportOptions {
   targetDir?: string
+  adapter?: AdapterName
   since?: string
   until?: string
   limit?: number

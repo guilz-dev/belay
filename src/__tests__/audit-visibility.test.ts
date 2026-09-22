@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -8,9 +8,10 @@ import {
   createDefaultGateRuntimeDeps,
 } from '../adapters/shared/gate-runtime.js'
 import { doctorProject } from '../commands/doctor.js'
+import { metricsProject } from '../commands/metrics.js'
 import { formatReport, reportProject } from '../commands/report.js'
 import { formatStatusReport, statusProject } from '../commands/status.js'
-import { loadConfigFile } from '../config-io.js'
+import { loadConfigFile, loadConfigForCommand, resolveAdapterName } from '../config-io.js'
 import { toAuditRecord } from '../core/audit-metrics.js'
 import {
   detectFenceDrift,
@@ -537,6 +538,59 @@ describe('audit visibility (T-V1)', () => {
       expect(text).toContain('Combined quality ready for enforce: no')
     } finally {
       await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps Cursor audit visibility when status resolves a child beneath a dual-adapter anchor', async () => {
+    const repoRoot = await mkdtemp(path.join(tmpdir(), 'belay-status-routing-'))
+    const child = path.join(repoRoot, 'child')
+    try {
+      await initProject({ targetDir: repoRoot, adapter: 'cursor' })
+      await initProject({ targetDir: repoRoot, adapter: 'claude' })
+      await mkdir(child)
+      await writeFile(
+        testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'),
+        `${JSON.stringify({
+          timestamp: '2026-01-01T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          verdict: 'allow',
+          summary: 'cursor event',
+        })}\n`,
+      )
+      await writeFile(
+        testAuditLogPath(repoRoot, '.claude/belay/audit.ndjson'),
+        `${JSON.stringify({
+          timestamp: '2026-01-01T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          verdict: 'allow',
+          summary: 'claude event',
+        })}\n${JSON.stringify({
+          timestamp: '2026-01-02T00:00:00.000Z',
+          event: 'beforeShellExecution',
+          verdict: 'allow',
+          summary: 'second claude event',
+        })}\n`,
+      )
+
+      const routed = await loadConfigForCommand(child)
+      expect(routed.effectiveRepoRoot).toBe(repoRoot)
+      expect(resolveAdapterName(routed.config)).toBe('cursor')
+
+      const status = await statusProject({ targetDir: child })
+      expect(status.repoRoot).toBe(repoRoot)
+      expect(status.health.adapter).toBe('cursor')
+      expect(status.visibility.gateEvents).toBe(1)
+      expect(status.visibility.auditLogPath).toBe(
+        testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'),
+      )
+
+      const metrics = await metricsProject({ targetDir: child })
+      expect(metrics.auditLogPath).toBe(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'))
+
+      const doctor = await doctorProject({ targetDir: child })
+      expect(doctor.configPath).toBe(path.join(repoRoot, '.cursor', 'belay.config.json'))
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
     }
   })
 
