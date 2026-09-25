@@ -60,7 +60,7 @@ function failClosedResponse(kind: CursorHookKind, message: string): CursorRespon
   return { permission: 'deny', user_message: message }
 }
 
-function respondToGateFailureInAudit(
+function respondToGateFailureWithAuditFailOpen(
   origin: CursorHookOrigin,
   kind: CursorHookKind,
   payload: Record<string, unknown> | undefined,
@@ -183,7 +183,7 @@ async function dispatchCursorHookResponse(
       return neutralResponse(params.kind)
     }
     if (route.decision === 'fail_closed') {
-      return respondToGateFailureInAudit(
+      return respondToGateFailureWithAuditFailOpen(
         params.origin,
         params.kind,
         input.payload,
@@ -194,7 +194,7 @@ async function dispatchCursorHookResponse(
     return await executeCoreHandler(params, input.payload)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    return respondToGateFailureInAudit(
+    return respondToGateFailureWithAuditFailOpen(
       params.origin,
       params.kind,
       input.ok ? input.payload : undefined,

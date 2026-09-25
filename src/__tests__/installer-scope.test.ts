@@ -19,6 +19,7 @@ import { metricsProject } from '../commands/metrics.js'
 import { loadConfigFile, pendingApprovalsPath } from '../config-io.js'
 import { runtimeIntegrityFiles } from '../core/integrity.js'
 import { getManagedHookEntries } from '../defaults.js'
+import * as cursorLifecycle from '../installer/cursor-lifecycle.js'
 import { initProject, uninstallProject, upgradeProject } from '../installer.js'
 import { PACKAGE_VERSION } from '../version.js'
 
@@ -68,6 +69,16 @@ async function runInstalledCursorShellGate(
     throw new Error(`Cursor shell gate failed (${result.status}): ${result.stderr}`)
   }
   return JSON.parse(result.stdout.trim()) as Record<string, unknown>
+}
+
+async function countBelayHookEntries(hooksPath: string): Promise<number> {
+  const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+    hooks: Record<string, Array<{ command?: unknown }>>
+  }
+  return Object.values(hooks.hooks)
+    .flat()
+    .filter((entry) => typeof entry.command === 'string' && entry.command.includes('belay-runner'))
+    .length
 }
 
 describe('installer scope (T29)', () => {
@@ -412,6 +423,39 @@ describe('installer scope (T29)', () => {
     ).toHaveLength(0)
     expect(existsSync(path.join(globalRuntime, 'dispatcher.mjs'))).toBe(false)
     expect(existsSync(path.join(globalCursor, 'belay.disabled.json'))).toBe(true)
+  })
+
+  it('withdraws project hooks when the post-publication install invariant fails', async () => {
+    const repoRoot = await createTempRepo()
+    const hooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+    vi.spyOn(cursorLifecycle, 'cursorLifecycleArtifactsAreRegularFiles').mockResolvedValueOnce(
+      false,
+    )
+
+    await expect(initProject({ targetDir: repoRoot, scope: 'project' })).rejects.toThrow(
+      /lifecycle invariant/i,
+    )
+
+    await expect(countBelayHookEntries(hooksPath)).resolves.toBe(0)
+  })
+
+  it('withdraws every published owner when a related global invariant fails', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    const projectHooksPath = path.join(repoRoot, '.cursor', 'hooks.json')
+    const globalHooksPath = path.join(homeDir, '.cursor', 'hooks.json')
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'project' })
+    vi.spyOn(cursorLifecycle, 'cursorLifecycleArtifactsAreRegularFiles').mockResolvedValueOnce(
+      false,
+    )
+
+    await expect(upgradeProject({ targetDir: repoRoot, scope: 'project' })).rejects.toThrow(
+      /lifecycle invariant/i,
+    )
+
+    await expect(countBelayHookEntries(projectHooksPath)).resolves.toBe(0)
+    await expect(countBelayHookEntries(globalHooksPath)).resolves.toBe(0)
   })
 
   it('keeps the global owner effective when staging a project init fails before publication', async () => {
