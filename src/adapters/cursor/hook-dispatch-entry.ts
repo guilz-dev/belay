@@ -60,13 +60,15 @@ function failClosedResponse(kind: CursorHookKind, message: string): CursorRespon
   return { permission: 'deny', user_message: message }
 }
 
-function respondToRoutingFailure(
+function respondToGateFailureInAudit(
   origin: CursorHookOrigin,
   kind: CursorHookKind,
+  payload: Record<string, unknown> | undefined,
   message: string,
+  logPrefix: string,
 ): CursorResponse {
-  if (shouldFailOpenRoutingInAudit(origin, kind)) {
-    console.error(`belay routing fail-open in audit mode: ${message}`)
+  if (shouldFailOpenRoutingInAudit(origin, kind, payload)) {
+    console.error(`belay ${logPrefix} fail-open in audit mode: ${message}`)
     return neutralResponse(kind)
   }
   return failClosedResponse(kind, message)
@@ -181,14 +183,23 @@ async function dispatchCursorHookResponse(
       return neutralResponse(params.kind)
     }
     if (route.decision === 'fail_closed') {
-      return respondToRoutingFailure(params.origin, params.kind, route.message)
+      return respondToGateFailureInAudit(
+        params.origin,
+        params.kind,
+        input.payload,
+        route.message,
+        'routing',
+      )
     }
     return await executeCoreHandler(params, input.payload)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    return failClosedResponse(
+    return respondToGateFailureInAudit(
+      params.origin,
       params.kind,
+      input.ok ? input.payload : undefined,
       `belay failed while dispatching this Cursor hook: ${detail}`,
+      'dispatch',
     )
   }
 }

@@ -104,8 +104,8 @@ describe('doctorProject', () => {
     ).toBe(true)
   })
 
-  it('reports a managed Cursor entry that has not migrated to failClosed', async () => {
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-host-fail-closed-'))
+  it('reports a managed Cursor entry that can host-block on startup failure', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-doctor-host-fail-open-'))
     tempDirs.push(repoRoot)
     await initProject({ targetDir: repoRoot })
     const configPath = path.join(repoRoot, '.cursor', 'belay.config.json')
@@ -121,7 +121,10 @@ describe('doctorProject', () => {
     const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
       hooks: { beforeShellExecution: Array<Record<string, unknown>> }
     }
-    delete hooks.hooks.beforeShellExecution[0]?.failClosed
+    const shellEntry = hooks.hooks.beforeShellExecution[0]
+    if (shellEntry) {
+      shellEntry.failClosed = true
+    }
     await writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`)
 
     const report = await doctorProject({ targetDir: repoRoot })
@@ -129,7 +132,7 @@ describe('doctorProject', () => {
     expect(report.ok).toBe(false)
     expect(
       report.issues.some(
-        (issue) => issue.includes('beforeShellExecution') && issue.includes('failClosed: true'),
+        (issue) => issue.includes('beforeShellExecution') && issue.includes('failClosed: false'),
       ),
     ).toBe(true)
   })

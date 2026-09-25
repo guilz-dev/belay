@@ -238,28 +238,40 @@ repository; same-root legacy embedded origins remain compatible until upgrade. A
 `installScope` uses its documented
 `project` default. A truly uninitialized repository is neutral to the global source, while a
 present but malformed, unreadable, or invalid config remains selected by the matching Project
-source and reaches Belay's fail-closed config path. A selected but incomplete Project owner fails
-closed for gates and prompts (audit hooks remain safe and diagnostic).
+source and reaches Belay's fail-closed config path. A selected but incomplete Project owner denies
+in enforce mode; audit mode is neutral when its trusted workspace config can be identified, and
+audit hooks remain safe and diagnostic.
 
-Every managed Cursor hook entry is installed with `failClosed: true`. Cursor can therefore stop an
-actionable prompt, shell, tool, or subagent operation when its runner, shim, or dispatcher cannot
-start, crashes, times out, or returns invalid JSON. Post-action audit events cannot undo an action
-that already completed, and Cursor documents `sessionEnd` as fire-and-forget with its response
-unused; `failClosed` on those entries is defense-in-depth and diagnostics, not rollback. With
-hash-pinned integrity enabled, both Project and global settings, runners, shims, core, and Cursor
-dispatcher are pinned and checked by `belay doctor`. The dispatcher itself contains only payload
-routing and filesystem layout logic; policy and audit modules load only for the selected owner.
+Every managed Cursor hook entry is installed with `failClosed: false`. A missing runner, shim, or
+dispatcher, a process crash, a timeout, or invalid hook JSON therefore cannot make Cursor block all
+commands before Belay starts. Once Belay starts, enforce mode can still return an explicit deny;
+audit mode returns a neutral response for routing and dispatch failures it can associate with the
+workspace. With hash-pinned integrity enabled, both Project and global settings, runners, shims,
+core, and Cursor dispatcher are pinned and checked by `belay doctor`. The dispatcher itself
+contains only payload routing and filesystem layout logic; policy and audit modules load only for
+the selected owner.
 
 Run `belay upgrade --scope global` for a pre-router global Cursor install, then run `belay doctor`.
 A Project upgrade also refreshes an exactly recognized managed global install; doctor reports old
 global generations, origin mismatches, incomplete owners, and managed entries that have not gained
-`failClosed: true`, while a healthy global source shadowed by Project precedence is only a note.
+`failClosed: false`, while a healthy global source shadowed by Project precedence is only a note.
 For release dogfood, `belay dogfood --check --since <ISO8601>` also blocks when the current Cursor
 repository or an initialized linked worktree has unhealthy hook routing.
 This mechanism resolves competing sources for the same canonical event; it does not combine
 distinct events such as `beforeShellExecution` and `preToolUse: Shell`, and it does not merge
 repeated deliveries to the effective owner. See
 [ADR-008](./docs/adr/ADR-008-cursor-hook-source-precedence.md).
+
+Cursor lifecycle operations are serialized per Project/User owner and recorded in
+`.cursor/belay-lifecycle.ndjson` (or `~/.cursor/belay-lifecycle.ndjson`). `belay uninstall` leaves a
+`belay.disabled.json` marker outside the removable runtime directory. A later ordinary `upgrade`
+will not silently recreate that owner; use an explicit `belay init --scope <scope>` or
+`belay upgrade --scope <scope> --reactivate` after deciding to enable it again.
+
+After upgrading, remove stale checkout-local Belay builds and do not run an older `dist/cli.js`
+directly. An old CLI predating this protocol can ignore the lock and tombstone and can republish
+`failClosed: true`. Do not restore `hooks.json` by itself; restore hook settings and runtime artifacts
+through the current `belay init` or `belay upgrade`, then verify them with `belay doctor`.
 
 **Skill-only.** The skill is just a UX layer (slash commands + guidance) and does
 **not** enable gating on its own. Install from [skills.sh](https://skills.sh/guilz-dev/belay)

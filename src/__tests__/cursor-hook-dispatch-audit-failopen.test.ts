@@ -18,6 +18,22 @@ async function createTempDir(prefix: string): Promise<string> {
   return dir
 }
 
+async function writeAuditRepoConfig(
+  repoRoot: string,
+  mode: 'audit' | 'enforce',
+  installScope: 'project' | 'global' = 'project',
+  trusted = true,
+): Promise<void> {
+  const rawConfig = { installScope, mode }
+  await writeFile(
+    path.join(repoRoot, '.cursor', 'belay.config.json'),
+    `${JSON.stringify(rawConfig)}\n`,
+  )
+  if (trusted) {
+    await trustRepoConfig(repoRoot, 'cursor', rawConfig)
+  }
+}
+
 async function installProjectHook(repoRoot: string, mode: 'audit' | 'enforce'): Promise<void> {
   const xdgConfigHome = await mkdtemp(path.join(os.tmpdir(), 'belay-cursor-dispatch-xdg-'))
   tempDirs.push(xdgConfigHome)
@@ -25,16 +41,11 @@ async function installProjectHook(repoRoot: string, mode: 'audit' | 'enforce'): 
   await mkdir(path.join(repoRoot, '.git'), { recursive: true })
   await mkdir(path.join(repoRoot, '.cursor', 'hooks'), { recursive: true })
   await mkdir(path.join(repoRoot, '.cursor', 'belay', 'runtime'), { recursive: true })
-  const rawConfig = { installScope: 'project', mode }
-  await writeFile(
-    path.join(repoRoot, '.cursor', 'belay.config.json'),
-    `${JSON.stringify(rawConfig)}\n`,
-  )
-  await trustRepoConfig(repoRoot, 'cursor', rawConfig)
+  await writeAuditRepoConfig(repoRoot, mode, 'project')
   const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
   const groupedHooks: Record<
     string,
-    Array<{ command: string; matcher?: string; failClosed: true }>
+    Array<{ command: string; matcher?: string; failClosed: false }>
   > = {}
   for (const { event, definition } of getManagedHookEntries(process.platform, hooksDir, repoRoot)) {
     const eventHooks = groupedHooks[event] ?? []
@@ -42,7 +53,7 @@ async function installProjectHook(repoRoot: string, mode: 'audit' | 'enforce'): 
     eventHooks.push({
       command: definition.command,
       ...(definition.matcher === undefined ? {} : { matcher: definition.matcher }),
-      failClosed: true,
+      failClosed: false,
     })
   }
   await writeFile(
@@ -59,8 +70,12 @@ async function installProjectHook(repoRoot: string, mode: 'audit' | 'enforce'): 
   await writeFile(path.join(repoRoot, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'), '')
 }
 
-async function dispatchShellGate(
-  repoRoot: string,
+async function dispatchHook(
+  params: {
+    origin: { scope: 'project'; repoRoot: string } | { scope: 'global' }
+    kind: 'shell-gate' | 'tool-gate'
+    eventName: string
+  },
   payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const { dispatchCursorHookResponse } = await import('../adapters/cursor/hook-dispatch-entry.js')
@@ -69,11 +84,7 @@ async function dispatchShellGate(
   Object.defineProperty(process, 'stdin', { configurable: true, value: stdin })
 
   try {
-    const responsePromise = dispatchCursorHookResponse({
-      origin: { scope: 'project', repoRoot },
-      kind: 'shell-gate',
-      eventName: 'beforeShellExecution',
-    })
+    const responsePromise = dispatchCursorHookResponse(params)
     stdin.end(JSON.stringify(payload))
     return (await responsePromise) as Record<string, unknown>
   } finally {
@@ -96,10 +107,17 @@ describe('dispatchCursorHookResponse routing fail-open in audit mode', () => {
     await installProjectHook(repoRoot, 'audit')
     const missingCwd = path.join(repoRoot, 'does-not-exist')
 
-    const response = await dispatchShellGate(repoRoot, {
-      command: 'git status',
-      cwd: missingCwd,
-    })
+    const response = await dispatchHook(
+      {
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        eventName: 'beforeShellExecution',
+      },
+      {
+        command: 'git status',
+        cwd: missingCwd,
+      },
+    )
 
     expect(response).toEqual({ permission: 'allow' })
   })
@@ -109,14 +127,96 @@ describe('dispatchCursorHookResponse routing fail-open in audit mode', () => {
     await installProjectHook(repoRoot, 'enforce')
     const missingCwd = path.join(repoRoot, 'does-not-exist')
 
-    const response = await dispatchShellGate(repoRoot, {
-      command: 'git status',
-      cwd: missingCwd,
-    })
+    const response = await dispatchHook(
+      {
+        origin: { scope: 'project', repoRoot },
+        kind: 'shell-gate',
+        eventName: 'beforeShellExecution',
+      },
+      {
+        command: 'git status',
+        cwd: missingCwd,
+      },
+    )
 
     expect(response).toMatchObject({
       permission: 'deny',
       user_message: 'belay could not determine the workspace.',
     })
+  })
+
+  it('allows global tool-gate routing failures when workspace_roots indicate audit mode', async () => {
+    const repoRoot = await createTempDir('belay-cursor-dispatch-global-audit-')
+    await mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await mkdir(path.join(repoRoot, '.cursor'), { recursive: true })
+    await writeAuditRepoConfig(repoRoot, 'audit', 'global')
+    const missingCwd = path.join(repoRoot, 'does-not-exist')
+
+    const response = await dispatchHook(
+      {
+        origin: { scope: 'global' },
+        kind: 'tool-gate',
+        eventName: 'preToolUse',
+      },
+      {
+        tool_name: 'Grep',
+        tool_input: { pattern: 'foo' },
+        cwd: missingCwd,
+        workspace_roots: [repoRoot],
+      },
+    )
+
+    expect(response).toEqual({ permission: 'allow' })
+  })
+
+  it('keeps deny for global tool-gate routing failures when workspace policy is enforce', async () => {
+    const repoRoot = await createTempDir('belay-cursor-dispatch-global-enforce-')
+    await mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await mkdir(path.join(repoRoot, '.cursor'), { recursive: true })
+    await writeAuditRepoConfig(repoRoot, 'enforce', 'global')
+    const missingCwd = path.join(repoRoot, 'does-not-exist')
+
+    const response = await dispatchHook(
+      {
+        origin: { scope: 'global' },
+        kind: 'tool-gate',
+        eventName: 'preToolUse',
+      },
+      {
+        tool_name: 'Grep',
+        tool_input: { pattern: 'foo' },
+        cwd: missingCwd,
+        workspace_roots: [repoRoot],
+      },
+    )
+
+    expect(response).toMatchObject({
+      permission: 'deny',
+      user_message: 'belay could not determine the workspace.',
+    })
+  })
+
+  it('does not let an untrusted audit config loosen a global routing failure', async () => {
+    const repoRoot = await createTempDir('belay-cursor-dispatch-untrusted-audit-')
+    const xdgConfigHome = await createTempDir('belay-cursor-dispatch-untrusted-xdg-')
+    process.env.XDG_CONFIG_HOME = xdgConfigHome
+    await mkdir(path.join(repoRoot, '.git'), { recursive: true })
+    await mkdir(path.join(repoRoot, '.cursor'), { recursive: true })
+    await writeAuditRepoConfig(repoRoot, 'audit', 'global', false)
+
+    const response = await dispatchHook(
+      {
+        origin: { scope: 'global' },
+        kind: 'tool-gate',
+        eventName: 'preToolUse',
+      },
+      {
+        tool_name: 'Grep',
+        tool_input: { pattern: 'foo' },
+        workspace_roots: [repoRoot],
+      },
+    )
+
+    expect(response).toMatchObject({ permission: 'deny' })
   })
 })

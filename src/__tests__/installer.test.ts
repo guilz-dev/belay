@@ -55,7 +55,7 @@ describe('agent-belay installer', () => {
     expect(hooks.hooks.preToolUse).toEqual([
       {
         command: managed.find((entry) => entry.event === 'preToolUse')?.definition.command,
-        failClosed: true,
+        failClosed: false,
       },
     ])
     expect(

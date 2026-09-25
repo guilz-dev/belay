@@ -198,7 +198,7 @@ function hasManagedProjectHookEntry(
     }
     const definition = entry as Record<string, unknown>
     return (
-      definition.failClosed === true &&
+      definition.failClosed === false &&
       matchers.has(definition.matcher as string | undefined) &&
       typeof definition.command === 'string' &&
       commandInvokesProjectHook(definition.command, runnerPath, params.kind, eventName)
