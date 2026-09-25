@@ -17,6 +17,7 @@ import {
   loadConfigFile,
   mergeAndWriteConfig,
   writeTrustedConfigFile,
+  writeUnknownLocalEffectPolicy,
 } from './config-io.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
 import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
@@ -359,14 +360,12 @@ async function applyInitPolicyConfig(
     return
   }
   const mergedConfig = await loadConfigFile(repoRoot, adapterName)
-  const configWithPolicy = normalizeConfig({
-    ...mergedConfig,
-    policy: {
-      ...mergedConfig.policy,
-      unknownLocalEffect: options.unknownLocalEffect,
-    },
-  })
-  await writeTrustedConfigFile(repoRoot, configWithPolicy, adapterName)
+  await writeUnknownLocalEffectPolicy(
+    repoRoot,
+    mergedConfig,
+    options.unknownLocalEffect,
+    adapterName,
+  )
 }
 
 async function refreshIntegrityManifest(repoRoot: string, adapterName: AdapterName): Promise<void> {

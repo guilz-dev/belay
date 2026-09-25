@@ -125,7 +125,7 @@ Non-TTY consent: `belay judge consent <provider-id>` → `belay approve <id>` �
 
 - **`model: auto`** — legacy values normalize to the catalog default on load (warning); new `auto` input is rejected.
 - **Model discovery** — production uses `judge-model-discovery.ts`; unit tests mock probes. Optional live probe: `BELAY_LIVE_CLI_DISCOVERY=1`.
-- **Interactive config** — installed repos default to judge-only setup; full `init` setup remains available when hooks are missing or when declined.
+- **Interactive config** — installed repos choose Judge, unknown-local-effect policy, or full setup; fresh repos start with full setup.
 - **Transport vs consent** — HTTP requires endpoint + `cloudConsent`; native CLI transport does not.
 
 ### CLI examples (`belay config`)

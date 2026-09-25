@@ -10,6 +10,7 @@ import {
   repoLocalStateDirFor,
   resolveAdapterName,
   writeTrustedConfigFile,
+  writeUnknownLocalEffectPolicy,
 } from '../config-io.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
 import type {
@@ -18,12 +19,7 @@ import type {
   JudgeCredentialRef,
   UnknownLocalEffectPolicy,
 } from '../core/config.js'
-import {
-  belayStateDir,
-  DEFAULT_POLICY_V3,
-  normalizeConfig,
-  normalizeJudgeConfig,
-} from '../core/config.js'
+import { belayStateDir, DEFAULT_POLICY_V3, normalizeJudgeConfig } from '../core/config.js'
 import { clearJudgeCredentialStore, writeJudgeCredentialStore } from '../core/credential-store.js'
 import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import {
@@ -224,14 +220,7 @@ async function persistUnknownLocalEffect(
   unknownLocalEffect: UnknownLocalEffectPolicy,
   adapter: ReturnType<typeof resolveAdapterName>,
 ): Promise<BelayConfigV4> {
-  const updated = normalizeConfig({
-    ...config,
-    policy: {
-      ...config.policy,
-      unknownLocalEffect,
-    },
-  })
-  await writeTrustedConfigFile(repoRoot, updated, adapter)
+  const updated = await writeUnknownLocalEffectPolicy(repoRoot, config, unknownLocalEffect, adapter)
   await refreshIntegrityIfPinned(repoRoot, updated)
   return updated
 }
@@ -793,9 +782,9 @@ async function collectCloudJudgeWizardAnswers(
 
 export async function resolveBelayConfigInteractiveMode(
   repoRoot: string,
-): Promise<'full' | 'judge-only'> {
+): Promise<'full' | 'installed'> {
   try {
-    return (await isBelayFloorInstalled({ targetDir: repoRoot })) ? 'judge-only' : 'full'
+    return (await isBelayFloorInstalled({ targetDir: repoRoot })) ? 'installed' : 'full'
   } catch {
     return 'full'
   }
@@ -986,7 +975,7 @@ export async function runBelayConfigInteractive(options: BelayConfigInteractiveO
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const mode = await resolveBelayConfigInteractiveMode(repoRoot)
 
-  if (mode === 'judge-only') {
+  if (mode === 'installed') {
     return withConfigWizardPrompter(options, async (prompter) => {
       writeConfigWizardBanner(options, 'belay config')
       const area = await prompter.askSelect<InstalledConfigWizardArea>(

@@ -4,6 +4,10 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { doctorProject } from '../commands/doctor.js'
+import { loadConfigFile } from '../config-io.js'
+import { classifyToolUse } from '../core/classify-tool.js'
+import { classifierOptionsFromConfig } from '../core/config.js'
+import { classifyShell } from '../core/verdict/adapter.js'
 import { getManagedHookEntries } from '../defaults.js'
 import { initProject } from '../installer.js'
 
@@ -161,11 +165,53 @@ describe('agent-belay installer', () => {
     await initProject({ targetDir: defaultRoot })
     const defaultConfig = await readJson(path.join(defaultRoot, '.cursor', 'belay.config.json'))
     expect(defaultConfig.policy.unknownLocalEffect).toBe('allow_flagged')
+    const loadedDefault = await loadConfigFile(defaultRoot)
+    const unknownTool = {
+      tool_name: 'FictionalLocalTool',
+      tool_input: { action: 'opaque' },
+    }
+    const defaultUnknown = await classifyToolUse(
+      unknownTool,
+      defaultRoot,
+      defaultRoot,
+      loadedDefault,
+      classifierOptionsFromConfig(loadedDefault),
+    )
+    expect(defaultUnknown.reason).toBe('indeterminate_tool_effect')
+    expect(defaultUnknown.verdict).toBe('allow_flagged')
+
+    const mustAsk = await classifyShell(
+      'git push origin main',
+      defaultRoot,
+      defaultRoot,
+      loadedDefault,
+      classifierOptionsFromConfig(loadedDefault),
+    )
+    expect(mustAsk.verdict).toBe('deny_pending_approval')
 
     const denyRoot = await createTempRepo()
     await initProject({ targetDir: denyRoot, unknownLocalEffect: 'deny' })
     const denyConfig = await readJson(path.join(denyRoot, '.cursor', 'belay.config.json'))
     expect(denyConfig.policy.unknownLocalEffect).toBe('deny')
+    const loadedDeny = await loadConfigFile(denyRoot)
+    const deniedUnknown = await classifyToolUse(
+      unknownTool,
+      denyRoot,
+      denyRoot,
+      loadedDeny,
+      classifierOptionsFromConfig(loadedDeny),
+    )
+    expect(deniedUnknown.reason).toBe('indeterminate_tool_effect')
+    expect(deniedUnknown.verdict).toBe('deny_pending_approval')
+
+    const presetOverrideRoot = await createTempRepo()
+    await initProject({
+      targetDir: presetOverrideRoot,
+      preset: 'strict',
+      unknownLocalEffect: 'allow_flagged',
+    })
+    const presetOverride = await loadConfigFile(presetOverrideRoot)
+    expect(presetOverride.policy.unknownLocalEffect).toBe('allow_flagged')
   })
 
   it('reports a healthy installation via doctor', async () => {
