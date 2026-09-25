@@ -10,10 +10,16 @@ import {
   repoLocalStateDirFor,
   resolveAdapterName,
   writeTrustedConfigFile,
+  writeUnknownLocalEffectPolicy,
 } from '../config-io.js'
 import { appendCliAuditEvent } from '../core/audit-io.js'
-import type { BelayConfigV4, BelayJudgeConfig, JudgeCredentialRef } from '../core/config.js'
-import { belayStateDir, normalizeJudgeConfig } from '../core/config.js'
+import type {
+  BelayConfigV4,
+  BelayJudgeConfig,
+  JudgeCredentialRef,
+  UnknownLocalEffectPolicy,
+} from '../core/config.js'
+import { belayStateDir, DEFAULT_POLICY_V3, normalizeJudgeConfig } from '../core/config.js'
 import { clearJudgeCredentialStore, writeJudgeCredentialStore } from '../core/credential-store.js'
 import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import {
@@ -87,6 +93,7 @@ export interface ConfigWizardAnswers {
   adapter: AdapterName
   scope: 'project' | 'global'
   withSkill: boolean
+  unknownLocalEffect: UnknownLocalEffectPolicy
   judgeProviderId: JudgeProviderId
   judgeCredentialMode?: 'project' | 'apiKey'
   judgeEndpoint?: string
@@ -142,6 +149,7 @@ export function buildInitOptionsFromConfigAnswers(
     adapter: answers.adapter,
     scope: answers.scope,
     withSkill: answers.withSkill,
+    unknownLocalEffect: answers.unknownLocalEffect,
     judgeProviderId: answers.judgeProviderId,
     judgeEndpoint: answers.judgeEndpoint,
     judgeCredentialMode: answers.judgeCredentialMode,
@@ -202,6 +210,17 @@ async function persistJudge(
 ): Promise<BelayConfigV4> {
   const updated: BelayConfigV4 = { ...config, judge: normalizeJudgeConfig(judge) }
   await writeTrustedConfigFile(repoRoot, updated, adapter)
+  await refreshIntegrityIfPinned(repoRoot, updated)
+  return updated
+}
+
+async function persistUnknownLocalEffect(
+  repoRoot: string,
+  config: BelayConfigV4,
+  unknownLocalEffect: UnknownLocalEffectPolicy,
+  adapter: ReturnType<typeof resolveAdapterName>,
+): Promise<BelayConfigV4> {
+  const updated = await writeUnknownLocalEffectPolicy(repoRoot, config, unknownLocalEffect, adapter)
   await refreshIntegrityIfPinned(repoRoot, updated)
   return updated
 }
@@ -466,6 +485,12 @@ interface CloudJudgeWizardAnswers {
   acceptCloud: boolean
 }
 
+export type InstalledConfigWizardArea = 'judge' | 'policy' | 'full'
+
+export const CONFIGURATION_AREA_PROMPT = 'What would you like to configure?'
+
+export const UNKNOWN_LOCAL_EFFECT_PROMPT = 'Unknown local effect policy'
+
 export const JUDGE_CREDENTIAL_MODE_PROMPT = 'Judge API key source'
 
 export const JUDGE_CREDENTIAL_STORE_KEY_PROMPT =
@@ -481,6 +506,51 @@ const CLOUD_CLI_LABELS: Record<Exclude<JudgeProviderId, 'ollama'>, string> = {
   codex: 'Codex CLI',
   claude: 'Claude CLI',
   cursor: 'Cursor CLI',
+}
+
+export function buildInstalledConfigAreaSelectOptions(): SelectOptions<InstalledConfigWizardArea> {
+  return {
+    message: CONFIGURATION_AREA_PROMPT,
+    defaultValue: 'judge',
+    choices: [
+      {
+        value: 'judge',
+        label: 'Judge',
+        hint: 'Change the Tier1 judge provider, transport, and credentials.',
+      },
+      {
+        value: 'policy',
+        label: 'Unknown local effects',
+        hint: 'Choose whether unknown local effects pass with an audit flag or require approval.',
+      },
+      {
+        value: 'full',
+        label: 'Full setup',
+        hint: 'Review installation scope, policy, judge, and managed artifacts.',
+      },
+    ],
+  }
+}
+
+export function buildUnknownLocalEffectSelectOptions(
+  defaultValue: UnknownLocalEffectPolicy = DEFAULT_POLICY_V3.unknownLocalEffect,
+): SelectOptions<UnknownLocalEffectPolicy> {
+  return {
+    message: UNKNOWN_LOCAL_EFFECT_PROMPT,
+    defaultValue,
+    choices: [
+      {
+        value: 'allow_flagged',
+        label: 'Allow and flag (recommended)',
+        hint: 'Passes the fallback result and records it for audit.',
+      },
+      {
+        value: 'deny',
+        label: 'Require approval',
+        hint: 'Blocks the fallback result until one-shot approval.',
+      },
+    ],
+  }
 }
 
 export function buildJudgeTransportSelectOptions(
@@ -712,9 +782,9 @@ async function collectCloudJudgeWizardAnswers(
 
 export async function resolveBelayConfigInteractiveMode(
   repoRoot: string,
-): Promise<'full' | 'judge-only'> {
+): Promise<'full' | 'installed'> {
   try {
-    return (await isBelayFloorInstalled({ targetDir: repoRoot })) ? 'judge-only' : 'full'
+    return (await isBelayFloorInstalled({ targetDir: repoRoot })) ? 'installed' : 'full'
   } catch {
     return 'full'
   }
@@ -737,6 +807,11 @@ async function runBelayConfigFullWithWizard(
     choices: [{ value: 'project' }, { value: 'global' }],
   })
   const withSkill = await prompter.askConfirm('Install SKILL.md and slash commands?', true)
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const currentConfig = await loadConfigFile(repoRoot, adapter)
+  const unknownLocalEffect = await prompter.askSelect<UnknownLocalEffectPolicy>(
+    buildUnknownLocalEffectSelectOptions(currentConfig.policy.unknownLocalEffect),
+  )
 
   const defaultJudgeProviderId = defaultJudgeProviderForAdapter(adapter)
   const judgeProviderId = await prompter.askSelect<JudgeProviderId>(
@@ -758,6 +833,7 @@ async function runBelayConfigFullWithWizard(
       adapter,
       scope,
       withSkill,
+      unknownLocalEffect,
       judgeProviderId,
       judgeCredentialMode,
       judgeEndpoint,
@@ -838,6 +914,31 @@ async function runBelayConfigJudgeOnlyWithWizard(
   return { repoRoot, adapter }
 }
 
+async function runBelayConfigPolicyWithWizard(
+  prompter: ConfigWizardPrompter,
+  options: BelayConfigInteractiveOptions,
+  repoRoot: string,
+  config: Awaited<ReturnType<typeof loadConfigFile>>,
+  adapter: AdapterName,
+): Promise<{ repoRoot: string; adapter: AdapterName }> {
+  writeConfigWizardBanner(options, 'belay config (policy)')
+
+  const unknownLocalEffect = await prompter.askSelect<UnknownLocalEffectPolicy>(
+    buildUnknownLocalEffectSelectOptions(config.policy.unknownLocalEffect),
+  )
+  const updated = await persistUnknownLocalEffect(repoRoot, config, unknownLocalEffect, adapter)
+
+  await appendConfigAudit(repoRoot, updated, {
+    event: 'policy_config_interactive',
+    path: 'policy.unknownLocalEffect',
+    from: config.policy.unknownLocalEffect,
+    to: updated.policy.unknownLocalEffect,
+    by: 'belay config interactive (policy)',
+  })
+
+  return { repoRoot, adapter }
+}
+
 export async function runBelayConfigFullInteractive(
   options: BelayConfigInteractiveOptions = {},
 ): Promise<{ repoRoot: string; withSkill: boolean; dogfood: boolean; adapter: AdapterName }> {
@@ -858,36 +959,42 @@ export async function runBelayConfigJudgeOnlyInteractive(
   )
 }
 
+export async function runBelayConfigPolicyInteractive(
+  options: BelayConfigInteractiveOptions = {},
+): Promise<{ repoRoot: string; adapter: AdapterName }> {
+  const repoRoot = path.resolve(options.targetDir ?? process.cwd())
+  const config = await loadConfigFile(repoRoot)
+  const adapter = resolveAdapterName(config)
+
+  return withConfigWizardPrompter(options, (prompter) =>
+    runBelayConfigPolicyWithWizard(prompter, options, repoRoot, config, adapter),
+  )
+}
+
 export async function runBelayConfigInteractive(options: BelayConfigInteractiveOptions = {}) {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const mode = await resolveBelayConfigInteractiveMode(repoRoot)
 
-  if (mode === 'judge-only') {
-    if (options.prompts) {
-      const judgeOnly = parseYesNo(options.prompts[0] ?? '', true)
-      const remainingPrompts = options.prompts.slice(1)
-      if (judgeOnly) {
-        return runBelayConfigJudgeOnlyInteractive({
-          ...options,
-          prompts: remainingPrompts,
-          skipBanner: true,
-        })
-      }
-      return runBelayConfigFullInteractive({
-        ...options,
-        prompts: remainingPrompts,
-        skipBanner: true,
-      })
-    }
-
+  if (mode === 'installed') {
     return withConfigWizardPrompter(options, async (prompter) => {
       writeConfigWizardBanner(options, 'belay config')
-      const judgeOnly = await prompter.askConfirm('Configure judge only?', true)
-      if (!judgeOnly) {
+      const area = await prompter.askSelect<InstalledConfigWizardArea>(
+        buildInstalledConfigAreaSelectOptions(),
+      )
+      if (area === 'full') {
         return runBelayConfigFullWithWizard(prompter, { ...options, skipBanner: true })
       }
       const config = await loadConfigFile(repoRoot)
       const adapter = resolveAdapterName(config)
+      if (area === 'policy') {
+        return runBelayConfigPolicyWithWizard(
+          prompter,
+          { ...options, skipBanner: true },
+          repoRoot,
+          config,
+          adapter,
+        )
+      }
       return runBelayConfigJudgeOnlyWithWizard(
         prompter,
         { ...options, skipBanner: true },

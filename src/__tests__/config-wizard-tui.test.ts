@@ -71,7 +71,7 @@ describe('config wizard TUI integration', () => {
     })
 
     const promise = runBelayConfigInteractive({ targetDir: dir })
-    await vi.waitFor(() => expect(writes.join('')).toContain('Configure judge only?'))
+    await vi.waitFor(() => expect(writes.join('')).toContain('What would you like to configure?'))
     await emitKeypress('c', true)
     await expect(promise).rejects.toThrow('Cancelled.')
     expect(raw.calls).toEqual([true, false])

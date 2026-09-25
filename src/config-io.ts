@@ -13,7 +13,9 @@ import {
   configForPersistence,
   configuredControlPlaneDir,
   mergeConfig,
+  normalizeConfig,
   pendingApprovalsFile,
+  type UnknownLocalEffectPolicy,
 } from './core/config.js'
 import {
   type LayeredConfigResult,
@@ -328,6 +330,23 @@ export async function writeTrustedConfigFile(
   const configPath = configPathFor(repoRoot, adapter)
   const parsed = JSON.parse(await readFile(configPath, 'utf8')) as unknown
   await trustRepoConfig(repoRoot, adapter, parsed)
+}
+
+export async function writeUnknownLocalEffectPolicy(
+  repoRoot: string,
+  config: BelayConfigV3,
+  unknownLocalEffect: UnknownLocalEffectPolicy,
+  adapter: AdapterName = resolveAdapterName(config),
+): Promise<BelayConfigV3> {
+  const updated = normalizeConfig({
+    ...config,
+    policy: {
+      ...config.policy,
+      unknownLocalEffect,
+    },
+  })
+  await writeTrustedConfigFile(repoRoot, updated, adapter)
+  return updated
 }
 
 export async function mergeAndWriteConfig(

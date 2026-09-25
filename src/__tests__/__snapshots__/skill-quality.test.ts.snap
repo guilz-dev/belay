@@ -95,7 +95,7 @@ Do not run init, config, or doctor implicitly from this skill — only when the 
 
 | User intent | Command |
 | --- | --- |
-| Set up or change judge settings | \`belay config\` |
+| Set up Belay or change judge / unknown-local-effect policy | \`belay config\` |
 | Why was this blocked? | \`belay explain --command "..."\` |
 | Explain latest pending ask | \`belay explain\` |
 | Status / dogfood / audit visibility | \`belay status\` |

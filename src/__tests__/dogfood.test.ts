@@ -181,7 +181,12 @@ describe('dogfood command', () => {
   it('init --preset l1-full-recommended --dogfood keeps preset layers but sets audit mode', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'belay-dogfood-preset-'))
     tempDirs.push(repoRoot)
-    await initProject({ targetDir: repoRoot, preset: 'l1-full-recommended', dogfood: true })
+    await initProject({
+      targetDir: repoRoot,
+      preset: 'l1-full-recommended',
+      unknownLocalEffect: 'allow_flagged',
+      dogfood: true,
+    })
 
     const config = JSON.parse(
       await readFile(path.join(repoRoot, '.cursor', 'belay.config.json'), 'utf8'),

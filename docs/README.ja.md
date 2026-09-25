@@ -41,6 +41,11 @@ npx @guilz-dev/belay init --adapter codex    # Codex（実験的）
 npx @guilz-dev/belay init                     # Cursor（既定）
 ```
 
+新規設定では `unknown_local_effect` の fallback は既定で通過し、`allow_flagged` として監査に
+記録されます。導入済みリポジトリで `belay config` を実行すると、Judge、unknown local
+effect policy、full setup を選択でき、policy のみなら hook を再インストールせず
+`allow_flagged` / `deny` を変更できます。
+
 承認・判定は `.cursor/belay/audit.ndjson`、`.claude/belay/audit.ndjson`、
 `.codex/belay/audit.ndjson` のいずれかに記録されます（アダプター依存）。v3 以降は ISO
 8601 timestamp を持つ NDJSON です。監査ログは既定で 32 MiB ごとにローテーションし、

@@ -17,6 +17,7 @@ import {
   loadConfigFile,
   mergeAndWriteConfig,
   writeTrustedConfigFile,
+  writeUnknownLocalEffectPolicy,
 } from './config-io.js'
 import { appendCliAuditEvent } from './core/audit-io.js'
 import { archiveLegacyAuditLogIfNeeded } from './core/audit-legacy-archive.js'
@@ -350,6 +351,23 @@ async function applyInitJudgeConfig(
   }
 }
 
+async function applyInitPolicyConfig(
+  repoRoot: string,
+  adapterName: AdapterName,
+  options: InitOptions,
+): Promise<void> {
+  if (!options.unknownLocalEffect) {
+    return
+  }
+  const mergedConfig = await loadConfigFile(repoRoot, adapterName)
+  await writeUnknownLocalEffectPolicy(
+    repoRoot,
+    mergedConfig,
+    options.unknownLocalEffect,
+    adapterName,
+  )
+}
+
 async function refreshIntegrityManifest(repoRoot: string, adapterName: AdapterName): Promise<void> {
   const layout = getAdapter(adapterName).layout
   const config = await loadConfigFile(repoRoot, adapterName)
@@ -382,6 +400,7 @@ export async function initProject(
     const merged = mergeConfig(presetConfig, existing)
     await writeTrustedConfigFile(repoRoot, merged, adapterName)
   }
+  await applyInitPolicyConfig(repoRoot, adapterName, options)
   if (options.dogfood === true) {
     await dogfoodProject({ targetDir: repoRoot, adapter: adapterName })
   }

@@ -14,6 +14,9 @@ import {
 } from '../../commands/config.js'
 import { judgeUse } from '../../commands/judge.js'
 import { loadConfigFile } from '../../config-io.js'
+import { classifyToolUse } from '../../core/classify-tool.js'
+import { classifierOptionsFromConfig } from '../../core/config.js'
+import { sha256File } from '../../core/integrity.js'
 import { rejectDeprecatedJudgeModelAuto } from '../../core/judge-model-policy.js'
 import * as installer from '../../installer.js'
 import { initProject } from '../../installer.js'
@@ -69,11 +72,11 @@ describe('Phase 3.5 plan — follow-ups', () => {
     })
   })
 
-  describe('P35-2 judge-only interactive config', () => {
-    it('resolveBelayConfigInteractiveMode returns judge-only after init', async () => {
+  describe('P35-2 installed-project interactive config', () => {
+    it('resolveBelayConfigInteractiveMode returns installed after init', async () => {
       const dir = await createTempRepo()
       await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
-      await expect(resolveBelayConfigInteractiveMode(dir)).resolves.toBe('judge-only')
+      await expect(resolveBelayConfigInteractiveMode(dir)).resolves.toBe('installed')
     })
 
     it('resolveBelayConfigInteractiveMode returns full before install', async () => {
@@ -114,14 +117,58 @@ describe('Phase 3.5 plan — follow-ups', () => {
       expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
     })
 
-    it('runBelayConfigInteractive full path when user declines judge-only', async () => {
+    it('runBelayConfigInteractive policy path updates policy without initProject', async () => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
+      const initSpy = vi.spyOn(installer, 'initProject')
+      const hooksPath = path.join(dir, '.cursor', 'hooks.json')
+      const hooksBefore = await readFile(hooksPath, 'utf8')
+      const payload = { tool_name: 'FictionalLocalTool', tool_input: { action: 'opaque' } }
+      const defaultConfig = await loadConfigFile(dir)
+      const allowed = await classifyToolUse(
+        payload,
+        dir,
+        dir,
+        defaultConfig,
+        classifierOptionsFromConfig(defaultConfig),
+      )
+      expect(allowed.verdict).toBe('allow_flagged')
+      expect(allowed.reason).toBe('indeterminate_tool_effect')
+
+      await runBelayConfigInteractive({
+        targetDir: dir,
+        prompts: ['policy', 'deny'],
+      })
+
+      expect(initSpy).not.toHaveBeenCalled()
+      const config = await loadConfigFile(dir)
+      expect(config.policy.unknownLocalEffect).toBe('deny')
+      const denied = await classifyToolUse(
+        payload,
+        dir,
+        dir,
+        config,
+        classifierOptionsFromConfig(config),
+      )
+      expect(denied.verdict).toBe('deny_pending_approval')
+      expect(denied.reason).toBe('indeterminate_tool_effect')
+      expect(await readFile(hooksPath, 'utf8')).toBe(hooksBefore)
+
+      const configPath = path.join(dir, '.cursor', 'belay.config.json')
+      const integrity = JSON.parse(
+        await readFile(path.join(dir, '.cursor', 'belay', 'integrity-manifest.json'), 'utf8'),
+      ) as { files: Record<string, string> }
+      expect(integrity.files['.cursor/belay.config.json']).toBe(await sha256File(configPath))
+    })
+
+    it('runBelayConfigInteractive full path when user selects full setup', async () => {
       const dir = await createTempRepo()
       await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
       const initSpy = vi.spyOn(installer, 'initProject')
 
       await runBelayConfigInteractive({
         targetDir: dir,
-        prompts: ['n', 'cursor', 'project', 'n', 'ollama'],
+        prompts: ['full', 'cursor', 'project', 'n', 'allow_flagged', 'ollama'],
       })
 
       expect(initSpy).toHaveBeenCalled()
