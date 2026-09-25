@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
   and dispatch errors when `workspace_roots` or payload cwd resolve to a repository whose trusted
   config is in `mode: audit` (including `installScope: global` dogfood workspaces such as
   freelance).
+- **Cursor multi-owner publication rollback** — A project upgrade that refreshes a related global
+  installation now withdraws both hook publications if either post-publication invariant fails.
 
 ### Changed
 

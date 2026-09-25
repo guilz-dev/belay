@@ -143,6 +143,29 @@ async function removeCursorHookPublication(paths: ScopedPaths, repoRoot: string)
   await writeHooksFile(paths.hooksSettingsPath, stripped)
 }
 
+async function rollbackCursorHookPublications(
+  publishedOwners: ScopedPaths[],
+  repoRoot: string,
+): Promise<void> {
+  const rolledBack = new Set<string>()
+  const failures: unknown[] = []
+  for (const publishedOwner of [...publishedOwners].reverse()) {
+    const ownerDir = cursorLifecyclePaths(publishedOwner).ownerDir
+    if (rolledBack.has(ownerDir)) {
+      continue
+    }
+    rolledBack.add(ownerDir)
+    try {
+      await removeCursorHookPublication(publishedOwner, repoRoot)
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Failed to withdraw one or more Cursor hook publications.')
+  }
+}
+
 async function cursorOwnerHasManagedState(paths: ScopedPaths, repoRoot: string): Promise<boolean> {
   if (existsSync(cursorLifecyclePaths(paths).disableMarkerPath)) {
     return true
@@ -180,13 +203,13 @@ export async function initCursorProject(
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
   const lifecycleOwners = await relatedCursorLifecyclePaths(scope, repoRoot, 'init')
-  const relatedOwnerLocked = lifecycleOwners.length > 1
+  const includesRelatedOwner = lifecycleOwners.length > 1
   return withCursorLifecycleLocks(
     lifecycleOwners,
     { operation: 'init', repoRoot, scope },
     async () => {
       const withSkill = options.withSkill === true
-      let published = false
+      const publishedOwners: ScopedPaths[] = []
       try {
         const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
         const mergedHooks = mergeCursorHooksFile(
@@ -206,9 +229,9 @@ export async function initCursorProject(
         }
 
         await writeHooksFile(paths.hooksSettingsPath, mergedHooks)
-        published = true
+        publishedOwners.push(paths)
         const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
-        if (scope === 'global' && relatedOwnerLocked) {
+        if (scope === 'global' && includesRelatedOwner) {
           await cleanupStaleProjectCursorInstall(repoRoot)
         }
         await writeIntegrityManifest(
@@ -221,9 +244,7 @@ export async function initCursorProject(
         await clearCursorDisableMarker(paths)
         return { repoRoot, withSkill }
       } catch (error) {
-        if (published) {
-          await removeCursorHookPublication(paths, repoRoot)
-        }
+        await rollbackCursorHookPublications(publishedOwners, repoRoot)
         throw error
       }
     },
@@ -237,7 +258,7 @@ export async function upgradeCursorProject(
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
   const lifecycleOwners = await relatedCursorLifecyclePaths(scope, repoRoot, 'upgrade')
-  const relatedOwnerLocked = lifecycleOwners.length > 1
+  const includesRelatedOwner = lifecycleOwners.length > 1
   return withCursorLifecycleLocks(
     lifecycleOwners,
     { operation: options.reactivate ? 'upgrade-reactivate' : 'upgrade', repoRoot, scope },
@@ -249,7 +270,7 @@ export async function upgradeCursorProject(
         )
       }
 
-      let published = false
+      const publishedOwners: ScopedPaths[] = []
       try {
         const config = await mergeAndWriteConfig(repoRoot, 'cursor')
         await writeRuntimeArtifacts('cursor', paths)
@@ -257,9 +278,9 @@ export async function upgradeCursorProject(
         const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
         const merged = mergeCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
         await writeHooksFile(paths.hooksSettingsPath, merged)
-        published = true
+        publishedOwners.push(paths)
 
-        if (scope === 'project' && relatedOwnerLocked) {
+        if (scope === 'project' && includesRelatedOwner) {
           const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
           const globalMarker = await readCursorDisableMarker(globalPaths)
           if (globalMarker) {
@@ -283,6 +304,7 @@ export async function upgradeCursorProject(
                 repoRoot,
               )
               await writeHooksFile(globalPaths.hooksSettingsPath, mergedGlobal)
+              publishedOwners.push(globalPaths)
               await assertCompleteCursorInstall(globalPaths, repoRoot)
             }
           }
@@ -293,7 +315,7 @@ export async function upgradeCursorProject(
         }
 
         const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
-        if (scope === 'global' && relatedOwnerLocked) {
+        if (scope === 'global' && includesRelatedOwner) {
           await cleanupStaleProjectCursorInstall(repoRoot)
         }
 
@@ -308,9 +330,7 @@ export async function upgradeCursorProject(
         await clearCursorDisableMarker(paths)
         return { repoRoot }
       } catch (error) {
-        if (published) {
-          await removeCursorHookPublication(paths, repoRoot)
-        }
+        await rollbackCursorHookPublications(publishedOwners, repoRoot)
         throw error
       }
     },

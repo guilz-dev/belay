@@ -32,8 +32,11 @@ can publish hooks while an uninstall deletes the artifacts those hooks need.
 ## Safety contract
 
 1. Every Belay-managed Cursor hook entry sets `failClosed: false`.
-2. Once Belay starts successfully, its own enforce-mode verdict may still deny
-   an action. Host startup failure can never deny an action.
+2. Once Belay starts successfully, routing and dispatch failures for a trusted
+   audit-mode workspace return a neutral response, including failures reached
+   through a global hook using `workspace_roots` or the payload cwd. Belay's
+   own enforce-mode verdict may still deny an action. Host startup failure can
+   never deny an action.
 3. Cursor lifecycle commands that can touch the same owner are serialized by
    scope-directory locks acquired in canonical path order.
 4. Uninstall records a durable tombstone before it removes ownership. Ordinary
@@ -77,7 +80,9 @@ complete explicit reactivation passes its end-state invariant.
   or tombstone there may require stale-owner cleanup.
 - Uninstall locks the selected owner. HOME overlap deduplicates identical lock
   paths.
-- A project upgrade skips a tombstoned global owner and does not resurrect it.
+- A project upgrade does not refresh or reactivate a tombstoned global owner.
+  It removes any stale managed hook publication and runtime artifacts while
+  preserving the tombstone.
 
 ## Compatibility
 
@@ -99,6 +104,6 @@ the matching runtime artifact generation.
   return an explicit denial.
 - Lifecycle unit/integration tests cover live-lock timeout, dead-lock recovery,
   uninstall tombstones, ordinary-upgrade refusal, explicit reactivation,
-  global refresh suppression, invariant rollback, log persistence, and HOME
-  path deduplication.
+  global refresh suppression, selected-owner and related-owner invariant
+  rollback, log persistence, and HOME path deduplication.
 - Full build, typecheck, lint, and test suites must pass.
