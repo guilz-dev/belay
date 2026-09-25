@@ -68,7 +68,7 @@ audit instead of guessing.
 ## Quick start
 
 ```bash
-# Interactive setup (adapter, scope, skill, judge provider, credentials)
+# Interactive setup (adapter, scope, unknown-effect policy, judge, credentials)
 belay config
 
 # Or non-interactive
@@ -84,10 +84,11 @@ npx @guilz-dev/belay doctor
 npx @guilz-dev/belay status
 ```
 
-Fresh installs default to **fail-closed** shell policy: unknown or unparseable
-shell commands are denied until approved. Use `belay explain` to inspect a
-verdict. Correct inaccurate EffectPlan semantics or resource scope; otherwise
-approve the exact request for one-shot, resource-scoped authorization.
+Fresh installs pass legacy/local `unknown_local_effect` fallback results as
+`allow_flagged` and record them for audit. Unparseable shell and authoritative
+EffectPlan results that remain ambiguous or reach protected boundaries still
+require approval. Use `belay explain` to inspect a verdict. The interactive
+wizard can switch the unknown-local fallback to `deny`.
 
 ## How it works
 
@@ -403,8 +404,9 @@ Notable settings:
 
   Legacy `judge.model: auto` in config files is normalized to the provider catalog default on load
   (with a warning); new `auto` values are rejected on CLI, `belay config set`, and `belay judge use`.
-  On an installed repo, interactive `belay config` defaults to judge-only setup without re-running
-  `init`. Model discovery is covered by unit tests with mocks; set `BELAY_LIVE_CLI_DISCOVERY=1` locally
+  On an installed repo, interactive `belay config` offers Judge, unknown-local-effect policy, and
+  full setup. Judge and policy changes do not re-run `init`. Model discovery is covered by unit tests
+  with mocks; set `BELAY_LIVE_CLI_DISCOVERY=1` locally
   for optional live CLI probes. Cloud egress consent is enforced for HTTP transport; native CLI
   transport uses the host session and does not require `judge.endpoint`. `BELAY_JUDGE_MODEL_RESOLVED`
   applies only under Vitest (test overrides).

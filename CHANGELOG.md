@@ -11,6 +11,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 - **CLI audit reads** — Cursor commands (`report`, `metrics`, `quality`, `audit`, `doctor`,
   `status`, `where`) normalize `--target` / cwd to the same routing repo root as hooks before
   resolving versioned audit logs.
+- **Config wizard policy control** — interactive `belay config` exposes
+  `policy.unknownLocalEffect`, defaults fresh setup to audit-flagged pass-through, and lets
+  installed repositories switch between `allow_flagged` and `deny` without reinstalling hooks.
 
 ### Added
 

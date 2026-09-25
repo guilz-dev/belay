@@ -155,6 +155,12 @@ belay config judge                        # same summary as belay judge status
 | `modelAssist` | `{ enabled, timeoutMs }` | off |
 | `transactional` | object | off — L2 observed diff |
 
+Interactive `belay config` exposes `policy.unknownLocalEffect` under
+**Unknown local effects**. `allow_flagged` is the default and passes the fallback result while
+recording it for audit; `deny` requires one-shot approval. On an installed repository this
+policy-only path updates the trusted config and integrity metadata without reinstalling hooks.
+Authoritative EffectPlan decisions remain stricter and cannot be loosened by this fallback.
+
 ### `policy.transactional.checkpoint` (Recovery)
 
 Checkpointing is separately opt-in. It applies to observed-safe repository-local filesystem

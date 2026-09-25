@@ -350,6 +350,25 @@ async function applyInitJudgeConfig(
   }
 }
 
+async function applyInitPolicyConfig(
+  repoRoot: string,
+  adapterName: AdapterName,
+  options: InitOptions,
+): Promise<void> {
+  if (!options.unknownLocalEffect) {
+    return
+  }
+  const mergedConfig = await loadConfigFile(repoRoot, adapterName)
+  const configWithPolicy = normalizeConfig({
+    ...mergedConfig,
+    policy: {
+      ...mergedConfig.policy,
+      unknownLocalEffect: options.unknownLocalEffect,
+    },
+  })
+  await writeTrustedConfigFile(repoRoot, configWithPolicy, adapterName)
+}
+
 async function refreshIntegrityManifest(repoRoot: string, adapterName: AdapterName): Promise<void> {
   const layout = getAdapter(adapterName).layout
   const config = await loadConfigFile(repoRoot, adapterName)
@@ -382,6 +401,7 @@ export async function initProject(
     const merged = mergeConfig(presetConfig, existing)
     await writeTrustedConfigFile(repoRoot, merged, adapterName)
   }
+  await applyInitPolicyConfig(repoRoot, adapterName, options)
   if (options.dogfood === true) {
     await dogfoodProject({ targetDir: repoRoot, adapter: adapterName })
   }

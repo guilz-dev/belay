@@ -114,14 +114,29 @@ describe('Phase 3.5 plan — follow-ups', () => {
       expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
     })
 
-    it('runBelayConfigInteractive full path when user declines judge-only', async () => {
+    it('runBelayConfigInteractive policy path updates policy without initProject', async () => {
       const dir = await createTempRepo()
       await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
       const initSpy = vi.spyOn(installer, 'initProject')
 
       await runBelayConfigInteractive({
         targetDir: dir,
-        prompts: ['n', 'cursor', 'project', 'n', 'ollama'],
+        prompts: ['policy', 'deny'],
+      })
+
+      expect(initSpy).not.toHaveBeenCalled()
+      const config = await loadConfigFile(dir)
+      expect(config.policy.unknownLocalEffect).toBe('deny')
+    })
+
+    it('runBelayConfigInteractive full path when user selects full setup', async () => {
+      const dir = await createTempRepo()
+      await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
+      const initSpy = vi.spyOn(installer, 'initProject')
+
+      await runBelayConfigInteractive({
+        targetDir: dir,
+        prompts: ['full', 'cursor', 'project', 'n', 'allow_flagged', 'ollama'],
       })
 
       expect(initSpy).toHaveBeenCalled()

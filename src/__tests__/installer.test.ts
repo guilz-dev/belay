@@ -156,6 +156,18 @@ describe('agent-belay installer', () => {
     expect(config.policy.unparseableShell).toBe('deny')
   })
 
+  it('keeps unknown local effects passing by default and accepts a wizard policy override', async () => {
+    const defaultRoot = await createTempRepo()
+    await initProject({ targetDir: defaultRoot })
+    const defaultConfig = await readJson(path.join(defaultRoot, '.cursor', 'belay.config.json'))
+    expect(defaultConfig.policy.unknownLocalEffect).toBe('allow_flagged')
+
+    const denyRoot = await createTempRepo()
+    await initProject({ targetDir: denyRoot, unknownLocalEffect: 'deny' })
+    const denyConfig = await readJson(path.join(denyRoot, '.cursor', 'belay.config.json'))
+    expect(denyConfig.policy.unknownLocalEffect).toBe('deny')
+  })
+
   it('reports a healthy installation via doctor', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot, judgeProfile: 'local-ollama' })

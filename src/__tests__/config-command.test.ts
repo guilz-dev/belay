@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildInitOptionsFromConfigAnswers,
+  buildInstalledConfigAreaSelectOptions,
+  buildUnknownLocalEffectSelectOptions,
   parseAdapter,
   parseJudgeProviderId,
   parseScope,
@@ -18,6 +20,18 @@ describe('belay config parsers', () => {
     expect(parseYesNo('', false)).toBe(false)
   })
 
+  it('defaults unknown local effects to pass with an audit flag', () => {
+    const policy = buildUnknownLocalEffectSelectOptions()
+    expect(policy.defaultValue).toBe('allow_flagged')
+    expect(policy.choices.map((choice) => choice.value)).toEqual(['allow_flagged', 'deny'])
+  })
+
+  it('offers policy-only configuration for installed projects', () => {
+    const area = buildInstalledConfigAreaSelectOptions()
+    expect(area.defaultValue).toBe('judge')
+    expect(area.choices.map((choice) => choice.value)).toEqual(['judge', 'policy', 'full'])
+  })
+
   it('maps config wizard answers to InitOptions', () => {
     expect(
       buildInitOptionsFromConfigAnswers(
@@ -25,6 +39,7 @@ describe('belay config parsers', () => {
           adapter: 'codex',
           scope: 'global',
           withSkill: true,
+          unknownLocalEffect: 'deny',
           judgeProviderId: 'codex',
           acceptCloud: true,
           dogfood: true,
@@ -36,6 +51,7 @@ describe('belay config parsers', () => {
       adapter: 'codex',
       scope: 'global',
       withSkill: true,
+      unknownLocalEffect: 'deny',
       judgeProviderId: 'codex',
       acceptCloudJudge: true,
       dogfood: true,
