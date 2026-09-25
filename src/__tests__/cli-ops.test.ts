@@ -204,4 +204,17 @@ describe('v0.2 operational commands', () => {
       ]),
     ).toThrow(/--fingerprint.*64-hex/i)
   })
+
+  it('limits explicit Cursor reactivation to upgrade', () => {
+    expect(parseArgs(['upgrade', '--scope', 'global', '--reactivate']).options.reactivate).toBe(
+      true,
+    )
+    expect(formatCliHelp()).toContain('upgrade')
+    expect(formatCliHelp()).toContain('--reactivate')
+    for (const command of ['init', 'uninstall', 'doctor']) {
+      expect(() => parseArgs([command, '--reactivate'])).toThrow(
+        /--reactivate is only valid for upgrade/i,
+      )
+    }
+  })
 })

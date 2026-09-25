@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
 
 import {
@@ -34,11 +34,21 @@ import {
   resolveInitJudgeConfig,
 } from './core/judge-config.js'
 import { resolveJudgeTransport } from './core/judge-runtime-detection.js'
+import { getManagedHookEntries } from './defaults.js'
 import {
   bootstrapStateFiles,
   CURSOR_COMMAND_ARTIFACTS,
   writeSkillArtifacts,
 } from './installer/bootstrap.js'
+import {
+  clearCursorDisableMarker,
+  cursorLifecycleArtifactsAreRegularFiles,
+  cursorLifecyclePaths,
+  readCursorDisableMarker,
+  withCursorLifecycleLocks,
+  writeCursorDisableMarker,
+  writeJsonAtomic,
+} from './installer/cursor-lifecycle.js'
 import { writeRuntimeArtifacts } from './installer/runtime-artifacts.js'
 import { applyInstallScope, resolveOperationScope } from './installer/scope-config.js'
 import { applyConfigPreset } from './presets.js'
@@ -91,34 +101,133 @@ export function mergeHooksFile(
   return mergeCursorHooksFile(current, platform, resolvedHooksDir, resolvedRepo)
 }
 
+async function writeHooksFile(hooksPath: string, hooks: HooksFile): Promise<void> {
+  await writeJsonAtomic(hooksPath, hooks)
+}
+
+function cursorRequiredArtifactPaths(paths: ScopedPaths): string[] {
+  return [
+    ...BELAY_HOOK_ARTIFACTS.map((fileName) => path.join(paths.hooksDir, fileName)),
+    path.join(paths.runtimeDir, 'core.mjs'),
+    path.join(paths.runtimeDir, 'dispatcher.mjs'),
+  ]
+}
+
+async function assertCompleteCursorInstall(paths: ScopedPaths, repoRoot: string): Promise<void> {
+  const hooks = await loadHooksFile(paths.hooksSettingsPath)
+  const completeHooks = getManagedHookEntries(process.platform, paths.hooksDir, repoRoot).every(
+    ({ event, definition }) =>
+      (hooks.hooks[event] ?? []).some(
+        (entry) =>
+          entry.command === definition.command &&
+          entry.matcher === definition.matcher &&
+          entry.failClosed === false,
+      ),
+  )
+  const completeArtifacts = await cursorLifecycleArtifactsAreRegularFiles(
+    cursorRequiredArtifactPaths(paths),
+  )
+  if (!completeHooks || !completeArtifacts) {
+    throw new Error(
+      `Cursor lifecycle invariant failed for ${paths.scope}: managed hooks and required runtime artifacts must form one complete installation.`,
+    )
+  }
+}
+
+async function removeCursorHookPublication(paths: ScopedPaths, repoRoot: string): Promise<void> {
+  if (!existsSync(paths.hooksSettingsPath)) {
+    return
+  }
+  const hooks = await loadHooksFile(paths.hooksSettingsPath)
+  const stripped = stripCursorHooksFile(hooks, process.platform, paths.hooksDir, repoRoot)
+  await writeHooksFile(paths.hooksSettingsPath, stripped)
+}
+
+async function cursorOwnerHasManagedState(paths: ScopedPaths, repoRoot: string): Promise<boolean> {
+  if (existsSync(cursorLifecyclePaths(paths).disableMarkerPath)) {
+    return true
+  }
+  if (!existsSync(paths.hooksSettingsPath)) {
+    return false
+  }
+  try {
+    const hooks = await loadHooksFile(paths.hooksSettingsPath)
+    return hasManagedCursorHookEntries(hooks, process.platform, paths.hooksDir, repoRoot)
+  } catch {
+    return true
+  }
+}
+
+async function relatedCursorLifecyclePaths(
+  scope: 'project' | 'global',
+  repoRoot: string,
+  operation: 'init' | 'upgrade',
+): Promise<ScopedPaths[]> {
+  const selected = resolveScopedPaths(cursorLayout, scope, repoRoot)
+  const relatedScope = scope === 'project' ? 'global' : 'project'
+  const related = resolveScopedPaths(cursorLayout, relatedScope, repoRoot)
+  const mayMutateRelated =
+    operation === 'upgrade'
+      ? await cursorOwnerHasManagedState(related, repoRoot)
+      : scope === 'global' && (await cursorOwnerHasManagedState(related, repoRoot))
+  return mayMutateRelated ? [selected, related] : [selected]
+}
+
 export async function initCursorProject(
   options: InitOptions = {},
 ): Promise<{ repoRoot: string; withSkill: boolean }> {
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
-  const withSkill = options.withSkill === true
-  const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
-  const mergedHooks = mergeCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
+  const lifecycleOwners = await relatedCursorLifecyclePaths(scope, repoRoot, 'init')
+  const relatedOwnerLocked = lifecycleOwners.length > 1
+  return withCursorLifecycleLocks(
+    lifecycleOwners,
+    { operation: 'init', repoRoot, scope },
+    async () => {
+      const withSkill = options.withSkill === true
+      let published = false
+      try {
+        const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
+        const mergedHooks = mergeCursorHooksFile(
+          hooksFile,
+          process.platform,
+          paths.hooksDir,
+          repoRoot,
+        )
 
-  await ensureDir(paths.hooksDir)
-  const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await writeRuntimeArtifacts('cursor', paths)
-  await bootstrapStateFiles(repoRoot, config, paths)
+        await ensureDir(paths.hooksDir)
+        const config = await mergeAndWriteConfig(repoRoot, 'cursor')
+        await writeRuntimeArtifacts('cursor', paths)
+        await bootstrapStateFiles(repoRoot, config, paths)
 
-  if (withSkill) {
-    await writeSkillArtifacts('cursor', paths)
-  }
+        if (withSkill) {
+          await writeSkillArtifacts('cursor', paths)
+        }
 
-  await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
-  await writeFile(paths.hooksSettingsPath, `${JSON.stringify(mergedHooks, null, 2)}\n`, 'utf8')
-  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
-  if (scope === 'global') {
-    await cleanupStaleProjectCursorInstall(repoRoot)
-  }
-  await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
-  return { repoRoot, withSkill }
+        await writeHooksFile(paths.hooksSettingsPath, mergedHooks)
+        published = true
+        const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
+        if (scope === 'global' && relatedOwnerLocked) {
+          await cleanupStaleProjectCursorInstall(repoRoot)
+        }
+        await writeIntegrityManifest(
+          repoRoot,
+          cursorLayout,
+          runtimeIntegrityFiles(cursorLayout, paths),
+        )
+        await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
+        await assertCompleteCursorInstall(paths, repoRoot)
+        await clearCursorDisableMarker(paths)
+        return { repoRoot, withSkill }
+      } catch (error) {
+        if (published) {
+          await removeCursorHookPublication(paths, repoRoot)
+        }
+        throw error
+      }
+    },
+  )
 }
 
 export async function upgradeCursorProject(
@@ -127,51 +236,85 @@ export async function upgradeCursorProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
-
-  const config = await mergeAndWriteConfig(repoRoot, 'cursor')
-  await writeRuntimeArtifacts('cursor', paths)
-
-  const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
-  const merged = mergeCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
-  await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
-  await writeFile(paths.hooksSettingsPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
-
-  if (scope === 'project') {
-    const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
-    if (existsSync(globalPaths.hooksSettingsPath)) {
-      const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
-      if (
-        hasManagedCursorHookEntries(globalHooks, process.platform, globalPaths.hooksDir, repoRoot)
-      ) {
-        await writeRuntimeArtifacts('cursor', globalPaths)
-        const mergedGlobal = mergeCursorHooksFile(
-          globalHooks,
-          process.platform,
-          globalPaths.hooksDir,
-          repoRoot,
-        )
-        await writeFile(
-          globalPaths.hooksSettingsPath,
-          `${JSON.stringify(mergedGlobal, null, 2)}\n`,
-          'utf8',
+  const lifecycleOwners = await relatedCursorLifecyclePaths(scope, repoRoot, 'upgrade')
+  const relatedOwnerLocked = lifecycleOwners.length > 1
+  return withCursorLifecycleLocks(
+    lifecycleOwners,
+    { operation: options.reactivate ? 'upgrade-reactivate' : 'upgrade', repoRoot, scope },
+    async () => {
+      const marker = await readCursorDisableMarker(paths)
+      if (marker && !options.reactivate) {
+        throw new Error(
+          `Cursor ${scope} scope was disabled by explicit uninstall at ${marker.disabledAt}. Use belay upgrade --scope ${scope} --reactivate to install it again.`,
         )
       }
-    }
-  }
 
-  if (options.withSkill) {
-    await writeSkillArtifacts('cursor', paths)
-  }
+      let published = false
+      try {
+        const config = await mergeAndWriteConfig(repoRoot, 'cursor')
+        await writeRuntimeArtifacts('cursor', paths)
 
-  const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
-  if (scope === 'global') {
-    await cleanupStaleProjectCursorInstall(repoRoot)
-  }
+        const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
+        const merged = mergeCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
+        await writeHooksFile(paths.hooksSettingsPath, merged)
+        published = true
 
-  await bootstrapStateFiles(repoRoot, installedConfig, paths)
-  await writeIntegrityManifest(repoRoot, cursorLayout, runtimeIntegrityFiles(cursorLayout, paths))
-  await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
-  return { repoRoot }
+        if (scope === 'project' && relatedOwnerLocked) {
+          const globalPaths = resolveScopedPaths(cursorLayout, 'global', repoRoot)
+          const globalMarker = await readCursorDisableMarker(globalPaths)
+          if (globalMarker) {
+            await removeCursorHookPublication(globalPaths, repoRoot)
+            await removeBelayHookArtifacts(globalPaths)
+          } else if (existsSync(globalPaths.hooksSettingsPath)) {
+            const globalHooks = await loadHooksFile(globalPaths.hooksSettingsPath)
+            if (
+              hasManagedCursorHookEntries(
+                globalHooks,
+                process.platform,
+                globalPaths.hooksDir,
+                repoRoot,
+              )
+            ) {
+              await writeRuntimeArtifacts('cursor', globalPaths)
+              const mergedGlobal = mergeCursorHooksFile(
+                globalHooks,
+                process.platform,
+                globalPaths.hooksDir,
+                repoRoot,
+              )
+              await writeHooksFile(globalPaths.hooksSettingsPath, mergedGlobal)
+              await assertCompleteCursorInstall(globalPaths, repoRoot)
+            }
+          }
+        }
+
+        if (options.withSkill) {
+          await writeSkillArtifacts('cursor', paths)
+        }
+
+        const installedConfig = await applyInstallScope(repoRoot, 'cursor', scope, config)
+        if (scope === 'global' && relatedOwnerLocked) {
+          await cleanupStaleProjectCursorInstall(repoRoot)
+        }
+
+        await bootstrapStateFiles(repoRoot, installedConfig, paths)
+        await writeIntegrityManifest(
+          repoRoot,
+          cursorLayout,
+          runtimeIntegrityFiles(cursorLayout, paths),
+        )
+        await archiveLegacyAuditLogIfNeeded(repoRoot, installedConfig)
+        await assertCompleteCursorInstall(paths, repoRoot)
+        await clearCursorDisableMarker(paths)
+        return { repoRoot }
+      } catch (error) {
+        if (published) {
+          await removeCursorHookPublication(paths, repoRoot)
+        }
+        throw error
+      }
+    },
+  )
 }
 
 const BELAY_HOOK_ARTIFACTS = [
@@ -223,8 +366,34 @@ async function cleanupStaleProjectCursorInstall(repoRoot: string): Promise<void>
     projectPaths.hooksDir,
     repoRoot,
   )
-  await writeFile(projectPaths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
+  await writeHooksFile(projectPaths.hooksSettingsPath, stripped)
   await removeBelayHookArtifacts(projectPaths)
+}
+
+async function assertCompleteCursorUninstall(paths: ScopedPaths, repoRoot: string): Promise<void> {
+  const hooks = await loadHooksFile(paths.hooksSettingsPath)
+  const hasManagedHooks = hasManagedCursorHookEntries(
+    hooks,
+    process.platform,
+    paths.hooksDir,
+    repoRoot,
+  )
+  const artifacts = [
+    ...cursorRequiredArtifactPaths(paths),
+    path.join(paths.skillsDir, 'SKILL.md'),
+    ...(paths.commandsDir
+      ? CURSOR_COMMAND_ARTIFACTS.map((fileName) => path.join(paths.commandsDir ?? '', fileName))
+      : []),
+  ]
+  const remainingArtifacts = (
+    await Promise.all(artifacts.map((filePath) => pathExists(filePath)))
+  ).filter(Boolean).length
+  const marker = await readCursorDisableMarker(paths)
+  if (hasManagedHooks || remainingArtifacts > 0 || !marker) {
+    throw new Error(
+      `Cursor lifecycle invariant failed for ${paths.scope}: uninstall must leave no managed hooks or artifacts and must retain its disable marker.`,
+    )
+  }
 }
 
 export async function uninstallCursorProject(
@@ -233,17 +402,24 @@ export async function uninstallCursorProject(
   const repoRoot = path.resolve(options.targetDir ?? process.cwd())
   const scope = await resolveOperationScope(repoRoot, 'cursor', options)
   const paths = resolveScopedPaths(cursorLayout, scope, repoRoot)
-  const hooksSettingsExisted = existsSync(paths.hooksSettingsPath)
-  const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
-  const stripped = stripCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
+  return withCursorLifecycleLocks(
+    [paths],
+    { operation: 'uninstall', repoRoot, scope },
+    async ({ operationId }) => {
+      await writeCursorDisableMarker(paths, { operationId, repoRoot, scope })
+      const hooksSettingsExisted = existsSync(paths.hooksSettingsPath)
+      const hooksFile = await loadHooksFile(paths.hooksSettingsPath)
+      const stripped = stripCursorHooksFile(hooksFile, process.platform, paths.hooksDir, repoRoot)
 
-  if (hooksSettingsExisted) {
-    await mkdir(path.dirname(paths.hooksSettingsPath), { recursive: true })
-    await writeFile(paths.hooksSettingsPath, `${JSON.stringify(stripped, null, 2)}\n`, 'utf8')
-  }
-  await removeBelayHookArtifacts(paths)
+      if (hooksSettingsExisted) {
+        await writeHooksFile(paths.hooksSettingsPath, stripped)
+      }
+      await removeBelayHookArtifacts(paths)
+      await assertCompleteCursorUninstall(paths, repoRoot)
 
-  return { repoRoot, scope }
+      return { repoRoot, scope }
+    },
+  )
 }
 
 function resolveAdapterName(

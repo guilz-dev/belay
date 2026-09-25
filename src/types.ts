@@ -72,6 +72,8 @@ export interface UpgradeOptions {
   withSkill?: boolean
   adapter?: AdapterName
   scope?: InstallScope
+  /** Explicitly reinstall a Cursor scope disabled by belay uninstall. */
+  reactivate?: boolean
   /** Opt-in: migrate implicit factory-default ollama judge to host default provider. */
   migrateJudgeDefault?: boolean
 }

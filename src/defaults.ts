@@ -21,7 +21,7 @@ export type ManagedHookDefinition = {
   failClosed?: boolean
 }
 
-export type CursorManagedHookDefinition = ManagedHookDefinition & { failClosed: true }
+export type CursorManagedHookDefinition = ManagedHookDefinition & { failClosed: false }
 
 function runnerCommand(
   platform: NodeJS.Platform,
@@ -225,7 +225,7 @@ export function getManagedHookEntries(
   ]
   return entries.map(({ event, definition }) => ({
     event,
-    definition: { ...definition, failClosed: true },
+    definition: { ...definition, failClosed: false },
   }))
 }
 

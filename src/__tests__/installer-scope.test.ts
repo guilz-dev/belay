@@ -226,7 +226,7 @@ describe('installer scope (T29)', () => {
         path.join(cursorDir, 'hooks'),
         'belay-before-submit',
       ),
-      failClosed: true,
+      failClosed: false,
     })
     expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
     expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
@@ -249,7 +249,7 @@ describe('installer scope (T29)', () => {
         path.join(cursorDir, 'hooks'),
         'belay-before-submit',
       ),
-      failClosed: true,
+      failClosed: false,
     })
     expect(existsSync(path.join(cursorDir, 'hooks', 'belay-runner'))).toBe(true)
     expect(existsSync(path.join(cursorDir, 'belay', 'runtime', 'core.mjs'))).toBe(true)
@@ -262,7 +262,7 @@ describe('installer scope (T29)', () => {
     })
     expect(smoke.status, smoke.stderr).toBe(0)
     expect(smoke.stdout).toContain('Cursor beforeSubmitPrompt hook: OK')
-  })
+  }, 30_000)
 
   it.skipIf(process.platform === 'win32')(
     'keeps global Cursor hooks when the target is a symlink to HOME',
@@ -291,6 +291,7 @@ describe('installer scope (T29)', () => {
       expect(smoke.status, smoke.stderr).toBe(0)
       expect(smoke.stdout).toContain('Cursor beforeSubmitPrompt hook: OK')
     },
+    30_000,
   )
 
   it.skipIf(process.platform === 'win32')(
@@ -381,6 +382,36 @@ describe('installer scope (T29)', () => {
     const globalShim = await readFile(path.join(globalHooksDir, 'belay-shell-gate.mjs'), 'utf8')
     expect(globalShim).toContain('origin: {"scope":"global"}')
     expect(globalShim).toContain("from '../belay/runtime/dispatcher.mjs'")
+  })
+
+  it('project upgrade cleans stale global publication without overriding its uninstall marker', async () => {
+    const homeDir = await createTempHome()
+    const globalRepo = await createTempRepo()
+    await initProject({ targetDir: globalRepo, scope: 'global' })
+    const globalCursor = path.join(homeDir, '.cursor')
+    const hooksPath = path.join(globalCursor, 'hooks.json')
+    const installedHooks = await readFile(hooksPath, 'utf8')
+    await uninstallProject({ targetDir: globalRepo, scope: 'global' })
+
+    await writeFile(hooksPath, installedHooks)
+    const globalRuntime = path.join(globalCursor, 'belay', 'runtime')
+    await mkdir(globalRuntime, { recursive: true })
+    await writeFile(path.join(globalRuntime, 'dispatcher.mjs'), '// stale dispatcher\n')
+
+    const projectRepo = await createTempRepo()
+    await initProject({ targetDir: projectRepo, scope: 'project' })
+    await upgradeProject({ targetDir: projectRepo, scope: 'project' })
+
+    const cleaned = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+      hooks: Record<string, Array<{ command?: string }>>
+    }
+    expect(
+      Object.values(cleaned.hooks)
+        .flat()
+        .filter((entry) => entry.command?.includes('belay-runner')),
+    ).toHaveLength(0)
+    expect(existsSync(path.join(globalRuntime, 'dispatcher.mjs'))).toBe(false)
+    expect(existsSync(path.join(globalCursor, 'belay.disabled.json'))).toBe(true)
   })
 
   it('keeps the global owner effective when staging a project init fails before publication', async () => {

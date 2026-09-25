@@ -523,12 +523,12 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
           (entry: { command?: string; matcher?: string; failClosed?: boolean }) =>
             entry.command === definition.command && entry.matcher === definition.matcher,
         )
-        if (!matchingEntry || matchingEntry.failClosed !== true) {
+        if (!matchingEntry || matchingEntry.failClosed !== false) {
           hooksOk = false
           const matcherSuffix = definition.matcher ? ` (matcher: ${definition.matcher})` : ''
           issues.push(
             matchingEntry
-              ? `Managed Cursor hook for ${event} must set failClosed: true: ${definition.command}${matcherSuffix}`
+              ? `Managed Cursor hook for ${event} must set failClosed: false so Belay startup failures cannot block Cursor: ${definition.command}${matcherSuffix}`
               : `Missing managed hook for ${event}: ${definition.command}${matcherSuffix}`,
           )
         }
