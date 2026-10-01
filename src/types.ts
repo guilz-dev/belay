@@ -29,6 +29,7 @@ import type {
   BelayOverridesConfig,
   BelayPolicyConfig,
   BelaySandboxConfig,
+  UnknownLocalEffectPolicy,
 } from './core/config.js'
 import type { ApprovalRecord, ClassifyResult } from './core/types.js'
 
@@ -58,6 +59,8 @@ export interface InitOptions {
   judgeModel?: string
   judgeEndpoint?: string
   judgeCredentialMode?: 'project' | 'apiKey'
+  /** Configure how legacy/local unknown effects are handled. */
+  unknownLocalEffect?: UnknownLocalEffectPolicy
   /** Acknowledge cloud judge egress + redaction limits (R19). Required for openai-compatible provider. */
   acceptCloudJudge?: boolean
   cloudConsentApprovalId?: string
