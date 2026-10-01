@@ -18,11 +18,7 @@ import type {
   JudgeCredentialRef,
   UnknownLocalEffectPolicy,
 } from '../core/config.js'
-import {
-  belayStateDir,
-  mergeConfig,
-  normalizeJudgeConfig,
-} from '../core/config.js'
+import { belayStateDir, mergeConfig, normalizeJudgeConfig } from '../core/config.js'
 import { clearJudgeCredentialStore, writeJudgeCredentialStore } from '../core/credential-store.js'
 import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import {
@@ -175,7 +171,7 @@ function assertConfigPath(pathKey: string | undefined): string {
   if (pathKey?.startsWith('judge.')) {
     return pathKey
   }
-  if ((POLICY_CONFIG_PATHS as readonly string[]).includes(pathKey ?? '')) {
+  if (pathKey && (POLICY_CONFIG_PATHS as readonly string[]).includes(pathKey)) {
     return pathKey
   }
   throw new Error(

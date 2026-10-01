@@ -28,6 +28,7 @@ import {
   DEFAULT_TRANSACTIONAL_V3,
   LEGACY_CONTROL_PLANE_V3,
   LEGACY_POLICY_V3,
+  materializePolicySpread,
 } from './config/defaults.js'
 import { normalizeJudgeConfig, synthesizeJudgeFromRaw } from './config/judge.js'
 import { resolveControlPlaneDir } from './config/paths.js'
@@ -39,7 +40,9 @@ import type {
   BelayContainedExecutionConfig,
   BelayFileCheckpointConfig,
   BelayOverridesConfig,
+  BelayPolicyConfig,
   BelaySandboxConfig,
+  PolicySpreadFields,
   RawConfigInput,
   SandboxRuntime,
 } from './config/types.js'
@@ -137,7 +140,6 @@ export type {
   BelayNotificationsConfig,
   BelayOverridesConfig,
   BelayPolicyConfig,
-  PolicySpreadFields,
   BelayRedactionConfig,
   BelaySandboxConfig,
   BelayTransactionalConfig,
@@ -150,6 +152,7 @@ export type {
   JudgeProvider,
   JudgeProviderId,
   NormalizedBelayAuditConfig,
+  PolicySpreadFields,
   SandboxRuntime,
 } from './config/types.js'
 export type { UnknownLocalEffectPolicy }
@@ -322,7 +325,7 @@ export function migrateV2ToV3(
       sensitivePaths: v2.classifier.sensitivePaths,
       shellFrontendMode: 'legacy',
     },
-    policy: { ...LEGACY_POLICY_V3 },
+    policy: materializePolicySpread(LEGACY_POLICY_V3),
     overrides: {
       allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
       external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external),
@@ -395,10 +398,10 @@ function mergeV3FromRaw(base: BelayConfigV4, raw: RawConfigInput): BelayConfigV4
   return normalizeConfig({
     ...base,
     judge: raw.judge ? { ...base.judge, ...raw.judge } : base.judge,
-    policy: {
+    policy: materializePolicySpread({
       ...policyFieldsForMerge(base.policy),
       ...(raw.policy ?? {}),
-    },
+    }),
     overrides: {
       allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
       external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? []),
@@ -452,10 +455,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
       ...DEFAULT_CONFIG_V3.classifier,
       ...(raw.classifier ?? {}),
     },
-    policy: {
+    policy: materializePolicySpread({
       ...LEGACY_POLICY_V3,
       ...(raw.policy ?? {}),
-    },
+    }),
     overrides: {
       ...DEFAULT_CONFIG_V3.overrides,
       ...(raw.overrides ?? {}),

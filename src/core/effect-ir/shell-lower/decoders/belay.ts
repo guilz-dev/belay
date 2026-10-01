@@ -94,8 +94,7 @@ export function decodeBelay(
     section === 'config' &&
     ((['set', 'unset'].includes(operation ?? '') && key?.startsWith('judge.')) ||
       (operation === 'credential' && key === 'mode'))
-  const configPolicyMutation =
-    section === 'config' && operation === 'set' && configPolicyPath
+  const configPolicyMutation = section === 'config' && operation === 'set' && configPolicyPath
   const approvalAuthorityCommand = [
     'approval-token',
     'approve',

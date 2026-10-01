@@ -17,10 +17,10 @@ import type {
   BelayNotificationsConfig,
   BelayOverridesConfig,
   BelayPolicyConfig,
-  PolicySpreadFields,
   BelayRedactionConfig,
   BelaySandboxConfig,
   BelayTransactionalConfig,
+  PolicySpreadFields,
 } from './types.js'
 
 export const DEFAULT_JUDGE_LOCAL_OLLAMA: BelayJudgeConfig = {
@@ -116,10 +116,12 @@ export const DEFAULT_POLICY_V3: PolicySpreadFields = {
   fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
 }
 
-export function materializePolicySpread(spread: PolicySpreadFields): BelayPolicyConfig {
+export function materializePolicySpread(
+  spread: PolicySpreadFields & Partial<Pick<BelayPolicyConfig, 'indeterminateToolEffect'>>,
+): BelayPolicyConfig {
   return {
     ...spread,
-    indeterminateToolEffect: spread.unknownLocalEffect,
+    indeterminateToolEffect: spread.indeterminateToolEffect ?? spread.unknownLocalEffect,
   }
 }
 
