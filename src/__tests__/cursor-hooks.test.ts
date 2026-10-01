@@ -37,7 +37,7 @@ async function readJson(filePath: string) {
 }
 
 describe('cursor hook dedupe', () => {
-  it('serializes failClosed for every managed Cursor hook entry', async () => {
+  it('serializes host fail-open for every managed Cursor hook entry', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
@@ -57,12 +57,12 @@ describe('cursor hook dedupe', () => {
         (entry) => entry.command === definition.command && entry.matcher === definition.matcher,
       )
       expect(installed, `${event}:${definition.matcher ?? '*'}`).toMatchObject({
-        failClosed: true,
+        failClosed: false,
       })
     }
   })
 
-  it('migrates an exact managed entry without failClosed to the host fail-closed definition', () => {
+  it('migrates an exact managed entry to the host fail-open definition', () => {
     const repoRoot = path.join(realpathSync(os.tmpdir()), 'fail-closed-project')
     const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
     const managed = getManagedHookEntries(process.platform, hooksDir, repoRoot).find(
@@ -80,7 +80,7 @@ describe('cursor hook dedupe', () => {
           beforeShellExecution: [
             { command: managed.definition.command },
             custom,
-            { command: managed.definition.command, failClosed: false },
+            { command: managed.definition.command, failClosed: true },
           ],
         },
       },
@@ -90,7 +90,7 @@ describe('cursor hook dedupe', () => {
     )
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: managed.definition.command, matcher: undefined, failClosed: true },
+      { command: managed.definition.command, matcher: undefined, failClosed: false },
       custom,
     ])
   })
@@ -143,7 +143,7 @@ describe('cursor hook dedupe', () => {
     const merged = mergeCursorHooksFile(hooks, process.platform, hooksDir, repoRoot)
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: currentShellCommand, matcher: undefined, failClosed: true },
+      { command: currentShellCommand, matcher: undefined, failClosed: false },
       customBefore,
       customMiddle,
       unknownBelayLike,
@@ -240,7 +240,7 @@ describe('cursor hook dedupe', () => {
     )
 
     expect(merged.hooks.beforeShellExecution).toEqual([
-      { command: current.command, matcher: current.matcher, failClosed: true },
+      { command: current.command, matcher: current.matcher, failClosed: false },
       customBefore,
       unknownLookalike,
       unknownBarePowerShell,
@@ -342,7 +342,7 @@ describe('cursor hook dedupe', () => {
     const upgraded = await readJson(hooksPath)
 
     expect(upgraded.hooks.preToolUse).toEqual([
-      { command: toolGate.command, failClosed: true },
+      { command: toolGate.command, failClosed: false },
       thirdParty,
     ])
   })

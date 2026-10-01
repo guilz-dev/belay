@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { formatWhereReport, whereProject } from '../commands/where.js'
-import { initProject, uninstallProject } from '../installer.js'
+import { initProject, uninstallProject, upgradeProject } from '../installer.js'
 
 const tempDirs: string[] = []
 const originalHome = process.env.HOME
@@ -119,6 +119,66 @@ describe('uninstall command', () => {
     expect(existsSync(path.join(hooksDir, 'belay-before-submit.mjs'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'core.mjs'))).toBe(false)
     expect(existsSync(path.join(homeDir, '.cursor', 'skills', 'belay', 'SKILL.md'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay.disabled.json'))).toBe(true)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay-lifecycle.ndjson'))).toBe(true)
+  })
+
+  it('does not silently reactivate an explicitly uninstalled global owner', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await uninstallProject({ targetDir: repoRoot, scope: 'global' })
+
+    await expect(upgradeProject({ targetDir: repoRoot, scope: 'global' })).rejects.toThrow(
+      /disabled by.*uninstall.*--reactivate/i,
+    )
+
+    expect(existsSync(path.join(homeDir, '.cursor', 'hooks', 'belay-runner'))).toBe(false)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      false,
+    )
+  })
+
+  it('reactivates only through explicit init or upgrade --reactivate', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    await uninstallProject({ targetDir: repoRoot, scope: 'global' })
+
+    await upgradeProject({ targetDir: repoRoot, scope: 'global', reactivate: true })
+
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay.disabled.json'))).toBe(false)
+    expect(
+      (await stat(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).isFile(),
+    ).toBe(true)
+    const hooks = JSON.parse(
+      await readFile(path.join(homeDir, '.cursor', 'hooks.json'), 'utf8'),
+    ) as { hooks: Record<string, unknown[]> }
+    expect(belayHookEntries(hooks.hooks)).not.toHaveLength(0)
+
+    await uninstallProject({ targetDir: repoRoot, scope: 'global' })
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay.disabled.json'))).toBe(false)
+  })
+
+  it('serializes concurrent global upgrade and uninstall to a complete uninstall state', async () => {
+    const homeDir = await createTempHome()
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot, scope: 'global' })
+
+    await Promise.allSettled([
+      upgradeProject({ targetDir: repoRoot, scope: 'global' }),
+      uninstallProject({ targetDir: repoRoot, scope: 'global' }),
+    ])
+
+    const hooks = JSON.parse(
+      await readFile(path.join(homeDir, '.cursor', 'hooks.json'), 'utf8'),
+    ) as { hooks: Record<string, unknown[]> }
+    expect(belayHookEntries(hooks.hooks)).toHaveLength(0)
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay', 'runtime', 'dispatcher.mjs'))).toBe(
+      false,
+    )
+    expect(existsSync(path.join(homeDir, '.cursor', 'belay.disabled.json'))).toBe(true)
   })
 
   it('does not create hooks.json when belay was never installed', async () => {

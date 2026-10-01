@@ -108,6 +108,8 @@ export interface BelayTransactionalConfig {
 
 export interface BelayPolicyConfig {
   unknownLocalEffect: UnknownLocalEffectPolicy
+  /** preToolUse tools with indeterminate effect (MCP etc.); defaults to unknownLocalEffect when unset in JSON */
+  indeterminateToolEffect: UnknownLocalEffectPolicy
   unparseableShell: UnparseableShellPolicy
   confidenceThresholds: BelayConfidenceThresholds
   modelAssist: BelayModelAssistConfig
@@ -121,6 +123,9 @@ export interface BelayPolicyConfig {
   /** R-V2: silent-pass rate below this triggers fence-drift warning (default 0.5). */
   fenceWarnThreshold: number
 }
+
+/** Merge/spread templates omit indeterminateToolEffect so normalize can fall back to unknownLocalEffect. */
+export type PolicySpreadFields = Omit<BelayPolicyConfig, 'indeterminateToolEffect'>
 
 export interface BelayOverridesConfig {
   allow: string[]

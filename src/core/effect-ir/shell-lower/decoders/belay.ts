@@ -84,15 +84,17 @@ export function decodeBelay(
     section === 'judge' &&
     operation !== undefined &&
     ['consent', 'list', 'status', 'test', 'use'].includes(operation)
+  const configPolicyPath = key === 'policy.indeterminateToolEffect'
   const configRead =
     section === 'config' &&
     (operation === undefined ||
       operation === 'list' ||
-      (operation === 'get' && key?.startsWith('judge.')))
+      (operation === 'get' && (key?.startsWith('judge.') || configPolicyPath)))
   const configJudgeMutation =
     section === 'config' &&
     ((['set', 'unset'].includes(operation ?? '') && key?.startsWith('judge.')) ||
       (operation === 'credential' && key === 'mode'))
+  const configPolicyMutation = section === 'config' && operation === 'set' && configPolicyPath
   const approvalAuthorityCommand = [
     'approval-token',
     'approve',
@@ -102,11 +104,13 @@ export function decodeBelay(
   const configTrustMutation = section === 'config' && operation === 'trust'
   const manifestOperation = manifestSubcommand(args)
   const manifestTrustMutation = manifestOperation === 'trust' || manifestOperation === 'revoke'
-  if (judgeCommand || configRead || configJudgeMutation) {
+  if (judgeCommand || configRead || configJudgeMutation || configPolicyMutation) {
     return [
       processRequirement('belay', 'inspect', segment, [
         'belay_control_plane_command',
-        configJudgeMutation ? 'belay.config_judge_mutation' : 'belay.config_read',
+        configJudgeMutation || configPolicyMutation
+          ? 'belay.config_judge_mutation'
+          : 'belay.config_read',
       ]),
     ]
   }

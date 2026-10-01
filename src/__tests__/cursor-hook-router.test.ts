@@ -39,7 +39,7 @@ async function installProjectHook(
   const hooksDir = path.join(repoRoot, '.cursor', 'hooks')
   const groupedHooks: Record<
     string,
-    Array<{ command: string; matcher?: string; failClosed: true }>
+    Array<{ command: string; matcher?: string; failClosed: false }>
   > = {}
   for (const { event, definition } of getManagedHookEntries(process.platform, hooksDir, repoRoot)) {
     const eventHooks = groupedHooks[event] ?? []
@@ -47,7 +47,7 @@ async function installProjectHook(
     eventHooks.push({
       command: definition.command,
       ...(definition.matcher === undefined ? {} : { matcher: definition.matcher }),
-      failClosed: true,
+      failClosed: false,
     })
   }
   await writeFile(

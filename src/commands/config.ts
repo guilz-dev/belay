@@ -19,7 +19,12 @@ import type {
   JudgeCredentialRef,
   UnknownLocalEffectPolicy,
 } from '../core/config.js'
-import { belayStateDir, DEFAULT_POLICY_V3, normalizeJudgeConfig } from '../core/config.js'
+import {
+  belayStateDir,
+  DEFAULT_POLICY_V3,
+  mergeConfig,
+  normalizeJudgeConfig,
+} from '../core/config.js'
 import { clearJudgeCredentialStore, writeJudgeCredentialStore } from '../core/credential-store.js'
 import { refreshIntegrityIfPinned } from '../core/integrity.js'
 import {
@@ -60,6 +65,11 @@ export const BELAY_CONFIG_SUBCOMMANDS = [
 ] as const
 
 export type BelayConfigSubcommand = (typeof BELAY_CONFIG_SUBCOMMANDS)[number]
+
+export const INDETERMINATE_TOOL_EFFECT_WIZARD_PROMPT =
+  'Allow unmapped MCP / preToolUse tools as flagged (allow_flagged) while keeping strict shell unknown-local policy?'
+
+const POLICY_CONFIG_PATHS = ['policy.indeterminateToolEffect'] as const
 
 const JUDGE_CONFIG_PATHS = [
   'judge.providerId',
@@ -163,6 +173,57 @@ function assertJudgeConfigPath(pathKey: string | undefined): string {
     throw new Error(`belay config only supports judge.* paths (got ${pathKey ?? '(empty)'}).`)
   }
   return pathKey
+}
+
+function assertConfigPath(pathKey: string | undefined): string {
+  if (pathKey?.startsWith('judge.')) {
+    return pathKey
+  }
+  if (pathKey && (POLICY_CONFIG_PATHS as readonly string[]).includes(pathKey)) {
+    return pathKey
+  }
+  throw new Error(
+    `belay config only supports judge.* and ${POLICY_CONFIG_PATHS.join(', ')} (got ${pathKey ?? '(empty)'}).`,
+  )
+}
+
+function getPolicyField(config: BelayConfigV4, pathKey: string): unknown {
+  if (pathKey === 'policy.indeterminateToolEffect') {
+    return config.policy.indeterminateToolEffect
+  }
+  throw new Error(`Unknown policy config path: ${pathKey}`)
+}
+
+async function persistConfig(
+  repoRoot: string,
+  config: BelayConfigV4,
+  adapter: ReturnType<typeof resolveAdapterName>,
+): Promise<BelayConfigV4> {
+  await writeTrustedConfigFile(repoRoot, config, adapter)
+  await refreshIntegrityIfPinned(repoRoot, config)
+  return config
+}
+
+async function applyPolicySet(
+  repoRoot: string,
+  config: BelayConfigV4,
+  pathKey: string,
+  rawValue: string,
+): Promise<BelayConfigV4> {
+  const adapter = resolveAdapterName(config)
+  const value = rawValue.trim()
+  if (pathKey === 'policy.indeterminateToolEffect') {
+    if (value !== 'deny' && value !== 'allow_flagged') {
+      throw new Error('policy.indeterminateToolEffect must be deny or allow_flagged.')
+    }
+    const indeterminateToolEffect = value as UnknownLocalEffectPolicy
+    const updated = mergeConfig({
+      ...config,
+      policy: { indeterminateToolEffect },
+    })
+    return persistConfig(repoRoot, updated, adapter)
+  }
+  throw new Error(`Unknown policy config path: ${pathKey}`)
 }
 
 function getJudgeField(judge: BelayJudgeConfig, pathKey: string): unknown {
@@ -895,7 +956,7 @@ async function runBelayConfigJudgeOnlyWithWizard(
     process.stderr.write(`Warning: ${warning}\n`)
   }
 
-  const updated = await persistJudge(repoRoot, config, patch.judge, adapter)
+  let updated = await persistJudge(repoRoot, config, patch.judge, adapter)
   warnCloudConsentIfNeeded(updated.judge)
 
   if (process.env.BELAY_CONFIG_WIZARD_JUDGE_KEY && judgeCredentialMode === 'apiKey') {
@@ -910,6 +971,35 @@ async function runBelayConfigJudgeOnlyWithWizard(
     credentialMode: updated.judge.credential?.mode ?? null,
     by: 'belay config interactive (judge only)',
   })
+
+  const changeIndeterminate = await prompter.askConfirm(
+    'Adjust indeterminate preToolUse tool policy?',
+    false,
+  )
+  if (changeIndeterminate) {
+    const allowFlagged = await prompter.askConfirm(
+      INDETERMINATE_TOOL_EFFECT_WIZARD_PROMPT,
+      updated.policy.indeterminateToolEffect === 'allow_flagged',
+    )
+    const indeterminateToolEffect: UnknownLocalEffectPolicy = allowFlagged
+      ? 'allow_flagged'
+      : 'deny'
+    if (indeterminateToolEffect !== updated.policy.indeterminateToolEffect) {
+      updated = await persistConfig(
+        repoRoot,
+        mergeConfig({
+          ...updated,
+          policy: { indeterminateToolEffect },
+        }),
+        adapter,
+      )
+      await appendConfigAudit(repoRoot, updated, {
+        event: 'policy_indeterminate_tool_effect_set',
+        value: indeterminateToolEffect,
+        by: 'belay config interactive (judge only)',
+      })
+    }
+  }
 
   return { repoRoot, adapter }
 }
@@ -1050,8 +1140,10 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
   }
 
   if (options.subcommand === 'get') {
-    const pathKey = assertJudgeConfigPath(options.path)
-    const value = getJudgeField(config.judge, pathKey)
+    const pathKey = assertConfigPath(options.path)
+    const value = pathKey.startsWith('judge.')
+      ? getJudgeField(config.judge, pathKey)
+      : getPolicyField(config, pathKey)
     if (options.json) {
       return { path: pathKey, value }
     }
@@ -1059,17 +1151,27 @@ export async function runBelayConfig(options: BelayConfigOptions = {}) {
   }
 
   if (options.subcommand === 'set') {
-    const pathKey = assertJudgeConfigPath(options.path)
+    const pathKey = assertConfigPath(options.path)
     if (options.value === undefined) {
       throw new Error('belay config set requires <path> <value>.')
     }
-    await applyJudgeSet(repoRoot, config, pathKey, options.value)
-    await appendConfigAudit(repoRoot, config, {
-      event: 'judge_config_set',
-      path: pathKey,
-      value: options.value,
-      by: 'belay config set',
-    })
+    if (pathKey.startsWith('judge.')) {
+      await applyJudgeSet(repoRoot, config, pathKey, options.value)
+      await appendConfigAudit(repoRoot, config, {
+        event: 'judge_config_set',
+        path: pathKey,
+        value: options.value,
+        by: 'belay config set',
+      })
+    } else {
+      await applyPolicySet(repoRoot, config, pathKey, options.value)
+      await appendConfigAudit(repoRoot, config, {
+        event: 'policy_indeterminate_tool_effect_set',
+        path: pathKey,
+        value: options.value,
+        by: 'belay config set',
+      })
+    }
     return `Set ${pathKey} = ${options.value}`
   }
 

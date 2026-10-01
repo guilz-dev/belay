@@ -99,7 +99,7 @@ reusable complete upper bound, not approval of one execution. See
 
 ### Mitigations in v0.4
 
-- **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` only as a compatibility fallback for non-EffectPlan paths, while normalized partial/indeterminate shell plans still ask. `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and the stricter fallback `unknownLocalEffect: deny`. Control plane defaults to enabled.
+- **Fresh-install defaults** — `mode: enforce`; `policy.unknownLocalEffect` defaults to `"allow_flagged"` only as a compatibility fallback for non-EffectPlan paths, while normalized partial/indeterminate shell plans still ask. `policy.unparseableShell` defaults to `"deny"` (ask). Run `belay dogfood` for audit mode and the stricter fallback `unknownLocalEffect: deny`. Control plane defaults to enabled. In enforce mode, `policy.indeterminateToolEffect: allow_flagged` with `unknownLocalEffect: deny` allows unknown preToolUse tools as flagged passes only.
 - **Exact authorization** — one-shot approvals and resource-scoped capability grants authorize the exact EffectPlan request. Legacy `overrides.allow` / `overrides.external` lists are parsed for compatibility but forbidden for use and ignored by shell authorization; `belay doctor` fails when either list is non-empty.
 - **Repository config trust boundary** — manual edits to repository config are fail-closed until an
   operator re-trusts the current parsed config snapshot with `belay config trust`. Malformed,

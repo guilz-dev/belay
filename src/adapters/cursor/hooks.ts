@@ -86,7 +86,7 @@ export function managedShellPreToolUseEntry(
   return {
     command: referencePreToolUse.command,
     matcher: 'Shell',
-    failClosed: true,
+    failClosed: false,
   }
 }
 
@@ -165,7 +165,7 @@ export function legacyManagedShellPreToolUseVariants(
   return [...commands].map((command) => ({
     command,
     matcher: 'Shell',
-    failClosed: true,
+    failClosed: false,
   }))
 }
 

@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- **Cursor host availability and lifecycle split-brain** — Managed Cursor entries now use
+  `failClosed: false`, so a missing or broken runner, shim, or dispatcher cannot block the editor
+  before Belay starts. Cursor lifecycle mutations are serialized, hook publication is atomic and
+  invariant-checked, uninstall intent persists across ordinary upgrades, and a surviving local log
+  identifies lifecycle writers. Explicit reinstallation uses `init` or `upgrade --reactivate`.
+- **Cursor global audit fail-open** — Global `preToolUse` / gate hooks now fail-open on routing
+  and dispatch errors when `workspace_roots` or payload cwd resolve to a repository whose trusted
+  config is in `mode: audit` (including `installScope: global` dogfood workspaces such as
+  freelance).
+- **Cursor multi-owner publication rollback** — A project upgrade that refreshes a related global
+  installation now withdraws both hook publications if either post-publication invariant fails.
+
 ### Changed
 
 - **CLI audit reads** — Cursor commands (`report`, `metrics`, `quality`, `audit`, `doctor`,
@@ -17,6 +31,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`policy.indeterminateToolEffect`** — split preToolUse / MCP indeterminate tools from
+  `policy.unknownLocalEffect`; configure via `belay config set` or the judge-only config wizard.
 - **`belay where`** — shows requested target and config anchor when they differ.
 - **`belay report`** — readiness path note, versioned log hint, and known host hook noise count.
 - **Ops doc** — `docs/ops/audit-log-versioning.ja.md`.

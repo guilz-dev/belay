@@ -86,6 +86,7 @@ export function parseArgs(argv: string[]) {
     dogfoodCheck?: boolean
     enforce?: boolean
     force?: boolean
+    reactivate?: boolean
     adapter?: 'cursor' | 'claude' | 'codex'
     auditSubcommand?: 'query' | 'summarize' | 'replay' | 'versions'
     auditVersion?: string
@@ -170,6 +171,13 @@ export function parseArgs(argv: string[]) {
     }
     if (token === '--force') {
       options.force = true
+      continue
+    }
+    if (token === '--reactivate') {
+      if (command !== 'upgrade') {
+        throw new Error('--reactivate is only valid for upgrade.')
+      }
+      options.reactivate = true
       continue
     }
     if (token === '--check') {
@@ -829,7 +837,7 @@ Usage:
   ${c} config credential clear [--target <dir>]
   (--adapter selects host; fresh init picks matching judge providerId: cursor/claude/codex)
   (--dogfood runs after --preset and sets mode: audit, overriding preset enforce mode)
-  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default]
+  ${c} upgrade [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--with-skill] [--migrate-judge-default] [--reactivate]
   ${c} uninstall [--target <dir>] [--adapter cursor] [--scope project|global]
   ${c} where [--target <dir>] [--adapter cursor|claude|codex] [--scope project|global] [--json]
   ${c} dogfood [--target <dir>] [--adapter cursor|claude|codex] [--enforce] [--force]
@@ -961,6 +969,7 @@ async function main() {
         adapter: options.adapter,
         scope: options.installScope,
         migrateJudgeDefault: options.migrateJudgeDefault,
+        reactivate: options.reactivate,
       })
       const upgraded = await loadConfigFile(result.repoRoot, result.adapter)
       if (upgraded.policy.modelAssist.enabled) {

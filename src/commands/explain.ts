@@ -117,6 +117,7 @@ export function formatExplainReport(report: ExplainReport): string {
     `Permission: ${report.permission}`,
     `Tier: ${report.tier}`,
     `Policy unknownLocalEffect: ${report.policy.unknownLocalEffect}`,
+    `Policy indeterminateToolEffect: ${report.policy.indeterminateToolEffect}`,
     `Egress (partial L1): ${report.egress.enabled ? 'enabled' : 'disabled'} (proxy running=${report.egressProxyRunning}; shell L3 demotion inactive — read/mutate enforced at proxy layer per R36)`,
     report.egress.enabled
       ? `Egress proxy: ${report.egress.listenHost}:${report.egress.listenPort}`

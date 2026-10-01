@@ -93,7 +93,7 @@ describe('Phase 3.5 plan — follow-ups', () => {
 
       await runBelayConfigJudgeOnlyInteractive({
         targetDir: dir,
-        prompts: ['codex', 'project', 'cli'],
+        prompts: ['codex', 'project', 'cli', 'n'],
       })
 
       expect(initSpy).not.toHaveBeenCalled()
@@ -109,7 +109,7 @@ describe('Phase 3.5 plan — follow-ups', () => {
 
       await runBelayConfigJudgeOnlyInteractive({
         targetDir: dir,
-        prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y'],
+        prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y', 'n'],
       })
 
       const config = await loadConfigFile(dir)
@@ -123,17 +123,17 @@ describe('Phase 3.5 plan — follow-ups', () => {
       const initSpy = vi.spyOn(installer, 'initProject')
       const hooksPath = path.join(dir, '.cursor', 'hooks.json')
       const hooksBefore = await readFile(hooksPath, 'utf8')
-      const payload = { tool_name: 'FictionalLocalTool', tool_input: { action: 'opaque' } }
       const defaultConfig = await loadConfigFile(dir)
+      const missingShellCommand = { tool_name: 'Shell', tool_input: {} }
       const allowed = await classifyToolUse(
-        payload,
+        missingShellCommand,
         dir,
         dir,
         defaultConfig,
         classifierOptionsFromConfig(defaultConfig),
       )
       expect(allowed.verdict).toBe('allow_flagged')
-      expect(allowed.reason).toBe('indeterminate_tool_effect')
+      expect(allowed.reason).toBe('tool_shell_missing_command')
 
       await runBelayConfigInteractive({
         targetDir: dir,
@@ -143,15 +143,16 @@ describe('Phase 3.5 plan — follow-ups', () => {
       expect(initSpy).not.toHaveBeenCalled()
       const config = await loadConfigFile(dir)
       expect(config.policy.unknownLocalEffect).toBe('deny')
+      expect(config.policy.indeterminateToolEffect).toBe('allow_flagged')
       const denied = await classifyToolUse(
-        payload,
+        missingShellCommand,
         dir,
         dir,
         config,
         classifierOptionsFromConfig(config),
       )
       expect(denied.verdict).toBe('deny_pending_approval')
-      expect(denied.reason).toBe('indeterminate_tool_effect')
+      expect(denied.reason).toBe('tool_shell_missing_command')
       expect(await readFile(hooksPath, 'utf8')).toBe(hooksBefore)
 
       const configPath = path.join(dir, '.cursor', 'belay.config.json')

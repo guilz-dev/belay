@@ -16,7 +16,9 @@ describe('belay judge self-command gate', () => {
     'belay config',
     'belay config list',
     'belay config get judge.model',
+    'belay config get policy.indeterminateToolEffect',
     'belay config set judge.providerId cursor',
+    'belay config set policy.indeterminateToolEffect allow_flagged',
     'belay config unset judge.endpoint',
     'belay config credential mode project',
   ])('allows %s without approval', async (command) => {

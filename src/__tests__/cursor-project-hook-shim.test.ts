@@ -137,7 +137,7 @@ describe('dynamic project hook shims and routing', () => {
             beforeShellExecution: [
               {
                 command: `'${runnerPath.replaceAll("'", "'\\''")}' belay-shell-gate`,
-                failClosed: true,
+                failClosed: false,
               },
             ],
           },

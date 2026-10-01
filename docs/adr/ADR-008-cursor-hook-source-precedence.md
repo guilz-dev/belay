@@ -53,8 +53,9 @@ also make one repository look like two sources.
    `{ "continue": true }` before prompt submission, and `{}` for audit hooks. A User/global hook is
    also neutral when the selected repository has no Belay config. If the selected config requires a
    Project owner but its router-visible current-event installation is incomplete, gates and prompts
-   deny with repair guidance; audit hooks emit a diagnostic and return `{}`. Missing or malformed
-   action context fails closed for gates/prompts and remains audit-safe.
+   deny with repair guidance in enforce mode; audit mode returns a neutral response when the
+   workspace can be identified. Audit hooks emit a diagnostic and return `{}`. Missing or malformed
+   action context retains the explicit enforce response and remains audit-safe.
 
 5. **Migration and diagnosis** — Current Project upgrades refresh an existing, exactly recognized
    managed global Cursor installation to the router-aware generation. Operators with a pre-router
@@ -73,13 +74,12 @@ also make one repository look like two sources.
    selected and effective.
 
 7. **Host failure and integrity floor** — Every managed Cursor hook entry sets
-   `failClosed: true`. For actionable prompt, shell, tool, and subagent hooks, Cursor can block when
-   the runner, shim, or dispatcher is absent, crashes, times out, or produces invalid JSON.
-   Post-action hooks cannot roll back an already completed action, and `sessionEnd` is
-   fire-and-forget with its response unused. Hash-pinned installs cover the settings file, all
-   shims, platform runners, core, and dispatcher at either scope; doctor requires the complete pin
-   set and validates it. Doctor also rejects an exact managed entry that has not migrated to
-   `failClosed: true`. Global files use stable, scope-relative `@global/…` keys rather than
+   `failClosed: false`. Cursor therefore cannot block a host action merely because the runner,
+   shim, or dispatcher is absent, crashes, times out, or produces invalid JSON. After startup,
+   enforce mode retains authority by returning an explicit deny response. Hash-pinned installs
+   cover the settings file, all shims, platform runners, core, and dispatcher at either scope;
+   doctor requires the complete pin set and validates it. Doctor also rejects an exact managed
+   entry that has not migrated to `failClosed: false`. Global files use stable, scope-relative `@global/…` keys rather than
    repository-relative traversal paths, and verification resolves those keys only through the
    expected adapter artifact set.
 
@@ -87,6 +87,14 @@ also make one repository look like two sources.
    repository discovery, scope selection, config-trust comparison for owner continuity, and
    artifact-presence probes. It must not bundle the full adapter layout, config defaults, policy,
    or audit modules. Only the selected owner imports `core.mjs` dynamically.
+
+9. **Serialized lifecycle and durable uninstall** — Cursor init, upgrade, uninstall, global refresh,
+   and stale-owner cleanup acquire owner-directory locks in canonical path order. Hook settings are
+   atomically replaced only after runtime artifacts exist, and command success requires a complete
+   install or complete uninstall invariant. Uninstall writes `belay.disabled.json` before removal;
+   ordinary upgrade cannot clear it, while explicit init or `upgrade --reactivate` clears it only
+   after a complete install. Start/result records in `belay-lifecycle.ndjson` survive runtime
+   removal and identify the operation, PID, scope, target, timestamp, and outcome.
 
 ## Consequences
 
@@ -108,9 +116,8 @@ legacy or third-party hook behavior and is not a Belay-managed shell gate source
 ([ADR-009](./ADR-009-single-cursor-shell-gate.md)). If Cursor delivers the same canonical event
 to the effective owner more than once, this ownership rule alone does not merge those repeated
 deliveries. If an entrypoint needed to reach the dispatcher itself is absent, the host process can
-surface its launch failure. Managed actionable entries request Cursor's `failClosed` behavior for
-that failure, while post-action hooks cannot undo prior effects and `sessionEnd` remains
-fire-and-forget. `belay doctor` is the preflight detection and repair path.
+surface its launch failure but the managed entry is host fail-open, so that failure cannot deny the
+action. `belay doctor` remains the preflight detection and repair path.
 
 ## Verification
 

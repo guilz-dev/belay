@@ -59,7 +59,7 @@ describe('agent-belay installer', () => {
     expect(hooks.hooks.preToolUse).toEqual([
       {
         command: managed.find((entry) => entry.event === 'preToolUse')?.definition.command,
-        failClosed: true,
+        failClosed: false,
       },
     ])
     expect(
@@ -166,18 +166,15 @@ describe('agent-belay installer', () => {
     const defaultConfig = await readJson(path.join(defaultRoot, '.cursor', 'belay.config.json'))
     expect(defaultConfig.policy.unknownLocalEffect).toBe('allow_flagged')
     const loadedDefault = await loadConfigFile(defaultRoot)
-    const unknownTool = {
-      tool_name: 'FictionalLocalTool',
-      tool_input: { action: 'opaque' },
-    }
+    const missingShellCommand = { tool_name: 'Shell', tool_input: {} }
     const defaultUnknown = await classifyToolUse(
-      unknownTool,
+      missingShellCommand,
       defaultRoot,
       defaultRoot,
       loadedDefault,
       classifierOptionsFromConfig(loadedDefault),
     )
-    expect(defaultUnknown.reason).toBe('indeterminate_tool_effect')
+    expect(defaultUnknown.reason).toBe('tool_shell_missing_command')
     expect(defaultUnknown.verdict).toBe('allow_flagged')
 
     const mustAsk = await classifyShell(
@@ -193,15 +190,16 @@ describe('agent-belay installer', () => {
     await initProject({ targetDir: denyRoot, unknownLocalEffect: 'deny' })
     const denyConfig = await readJson(path.join(denyRoot, '.cursor', 'belay.config.json'))
     expect(denyConfig.policy.unknownLocalEffect).toBe('deny')
+    expect(denyConfig.policy.indeterminateToolEffect).toBe('allow_flagged')
     const loadedDeny = await loadConfigFile(denyRoot)
     const deniedUnknown = await classifyToolUse(
-      unknownTool,
+      missingShellCommand,
       denyRoot,
       denyRoot,
       loadedDeny,
       classifierOptionsFromConfig(loadedDeny),
     )
-    expect(deniedUnknown.reason).toBe('indeterminate_tool_effect')
+    expect(deniedUnknown.reason).toBe('tool_shell_missing_command')
     expect(deniedUnknown.verdict).toBe('deny_pending_approval')
 
     const presetOverrideRoot = await createTempRepo()

@@ -135,8 +135,12 @@ authorization model. It complements
     detectable existing Project installation as owner; without one, User/global imports the core
     and the core fails closed on config trust. This continuity check cannot grant repository config
     policy authority. Non-owners are neutral and cannot import the heavy core or touch approval,
-    control-plane, or audit state. Managed Cursor entries set the host's `failClosed` option, but
-    post-action events cannot undo completed effects and `sessionEnd` is fire-and-forget. This is
+    control-plane, or audit state. Managed Cursor entries set `failClosed: false`, so a missing or
+    broken runner/shim/dispatcher cannot block Cursor before Belay starts; a running enforce-mode
+    hook may still explicitly deny. Lifecycle mutations use canonical owner locks, atomic hook
+    publication, end-state invariants, a persistent uninstall marker, and a surviving local writer
+    log. Ordinary upgrade cannot clear an uninstall marker; explicit init or `upgrade --reactivate`
+    is required. This is
     source precedence only: distinct canonical events and repeated effective-owner deliveries
     remain separate hook processes. Doctor diagnoses one workspace; the blocking dogfood release
     check also verifies Cursor routing health across the initialized linked-worktree set

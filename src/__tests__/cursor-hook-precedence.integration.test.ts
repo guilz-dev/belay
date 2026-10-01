@@ -326,7 +326,7 @@ describe.sequential('Cursor hook source precedence integration', () => {
       artifactPath: (cursorRoot: string) =>
         path.join(cursorRoot, 'belay', 'runtime', 'dispatcher.mjs'),
     },
-  ])('marks the gate failClosed when its $name cannot start', async ({ artifactPath }) => {
+  ])('keeps the host fail-open when its $name cannot start', async ({ artifactPath }) => {
     const homeRoot = await createTempDir('agent-belay-cursor-home-')
     const projectRoot = await createTempDir('agent-belay-cursor-host-fail-closed-')
     process.env.HOME = homeRoot
@@ -349,7 +349,7 @@ describe.sequential('Cursor hook source precedence integration', () => {
       path.join(homeRoot, 'missing-entrypoint-core-imports.txt'),
     )
 
-    expect(definition.failClosed).toBe(true)
+    expect(definition.failClosed).toBe(false)
     expect(result.exitCode).not.toBe(0)
   })
 

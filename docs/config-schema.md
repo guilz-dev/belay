@@ -47,8 +47,9 @@ install. Nonmatching sources are neutral before the heavy runtime loads. A globa
 for a repository without `.cursor/belay.config.json`. Omitted `installScope` normalizes to the
 documented `project` default; a present config that is malformed, unreadable, structurally invalid,
 or has an invalid scope remains routed to the matching Project owner so config loading fails
-closed. A router-visible incomplete selected Project owner fails closed for gates/prompts and is
-audit-safe. Multi-root selection follows Shell
+closed. A router-visible incomplete selected Project owner denies in enforce mode; audit mode is
+neutral when its trusted workspace config can be identified, and audit hooks remain safe.
+Multi-root selection follows Shell
 `tool_input.working_directory` → `cwd` → first non-empty `workspace_roots[]`, with canonical path
 comparison. Project shims derive their source root from their own installed file URL at invocation
 time; the dispatcher canonicalizes it before comparison with the action repository. Moving or
@@ -59,9 +60,9 @@ This behavior adds no config field or schema migration. Pre-router global Cursor
 refreshed with `belay upgrade --scope global`; `belay doctor` reports old generations, origin
 mismatches, incomplete owners, and integrity gaps. Init/upgrade stage the target owner before
 atomically publishing the scope and preserve the previous selection if staging fails. Managed
-Cursor hook entries set `failClosed: true`; this supplies host-level failure handling for actionable
-events, but does not retroactively undo post-action events and does not change `sessionEnd`'s
-fire-and-forget semantics. Source precedence applies only within the same canonical event: distinct
+Cursor hook entries set `failClosed: false`, so runner, shim, or dispatcher startup failure cannot
+block Cursor before Belay runs. A running enforce-mode hook can still return an explicit deny.
+Source precedence applies only within the same canonical event: distinct
 events and repeated deliveries to the effective owner remain separate hook processes. See
 [ADR-008](./adr/ADR-008-cursor-hook-source-precedence.md).
 When dogfood is active, the blocking release check applies Cursor routing-health diagnostics to the
@@ -137,6 +138,8 @@ belay config get judge.model
 belay config set judge.providerId codex
 belay config set judge.runtime.session.enabled true
 belay config set judge.runtime.shadow.enabled false
+belay config set policy.indeterminateToolEffect allow_flagged
+belay config get policy.indeterminateToolEffect
 belay config unset judge.endpoint
 belay config credential mode project
 belay config credential set --key-stdin
@@ -148,6 +151,7 @@ belay config judge                        # same summary as belay judge status
 | Field | Values | Default |
 |-------|--------|---------|
 | `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"allow_flagged"` |
+| `indeterminateToolEffect` | `"deny"` \| `"allow_flagged"` | same as `unknownLocalEffect` when omitted in JSON |
 | `unparseableShell` | `"deny"` \| `"allow_flagged"` | `"deny"` |
 | `codexUnmappedTool` | `"deny"` \| `"allow"` | `"allow"` (deprecated; ignored at runtime — tools use effect policy) |
 | `fenceWarnThreshold` | number | `0.5` (silent-pass rate below which `report`/`doctor` warn of over-blocking) |
