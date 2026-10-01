@@ -17,6 +17,7 @@ import type {
   BelayNotificationsConfig,
   BelayOverridesConfig,
   BelayPolicyConfig,
+  PolicySpreadFields,
   BelayRedactionConfig,
   BelaySandboxConfig,
   BelayTransactionalConfig,
@@ -95,7 +96,7 @@ export const DEFAULT_TRANSACTIONAL_V3: BelayTransactionalConfig = {
   checkpoint: { ...DEFAULT_RECOVERY_CHECKPOINT },
 }
 
-export const LEGACY_POLICY_V3: BelayPolicyConfig = {
+export const LEGACY_POLICY_V3: PolicySpreadFields = {
   unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'allow_flagged',
   confidenceThresholds: { ...DEFAULT_CONFIDENCE_THRESHOLDS },
@@ -105,7 +106,7 @@ export const LEGACY_POLICY_V3: BelayPolicyConfig = {
 }
 
 /** Fresh install defaults: recoverable-first with opaque/unparseable fail-closed. */
-export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
+export const DEFAULT_POLICY_V3: PolicySpreadFields = {
   unknownLocalEffect: 'allow_flagged',
   unparseableShell: 'deny',
   codexUnmappedTool: 'allow',
@@ -113,6 +114,13 @@ export const DEFAULT_POLICY_V3: BelayPolicyConfig = {
   modelAssist: { ...DEFAULT_MODEL_ASSIST },
   transactional: { ...DEFAULT_TRANSACTIONAL_V3 },
   fenceWarnThreshold: DEFAULT_FENCE_WARN_THRESHOLD,
+}
+
+export function materializePolicySpread(spread: PolicySpreadFields): BelayPolicyConfig {
+  return {
+    ...spread,
+    indeterminateToolEffect: spread.unknownLocalEffect,
+  }
 }
 
 export const DEFAULT_OVERRIDES_V3: BelayOverridesConfig = {
@@ -224,7 +232,7 @@ export const DEFAULT_CONFIG_V4: BelayConfigV4 = {
     sensitivePaths: [...DEFAULT_CONFIG_V2.classifier.sensitivePaths],
     shellFrontendMode: 'legacy',
   },
-  policy: { ...DEFAULT_POLICY_V3 },
+  policy: materializePolicySpread(DEFAULT_POLICY_V3),
   overrides: { ...DEFAULT_OVERRIDES_V3 },
   redaction: { ...DEFAULT_REDACTION_V3 },
   controlPlane: { ...DEFAULT_CONTROL_PLANE_V3 },

@@ -138,6 +138,8 @@ belay config get judge.model
 belay config set judge.providerId codex
 belay config set judge.runtime.session.enabled true
 belay config set judge.runtime.shadow.enabled false
+belay config set policy.indeterminateToolEffect allow_flagged
+belay config get policy.indeterminateToolEffect
 belay config unset judge.endpoint
 belay config credential mode project
 belay config credential set --key-stdin
@@ -149,6 +151,7 @@ belay config judge                        # same summary as belay judge status
 | Field | Values | Default |
 |-------|--------|---------|
 | `unknownLocalEffect` | `"deny"` \| `"allow_flagged"` | `"allow_flagged"` |
+| `indeterminateToolEffect` | `"deny"` \| `"allow_flagged"` | same as `unknownLocalEffect` when omitted in JSON |
 | `unparseableShell` | `"deny"` \| `"allow_flagged"` | `"deny"` |
 | `codexUnmappedTool` | `"deny"` \| `"allow"` | `"allow"` (deprecated; ignored at runtime — tools use effect policy) |
 | `fenceWarnThreshold` | number | `0.5` (silent-pass rate below which `report`/`doctor` warn of over-blocking) |

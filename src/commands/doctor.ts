@@ -754,6 +754,15 @@ export async function doctorProject(options: DoctorOptions = {}): Promise<Doctor
     } else if (dogfood.unknownLocalEffect === 'deny' && dogfood.mode !== 'audit') {
       notes.push('Fail-closed policy is enabled in enforce mode.')
     }
+    if (
+      loadedConfig.mode === 'enforce' &&
+      loadedConfig.policy.indeterminateToolEffect === 'allow_flagged' &&
+      loadedConfig.policy.unknownLocalEffect === 'deny'
+    ) {
+      notes.push(
+        'Split policy: unknown preToolUse tools pass flagged in enforce mode; shell unknown-local remains deny.',
+      )
+    }
 
     const recoveryCohort = metrics.currentCohortRecovery
     const restoreTotal =

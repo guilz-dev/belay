@@ -644,7 +644,9 @@ function indeterminateToolResult(
 ): ClassifyResult {
   const summary = toolAuditSummary(toolName, payload, options)
   const fingerprint = toolFingerprint(toolName, fingerprintPayload(payload, options), repoRoot)
-  if (options.unknownLocalEffect === 'deny') {
+  const indeterminatePolicy =
+    options.indeterminateToolEffect ?? options.unknownLocalEffect ?? 'deny'
+  if (indeterminatePolicy === 'deny') {
     return {
       verdict: 'deny_pending_approval',
       reason: 'indeterminate_tool_effect',

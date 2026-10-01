@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { classifyToolUse } from '../core/classify-tool.js'
-import { mergeConfig } from '../core/config.js'
+import { classifierOptionsFromConfig, mergeConfig } from '../core/config.js'
 import { toolFingerprint } from '../core/fingerprint.js'
 import { canonicalPath } from '../core/path-utils.js'
 import { classifyShell } from '../core/verdict/adapter.js'
@@ -60,6 +60,40 @@ describe('classifyToolUse', () => {
 
     expect(result.verdict).toBe('deny_pending_approval')
     expect(result.reason).toBe('outside_repo_mutation')
+  })
+
+  it('uses indeterminateToolEffect independently of unknownLocalEffect', async () => {
+    const splitConfig = mergeConfig({
+      policy: {
+        unknownLocalEffect: 'deny',
+        indeterminateToolEffect: 'allow_flagged',
+      },
+    })
+    const result = await classifyToolUse(
+      { tool_name: 'FutureMutationTool', tool_input: {} },
+      repoRoot,
+      cwd,
+      splitConfig,
+      classifierOptionsFromConfig(splitConfig),
+    )
+    expect(result.verdict).toBe('allow_flagged')
+    expect(result.reason).toBe('indeterminate_tool_effect')
+
+    const coupledConfig = mergeConfig({
+      policy: {
+        unknownLocalEffect: 'deny',
+        indeterminateToolEffect: 'deny',
+      },
+    })
+    const denied = await classifyToolUse(
+      { tool_name: 'FutureMutationTool', tool_input: {} },
+      repoRoot,
+      cwd,
+      coupledConfig,
+      classifierOptionsFromConfig(coupledConfig),
+    )
+    expect(denied.verdict).toBe('deny_pending_approval')
+    expect(denied.reason).toBe('indeterminate_tool_effect')
   })
 
   it('reuses v2 shell classification and fingerprint for Shell tool', async () => {

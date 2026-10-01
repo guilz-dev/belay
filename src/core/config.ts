@@ -46,6 +46,21 @@ import type {
 import { normalizeShellFrontendMode } from './shell-frontend/mode.js'
 import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
 
+export function parseLocalEffectPolicy(
+  value: unknown,
+  fallback: UnknownLocalEffectPolicy,
+): UnknownLocalEffectPolicy {
+  if (value === 'deny' || value === 'allow_flagged') {
+    return value
+  }
+  return fallback
+}
+
+function policyFieldsForMerge(policy: BelayPolicyConfig): PolicySpreadFields {
+  const { indeterminateToolEffect: _indeterminate, ...spread } = policy
+  return spread
+}
+
 export {
   auditRetentionFromConfig,
   DEFAULT_AUDIT_MAX_BYTES,
@@ -122,6 +137,7 @@ export type {
   BelayNotificationsConfig,
   BelayOverridesConfig,
   BelayPolicyConfig,
+  PolicySpreadFields,
   BelayRedactionConfig,
   BelaySandboxConfig,
   BelayTransactionalConfig,
@@ -380,7 +396,7 @@ function mergeV3FromRaw(base: BelayConfigV4, raw: RawConfigInput): BelayConfigV4
     ...base,
     judge: raw.judge ? { ...base.judge, ...raw.judge } : base.judge,
     policy: {
-      ...base.policy,
+      ...policyFieldsForMerge(base.policy),
       ...(raw.policy ?? {}),
     },
     overrides: {
@@ -627,12 +643,14 @@ export function normalizeConfig(
       shellFrontendMode: normalizeShellFrontendMode(v4.classifier?.shellFrontendMode),
     },
     policy: {
-      unknownLocalEffect:
-        v4.policy?.unknownLocalEffect === 'deny'
-          ? 'deny'
-          : v4.policy?.unknownLocalEffect === 'allow_flagged'
-            ? 'allow_flagged'
-            : DEFAULT_POLICY_V3.unknownLocalEffect,
+      unknownLocalEffect: parseLocalEffectPolicy(
+        v4.policy?.unknownLocalEffect,
+        DEFAULT_POLICY_V3.unknownLocalEffect,
+      ),
+      indeterminateToolEffect: parseLocalEffectPolicy(
+        v4.policy?.indeterminateToolEffect,
+        parseLocalEffectPolicy(v4.policy?.unknownLocalEffect, DEFAULT_POLICY_V3.unknownLocalEffect),
+      ),
       unparseableShell:
         v4.policy?.unparseableShell === 'deny'
           ? 'deny'
@@ -866,7 +884,7 @@ export function mergeConfig(
       ...migrated.classifier,
     },
     policy: {
-      ...defaults.policy,
+      ...policyFieldsForMerge(defaults.policy),
       ...migrated.policy,
     },
     overrides: {
@@ -935,6 +953,7 @@ export function classifierOptionsFromConfig(config: BelayConfigV4): ClassifierOp
     strictChains: config.classifier.strictChains,
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
+    indeterminateToolEffect: config.policy.indeterminateToolEffect,
     unparseableShell: config.policy.unparseableShell,
     confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,

@@ -94,6 +94,7 @@ export interface ClassifierOptions {
   customAllowCommands?: string[]
   sensitivePaths?: string[]
   unknownLocalEffect?: UnknownLocalEffectPolicy
+  indeterminateToolEffect?: UnknownLocalEffectPolicy
   unparseableShell?: UnparseableShellPolicy
   controlPlaneDir?: string | null
   protectedArtifactRoots?: string[]
