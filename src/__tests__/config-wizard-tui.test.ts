@@ -51,8 +51,10 @@ describe('config wizard TUI integration', () => {
     await vi.waitFor(() => expect(writes.join('')).toContain('Judge provider'))
     await emitKeypress('down')
     await emitKeypress('enter')
+    await vi.waitFor(() => expect(writes.join('')).toContain('Adjust indeterminate'))
+    await emitKeypress('enter')
     await expect(promise).resolves.toMatchObject({ repoRoot: dir, adapter: 'cursor' })
-    expect(raw.calls).toEqual([true, false])
+    expect(raw.calls).toEqual([true, false, true, false])
 
     const config = await loadConfigFile(dir)
     expect(config.judge.providerId).toBe('ollama')
@@ -109,8 +111,10 @@ describe('config wizard TUI integration', () => {
     await vi.waitFor(() => expect(writes.join('')).toContain('Accept cloud judge egress'))
     await emitKeypress('k') // no -> yes
     await emitKeypress('enter')
+    await vi.waitFor(() => expect(writes.join('')).toContain('Adjust indeterminate'))
+    await emitKeypress('enter')
     await expect(promise).resolves.toMatchObject({ repoRoot: dir, adapter: 'cursor' })
-    expect(raw.calls).toEqual([true, false, true, false, true, false, true, false])
+    expect(raw.calls).toEqual([true, false, true, false, true, false, true, false, true, false])
     expect(close).toHaveBeenCalledTimes(1)
 
     const config = await loadConfigFile(dir)
@@ -124,7 +128,7 @@ describe('config wizard TUI integration', () => {
     await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
     restoreTTY = mockInteractiveTTY(false)
 
-    const answers = ['openai', 'project', 'cli']
+    const answers = ['openai', 'project', 'cli', 'n']
     const question = vi.fn(async () => answers.shift() ?? '')
     const close = vi.fn()
     vi.resetModules()
@@ -140,8 +144,8 @@ describe('config wizard TUI integration', () => {
     const configModule = await import('../commands/config.js')
     await configModule.runBelayConfigJudgeOnlyInteractive({ targetDir: dir })
 
-    expect(question).toHaveBeenCalledTimes(3)
-    expect(close).toHaveBeenCalledTimes(3)
+    expect(question).toHaveBeenCalledTimes(4)
+    expect(close).toHaveBeenCalledTimes(4)
     const config = await loadConfigFile(dir)
     expect(config.judge.providerId).toBe('codex')
   })

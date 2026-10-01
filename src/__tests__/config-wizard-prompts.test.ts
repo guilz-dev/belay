@@ -73,7 +73,7 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'apiKey', 'cli', 'sk-wizard-key'],
+      prompts: ['codex', 'apiKey', 'cli', 'sk-wizard-key', 'n'],
     })
 
     const config = await loadConfigFile(dir)
@@ -90,7 +90,7 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'apiKey', 'cli', '', 'sk-wizard-key'],
+      prompts: ['codex', 'apiKey', 'cli', '', 'sk-wizard-key', 'n'],
     })
 
     const config = await loadConfigFile(dir)
@@ -105,7 +105,7 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'project', 'cli'],
+      prompts: ['codex', 'project', 'cli', 'n'],
     })
 
     const config = await loadConfigFile(dir)
@@ -121,11 +121,24 @@ describe('config wizard credential prompts', () => {
 
     await runBelayConfigJudgeOnlyInteractive({
       targetDir: dir,
-      prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y'],
+      prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y', 'n'],
     })
 
     const config = await loadConfigFile(dir)
     expect(config.judge.endpoint).toBe('https://api.openai.com/v1')
     expect(config.judge.cloudConsent?.accepted).toBe(true)
+  })
+
+  it('sets indeterminateToolEffect allow_flagged when wizard policy prompts are accepted', async () => {
+    const dir = await createTempRepo()
+    await initProject({ targetDir: dir, adapter: 'cursor', withSkill: false })
+
+    await runBelayConfigJudgeOnlyInteractive({
+      targetDir: dir,
+      prompts: ['codex', 'project', 'cli', 'y', 'y'],
+    })
+
+    const config = await loadConfigFile(dir)
+    expect(config.policy.indeterminateToolEffect).toBe('allow_flagged')
   })
 })

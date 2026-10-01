@@ -28,6 +28,7 @@ import {
   DEFAULT_TRANSACTIONAL_V3,
   LEGACY_CONTROL_PLANE_V3,
   LEGACY_POLICY_V3,
+  materializePolicySpread,
 } from './config/defaults.js'
 import { normalizeJudgeConfig, synthesizeJudgeFromRaw } from './config/judge.js'
 import { resolveControlPlaneDir } from './config/paths.js'
@@ -39,12 +40,29 @@ import type {
   BelayContainedExecutionConfig,
   BelayFileCheckpointConfig,
   BelayOverridesConfig,
+  BelayPolicyConfig,
   BelaySandboxConfig,
+  PolicySpreadFields,
   RawConfigInput,
   SandboxRuntime,
 } from './config/types.js'
 import { normalizeShellFrontendMode } from './shell-frontend/mode.js'
 import type { ClassifierOptions, ScrubOptions, UnknownLocalEffectPolicy } from './types.js'
+
+export function parseLocalEffectPolicy(
+  value: unknown,
+  fallback: UnknownLocalEffectPolicy,
+): UnknownLocalEffectPolicy {
+  if (value === 'deny' || value === 'allow_flagged') {
+    return value
+  }
+  return fallback
+}
+
+function policyFieldsForMerge(policy: BelayPolicyConfig): PolicySpreadFields {
+  const { indeterminateToolEffect: _indeterminate, ...spread } = policy
+  return spread
+}
 
 export {
   auditRetentionFromConfig,
@@ -134,6 +152,7 @@ export type {
   JudgeProvider,
   JudgeProviderId,
   NormalizedBelayAuditConfig,
+  PolicySpreadFields,
   SandboxRuntime,
 } from './config/types.js'
 export type { UnknownLocalEffectPolicy }
@@ -306,7 +325,7 @@ export function migrateV2ToV3(
       sensitivePaths: v2.classifier.sensitivePaths,
       shellFrontendMode: 'legacy',
     },
-    policy: { ...LEGACY_POLICY_V3 },
+    policy: materializePolicySpread(LEGACY_POLICY_V3),
     overrides: {
       allow: mergeOverrideLists(rawOverrides?.allow ?? [], legacyOverrides.allow),
       external: mergeOverrideLists(rawOverrides?.external ?? [], legacyOverrides.external),
@@ -379,10 +398,10 @@ function mergeV3FromRaw(base: BelayConfigV4, raw: RawConfigInput): BelayConfigV4
   return normalizeConfig({
     ...base,
     judge: raw.judge ? { ...base.judge, ...raw.judge } : base.judge,
-    policy: {
-      ...base.policy,
+    policy: materializePolicySpread({
+      ...policyFieldsForMerge(base.policy),
       ...(raw.policy ?? {}),
-    },
+    }),
     overrides: {
       allow: mergeOverrideLists(base.overrides.allow, raw.overrides?.allow ?? []),
       external: mergeOverrideLists(base.overrides.external, raw.overrides?.external ?? []),
@@ -436,10 +455,10 @@ function normalizeV3Raw(raw: RawConfigInput): BelayConfigV4 {
       ...DEFAULT_CONFIG_V3.classifier,
       ...(raw.classifier ?? {}),
     },
-    policy: {
+    policy: materializePolicySpread({
       ...LEGACY_POLICY_V3,
       ...(raw.policy ?? {}),
-    },
+    }),
     overrides: {
       ...DEFAULT_CONFIG_V3.overrides,
       ...(raw.overrides ?? {}),
@@ -627,12 +646,14 @@ export function normalizeConfig(
       shellFrontendMode: normalizeShellFrontendMode(v4.classifier?.shellFrontendMode),
     },
     policy: {
-      unknownLocalEffect:
-        v4.policy?.unknownLocalEffect === 'deny'
-          ? 'deny'
-          : v4.policy?.unknownLocalEffect === 'allow_flagged'
-            ? 'allow_flagged'
-            : DEFAULT_POLICY_V3.unknownLocalEffect,
+      unknownLocalEffect: parseLocalEffectPolicy(
+        v4.policy?.unknownLocalEffect,
+        DEFAULT_POLICY_V3.unknownLocalEffect,
+      ),
+      indeterminateToolEffect: parseLocalEffectPolicy(
+        v4.policy?.indeterminateToolEffect,
+        parseLocalEffectPolicy(v4.policy?.unknownLocalEffect, DEFAULT_POLICY_V3.unknownLocalEffect),
+      ),
       unparseableShell:
         v4.policy?.unparseableShell === 'deny'
           ? 'deny'
@@ -866,7 +887,7 @@ export function mergeConfig(
       ...migrated.classifier,
     },
     policy: {
-      ...defaults.policy,
+      ...policyFieldsForMerge(defaults.policy),
       ...migrated.policy,
     },
     overrides: {
@@ -935,6 +956,7 @@ export function classifierOptionsFromConfig(config: BelayConfigV4): ClassifierOp
     strictChains: config.classifier.strictChains,
     sensitivePaths: config.classifier.sensitivePaths,
     unknownLocalEffect: config.policy.unknownLocalEffect,
+    indeterminateToolEffect: config.policy.indeterminateToolEffect,
     unparseableShell: config.policy.unparseableShell,
     confidenceThresholds: { ...config.policy.confidenceThresholds },
     controlPlaneDir: config.controlPlane.enabled ? resolveControlPlaneDir(config) : null,

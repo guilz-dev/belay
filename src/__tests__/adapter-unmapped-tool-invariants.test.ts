@@ -102,6 +102,58 @@ describe('adapter unmapped tool invariants', () => {
     expect(audit).not.toContain('"reason":"unmapped_tool"')
   })
 
+  it('does not would-block indeterminate tools in audit when indeterminateToolEffect is allow_flagged', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...(await loadConfigFile(repoRoot)),
+        mode: 'audit',
+        policy: {
+          unknownLocalEffect: 'deny',
+          indeterminateToolEffect: 'allow_flagged',
+        },
+      }),
+    )
+
+    await expect(
+      handleToolGateHook('preToolUse', {
+        tool_name: 'FutureMutationTool',
+        tool_input: {},
+        cwd: repoRoot,
+      }),
+    ).resolves.toMatchObject({ permission: 'allow' })
+
+    const audit = await readFile(testAuditLogPath(repoRoot, '.cursor/belay/audit.ndjson'), 'utf8')
+    expect(audit).toContain('"reason":"indeterminate_tool_effect"')
+    expect(audit).not.toContain('"wouldBlock":true')
+  })
+
+  it('denies indeterminate preToolUse tools in enforce when both policies deny', async () => {
+    const repoRoot = await createTempRepo()
+    await initProject({ targetDir: repoRoot })
+    await writeTrustedConfigFile(
+      repoRoot,
+      mergeConfig({
+        ...(await loadConfigFile(repoRoot)),
+        mode: 'enforce',
+        policy: {
+          unknownLocalEffect: 'deny',
+          indeterminateToolEffect: 'deny',
+        },
+      }),
+    )
+
+    await expect(
+      handleToolGateHook('preToolUse', {
+        tool_name: 'FutureMutationTool',
+        tool_input: {},
+        cwd: repoRoot,
+      }),
+    ).resolves.toMatchObject({ permission: 'deny' })
+  })
+
   it('allows and audits indeterminate preToolUse tools in audit mode', async () => {
     const repoRoot = await createTempRepo()
     await initProject({ targetDir: repoRoot })

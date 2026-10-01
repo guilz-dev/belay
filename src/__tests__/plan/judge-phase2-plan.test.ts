@@ -181,6 +181,11 @@ describe('Phase 2 plan — Config UX', () => {
       expect(result.permission).not.toBe('allow')
     })
 
+    it('rejects belay config set policy.unknownLocalEffect', async () => {
+      const result = await verdict('belay config set policy.unknownLocalEffect deny', context)
+      expect(result.permission).not.toBe('allow')
+    })
+
     it('rejects belay config set overrides.allow (ADR-005)', async () => {
       const result = await verdict('belay config set overrides.allow "git status"', context)
       expect(result.permission).not.toBe('allow')

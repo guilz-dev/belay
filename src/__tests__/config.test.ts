@@ -411,6 +411,37 @@ describe('config migration', () => {
     expect(merged.policy.unknownLocalEffect).toBe('allow_flagged')
     expect(merged.policy.unparseableShell).toBe('allow_flagged')
   })
+
+  it('falls back indeterminateToolEffect to unknownLocalEffect when unset', () => {
+    const merged = mergeConfig({
+      policy: { unknownLocalEffect: 'deny' },
+    })
+    expect(merged.policy.indeterminateToolEffect).toBe('deny')
+  })
+
+  it('keeps explicit split between unknownLocalEffect and indeterminateToolEffect', () => {
+    const merged = mergeConfig({
+      policy: {
+        unknownLocalEffect: 'deny',
+        indeterminateToolEffect: 'allow_flagged',
+      },
+    })
+    expect(merged.policy.unknownLocalEffect).toBe('deny')
+    expect(merged.policy.indeterminateToolEffect).toBe('allow_flagged')
+  })
+
+  it('round-trips split policy through persistence helpers', () => {
+    const loaded = mergeConfig({
+      policy: {
+        unknownLocalEffect: 'deny',
+        indeterminateToolEffect: 'allow_flagged',
+      },
+    })
+    const persisted = JSON.parse(JSON.stringify(configForPersistence(loaded)))
+    const reloaded = mergeConfig(persisted)
+    expect(reloaded.policy.unknownLocalEffect).toBe('deny')
+    expect(reloaded.policy.indeterminateToolEffect).toBe('allow_flagged')
+  })
 })
 
 describe('mapLegacyClassifierToOverrides', () => {

@@ -90,7 +90,7 @@ describe('Phase 3.5 plan — follow-ups', () => {
 
       await runBelayConfigJudgeOnlyInteractive({
         targetDir: dir,
-        prompts: ['codex', 'project', 'cli'],
+        prompts: ['codex', 'project', 'cli', 'n'],
       })
 
       expect(initSpy).not.toHaveBeenCalled()
@@ -106,7 +106,7 @@ describe('Phase 3.5 plan — follow-ups', () => {
 
       await runBelayConfigJudgeOnlyInteractive({
         targetDir: dir,
-        prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y'],
+        prompts: ['codex', 'project', 'http', 'https://api.openai.com/v1', 'y', 'n'],
       })
 
       const config = await loadConfigFile(dir)

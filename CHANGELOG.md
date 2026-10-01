@@ -28,6 +28,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **`policy.indeterminateToolEffect`** — split preToolUse / MCP indeterminate tools from
+  `policy.unknownLocalEffect`; configure via `belay config set` or the judge-only config wizard.
 - **`belay where`** — shows requested target and config anchor when they differ.
 - **`belay report`** — readiness path note, versioned log hint, and known host hook noise count.
 - **Ops doc** — `docs/ops/audit-log-versioning.ja.md`.
